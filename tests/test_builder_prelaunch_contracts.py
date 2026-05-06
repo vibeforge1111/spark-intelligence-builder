@@ -392,6 +392,70 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
 
+    def test_stop_ship_flags_no_run_intent_without_request_level_proof(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="intent without run or proof",
+            request_id="req-no-run-missing-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
+
+    def test_stop_ship_accepts_no_run_intent_with_request_level_result_proof(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-no-run-result-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="legacy simulated result",
+            request_id="req-no-run-result-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_intent_without_proof"].ok)
+
+    def test_stop_ship_accepts_no_run_intent_with_request_level_dispatch_failure(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-no-run-dispatch-failure",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="legacy simulated dispatch failed",
+            request_id="req-no-run-dispatch-failure",
+            channel_id="telegram",
+            actor_id="test",
+            facts={"failure_family": "test"},
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_intent_without_proof"].ok)
+
     def test_stop_ship_accepts_terminal_run_closure_as_execution_proof(self) -> None:
         run = open_run(
             self.state_db,
@@ -729,6 +793,31 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         snapshot = build_watchtower_snapshot(self.state_db)
 
         self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "healthy")
+
+    def test_watchtower_execution_health_accepts_no_run_intent_with_request_level_result(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-watchtower-no-run-result",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="legacy simulated result",
+            request_id="req-watchtower-no-run-result",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+
+        self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "healthy")
+        self.assertEqual(snapshot["panels"]["execution_lineage"]["counts"]["intent_without_dispatch"], 0)
 
     def test_classified_bridge_output_creates_typed_memory_lane_record(self) -> None:
         record_event(

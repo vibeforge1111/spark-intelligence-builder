@@ -2792,6 +2792,7 @@ def _build_config_authority_panel(state_db: StateDB) -> dict[str, Any]:
 
 def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
     terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
+    request_proof_events = {"dispatch_started", "tool_result_received", "dispatch_failed", *terminal_run_events}
     with state_db.connect() as conn:
         counts = conn.execute(
             """
@@ -2811,6 +2812,14 @@ def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
     for intent in intents:
         run_id = str(intent.get("run_id") or "")
         if not run_id:
+            request_id = str(intent.get("request_id") or "")
+            if request_id and _request_has_event_type(
+                state_db,
+                request_id=request_id,
+                excluded_event_id=str(intent.get("event_id") or ""),
+                event_types=request_proof_events,
+            ):
+                continue
             intent_without_dispatch += 1
             continue
         run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
@@ -2838,6 +2847,30 @@ def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
             "dispatch_without_result_closure": dispatch_without_result,
         }
     }
+
+
+def _request_has_event_type(
+    state_db: StateDB,
+    *,
+    request_id: str,
+    excluded_event_id: str,
+    event_types: set[str],
+) -> bool:
+    placeholders = ", ".join("?" for _ in event_types)
+    params = [request_id, excluded_event_id, *sorted(event_types)]
+    with state_db.connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT event_id
+            FROM builder_events
+            WHERE request_id = ?
+              AND event_id != ?
+              AND event_type IN ({placeholders})
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return row is not None
 
 
 def _build_delivery_truth_panel(state_db: StateDB, *, health_facts: dict[str, Any]) -> dict[str, Any]:
