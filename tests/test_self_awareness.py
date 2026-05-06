@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
@@ -27,6 +28,7 @@ from spark_intelligence.self_awareness import (
     run_route_probe_and_record,
     redact_connector_probe_sample,
 )
+from spark_intelligence.state.db import StateDB
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
@@ -627,6 +629,25 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("browser-use adapter status=missing_status", result.probe_summary)
         self.assertIn("status_path=", result.probe_summary)
 
+    def test_browser_route_probe_uses_shared_spark_root_from_nested_builder_home(self) -> None:
+        spark_root = self.home / ".spark"
+        builder_home = spark_root / "state" / "spark-intelligence"
+        config_manager = ConfigManager.from_home(str(builder_home))
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+
+        result = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key="spark_browser",
+            actor_id="operator:test",
+        )
+
+        expected_path = spark_root / "state" / "browser-use" / "status.json"
+        self.assertEqual(result.status, "failure")
+        self.assertIn(f"status_path={expected_path}", result.probe_summary)
+
     def test_browser_route_probe_records_browser_use_adapter_success(self) -> None:
         with patch(
             "spark_intelligence.self_awareness.route_probe.collect_browser_use_probe_contract",
@@ -742,7 +763,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
                 {
                     "kind": "system",
                     "key": "spark_browser",
-                    "label": "Spark Browser",
+                    "label": "Legacy Browser Extension",
                     "status": "missing",
                     "available": False,
                     "degraded": True,
@@ -778,6 +799,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         payload = context.to_payload()
         browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
         self.assertEqual(browser["status"], "planned")
+        self.assertEqual(browser["label"], "Spark Browser")
         self.assertFalse(browser["degraded"])
         self.assertEqual(browser["planned_reason"], "browser-use adapter migration pending")
         self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})

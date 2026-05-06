@@ -257,9 +257,10 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         else _route_health_status(available=available, degraded=degraded, registry_status=registry_status)
         )
     )
+    label = "Spark Browser" if key == "spark_browser" and browser_use_pending else str(record.get("label") or record.get("key") or "")
     return {
         "key": key,
-        "label": str(record.get("label") or record.get("key") or ""),
+        "label": label,
         "status": status,
         "registry_status": registry_status,
         "available": available,
