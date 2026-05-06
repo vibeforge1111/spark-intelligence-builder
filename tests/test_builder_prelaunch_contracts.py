@@ -2517,6 +2517,26 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-observer-packet-kinds", checks)
         self.assertTrue(checks["watchtower-observer-packet-kinds"].ok)
 
+    def test_doctor_treats_repair_planned_medium_promotion_blocks_as_managed(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="promotion candidate",
+            request_id="req-managed-promotion-block",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "durable_candidate",
+            },
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertTrue(checks["watchtower-observer-incidents"].ok)
+        self.assertIn("managed_by_repair_plans=yes", checks["watchtower-observer-incidents"].detail)
+
     def test_doctor_ignores_info_only_observer_incidents(self) -> None:
         record_pairing_context(
             state_db=self.state_db,
