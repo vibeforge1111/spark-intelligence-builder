@@ -8,6 +8,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import record_event, utc_now_iso
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
+from spark_intelligence.browser.service import collect_browser_use_probe_contract
 
 
 ProbeStatus = Literal["success", "failure"]
@@ -118,6 +119,8 @@ def _run_route_probe(
         return _run_researcher_status_probe(config_manager, state_db)
     if capability_key == "spark_swarm":
         return _run_swarm_status_probe(config_manager, state_db)
+    if capability_key == "spark_browser":
+        return _run_browser_use_status_probe(config_manager)
     return _run_registry_route_probe(config_manager, state_db, capability_key=capability_key)
 
 
@@ -299,6 +302,20 @@ def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
         "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
+    }
+
+
+def _run_browser_use_status_probe(config_manager: ConfigManager) -> dict[str, Any]:
+    status = collect_browser_use_probe_contract(config_manager)
+    ok = str(status.get("status") or "") == "completed"
+    return {
+        "status": "success" if ok else "failure",
+        "failure_reason": "" if ok else str(
+            status.get("last_failure_reason")
+            or status.get("error_message")
+            or "browser-use adapter status source is not ready."
+        ),
+        "summary": str(status.get("evidence_summary") or "browser-use adapter status=unknown"),
     }
 
 

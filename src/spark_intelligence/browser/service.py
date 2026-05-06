@@ -121,6 +121,44 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
     }
 
 
+def collect_browser_use_probe_contract(config_manager: ConfigManager) -> dict[str, Any]:
+    status = collect_browser_use_adapter_status(config_manager)
+    if status is not None:
+        return status
+
+    status_path = _browser_use_default_status_path(config_manager)
+    package_available = importlib.util.find_spec("browser_use") is not None
+    cli_path = shutil.which("browser-use") or shutil.which("browser_use")
+    failure_reason = "browser-use adapter status source is not ready."
+    return {
+        "status": "missing_status",
+        "backend_kind": BROWSER_USE_BACKEND_KIND,
+        "backend_label": BROWSER_USE_BACKEND_LABEL,
+        "adapter_status": "missing_status",
+        "configured": False,
+        "package_available": bool(package_available),
+        "cli_path": cli_path,
+        "status_path": str(status_path),
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": failure_reason,
+        "error_code": "BROWSER_USE_STATUS_MISSING",
+        "error_message": failure_reason,
+        "evidence_summary": _browser_use_summary(
+            status="missing_status",
+            raw_status="missing_status",
+            package_available=package_available,
+            cli_path=cli_path,
+            status_path=status_path,
+            failure_reason=failure_reason,
+        ),
+        "provenance": {
+            "source": "browser_use_probe_contract",
+            "status_path": str(status_path),
+        },
+    }
+
+
 def build_browser_page_snapshot_payload(
     *,
     config_manager: ConfigManager,
@@ -484,7 +522,7 @@ def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, An
         candidates.append(ConfigManager.normalize_runtime_path(explicit) or Path(explicit).expanduser())
     candidates.extend(
         [
-            config_manager.paths.home / "state" / "browser-use" / "status.json",
+            _browser_use_default_status_path(config_manager),
             config_manager.paths.home / "state" / "spark-browser-use" / "status.json",
             config_manager.paths.home / "artifacts" / "browser-use" / "status.json",
             config_manager.paths.home / "diagnostics" / "browser-use-status.json",
@@ -494,6 +532,10 @@ def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, An
         if candidate.exists():
             return candidate
     return candidates[0] if explicit else None
+
+
+def _browser_use_default_status_path(config_manager: ConfigManager) -> Path:
+    return config_manager.paths.home / "state" / "browser-use" / "status.json"
 
 
 def _read_browser_use_status(path: Path | None) -> dict[str, Any]:
@@ -547,6 +589,7 @@ def _browser_use_summary(
     ]
     if status_path:
         parts.append(f"status_path={status_path}")
+        parts.append(f"exists={status_path.exists()}")
     if failure_reason and status != "completed":
         parts.append(f"reason={failure_reason}")
     return " ".join(parts)
