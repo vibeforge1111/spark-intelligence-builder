@@ -237,7 +237,8 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
     registry_status = str(record.get("status") or "")
     ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
     command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
-    degraded = ecosystem_degraded and not command_path_available_with_warnings
+    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure"
+    degraded = (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
     status = (
         "available_with_warnings"
         if command_path_available_with_warnings
