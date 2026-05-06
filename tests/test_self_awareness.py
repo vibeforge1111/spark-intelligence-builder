@@ -12,6 +12,7 @@ from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_ll
 from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
     build_capability_drift_heartbeat,
     build_handoff_freshness_check,
     build_self_awareness_capsule,
@@ -192,6 +193,74 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("project_awareness", payload)
         self.assertIn("capability_probe_registry", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_agent_operating_context_separates_access_from_runner_writability(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:cem",
+            session_id="session:telegram:cem",
+            channel_kind="telegram",
+            user_message="inspect and patch the mission memory loop",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only Codex sandbox",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["schema_version"], "spark.agent_operating_context.v1")
+        self.assertTrue(payload["access"]["local_workspace_allowed"])
+        self.assertFalse(payload["runner"]["writable"])
+        self.assertEqual(payload["task_fit"]["recommended_route"], "writable_spawner_codex_mission")
+        self.assertIn("current_runner_read_only", payload["task_fit"]["blocked_here_by"])
+        self.assertIn("Permission is not proof of runner writability", payload["truth_boundary"])
+        rendered = result.to_text()
+        self.assertIn("Access: Level 4 - local workspace allowed", rendered)
+        self.assertIn("Runner: read-only Codex sandbox", rendered)
+        self.assertIn("writable Spawner/Codex mission", rendered)
+
+    def test_agent_operating_context_exposes_route_health_with_claim_boundaries(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="what should Rec use for this task?",
+            runner_writable=None,
+        )
+        payload = result.to_payload()
+
+        route_keys = {route["key"] for route in payload["routes"]}
+        self.assertIn("chat", route_keys)
+        self.assertIn("spark_intelligence_builder", route_keys)
+        self.assertIn("spark_memory", route_keys)
+        self.assertIn("spark_spawner", route_keys)
+        for route in payload["routes"]:
+            self.assertIn("status", route)
+            self.assertIn("claim_boundary", route)
+        ledger_sources = {item["source"] for item in payload["source_ledger"]}
+        self.assertIn("operator_supplied_access", ledger_sources)
+        self.assertIn("runner_preflight", ledger_sources)
+        self.assertIn("system_registry", ledger_sources)
+
+    def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "context",
+            "--home",
+            str(self.home),
+            "--spark-access-level",
+            "4",
+            "--runner-writable",
+            "no",
+            "--user-message",
+            "fix mission memory loop",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["schema_version"], "spark.agent_operating_context.v1")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "writable_spawner_codex_mission")
+        self.assertFalse(payload["runner"]["writable"])
 
     def test_builder_aggregate_readiness_points_to_concrete_provider_records(self) -> None:
         registry_payload = {
