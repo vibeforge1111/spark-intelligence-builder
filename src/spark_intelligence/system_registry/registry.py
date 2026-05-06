@@ -10,7 +10,11 @@ from spark_intelligence.attachments import (
     build_attachment_context,
     run_first_active_chip_hook,
 )
-from spark_intelligence.browser.service import build_browser_status_payload
+from spark_intelligence.browser.service import (
+    BROWSER_USE_BACKEND_KIND,
+    build_browser_status_payload,
+    collect_browser_use_adapter_status,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
@@ -706,6 +710,8 @@ def _build_browser_record(
     attached_chip_keys = set(str(item) for item in (attachment_context.get("attached_chip_keys") or []) if str(item))
     attached = "spark-browser" in attached_chip_keys
     if isinstance(browser_payload, dict) and browser_payload:
+        if str(browser_payload.get("backend_kind") or "") == BROWSER_USE_BACKEND_KIND:
+            return _build_browser_use_record(browser_payload)
         error_code = str(browser_payload.get("error_code") or "").strip()
         error_message = str(browser_payload.get("error_message") or "").strip()
         if str(browser_payload.get("status") or "") == "completed":
@@ -751,6 +757,56 @@ def _build_browser_record(
         chip_key="spark-browser",
         active_chip_keys=active_chip_keys,
         attachment_context=attachment_context,
+    )
+
+
+def _build_browser_use_record(browser_payload: dict[str, Any]) -> SystemRegistryRecord:
+    payload_status = str(browser_payload.get("status") or "").strip()
+    if payload_status == "completed":
+        status = "ready"
+        active = True
+        available = True
+        degraded = False
+        limitations: list[str] = []
+    elif payload_status == "configured":
+        status = "standby"
+        active = False
+        available = True
+        degraded = True
+        limitations = [
+            str(
+                browser_payload.get("last_failure_reason")
+                or "browser-use adapter configured, but no passing status proof has been recorded."
+            )
+        ]
+    else:
+        status = "degraded"
+        active = False
+        available = bool(browser_payload.get("configured"))
+        degraded = True
+        limitations = [
+            str(
+                browser_payload.get("last_failure_reason")
+                or browser_payload.get("error_message")
+                or "Browser-use adapter failed or is unavailable."
+            )
+        ]
+    return SystemRegistryRecord(
+        record_id="system:spark_browser",
+        kind="system",
+        key="spark_browser",
+        label="Spark Browser",
+        role=_SYSTEM_ROLE_HINTS["spark_browser"],
+        status=status,
+        attached=bool(browser_payload.get("configured")),
+        active=active,
+        pinned=False,
+        available=available,
+        degraded=degraded,
+        requires_restart=False,
+        capabilities=_SYSTEM_CAPABILITY_HINTS["spark_browser"],
+        limitations=[item for item in limitations if item],
+        metadata=browser_payload,
     )
 
 
@@ -1078,6 +1134,10 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
 
 
 def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str, Any] | None:
+    browser_use = collect_browser_use_adapter_status(config_manager)
+    if browser_use is not None:
+        return browser_use
+
     payload = build_browser_status_payload(
         config_manager=config_manager,
         browser_family="brave",
@@ -1125,10 +1185,12 @@ def _format_system_registry_direct_reply_line(record: dict[str, Any]) -> str:
     elif key == "spark_swarm":
         detail = "Escalation and collective sync are available." if status in {"ready", "configured"} else limitations[:1]
     elif key == "spark_browser":
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        backend_label = str(metadata.get("backend_label") or "").strip()
         if status == "ready":
-            detail = "Live search and page inspection are available."
+            detail = f"{backend_label or 'Browser'} is ready for governed page inspection."
         elif status == "standby":
-            detail = limitations[:1] or ["Reconnect the extension session to restore live browser grounding."]
+            detail = limitations[:1] or ["Run a browser route probe to record fresh readiness evidence."]
         else:
             detail = limitations[:1]
     elif key == "spark_voice":

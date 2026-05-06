@@ -550,10 +550,21 @@ def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, 
     key = str(record.get("key") or "")
     if key != "spark_browser":
         return False
+    if _browser_use_adapter_known(record, evidence=evidence):
+        return False
     legacy_chip_missing = not bool(record.get("attached")) and str(record.get("status") or "") in {"missing", "unavailable"}
     failure_reason = str(evidence.get("last_failure_reason") or "").casefold()
     legacy_failure = "spark-browser" in failure_reason and "not attached" in failure_reason
     return legacy_chip_missing or legacy_failure
+
+
+def _browser_use_adapter_known(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    if str(metadata.get("backend_kind") or "") == "browser_use_adapter":
+        return True
+    summary = str(evidence.get("latest_probe_summary") or "").casefold()
+    failure = str(evidence.get("last_failure_reason") or "").casefold()
+    return "browser-use adapter" in summary or "browser-use adapter" in failure
 
 
 def _contradiction_flag_summary(row: dict[str, Any]) -> str:
@@ -591,7 +602,7 @@ def _safe_route_probe(key: str) -> str:
         "spark_intelligence_builder": "Run `spark-intelligence self status --json` and record success, failure, latency, and eval source.",
         "spark_spawner": "Run a Spawner health/status probe and record mission route latency before claiming current mission readiness.",
         "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path before claiming local work is available.",
-        "spark_browser": "Run a Browser attachment/status probe before claiming web automation is available.",
+        "spark_browser": "Run a browser-use or legacy Browser status probe before claiming web automation is available.",
         "spark_memory": "Run a memory recall/write smoke with source refs before claiming memory is healthy this turn.",
         "spark_researcher": "Run a researcher status or read-only query probe before claiming research route health.",
         "spark_swarm": "Run a swarm route status probe before recommending swarm execution.",
@@ -719,7 +730,7 @@ def _route_repair_action(key: str) -> str:
         ),
         "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path.",
         "spark_browser": (
-            "Run a governed browser attachment/status probe before claiming browser automation is available."
+            "Run a governed browser-use or legacy Browser status probe before claiming browser automation is available."
         ),
         "spark_memory": (
             "Run a memory smoke and inspect recent memory failures; keep smoke output as evidence, not memory truth."
