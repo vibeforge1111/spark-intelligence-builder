@@ -243,14 +243,19 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
     key = str(record.get("key") or "")
     available = bool(record.get("available"))
     registry_status = str(record.get("status") or "")
+    browser_use_pending = _browser_use_adapter_pending(record, evidence=evidence)
     ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
     command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
-    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure"
-    degraded = (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
+    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure" and not browser_use_pending
+    degraded = False if browser_use_pending else (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
     status = (
+        "planned"
+        if browser_use_pending
+        else (
         "available_with_warnings"
         if command_path_available_with_warnings
         else _route_health_status(available=available, degraded=degraded, registry_status=registry_status)
+        )
     )
     return {
         "key": key,
@@ -262,6 +267,7 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "ecosystem_degraded": ecosystem_degraded,
         "active": bool(record.get("active")),
         "attached": bool(record.get("attached")),
+        "planned_reason": "browser-use adapter migration pending" if browser_use_pending else None,
         "last_success_at": evidence.get("last_success_at"),
         "last_failure_at": evidence.get("last_failure_at"),
         "last_failure_reason": evidence.get("last_failure_reason"),
@@ -273,9 +279,13 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "confidence_level": evidence.get("confidence_level") or "registry_only",
         "limitations": list(record.get("limitations") or [])[:3],
         "claim_boundary": (
+            "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
+            if browser_use_pending
+            else (
             "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
             if command_path_available_with_warnings
             else "Registry visibility is route availability context, not proof the route succeeded for the current task."
+            )
         ),
     }
 
@@ -528,6 +538,16 @@ def _route_health_status(*, available: bool, degraded: bool, registry_status: st
     return "unavailable"
 
 
+def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
+    key = str(record.get("key") or "")
+    if key != "spark_browser":
+        return False
+    legacy_chip_missing = not bool(record.get("attached")) and str(record.get("status") or "") in {"missing", "unavailable"}
+    failure_reason = str(evidence.get("last_failure_reason") or "").casefold()
+    legacy_failure = "spark-browser" in failure_reason and "not attached" in failure_reason
+    return legacy_chip_missing or legacy_failure
+
+
 def _route_evidence_status(evidence: dict[str, Any]) -> str:
     if evidence.get("last_success_at"):
         return "last_success_recorded"
@@ -573,6 +593,9 @@ def _route_status(route: dict[str, Any]) -> str:
 
 
 def _route_timeline_suffix(route: dict[str, Any]) -> str:
+    if str(route.get("status") or "") == "planned":
+        planned_reason = str(route.get("planned_reason") or "").strip()
+        return f", {planned_reason}" if planned_reason else ""
     confidence_level = str(route.get("confidence_level") or "")
     if route.get("last_success_at") and confidence_level != "recent_failure":
         return f", last success: {route['last_success_at']}"
@@ -616,6 +639,8 @@ def _build_route_repairs(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _route_needs_repair(route: dict[str, Any]) -> bool:
+    if str(route.get("status") or "") == "planned":
+        return False
     status = str(route.get("status") or "")
     evidence_status = str(route.get("evidence_status") or "")
     confidence_level = str(route.get("confidence_level") or "")
