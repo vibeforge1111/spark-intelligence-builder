@@ -460,13 +460,17 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
             and int(personality_row["evolution_count"]) == 0
         ):
             missing_domains.append("personality")
+    telegram_state_keys = [key for key in state_keys if key.startswith("telegram:")]
     telegram_events = _typed_events(
         state_db,
         event_types=("intent_committed", "delivery_attempted", "delivery_succeeded", "delivery_failed"),
         component="telegram_runtime",
         limit=200,
     )
-    if any(key.startswith("telegram:") for key in state_keys) and not telegram_events:
+    if telegram_state_keys and not telegram_events and not _telegram_runtime_state_has_typed_mirror(
+        state_db,
+        state_keys=telegram_state_keys,
+    ):
         missing_domains.append("telegram")
     if missing_domains:
         return StopShipIssue(
@@ -484,6 +488,28 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
         detail="Critical runtime_state keys have typed domain mirrors available.",
         severity="high",
     )
+
+
+def _telegram_runtime_state_has_typed_mirror(state_db: StateDB, *, state_keys: list[str]) -> bool:
+    # telegram:auth_state and telegram:poll_state are runtime health snapshots.
+    # Their authority mirror is the typed Telegram channel installation, not a
+    # delivery event, because healthy installs can exist before a message is sent.
+    if not state_keys:
+        return True
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT channel_id, status, auth_ref
+            FROM channel_installations
+            WHERE channel_id = 'telegram' AND channel_kind = 'telegram'
+            LIMIT 1
+            """
+        ).fetchone()
+    if not row:
+        return False
+    status = str(row["status"] or "").strip().lower()
+    auth_ref = str(row["auth_ref"] or "").strip()
+    return status in {"enabled", "active"} and bool(auth_ref)
 
 
 def _reset_integrity_issue(state_db: StateDB) -> StopShipIssue:
