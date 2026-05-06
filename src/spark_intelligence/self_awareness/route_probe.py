@@ -210,18 +210,48 @@ def _run_spawner_status_probe(config_manager: ConfigManager, state_db: StateDB) 
     drift = panels.get("spawner_payload_drift") if isinstance(panels.get("spawner_payload_drift"), dict) else {}
     drift_status = str(drift.get("status") or "unknown")
     mission_status = str(summary.get("top_level_state") or "unknown")
-    mission_degraded = mission_status in {"degraded", "execution_impaired", "blocked", "error", "failed"}
-    ok = not mission_degraded and drift_status in {"ok", "none", "unknown"} and "Spark Spawner" in [
-        str(item) for item in (summary.get("active_systems") or []) if str(item).strip()
-    ]
+    active_systems = [str(item) for item in (summary.get("active_systems") or []) if str(item).strip()]
+    degraded_surfaces = [str(item) for item in (summary.get("degraded_surfaces") or []) if str(item).strip()]
+    drift_ok = drift_status in {"ok", "none", "unknown"}
+    spawner_active = "Spark Spawner" in active_systems
+    spawner_surface_degraded = any("spawner" in surface.casefold() for surface in degraded_surfaces)
+    mission_execution_blocked = mission_status in {"execution_impaired", "blocked", "error", "failed"}
+    ok = drift_ok and spawner_active and not spawner_surface_degraded and not mission_execution_blocked
+    failure_reason = _spawner_probe_failure_reason(
+        mission_status=mission_status,
+        drift_status=drift_status,
+        spawner_active=spawner_active,
+        spawner_surface_degraded=spawner_surface_degraded,
+        mission_execution_blocked=mission_execution_blocked,
+    )
+    degraded_hint = f" degraded_surfaces={len(degraded_surfaces)}" if degraded_surfaces else ""
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else f"mission status={mission_status} drift={drift_status}",
+        "failure_reason": "" if ok else failure_reason,
         "summary": (
             f"mission status={mission_status} "
-            f"drift={drift_status} active_systems={len(summary.get('active_systems') or [])}"
+            f"drift={drift_status} active_systems={len(active_systems)}{degraded_hint}"
         ),
     }
+
+
+def _spawner_probe_failure_reason(
+    *,
+    mission_status: str,
+    drift_status: str,
+    spawner_active: bool,
+    spawner_surface_degraded: bool,
+    mission_execution_blocked: bool,
+) -> str:
+    if not spawner_active:
+        return "Spark Spawner is not active in Mission Control."
+    if drift_status not in {"ok", "none", "unknown"}:
+        return f"spawner payload drift={drift_status}"
+    if spawner_surface_degraded:
+        return f"spawner surface degraded; mission status={mission_status}"
+    if mission_execution_blocked:
+        return f"mission execution blocked; mission status={mission_status}"
+    return f"mission status={mission_status} drift={drift_status}"
 
 
 def _run_memory_smoke_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
