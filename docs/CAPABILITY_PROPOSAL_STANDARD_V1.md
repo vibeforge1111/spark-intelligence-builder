@@ -253,3 +253,30 @@ A capability proposal cannot be promoted unless:
 - The capability ledger key is stable.
 
 If any gate is missing, keep the proposal in `plan_only_probe_first` mode.
+
+## Upgrade Compatibility Gate
+
+Before changing capability proposal, connector harness, ledger, Telegram routing, or runtime sync behavior, run:
+
+```bash
+python -m pytest tests/test_capability_upgrade_compatibility.py -q
+python -m pytest tests/test_capability_natural_language_matrix.py -q
+python -m pytest tests/test_self_awareness.py -k "capability_ledger or connector_harness or capability_proposal_packet" -q
+python -m compileall -q src/spark_intelligence
+```
+
+Then run the Telegram-side gate:
+
+```bash
+npx ts-node tests\capabilityNaturalLanguageMatrix.test.ts
+npx ts-node tests\runtimeSyncCompatibility.test.ts
+npm run build
+npm run sync:check
+```
+
+Compatibility rules:
+
+- `spark.capability_proposal.v1` packets without `connector_harness` remain valid legacy packets.
+- Unknown future packet or harness fields are preserved for traceability but ignored by v1 activation logic.
+- Runtime sync must include the natural-language capability matrix so installed-runtime smoke checks exercise the same route contract as source tests.
+- Installed runtime must be smoke-tested after sync before claiming an upgrade is safe.
