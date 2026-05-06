@@ -97,8 +97,10 @@ class AgentOperatingContextResult:
                 elif route.get("last_success_at"):
                     suffix = f", last success: {route['last_success_at']}"
                 lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{suffix}")
-                if route.get("latest_probe_summary"):
-                    lines.append(f"  - Evidence: {_compact_probe_summary(route['latest_probe_summary'])}")
+            evidence_lines = _route_evidence_lines(self.routes)
+            if evidence_lines:
+                lines.extend(["", "Route Evidence"])
+                lines.extend(evidence_lines[:6])
         if self.stale_or_contradicted_context:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
@@ -559,6 +561,17 @@ def _evidence_alias(key: str) -> str:
 def _route_status(route: dict[str, Any]) -> str:
     status = str(route.get("status") or "unknown")
     return _display_status(status)
+
+
+def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for route in routes:
+        summary = route.get("latest_probe_summary")
+        if not summary:
+            continue
+        label = str(route.get("label") or route.get("key") or "Route").strip()
+        lines.append(f"- {label}: {_compact_probe_summary(summary)}")
+    return lines
 
 
 def _compact_probe_summary(value: object, limit: int = 120) -> str:
