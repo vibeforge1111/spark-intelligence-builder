@@ -34,6 +34,10 @@ from spark_intelligence.self_awareness.live_telegram_cadence import (
     LiveTelegramRegressionCadenceResult,
     build_live_telegram_regression_cadence,
 )
+from spark_intelligence.self_awareness.operating_context import (
+    AgentOperatingContextResult,
+    build_agent_operating_context,
+)
 
 __all__ = [
     "SelfAwarenessCapsule",
@@ -47,6 +51,8 @@ __all__ = [
     "HandoffFreshnessCheckResult",
     "LiveTelegramRegressionCadenceResult",
     "SelfImprovementPlanResult",
+    "AgentOperatingContextResult",
+    "build_agent_operating_context",
     "build_capability_drift_heartbeat",
     "build_capability_proposal_packet",
     "build_connector_harness_envelope",
