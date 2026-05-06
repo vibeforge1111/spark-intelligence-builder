@@ -449,6 +449,18 @@ class ConfigManager:
 
     @staticmethod
     def _windows_current_principal() -> str:
+        try:
+            result = subprocess.run(
+                ["whoami"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            principal = str(result.stdout or "").strip()
+            if "\\" in principal and "\n" not in principal and ":" not in principal:
+                return principal
+        except Exception:
+            pass
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
         return f"{domain}\\{username}" if domain else username
