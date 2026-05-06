@@ -672,6 +672,34 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
         self.assertIn("Spark Browser: planned, browser-use adapter migration pending", context.to_text())
 
+    def test_agent_operating_context_expands_stop_ship_contradictions_with_actionable_detail(self) -> None:
+        contradiction_row = {
+            "contradiction_key": "stop_ship:stop_ship_memory_contract",
+            "reason_code": "stop_ship_memory_contract",
+            "summary": "Stop-ship contradiction: stop_ship_memory_contract.",
+            "detail": "2 memory event(s) violated the Builder memory role contract.",
+            "severity": "high",
+            "last_seen_at": "2026-05-06T16:40:00Z",
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.recent_contradictions",
+            return_value=[contradiction_row],
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+        payload = context.to_payload()
+        flag = payload["stale_or_contradicted_context"][0]
+
+        self.assertEqual(flag["summary"], "2 memory event(s) violated the Builder memory role contract.")
+        self.assertEqual(flag["reason_code"], "stop_ship_memory_contract")
+        self.assertEqual(flag["severity"], "high")
+        self.assertIn("operational residue", flag["next_action"])
+        rendered = context.to_text()
+        self.assertIn(
+            "stop_ship_memory_contract: 2 memory event(s) violated the Builder memory role contract.",
+            rendered,
+        )
+        self.assertNotIn("Stop-ship contradiction: stop_ship_memory_contract.", rendered)
+
     def test_self_route_probe_cli_can_run_builtin_probe(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",

@@ -110,7 +110,7 @@ class AgentOperatingContextResult:
         if self.stale_or_contradicted_context:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
-                lines.append(f"- {item.get('summary') or item.get('kind') or 'context flag'}")
+                lines.append(f"- {_stale_flag_line(item)}")
         ledger = [item for item in self.source_ledger if item.get("present")]
         if ledger:
             lines.extend(["", "Source Ledger"])
@@ -410,10 +410,18 @@ def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_messag
     except Exception:
         contradictions = []
     for row in contradictions[:3]:
+        reason_code = str(row.get("reason_code") or "").strip()
+        contradiction_key = str(row.get("contradiction_key") or "").strip()
         flags.append(
             {
                 "kind": "open_contradiction",
-                "summary": str(row.get("summary") or row.get("detail") or row.get("contradiction_key") or "open contradiction"),
+                "summary": _contradiction_flag_summary(row),
+                "detail": str(row.get("detail") or "").strip() or None,
+                "contradiction_key": contradiction_key or None,
+                "reason_code": reason_code or None,
+                "severity": str(row.get("severity") or "").strip() or None,
+                "last_seen_at": row.get("last_seen_at"),
+                "next_action": _contradiction_next_action(reason_code or contradiction_key),
                 "source": "observability.contradiction_records",
                 "claim_boundary": "Contradiction rows are review flags and should not be promoted into memory truth without resolution.",
             }
@@ -548,6 +556,28 @@ def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, 
     return legacy_chip_missing or legacy_failure
 
 
+def _contradiction_flag_summary(row: dict[str, Any]) -> str:
+    detail = str(row.get("detail") or "").strip()
+    summary = str(row.get("summary") or "").strip()
+    key = str(row.get("contradiction_key") or row.get("reason_code") or "open contradiction").strip()
+    if detail and (not summary or summary.startswith("Stop-ship contradiction:")):
+        return detail
+    return summary or detail or key
+
+
+def _contradiction_next_action(reason_code: str) -> str:
+    key = str(reason_code or "").replace("stop_ship:", "").strip()
+    actions = {
+        "stop_ship_memory_contract": (
+            "Inspect violating memory events and keep operational residue out of durable memory until the check resolves."
+        ),
+        "stop_ship_runtime_state_authority": (
+            "Inspect runtime authority sources and ensure live state, attachments, and route evidence agree before reuse."
+        ),
+    }
+    return actions.get(key, "Review the contradiction evidence and resolve it before treating the flagged context as reusable truth.")
+
+
 def _route_evidence_status(evidence: dict[str, Any]) -> str:
     if evidence.get("last_success_at"):
         return "last_success_recorded"
@@ -613,6 +643,16 @@ def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
         label = str(route.get("label") or route.get("key") or "Route").strip()
         lines.append(f"- {label}: {_compact_probe_summary(summary)}")
     return lines
+
+
+def _stale_flag_line(item: dict[str, Any]) -> str:
+    key = str(item.get("reason_code") or item.get("contradiction_key") or item.get("kind") or "context flag").replace(
+        "stop_ship:", ""
+    )
+    summary = _compact_probe_summary(item.get("summary") or item.get("detail") or item.get("kind"), limit=110)
+    if key and key not in summary:
+        return f"{key}: {summary}"
+    return summary
 
 
 def _build_route_repairs(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
