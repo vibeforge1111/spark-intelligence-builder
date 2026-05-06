@@ -220,15 +220,25 @@ def _missing_route(key: str) -> dict[str, Any]:
 
 
 def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> dict[str, Any]:
+    key = str(record.get("key") or "")
     available = bool(record.get("available"))
-    degraded = bool(record.get("degraded")) or str(record.get("status") or "") in {"missing", "unavailable", "error"}
+    registry_status = str(record.get("status") or "")
+    ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
+    command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
+    degraded = ecosystem_degraded and not command_path_available_with_warnings
+    status = (
+        "available_with_warnings"
+        if command_path_available_with_warnings
+        else _route_health_status(available=available, degraded=degraded, registry_status=registry_status)
+    )
     return {
-        "key": str(record.get("key") or ""),
+        "key": key,
         "label": str(record.get("label") or record.get("key") or ""),
-        "status": _route_health_status(available=available, degraded=degraded, registry_status=str(record.get("status") or "")),
-        "registry_status": str(record.get("status") or ""),
+        "status": status,
+        "registry_status": registry_status,
         "available": available,
         "degraded": degraded,
+        "ecosystem_degraded": ecosystem_degraded,
         "active": bool(record.get("active")),
         "attached": bool(record.get("attached")),
         "last_success_at": evidence.get("last_success_at"),
@@ -237,7 +247,11 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "eval_coverage_status": evidence.get("eval_coverage_status") or "missing",
         "confidence_level": evidence.get("confidence_level") or "registry_only",
         "limitations": list(record.get("limitations") or [])[:3],
-        "claim_boundary": "Registry visibility is route availability context, not proof the route succeeded for the current task.",
+        "claim_boundary": (
+            "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
+            if command_path_available_with_warnings
+            else "Registry visibility is route availability context, not proof the route succeeded for the current task."
+        ),
     }
 
 
