@@ -71,7 +71,7 @@ def run_route_probe_and_record(
     normalized_key = _normalize_capability_key(capability_key)
     started = perf_counter()
     try:
-        probe = _run_registry_route_probe(config_manager, state_db, capability_key=normalized_key)
+        probe = _run_route_probe(config_manager, state_db, capability_key=normalized_key)
     except Exception as exc:
         return record_route_probe_evidence(
             state_db,
@@ -100,6 +100,25 @@ def run_route_probe_and_record(
         human_id=human_id,
         probe_summary=str(probe.get("summary") or ""),
     )
+
+
+def _run_route_probe(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    capability_key: str,
+) -> dict[str, Any]:
+    if capability_key == "spark_intelligence_builder":
+        return _run_builder_status_probe(config_manager, state_db)
+    if capability_key == "spark_spawner":
+        return _run_spawner_status_probe(config_manager, state_db)
+    if capability_key == "spark_memory":
+        return _run_memory_smoke_probe(config_manager, state_db)
+    if capability_key == "spark_researcher":
+        return _run_researcher_status_probe(config_manager, state_db)
+    if capability_key == "spark_swarm":
+        return _run_swarm_status_probe(config_manager, state_db)
+    return _run_registry_route_probe(config_manager, state_db, capability_key=capability_key)
 
 
 def record_route_probe_evidence(
@@ -165,6 +184,91 @@ def record_route_probe_evidence(
     )
 
 
+def _run_builder_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.gateway.runtime import gateway_status
+
+    status = gateway_status(config_manager, state_db)
+    ok = bool(status.doctor_blocking_ok)
+    return {
+        "status": "success" if ok else "failure",
+        "failure_reason": "" if ok else _first_nonempty(status.doctor_blocking_failures) or status.provider_runtime_detail,
+        "summary": (
+            f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} "
+            f"providers={len(status.configured_providers)} channels={len(status.configured_channels)}"
+        ),
+    }
+
+
+def _run_spawner_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.mission_control import build_mission_control_snapshot
+
+    snapshot = build_mission_control_snapshot(config_manager, state_db)
+    payload = snapshot.to_payload()
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    panels = payload.get("panels") if isinstance(payload.get("panels"), dict) else {}
+    drift = panels.get("spawner_payload_drift") if isinstance(panels.get("spawner_payload_drift"), dict) else {}
+    drift_status = str(drift.get("status") or "unknown")
+    ok = drift_status in {"ok", "none", "unknown"} and "Spark Spawner" in [
+        str(item) for item in (summary.get("active_systems") or []) if str(item).strip()
+    ]
+    return {
+        "status": "success" if ok else "failure",
+        "failure_reason": "" if ok else f"mission status={summary.get('top_level_state') or 'unknown'} drift={drift_status}",
+        "summary": (
+            f"mission status={summary.get('top_level_state') or 'unknown'} "
+            f"drift={drift_status} active_systems={len(summary.get('active_systems') or [])}"
+        ),
+    }
+
+
+def _run_memory_smoke_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.memory import run_memory_sdk_smoke_test
+
+    result = run_memory_sdk_smoke_test(
+        config_manager=config_manager,
+        state_db=state_db,
+        subject="human:route-probe:aoc",
+        predicate="system.route_probe.spark_memory",
+        value="ok",
+        cleanup=True,
+        actor_id="route_probe",
+    )
+    cleanup_ok = result.cleanup_result is None or result.cleanup_result.accepted_count > 0
+    ok = result.write_result.accepted_count > 0 and not result.read_result.abstained and bool(result.read_result.records) and cleanup_ok
+    summary = (
+        f"memory smoke write={result.write_result.status}/{result.write_result.accepted_count} "
+        f"read_records={len(result.read_result.records)} cleanup={'ok' if cleanup_ok else 'failed'}"
+    )
+    return {
+        "status": "success" if ok else "failure",
+        "failure_reason": "" if ok else result.read_result.reason or result.write_result.reason or "memory_smoke_failed",
+        "summary": summary,
+    }
+
+
+def _run_researcher_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.researcher_bridge import researcher_bridge_status
+
+    status = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    return {
+        "status": "success" if status.available else "failure",
+        "failure_reason": "" if status.available else (status.last_failure or {}).get("message") or "researcher_unavailable",
+        "summary": f"researcher available={status.available} configured={status.configured} mode={status.mode}",
+    }
+
+
+def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.swarm_bridge import swarm_status
+
+    status = swarm_status(config_manager, state_db)
+    ok = bool(status.payload_ready)
+    return {
+        "status": "success" if ok else "failure",
+        "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
+        "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
+    }
+
+
 def _run_registry_route_probe(
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -226,6 +330,14 @@ def _normalize_latency(value: int | None) -> int | None:
     if value < 0:
         raise ValueError("route_latency_ms must be non-negative")
     return int(value)
+
+
+def _first_nonempty(values: list[str]) -> str:
+    for value in values:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return ""
 
 
 def _elapsed_ms(started: float) -> int:
