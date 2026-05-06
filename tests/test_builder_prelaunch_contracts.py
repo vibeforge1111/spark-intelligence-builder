@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
-from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply
+from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply, record_telegram_auth_result
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
@@ -1652,6 +1652,31 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_stop_ship_accepts_telegram_runtime_state_with_typed_channel_installation(self) -> None:
+        self.add_telegram_channel(bot_token="telegram-test-token")
+        record_telegram_auth_result(
+            state_db=self.state_db,
+            status="ok",
+            bot_username="SparkTestBot",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_runtime_state_authority"].ok)
+
+    def test_stop_ship_flags_telegram_runtime_state_without_typed_channel_installation(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("telegram:auth_state", '{"status":"ok","bot_username":"SparkTestBot"}'),
+            )
+            conn.commit()
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
+        self.assertIn("telegram", issues["stop_ship_runtime_state_authority"].detail)
 
     def test_stop_ship_checks_fail_closed_when_sqlite_event_queries_error(self) -> None:
         with patch(
