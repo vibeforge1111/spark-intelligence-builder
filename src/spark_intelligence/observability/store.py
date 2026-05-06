@@ -2626,6 +2626,79 @@ def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) 
     return repaired
 
 
+def repair_memory_lane_artifact_lanes(state_db: StateDB, *, limit: int = 50000) -> int:
+    repaired = 0
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                lane_record_id,
+                artifact_lane,
+                promotion_target_lane,
+                keepability,
+                promotion_disposition,
+                evidence_json
+            FROM memory_lane_records
+            WHERE keepability IS NOT NULL
+            ORDER BY recorded_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            keepability = str(row["keepability"] or "")
+            promotion_disposition = str(row["promotion_disposition"] or "")
+            expected_lane = _artifact_lane_from_keepability(keepability)
+            expected_target_lane = _promotion_target_lane(promotion_disposition)
+            if (
+                str(row["artifact_lane"] or "") == expected_lane
+                and (row["promotion_target_lane"] or None) == expected_target_lane
+            ):
+                continue
+            evidence = _repair_memory_lane_evidence_json(
+                row["evidence_json"],
+                artifact_lane=expected_lane,
+                promotion_target_lane=expected_target_lane,
+            )
+            conn.execute(
+                """
+                UPDATE memory_lane_records
+                SET artifact_lane = ?,
+                    promotion_target_lane = ?,
+                    evidence_json = ?
+                WHERE lane_record_id = ?
+                """,
+                (expected_lane, expected_target_lane, evidence, row["lane_record_id"]),
+            )
+            repaired += 1
+        conn.commit()
+    return repaired
+
+
+def _repair_memory_lane_evidence_json(
+    value: Any,
+    *,
+    artifact_lane: str,
+    promotion_target_lane: str | None,
+) -> str | None:
+    try:
+        payload = json.loads(str(value)) if value else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["artifact_lane"] = artifact_lane
+    payload["promotion_target_lane"] = promotion_target_lane
+    facts = payload.get("facts")
+    if isinstance(facts, dict):
+        facts["artifact_lane"] = artifact_lane
+        facts["promotion_target_lane"] = promotion_target_lane
+        trace_contract = facts.get("trace_contract")
+        if isinstance(trace_contract, dict):
+            trace_contract["destination"] = promotion_target_lane or artifact_lane
+    return _json_or_none(payload)
+
+
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
     if keepability == "not_keepable":

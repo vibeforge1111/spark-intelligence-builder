@@ -32,6 +32,7 @@ from spark_intelligence.observability.store import (
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
+    repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
 )
 from spark_intelligence.personality.loader import (
@@ -973,6 +974,39 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         lane_records = recent_memory_lane_records(self.state_db, limit=10)
         self.assertEqual(len(lane_records), 1)
         self.assertEqual(str(lane_records[0]["event_id"]), event_id)
+
+    def test_repair_memory_lane_artifact_lanes_updates_stale_ephemeral_lane(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result with stale lane",
+            request_id="req-memory-lane-repair",
+            trace_ref="trace:req-memory-lane-repair",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE memory_lane_records SET artifact_lane = ? WHERE lane_record_id = ?",
+                ("execution_evidence", lane_record["lane_record_id"]),
+            )
+            conn.commit()
+
+        repaired = repair_memory_lane_artifact_lanes(self.state_db)
+
+        self.assertEqual(repaired, 1)
+        repaired_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        self.assertEqual(repaired_record["artifact_lane"], "working_scratchpad")
+        self.assertEqual(repaired_record["evidence_json"]["artifact_lane"], "working_scratchpad")
+        self.assertEqual(
+            repaired_record["evidence_json"]["facts"]["trace_contract"]["destination"],
+            "working_scratchpad",
+        )
 
     def test_watchtower_session_integrity_panel_tracks_reset_and_resume_surfaces(self) -> None:
         detect_and_persist_nl_preferences(
@@ -2357,6 +2391,33 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             for row in recent_contradictions(self.state_db, limit=20, status="open")
         }
         self.assertNotIn("stop_ship:stop_ship_keepability_rules", open_keys)
+
+    def test_doctor_repairs_stale_memory_lane_labels_before_stop_ship(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result with stale lane",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE memory_lane_records SET artifact_lane = ? WHERE lane_record_id = ?",
+                ("execution_evidence", lane_record["lane_record_id"]),
+            )
+            conn.commit()
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertTrue(checks["stop_ship_keepability_rules"].ok)
+        repaired_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        self.assertEqual(repaired_record["artifact_lane"], "working_scratchpad")
 
     def test_doctor_report_includes_observer_incident_check(self) -> None:
         record_event(
