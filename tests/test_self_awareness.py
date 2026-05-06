@@ -250,6 +250,22 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("memory_context", ledger_sources)
         self.assertIn("wiki_context", ledger_sources)
 
+    def test_agent_operating_context_routes_write_tasks_away_from_chat_when_runner_unknown(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="/aoc fix mission memory loop",
+            spark_access_level="4",
+            runner_writable=None,
+            runner_label="telegram bot runner unknown",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["task_fit"]["recommended_route"], "probe_runner_or_spawner_codex_mission")
+        self.assertIn("current_runner_unknown", payload["task_fit"]["blocked_here_by"])
+        self.assertTrue(payload["task_fit"]["needs_local_workspace"])
+        self.assertIn("probe runner or Spawner/Codex mission", result.to_text())
+
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
