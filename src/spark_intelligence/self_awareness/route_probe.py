@@ -328,17 +328,34 @@ def _run_registry_route_probe(
         }
     status = str(record.get("status") or "unknown")
     limitations = [str(item) for item in (record.get("limitations") or []) if str(item).strip()]
+    summary = _registry_probe_summary(record, status=status)
     ok = bool(record.get("available")) and not bool(record.get("degraded")) and status not in {"missing", "unavailable", "error"}
     if ok:
         return {
             "status": "success",
-            "summary": f"registry status={status} available={bool(record.get('available'))}",
+            "summary": summary,
         }
     return {
         "status": "failure",
         "failure_reason": limitations[0] if limitations else f"registry status={status}",
-        "summary": f"registry status={status} available={bool(record.get('available'))}",
+        "summary": summary,
     }
+
+
+def _registry_probe_summary(record: dict[str, Any], *, status: str) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    browser_use_record = (
+        str(record.get("key") or "") == "spark_browser"
+        and str(metadata.get("backend_kind") or "") == "browser_use_adapter"
+    )
+    if browser_use_record:
+        adapter_status = metadata.get("adapter_status") or status
+        package_available = bool(metadata.get("package_available"))
+        return str(
+            metadata.get("evidence_summary")
+            or f"browser-use adapter status={adapter_status} package_available={package_available}"
+        )
+    return f"registry status={status} available={bool(record.get('available'))}"
 
 
 def _normalize_capability_key(value: str) -> str:

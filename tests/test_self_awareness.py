@@ -617,6 +617,43 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(browser["evidence_status"], "last_failure_recorded")
         self.assertEqual(browser["last_failure_reason"], "Browser hook failed.")
 
+    def test_browser_route_probe_records_browser_use_adapter_success(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "ready",
+                    "available": True,
+                    "degraded": False,
+                    "limitations": [],
+                    "metadata": {
+                        "backend_kind": "browser_use_adapter",
+                        "adapter_status": "ready",
+                        "package_available": True,
+                        "evidence_summary": (
+                            "browser-use adapter status=ready package_available=True cli_available=False"
+                        ),
+                    },
+                }
+            ],
+        }
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("browser-use adapter status=ready", result.probe_summary)
+
     def test_agent_operating_context_marks_legacy_browser_gap_as_planned_browser_use_migration(self) -> None:
         registry_payload = {
             "workspace_id": "default",
@@ -664,6 +701,54 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("browser-use adapter", browser["claim_boundary"])
         self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
         self.assertIn("Spark Browser: planned, browser-use adapter migration pending", context.to_text())
+
+    def test_agent_operating_context_does_not_hide_browser_use_adapter_warnings_as_planned(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "standby",
+                    "available": True,
+                    "degraded": True,
+                    "active": False,
+                    "attached": True,
+                    "limitations": ["browser-use adapter configured, but no passing status proof has been recorded."],
+                    "metadata": {"backend_kind": "browser_use_adapter", "adapter_status": "configured"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_failure_at": "2026-05-06T16:16:00Z",
+                    "last_failure_reason": "Chip 'spark-browser' is not attached in this workspace.",
+                    "latest_probe_summary": "registry status=missing available=False",
+                    "confidence_level": "recent_failure",
+                }
+            ],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "degraded")
+        self.assertTrue(browser["degraded"])
+        self.assertIsNone(browser["planned_reason"])
+        self.assertIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+        self.assertNotIn("Spark Browser: planned", context.to_text())
 
     def test_agent_operating_context_expands_stop_ship_contradictions_with_actionable_detail(self) -> None:
         contradiction_row = {
