@@ -168,6 +168,7 @@ from spark_intelligence.self_awareness import (
     build_self_improvement_plan,
     load_capability_ledger,
     record_capability_ledger_event,
+    record_route_probe_evidence,
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
@@ -1340,6 +1341,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_context_parser.add_argument("--runner-label", default="", help="Optional display label for the current runner")
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_probe_parser = self_subparsers.add_parser(
+        "route-probe",
+        help="Record a route-specific probe result for Agent Operating Context evidence",
+    )
+    self_route_probe_parser.add_argument("capability_key", help="Route or capability key, for example spark_spawner")
+    self_route_probe_parser.add_argument(
+        "--status",
+        choices=["success", "failure"],
+        required=True,
+        help="Whether the route probe succeeded or failed",
+    )
+    self_route_probe_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_probe_parser.add_argument("--latency-ms", type=int, default=None, help="Route probe latency in milliseconds")
+    self_route_probe_parser.add_argument("--eval-ref", default="", help="Eval, smoke, test, or probe reference")
+    self_route_probe_parser.add_argument("--source-ref", default="", help="Trace or command reference for this probe")
+    self_route_probe_parser.add_argument("--failure-reason", default="", help="Failure reason for failed probes")
+    self_route_probe_parser.add_argument("--actor-id", default="operator", help="Actor recording the probe")
+    self_route_probe_parser.add_argument("--human-id", default="", help="Optional human id")
+    self_route_probe_parser.add_argument("--session-id", default="", help="Optional session id")
+    self_route_probe_parser.add_argument("--request-id", default="", help="Optional request id")
+    self_route_probe_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_heartbeat_parser = self_subparsers.add_parser(
         "heartbeat",
         help="Write a typed capability drift report with stale/missing last-success probes",
@@ -4288,6 +4310,28 @@ def _parse_runner_writable(value: str) -> bool | None:
     if normalized == "no":
         return False
     return None
+
+
+def handle_self_route_probe(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = record_route_probe_evidence(
+        state_db,
+        capability_key=str(getattr(args, "capability_key", "") or ""),
+        status=str(getattr(args, "status", "") or ""),  # type: ignore[arg-type]
+        route_latency_ms=getattr(args, "latency_ms", None),
+        eval_ref=str(getattr(args, "eval_ref", "") or ""),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        failure_reason=str(getattr(args, "failure_reason", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+    )
+    print(json.dumps(result.to_payload(), indent=2) if args.json else result.to_text())
+    return 0
 
 
 def handle_self_heartbeat(args: argparse.Namespace) -> int:
@@ -8240,6 +8284,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_status(args)
     if args.command == "self" and args.self_command == "context":
         return handle_self_context(args)
+    if args.command == "self" and args.self_command == "route-probe":
+        return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
         return handle_self_heartbeat(args)
     if args.command == "self" and args.self_command == "live-telegram-cadence":
