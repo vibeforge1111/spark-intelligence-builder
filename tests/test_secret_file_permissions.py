@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.config.loader import ConfigManager
@@ -58,3 +60,22 @@ class SecretFilePermissionTests(SparkTestCase):
 
         self.assertEqual(exit_code, 0, stderr)
         self.assertIn(".env-permissions", stdout)
+
+    @patch.dict(os.environ, {"USERDOMAIN": "STALE_DOMAIN", "USERNAME": "STALE_USER"})
+    @patch("spark_intelligence.config.loader.subprocess.run")
+    def test_windows_current_principal_prefers_process_token_over_environment(self, mock_run) -> None:
+        mock_run.return_value = SimpleNamespace(stdout="desktop-smvb6c0\\user\n")
+
+        principal = ConfigManager._windows_current_principal()
+
+        self.assertEqual(principal, "desktop-smvb6c0\\user")
+        mock_run.assert_called_once_with(["whoami"], check=True, capture_output=True, text=True)
+
+    @patch.dict(os.environ, {"USERDOMAIN": "DESKTOP-SMVB6C0", "USERNAME": "USER"})
+    @patch("spark_intelligence.config.loader.subprocess.run")
+    def test_windows_current_principal_falls_back_to_environment_when_whoami_fails(self, mock_run) -> None:
+        mock_run.side_effect = subprocess.CalledProcessError(1, ["whoami"])
+
+        principal = ConfigManager._windows_current_principal()
+
+        self.assertEqual(principal, "DESKTOP-SMVB6C0\\USER")
