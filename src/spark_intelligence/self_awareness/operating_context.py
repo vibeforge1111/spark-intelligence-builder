@@ -98,7 +98,7 @@ class AgentOperatingContextResult:
                     suffix = f", last success: {route['last_success_at']}"
                 lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{suffix}")
                 if route.get("latest_probe_summary"):
-                    lines.append(f"  evidence: {_compact_probe_summary(route['latest_probe_summary'])}")
+                    lines.append(f"  - Evidence: {_compact_probe_summary(route['latest_probe_summary'])}")
         if self.stale_or_contradicted_context:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
