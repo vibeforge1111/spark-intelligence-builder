@@ -537,11 +537,37 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("memory smoke", result.probe_summary)
         smoke.assert_called_once()
 
-    def test_spawner_route_probe_fails_when_mission_control_is_degraded(self) -> None:
+    def test_spawner_route_probe_succeeds_when_unrelated_mission_control_surfaces_are_degraded(self) -> None:
         mission_payload = {
             "summary": {
                 "top_level_state": "degraded",
                 "active_systems": ["Spark Spawner"],
+                "degraded_surfaces": ["Spark Swarm payload", "Watchtower scheduler"],
+            },
+            "panels": {
+                "spawner_payload_drift": {"status": "ok"},
+            },
+        }
+        with patch(
+            "spark_intelligence.mission_control.build_mission_control_snapshot",
+            return_value=SimpleNamespace(to_payload=lambda: mission_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_spawner",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("degraded_surfaces=2", result.probe_summary)
+
+    def test_spawner_route_probe_fails_when_spawner_surface_is_degraded(self) -> None:
+        mission_payload = {
+            "summary": {
+                "top_level_state": "degraded",
+                "active_systems": ["Spark Spawner"],
+                "degraded_surfaces": ["Spark Spawner"],
             },
             "panels": {
                 "spawner_payload_drift": {"status": "ok"},
@@ -559,7 +585,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             )
 
         self.assertEqual(result.status, "failure")
-        self.assertEqual(result.failure_reason, "mission status=degraded drift=ok")
+        self.assertEqual(result.failure_reason, "spawner surface degraded; mission status=degraded")
         self.assertIn("mission status=degraded", result.probe_summary)
 
     def test_run_route_probe_records_registry_backed_failure(self) -> None:
