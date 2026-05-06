@@ -335,6 +335,10 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
         for event in provenance_events
         if str((event.get("provenance_json") or {}).get("source_kind") or "").startswith("personality_")
     ]
+    personality_provenance_recorded = bool(personality_events) or _has_provenance_mutation_source_prefix(
+        state_db,
+        prefix="personality_",
+    )
     bridge_activity = _typed_events(
         state_db,
         event_types=("dispatch_started", "tool_result_received"),
@@ -349,7 +353,7 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
                 detail="Active chip or specialization-path influence exists without provenance events.",
                 severity="critical",
             )
-    if personality_enabled and bridge_activity and not personality_events:
+    if personality_enabled and bridge_activity and not personality_provenance_recorded:
         return StopShipIssue(
             name="stop_ship_plugin_provenance",
             ok=False,
@@ -369,6 +373,21 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
         detail="Chip, path, and personality influence is recorded with provenance.",
         severity="critical",
     )
+
+
+def _has_provenance_mutation_source_prefix(state_db: StateDB, *, prefix: str) -> bool:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM provenance_mutation_log
+            WHERE source_kind LIKE ?
+            ORDER BY recorded_at DESC, mutation_id DESC
+            LIMIT 1
+            """,
+            (f"{prefix}%",),
+        ).fetchone()
+    return row is not None
 
 
 def _provenance_ledger_issue(state_db: StateDB) -> StopShipIssue:

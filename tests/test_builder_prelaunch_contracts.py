@@ -1478,6 +1478,47 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(facts["keepability"], "user_preference_ephemeral")
         self.assertTrue(facts["detected_deltas"])
 
+    def test_stop_ship_plugin_provenance_uses_typed_personality_ledger_beyond_recent_event_window(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Personality influence was recorded before bridge execution.",
+            request_id="req-personality-ledger",
+            actor_id="researcher_bridge",
+            reason_code="personality_context_applied",
+            facts={"keepability": "user_preference_ephemeral"},
+            provenance={"source_kind": "personality_profile", "source_ref": "founder-operator"},
+        )
+        for index in range(240):
+            record_event(
+                self.state_db,
+                event_type="plugin_or_chip_influence_recorded",
+                component="attachment_snapshot",
+                summary="Active chip and specialization-path attachment state was snapshotted with provenance.",
+                request_id=f"req-attachment-{index}",
+                actor_id="attachment_snapshot",
+                reason_code="attachment_snapshot_synced",
+                facts={"keepability": "execution_evidence"},
+                provenance={"source_kind": "attachment_snapshot", "source_ref": f"attachments:{index}"},
+            )
+        record_event(
+            self.state_db,
+            event_type="dispatch_started",
+            component="researcher_bridge",
+            summary="Researcher bridge dispatch started.",
+            request_id="req-personality-ledger",
+            actor_id="researcher_bridge",
+            reason_code="build_advisory",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertTrue(issues["stop_ship_plugin_provenance"].ok)
+
     def test_sync_attachment_snapshot_writes_typed_snapshot_storage(self) -> None:
         snapshot = sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
 
