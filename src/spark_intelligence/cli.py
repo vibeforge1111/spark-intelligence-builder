@@ -167,6 +167,7 @@ from spark_intelligence.self_awareness import (
     build_self_awareness_capsule,
     build_self_improvement_plan,
     record_route_probe_evidence,
+    run_route_probe_and_record,
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
@@ -1347,9 +1348,9 @@ def build_parser() -> argparse.ArgumentParser:
     self_route_probe_parser.add_argument(
         "--status",
         choices=["success", "failure"],
-        required=True,
         help="Whether the route probe succeeded or failed",
     )
+    self_route_probe_parser.add_argument("--run", action="store_true", help="Run the built-in safe route probe before recording evidence")
     self_route_probe_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_route_probe_parser.add_argument("--latency-ms", type=int, default=None, help="Route probe latency in milliseconds")
     self_route_probe_parser.add_argument("--eval-ref", default="", help="Eval, smoke, test, or probe reference")
@@ -4293,6 +4294,20 @@ def handle_self_route_probe(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    if bool(getattr(args, "run", False)):
+        result = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key=str(getattr(args, "capability_key", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            human_id=str(getattr(args, "human_id", "") or ""),
+            session_id=str(getattr(args, "session_id", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or ""),
+        )
+        print(json.dumps(result.to_payload(), indent=2) if args.json else result.to_text())
+        return 0
+    if not str(getattr(args, "status", "") or "").strip():
+        raise SystemExit("--status is required unless --run is used")
     result = record_route_probe_evidence(
         state_db,
         capability_key=str(getattr(args, "capability_key", "") or ""),
