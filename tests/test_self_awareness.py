@@ -17,6 +17,7 @@ from spark_intelligence.self_awareness import (
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    record_route_probe_evidence,
 )
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
@@ -339,6 +340,73 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(spawner["eval_coverage_status"], "missing")
         self.assertIn("Spawner health/status probe", spawner["next_probe"])
         self.assertIn("not proof the route succeeded", spawner["claim_boundary"])
+
+    def test_route_probe_evidence_moves_aoc_route_from_missing_to_last_success(self) -> None:
+        result = record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_spawner",
+            status="success",
+            route_latency_ms=123,
+            eval_ref="pytest:aoc-route-probe",
+            source_ref="test:spawner-health",
+            actor_id="operator:test",
+        )
+
+        self.assertEqual(result.status, "success")
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="/aoc fix mission memory loop",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="test writable runner",
+        )
+        payload = context.to_payload()
+        spawner = next(route for route in payload["routes"] if route["key"] == "spark_spawner")
+        self.assertEqual(spawner["evidence_status"], "last_success_recorded")
+        self.assertEqual(spawner["route_latency_ms"], 123)
+        self.assertEqual(spawner["eval_coverage_status"], "covered")
+        self.assertIsNotNone(spawner["last_success_at"])
+        ledger = {item["source"]: item for item in payload["source_ledger"]}
+        self.assertTrue(ledger["capability_evidence"]["present"])
+
+    def test_self_route_probe_cli_records_evidence_for_aoc(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "route-probe",
+            "spark_memory",
+            "--home",
+            str(self.home),
+            "--status",
+            "success",
+            "--latency-ms",
+            "45",
+            "--eval-ref",
+            "memory-smoke",
+            "--source-ref",
+            "test:memory-smoke",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        probe_payload = json.loads(stdout)
+        self.assertEqual(probe_payload["capability_key"], "spark_memory")
+        self.assertEqual(probe_payload["status"], "success")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "context",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        context_payload = json.loads(stdout)
+        memory = next(route for route in context_payload["routes"] if route["key"] == "spark_memory")
+        self.assertEqual(memory["evidence_status"], "last_success_recorded")
+        self.assertEqual(memory["route_latency_ms"], 45)
+        self.assertEqual(memory["eval_coverage_status"], "covered")
 
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
