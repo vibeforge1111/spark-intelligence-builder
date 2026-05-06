@@ -375,6 +375,28 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         ledger = {item["source"]: item for item in payload["source_ledger"]}
         self.assertTrue(ledger["capability_evidence"]["present"])
 
+    def test_recent_route_probe_failure_downgrades_aoc_route_status(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_swarm",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:swarm-route-probe",
+            source_ref="test:swarm-health",
+            failure_reason="swarm_payload_not_ready",
+            actor_id="operator:test",
+            probe_summary="swarm payload_ready=False api_ready=False auth_state=missing",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        swarm = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_swarm")
+        self.assertEqual(swarm["status"], "degraded")
+        self.assertEqual(swarm["evidence_status"], "last_failure_recorded")
+        self.assertIn("- Spark Swarm: swarm payload_ready=False", context.to_text())
+
     def test_self_route_probe_cli_records_evidence_for_aoc(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
@@ -463,6 +485,31 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.status, "success")
         self.assertIn("memory smoke", result.probe_summary)
         smoke.assert_called_once()
+
+    def test_spawner_route_probe_fails_when_mission_control_is_degraded(self) -> None:
+        mission_payload = {
+            "summary": {
+                "top_level_state": "degraded",
+                "active_systems": ["Spark Spawner"],
+            },
+            "panels": {
+                "spawner_payload_drift": {"status": "ok"},
+            },
+        }
+        with patch(
+            "spark_intelligence.mission_control.build_mission_control_snapshot",
+            return_value=SimpleNamespace(to_payload=lambda: mission_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_spawner",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "mission status=degraded drift=ok")
+        self.assertIn("mission status=degraded", result.probe_summary)
 
     def test_run_route_probe_records_registry_backed_failure(self) -> None:
         registry_payload = {

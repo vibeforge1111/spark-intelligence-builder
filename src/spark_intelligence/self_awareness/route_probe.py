@@ -208,14 +208,16 @@ def _run_spawner_status_probe(config_manager: ConfigManager, state_db: StateDB) 
     panels = payload.get("panels") if isinstance(payload.get("panels"), dict) else {}
     drift = panels.get("spawner_payload_drift") if isinstance(panels.get("spawner_payload_drift"), dict) else {}
     drift_status = str(drift.get("status") or "unknown")
-    ok = drift_status in {"ok", "none", "unknown"} and "Spark Spawner" in [
+    mission_status = str(summary.get("top_level_state") or "unknown")
+    mission_degraded = mission_status in {"degraded", "execution_impaired", "blocked", "error", "failed"}
+    ok = not mission_degraded and drift_status in {"ok", "none", "unknown"} and "Spark Spawner" in [
         str(item) for item in (summary.get("active_systems") or []) if str(item).strip()
     ]
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else f"mission status={summary.get('top_level_state') or 'unknown'} drift={drift_status}",
+        "failure_reason": "" if ok else f"mission status={mission_status} drift={drift_status}",
         "summary": (
-            f"mission status={summary.get('top_level_state') or 'unknown'} "
+            f"mission status={mission_status} "
             f"drift={drift_status} active_systems={len(summary.get('active_systems') or [])}"
         ),
     }
