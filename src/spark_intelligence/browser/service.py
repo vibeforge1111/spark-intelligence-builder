@@ -523,6 +523,7 @@ def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, An
     candidates.extend(
         [
             _browser_use_default_status_path(config_manager),
+            config_manager.paths.home / "state" / "browser-use" / "status.json",
             config_manager.paths.home / "state" / "spark-browser-use" / "status.json",
             config_manager.paths.home / "artifacts" / "browser-use" / "status.json",
             config_manager.paths.home / "diagnostics" / "browser-use-status.json",
@@ -535,7 +536,14 @@ def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, An
 
 
 def _browser_use_default_status_path(config_manager: ConfigManager) -> Path:
-    return config_manager.paths.home / "state" / "browser-use" / "status.json"
+    return _spark_runtime_root(config_manager.paths.home) / "state" / "browser-use" / "status.json"
+
+
+def _spark_runtime_root(home: Path) -> Path:
+    resolved = home.resolve(strict=False)
+    if resolved.name == "spark-intelligence" and resolved.parent.name == "state":
+        return resolved.parent.parent
+    return resolved
 
 
 def _read_browser_use_status(path: Path | None) -> dict[str, Any]:
