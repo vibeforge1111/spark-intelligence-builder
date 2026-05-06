@@ -370,7 +370,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(spawner["eval_coverage_status"], "covered")
         self.assertEqual(spawner["latest_probe_summary"], "mission status=attention drift=ok active_systems=6")
         self.assertIsNotNone(spawner["last_success_at"])
-        self.assertIn("- Evidence: mission status=attention drift=ok", context.to_text())
+        self.assertIn("Route Evidence", context.to_text())
+        self.assertIn("- Spark Spawner: mission status=attention drift=ok", context.to_text())
         ledger = {item["source"]: item for item in payload["source_ledger"]}
         self.assertTrue(ledger["capability_evidence"]["present"])
 
