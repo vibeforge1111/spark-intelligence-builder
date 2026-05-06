@@ -550,6 +550,8 @@ def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, 
     key = str(record.get("key") or "")
     if key != "spark_browser":
         return False
+    if _browser_use_status_contract_missing(evidence):
+        return True
     if _browser_use_adapter_known(record, evidence=evidence):
         return False
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
@@ -562,6 +564,12 @@ def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, 
     failure_reason = str(evidence.get("last_failure_reason") or "").casefold()
     legacy_failure = "spark-browser" in failure_reason and "not attached" in failure_reason
     return legacy_chip_missing or legacy_chip_inactive or legacy_failure
+
+
+def _browser_use_status_contract_missing(evidence: dict[str, Any]) -> bool:
+    summary = str(evidence.get("latest_probe_summary") or "").casefold()
+    failure = str(evidence.get("last_failure_reason") or "").casefold()
+    return "browser-use adapter status=missing_status" in summary or "browser-use adapter status source is not ready" in failure
 
 
 def _browser_use_adapter_known(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:

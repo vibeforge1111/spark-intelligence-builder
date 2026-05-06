@@ -588,24 +588,14 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.failure_reason, "spawner surface degraded; mission status=degraded")
         self.assertIn("mission status=degraded", result.probe_summary)
 
-    def test_run_route_probe_records_registry_backed_failure(self) -> None:
-        registry_payload = {
-            "workspace_id": "default",
-            "records": [
-                {
-                    "kind": "system",
-                    "key": "spark_browser",
-                    "label": "Spark Browser",
-                    "status": "degraded",
-                    "available": True,
-                    "degraded": True,
-                    "limitations": ["Browser hook failed."],
-                }
-            ],
-        }
+    def test_run_route_probe_records_browser_failure(self) -> None:
         with patch(
-            "spark_intelligence.self_awareness.route_probe.build_system_registry",
-            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+            "spark_intelligence.self_awareness.route_probe.collect_browser_use_probe_contract",
+            return_value={
+                "status": "failed",
+                "last_failure_reason": "Browser hook failed.",
+                "evidence_summary": "browser-use adapter status=failed",
+            },
         ):
             result = run_route_probe_and_record(
                 self.config_manager,
@@ -624,32 +614,29 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(browser["evidence_status"], "last_failure_recorded")
         self.assertEqual(browser["last_failure_reason"], "Browser hook failed.")
 
+    def test_browser_route_probe_reports_browser_use_status_contract_when_missing(self) -> None:
+        result = run_route_probe_and_record(
+            self.config_manager,
+            self.state_db,
+            capability_key="spark_browser",
+            actor_id="operator:test",
+        )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "browser-use adapter status source is not ready.")
+        self.assertIn("browser-use adapter status=missing_status", result.probe_summary)
+        self.assertIn("status_path=", result.probe_summary)
+
     def test_browser_route_probe_records_browser_use_adapter_success(self) -> None:
-        registry_payload = {
-            "workspace_id": "default",
-            "records": [
-                {
-                    "kind": "system",
-                    "key": "spark_browser",
-                    "label": "Spark Browser",
-                    "status": "ready",
-                    "available": True,
-                    "degraded": False,
-                    "limitations": [],
-                    "metadata": {
-                        "backend_kind": "browser_use_adapter",
-                        "adapter_status": "ready",
-                        "package_available": True,
-                        "evidence_summary": (
-                            "browser-use adapter status=ready package_available=True cli_available=False"
-                        ),
-                    },
-                }
-            ],
-        }
         with patch(
-            "spark_intelligence.self_awareness.route_probe.build_system_registry",
-            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+            "spark_intelligence.self_awareness.route_probe.collect_browser_use_probe_contract",
+            return_value={
+                "status": "completed",
+                "backend_kind": "browser_use_adapter",
+                "adapter_status": "ready",
+                "package_available": True,
+                "evidence_summary": "browser-use adapter status=ready package_available=True cli_available=False",
+            },
         ):
             result = run_route_probe_and_record(
                 self.config_manager,
@@ -729,6 +716,53 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         }
         capsule_payload = {
             "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "planned")
+        self.assertFalse(browser["degraded"])
+        self.assertEqual(browser["planned_reason"], "browser-use adapter migration pending")
+        self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+
+    def test_agent_operating_context_keeps_missing_browser_use_contract_as_planned_migration(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "missing",
+                    "available": False,
+                    "degraded": True,
+                    "active": False,
+                    "attached": False,
+                    "limitations": ["Chip 'spark-browser' is not attached in this workspace."],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_failure_at": "2026-05-06T18:55:00Z",
+                    "last_failure_reason": "browser-use adapter status source is not ready.",
+                    "latest_probe_summary": "browser-use adapter status=missing_status status_path=C:\\Users\\USER\\.spark\\state\\browser-use\\status.json exists=False",
+                    "confidence_level": "recent_failure",
+                }
+            ],
             "user_awareness": {},
             "memory_cognition": {},
         }
