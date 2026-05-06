@@ -236,6 +236,9 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         for route in payload["routes"]:
             self.assertIn("status", route)
             self.assertIn("claim_boundary", route)
+            self.assertIn("evidence_status", route)
+            self.assertIn("next_probe", route)
+            self.assertIn("eval_coverage_status", route)
         ledger_sources = {item["source"] for item in payload["source_ledger"]}
         self.assertIn("operator_supplied_access", ledger_sources)
         self.assertIn("runner_preflight", ledger_sources)
@@ -297,6 +300,45 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertFalse(builder["degraded"])
         self.assertTrue(builder["ecosystem_degraded"])
         self.assertIn("Builder: available with warnings", result.to_text())
+
+    def test_agent_operating_context_marks_route_evidence_gaps_without_claiming_success(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_spawner",
+                    "label": "Spark Spawner",
+                    "status": "available",
+                    "available": True,
+                    "degraded": False,
+                    "active": True,
+                    "attached": True,
+                    "limitations": [],
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            result = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = result.to_payload()
+        spawner = next(route for route in payload["routes"] if route["key"] == "spark_spawner")
+        self.assertEqual(spawner["status"], "healthy")
+        self.assertEqual(spawner["evidence_status"], "current_probe_missing")
+        self.assertEqual(spawner["eval_coverage_status"], "missing")
+        self.assertIn("Spawner health/status probe", spawner["next_probe"])
+        self.assertIn("not proof the route succeeded", spawner["claim_boundary"])
 
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

@@ -202,6 +202,10 @@ def _chat_route() -> dict[str, Any]:
         "degraded": False,
         "last_success_at": None,
         "last_failure_reason": None,
+        "route_latency_ms": None,
+        "eval_coverage_status": "missing",
+        "evidence_status": "available_without_current_probe",
+        "next_probe": "Send a low-risk Telegram message and record the delivery trace if current chat health matters.",
         "claim_boundary": "Conversation is available, but chat alone cannot prove local writes, external services, or completed missions.",
     }
 
@@ -215,6 +219,10 @@ def _missing_route(key: str) -> dict[str, Any]:
         "degraded": True,
         "last_success_at": None,
         "last_failure_reason": "route_not_visible_in_system_registry",
+        "route_latency_ms": None,
+        "eval_coverage_status": "missing",
+        "evidence_status": "missing_registry_row",
+        "next_probe": f"Run diagnostics or a direct route check for {key}.",
         "claim_boundary": "Missing registry row is a routing warning, not proof the system cannot be installed elsewhere.",
     }
 
@@ -244,7 +252,10 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "last_success_at": evidence.get("last_success_at"),
         "last_failure_at": evidence.get("last_failure_at"),
         "last_failure_reason": evidence.get("last_failure_reason"),
+        "route_latency_ms": evidence.get("route_latency_ms"),
         "eval_coverage_status": evidence.get("eval_coverage_status") or "missing",
+        "evidence_status": _route_evidence_status(evidence),
+        "next_probe": evidence.get("next_probe") or _safe_route_probe(key),
         "confidence_level": evidence.get("confidence_level") or "registry_only",
         "limitations": list(record.get("limitations") or [])[:3],
         "claim_boundary": (
@@ -501,6 +512,27 @@ def _route_health_status(*, available: bool, degraded: bool, registry_status: st
     if available:
         return "healthy" if registry_status in {"available", "configured", "active", "ready"} else registry_status or "available"
     return "unavailable"
+
+
+def _route_evidence_status(evidence: dict[str, Any]) -> str:
+    if evidence.get("last_success_at"):
+        return "last_success_recorded"
+    if evidence.get("last_failure_at") or evidence.get("last_failure_reason"):
+        return "last_failure_recorded"
+    return "current_probe_missing"
+
+
+def _safe_route_probe(key: str) -> str:
+    probes = {
+        "spark_intelligence_builder": "Run `spark-intelligence self status --json` and record success, failure, latency, and eval source.",
+        "spark_spawner": "Run a Spawner health/status probe and record mission route latency before claiming current mission readiness.",
+        "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path before claiming local work is available.",
+        "spark_browser": "Run a Browser attachment/status probe before claiming web automation is available.",
+        "spark_memory": "Run a memory recall/write smoke with source refs before claiming memory is healthy this turn.",
+        "spark_researcher": "Run a researcher status or read-only query probe before claiming research route health.",
+        "spark_swarm": "Run a swarm route status probe before recommending swarm execution.",
+    }
+    return probes.get(key, f"Run diagnostics or a direct route check for {key}.")
 
 
 def _access_allows_local_work(value: str) -> bool:
