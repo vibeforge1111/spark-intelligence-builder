@@ -49,6 +49,10 @@ class SelfImprovementPlanResult:
             lines.append(f"- owner: {proposal.get('owner_system') or 'unknown'}")
             lines.append(f"- ledger: {proposal.get('capability_ledger_key') or 'unknown'}")
             lines.append(f"- probe: {proposal.get('safe_probe') or 'unknown'}")
+            harness = proposal.get("connector_harness") if isinstance(proposal.get("connector_harness"), dict) else {}
+            if harness:
+                lines.append(f"- connector: {harness.get('connector_key') or 'unknown'}")
+                lines.append(f"- harness: {harness.get('authority_stage') or 'unknown'}")
         invocations = [str(item) for item in self.payload.get("natural_language_invocations") or [] if str(item).strip()]
         if invocations:
             lines.extend(["", "Natural language invocations"])

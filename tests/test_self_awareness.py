@@ -14,6 +14,7 @@ from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
     build_capability_drift_heartbeat,
     build_capability_proposal_packet,
+    build_connector_harness_envelope,
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
@@ -21,6 +22,7 @@ from spark_intelligence.self_awareness import (
     load_capability_ledger,
     record_capability_ledger_event,
     record_capability_proposal,
+    redact_connector_probe_sample,
 )
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
@@ -679,6 +681,11 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("email_account_access", email_packet["permissions_required"])
         self.assertIn("redacted", email_packet["safe_probe"])
         self.assertIn("capability_connector:", email_packet["capability_ledger_key"])
+        self.assertEqual(email_packet["connector_harness"]["schema_version"], "spark.connector_harness.v1")
+        self.assertEqual(email_packet["connector_harness"]["connector_key"], "email")
+        self.assertEqual(email_packet["connector_harness"]["authority_stage"], "proposal_only")
+        self.assertIn("read_message_body", email_packet["connector_harness"]["blocked_live_actions"])
+        self.assertIn("human_approval_recorded", email_packet["connector_harness"]["live_access_blocked_until"])
 
         report_packet = build_capability_proposal_packet(
             goal="Set up daily reports of my memories so I know what changed.",
@@ -687,6 +694,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(report_packet["implementation_route"], "workflow_automation")
         self.assertIn("scheduler_write_scope", report_packet["permissions_required"])
         self.assertIn("dry-run", report_packet["safe_probe"])
+        self.assertEqual(report_packet["connector_harness"]["connector_key"], "workflow")
+        self.assertIn("enable_delivery", report_packet["connector_harness"]["blocked_live_actions"])
 
     def test_capability_proposal_packet_keeps_mission_artifacts_distinct(self) -> None:
         packet = build_capability_proposal_packet(
@@ -697,6 +706,44 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(packet["implementation_route"], "mission_artifact")
         self.assertEqual(packet["owner_system"], "Spark Spawner / Mission Control")
         self.assertIn("not proof of a live capability", packet["claim_boundary"])
+        self.assertNotIn("connector_harness", packet)
+
+    def test_connector_harness_envelope_blocks_live_access_until_approval(self) -> None:
+        harness = build_connector_harness_envelope(
+            goal="Let Spark read my calendar and summarize upcoming events.",
+            implementation_route="capability_connector",
+            permissions_required=["calendar_account_access", "event_read_scope"],
+        )
+
+        self.assertIsNotNone(harness)
+        payload = harness.to_payload()
+        self.assertEqual(payload["connector_key"], "calendar")
+        self.assertEqual(payload["authority_stage"], "proposal_only")
+        self.assertIn("calendar_account_access", payload["permissions_required"])
+        self.assertIn("metadata sample", payload["dry_run_probe"])
+        self.assertIn("create_event", payload["blocked_live_actions"])
+        self.assertIn("approval", payload["approval_prompt"].lower())
+        self.assertIn("capability_ledger_key", payload["trace_fields"])
+
+    def test_connector_probe_redaction_removes_private_content_and_secrets(self) -> None:
+        redacted = redact_connector_probe_sample(
+            connector_key="email",
+            sample={
+                "id": "msg_123",
+                "from": "alice@example.com",
+                "subject": "Private launch details",
+                "snippet": "Revenue and medical info",
+                "headers": {"authorization": "Bearer sk-test-abcdefghijklmnopqrstuvwxyz"},
+                "metadata_count": 1,
+            },
+        )
+
+        self.assertEqual(redacted["id"], "msg_123")
+        self.assertEqual(redacted["metadata_count"], 1)
+        self.assertIn("<redacted email from>", redacted["from"])
+        self.assertIn("<redacted email subject>", redacted["subject"])
+        self.assertIn("<redacted email snippet>", redacted["snippet"])
+        self.assertIn("<redacted email authorization>", redacted["headers"]["authorization"])
 
     def test_capability_ledger_records_proposal_without_activation(self) -> None:
         packet = build_capability_proposal_packet(

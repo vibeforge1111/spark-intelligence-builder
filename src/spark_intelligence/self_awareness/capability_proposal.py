@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from spark_intelligence.self_awareness.connector_harness import build_connector_harness_envelope
+
 
 IMPLEMENTATION_ROUTES = {
     "domain_chip",
@@ -29,11 +31,12 @@ class CapabilityProposalPacket:
     capability_ledger_key: str
     claim_boundary: str
     source_intent: str
+    connector_harness: dict[str, Any] | None = None
     status: str = "proposal_plan_only"
     schema_version: str = "spark.capability_proposal.v1"
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "status": self.status,
             "capability_goal": self.capability_goal,
@@ -50,6 +53,9 @@ class CapabilityProposalPacket:
             "claim_boundary": self.claim_boundary,
             "source_intent": self.source_intent,
         }
+        if self.connector_harness:
+            payload["connector_harness"] = self.connector_harness
+        return payload
 
 
 def build_capability_proposal_packet(*, goal: str, user_message: str = "") -> CapabilityProposalPacket:
@@ -61,6 +67,11 @@ def build_capability_proposal_packet(*, goal: str, user_message: str = "") -> Ca
     recipient = _recipient(lowered)
     permissions = _permissions_required(lowered, implementation_route)
     ledger_key = f"{implementation_route}:{_slug(capability_goal)}"
+    connector_harness = build_connector_harness_envelope(
+        goal=capability_goal,
+        implementation_route=implementation_route,
+        permissions_required=permissions,
+    )
     return CapabilityProposalPacket(
         capability_goal=capability_goal,
         recipient=recipient,
@@ -75,6 +86,7 @@ def build_capability_proposal_packet(*, goal: str, user_message: str = "") -> Ca
         capability_ledger_key=ledger_key,
         claim_boundary=_claim_boundary(implementation_route),
         source_intent=source_intent,
+        connector_harness=connector_harness.to_payload() if connector_harness else None,
     )
 
 

@@ -96,6 +96,42 @@ Canonical JSON shape:
 
 The initial packet is always `proposal_plan_only`. Later systems may add activation/evidence records, but they must not rewrite this packet into proof.
 
+## Connector Harness Envelope
+
+Capability proposals that touch external accounts, browsers, files, voice providers, APIs, or scheduled delivery may include a `connector_harness` object.
+
+Canonical shape:
+
+```json
+{
+  "schema_version": "spark.connector_harness.v1",
+  "authority_stage": "proposal_only",
+  "connector_key": "email",
+  "permissions_required": ["email_account_access", "message_read_scope"],
+  "dry_run_probe": "Check provider/auth status, then fetch at most one metadata-only message sample with subject/body/addresses redacted.",
+  "redaction_policy": "email_metadata_redacted; redact secrets, account identifiers, message contents, and private free text before model exposure",
+  "approval_prompt": "Record human approval for email connector activation only after reviewing the dry-run probe, the requested scopes, and the rollback path.",
+  "live_access_blocked_until": "human_approval_recorded_and_probe_eval_passed_in_capability_ledger",
+  "blocked_live_actions": ["read_message_body", "send_email", "persist_message_content", "train_on_inbox"],
+  "trace_fields": ["capability_ledger_key", "connector_key", "probe_ref", "approval_ref", "eval_ref", "redaction_policy"],
+  "truth_boundary": "connector_harness_is_not_live_access_or_activation_proof"
+}
+```
+
+Supported v1 connector keys:
+
+- `email`
+- `calendar`
+- `voice`
+- `browser`
+- `files`
+- `workflow`
+- `api`
+
+The connector harness is a standard permission/probe envelope. It does not run the connector, grant account access, mark a capability active, or let Spark claim a live capability.
+
+Dry-run probe output must redact secrets, private content, account identifiers, message body/snippet/subject fields, event details, and browser/file content unless the operator explicitly approves a stronger probe.
+
 ## Capability Ledger
 
 Capability activation state lives in the Builder-owned capability ledger, not inside the proposal packet.
