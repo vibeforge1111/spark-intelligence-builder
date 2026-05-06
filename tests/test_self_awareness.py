@@ -259,6 +259,45 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["task_fit"]["needs_local_workspace"])
         self.assertIn("probe runner or Spawner/Codex mission", result.to_text())
 
+    def test_agent_operating_context_labels_builder_command_path_available_with_warnings(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_intelligence_builder",
+                    "label": "Spark Intelligence Builder",
+                    "status": "degraded",
+                    "available": True,
+                    "degraded": True,
+                    "active": True,
+                    "attached": True,
+                    "limitations": ["Gateway/provider/channel readiness is not fully green yet."],
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            result = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = result.to_payload()
+        builder = next(route for route in payload["routes"] if route["key"] == "spark_intelligence_builder")
+        self.assertEqual(builder["status"], "available_with_warnings")
+        self.assertEqual(builder["registry_status"], "degraded")
+        self.assertFalse(builder["degraded"])
+        self.assertTrue(builder["ecosystem_degraded"])
+        self.assertIn("Builder: available with warnings", result.to_text())
+
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
