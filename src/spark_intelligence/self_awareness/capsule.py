@@ -602,7 +602,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
             events.extend(latest_events_by_type(state_db, event_type=event_type, limit=80))
         except Exception:
             continue
-    events.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
+    events.sort(key=lambda event: (_event_created_at(event), str(event.get("event_id") or "")), reverse=True)
     for event in events:
         capability_key = _capability_key_for_event(event)
         if not capability_key:
@@ -624,7 +624,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         )
         row["evidence_count"] = int(row.get("evidence_count") or 0) + 1
         facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
-        created_at = str(event.get("created_at") or "").strip() or None
+        created_at = _event_created_at(event) or None
         event_id = str(event.get("event_id") or "").strip()
         if not row.get("source") and event_id:
             row["source"] = f"event:{event_id}"
@@ -705,6 +705,11 @@ def _latency_ms(facts: dict[str, Any]) -> int | None:
         if number >= 0:
             return number
     return None
+
+
+def _event_created_at(event: dict[str, Any]) -> str:
+    facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+    return str(facts.get("route_probe_recorded_at") or event.get("created_at") or "").strip()
 
 
 def _event_eval_coverage(event: dict[str, Any]) -> tuple[str, list[str]]:

@@ -93,12 +93,7 @@ class AgentOperatingContextResult:
         if self.routes:
             lines.extend(["", "Routes"])
             for route in self.routes[:8]:
-                suffix = ""
-                if route.get("last_failure_reason"):
-                    suffix = f", last failure: {route['last_failure_reason']}"
-                elif route.get("last_success_at"):
-                    suffix = f", last success: {route['last_success_at']}"
-                lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{suffix}")
+                lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{_route_timeline_suffix(route)}")
             evidence_lines = _route_evidence_lines(self.routes)
             if evidence_lines:
                 lines.extend(["", "Route Evidence"])
@@ -577,6 +572,15 @@ def _route_status(route: dict[str, Any]) -> str:
     return _display_status(status)
 
 
+def _route_timeline_suffix(route: dict[str, Any]) -> str:
+    confidence_level = str(route.get("confidence_level") or "")
+    if route.get("last_success_at") and confidence_level != "recent_failure":
+        return f", last success: {route['last_success_at']}"
+    if route.get("last_failure_reason"):
+        return f", last failure: {route['last_failure_reason']}"
+    return ""
+
+
 def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for route in routes:
@@ -624,6 +628,13 @@ def _route_needs_repair(route: dict[str, Any]) -> bool:
 
 
 def _route_repair_reason(route: dict[str, Any]) -> str:
+    if route.get("last_success_at") and str(route.get("confidence_level") or "") != "recent_failure":
+        return str(
+            route.get("latest_probe_summary")
+            or route.get("status")
+            or route.get("evidence_status")
+            or "route has warnings despite latest success evidence"
+        )
     return str(
         route.get("last_failure_reason")
         or route.get("latest_probe_summary")

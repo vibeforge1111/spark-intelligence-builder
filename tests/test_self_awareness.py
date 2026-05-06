@@ -410,6 +410,44 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("Route Repairs", context.to_text())
         self.assertIn("- Spark Swarm: Run swarm status/doctor", context.to_text())
 
+    def test_agent_operating_context_text_prefers_recent_success_over_stale_failure(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_intelligence_builder",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:builder-route-probe",
+            source_ref="test:builder-health",
+            failure_reason=".env-permissions",
+            actor_id="operator:test",
+            probe_summary="gateway ready=False doctor_blocking_ok=False providers=1 channels=1",
+        )
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_intelligence_builder",
+            status="success",
+            route_latency_ms=88,
+            eval_ref="pytest:builder-route-probe",
+            source_ref="test:builder-health",
+            actor_id="operator:test",
+            probe_summary="gateway ready=True doctor_blocking_ok=True providers=1 channels=1",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+
+        builder = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_intelligence_builder")
+        self.assertEqual(builder["confidence_level"], "recent_success")
+        self.assertEqual(builder["evidence_status"], "last_success_recorded")
+        rendered = context.to_text()
+        self.assertIn("Spark Intelligence Builder: available with warnings, last success:", rendered)
+        self.assertNotIn("Spark Intelligence Builder: available with warnings, last failure: .env-permissions", rendered)
+        builder_repair = next(repair for repair in context.to_payload()["route_repairs"] if repair["route_key"] == "spark_intelligence_builder")
+        self.assertIn("gateway ready=True", builder_repair["reason"])
+        self.assertNotEqual(builder_repair["reason"], ".env-permissions")
+
     def test_self_route_probe_cli_records_evidence_for_aoc(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
