@@ -35,6 +35,7 @@ class AgentOperatingContextResult:
     runner: dict[str, Any]
     task_fit: dict[str, Any]
     routes: list[dict[str, Any]] = field(default_factory=list)
+    route_repairs: list[dict[str, Any]] = field(default_factory=list)
     memory_in_play: dict[str, Any] = field(default_factory=dict)
     wiki_in_play: dict[str, Any] = field(default_factory=dict)
     stale_or_contradicted_context: list[dict[str, Any]] = field(default_factory=list)
@@ -51,6 +52,7 @@ class AgentOperatingContextResult:
             "runner": self.runner,
             "task_fit": self.task_fit,
             "routes": self.routes,
+            "route_repairs": self.route_repairs,
             "memory_in_play": self.memory_in_play,
             "wiki_in_play": self.wiki_in_play,
             "stale_or_contradicted_context": self.stale_or_contradicted_context,
@@ -101,6 +103,15 @@ class AgentOperatingContextResult:
             if evidence_lines:
                 lines.extend(["", "Route Evidence"])
                 lines.extend(evidence_lines[:6])
+        if self.route_repairs:
+            lines.extend(["", "Route Repairs"])
+            for repair in self.route_repairs[:6]:
+                reason = str(repair.get("reason") or "").strip()
+                reason_suffix = f" Reason: {_compact_probe_summary(reason, limit=80)}" if reason else ""
+                lines.append(
+                    f"- {repair.get('label') or repair.get('route_key')}: "
+                    f"{repair.get('next_action') or 'Run a direct route probe.'}{reason_suffix}"
+                )
         if self.stale_or_contradicted_context:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
@@ -146,6 +157,7 @@ def build_agent_operating_context(
         if isinstance(item, dict)
     }
     routes = _build_routes(registry_payload=registry_payload, evidence_by_key=evidence_by_key)
+    route_repairs = _build_route_repairs(routes)
     access = _build_access(spark_access_level)
     runner = _build_runner(runner_writable=runner_writable, runner_label=runner_label)
     task_fit = _build_task_fit(user_message=user_message, access=access, runner=runner, routes=routes)
@@ -168,6 +180,7 @@ def build_agent_operating_context(
         runner=runner,
         task_fit=task_fit,
         routes=routes,
+        route_repairs=route_repairs,
         memory_in_play=memory_in_play,
         wiki_in_play=wiki_in_play,
         stale_or_contradicted_context=stale_flags,
@@ -573,6 +586,76 @@ def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
         label = str(route.get("label") or route.get("key") or "Route").strip()
         lines.append(f"- {label}: {_compact_probe_summary(summary)}")
     return lines
+
+
+def _build_route_repairs(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    repairs: list[dict[str, Any]] = []
+    for route in routes:
+        if not _route_needs_repair(route):
+            continue
+        key = str(route.get("key") or "").strip()
+        if key == "chat":
+            continue
+        repairs.append(
+            {
+                "route_key": key,
+                "label": str(route.get("label") or key or "Route"),
+                "reason": _route_repair_reason(route),
+                "next_action": _route_repair_action(key),
+                "probe": route.get("next_probe") or _safe_route_probe(key),
+                "claim_boundary": (
+                    "Repair guidance is diagnostic only. Do not claim the route works again until a fresh route probe succeeds."
+                ),
+            }
+        )
+    return repairs
+
+
+def _route_needs_repair(route: dict[str, Any]) -> bool:
+    status = str(route.get("status") or "")
+    evidence_status = str(route.get("evidence_status") or "")
+    confidence_level = str(route.get("confidence_level") or "")
+    return (
+        bool(route.get("degraded"))
+        or status in {"degraded", "missing", "unavailable", "available_with_warnings"}
+        or evidence_status == "last_failure_recorded"
+        or confidence_level == "recent_failure"
+    )
+
+
+def _route_repair_reason(route: dict[str, Any]) -> str:
+    return str(
+        route.get("last_failure_reason")
+        or route.get("latest_probe_summary")
+        or route.get("status")
+        or route.get("evidence_status")
+        or "route needs fresh diagnostic evidence"
+    )
+
+
+def _route_repair_action(key: str) -> str:
+    actions = {
+        "spark_intelligence_builder": (
+            "Inspect Builder gateway doctor checks, .env permissions, and Telegram runtime auth before claiming Builder is fully healthy."
+        ),
+        "spark_spawner": (
+            "Inspect Mission Control status, Watchtower execution health, and Spawner payload drift before relying on mission execution."
+        ),
+        "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path.",
+        "spark_browser": (
+            "Run a governed browser attachment/status probe before claiming browser automation is available."
+        ),
+        "spark_memory": (
+            "Run a memory smoke and inspect recent memory failures; keep smoke output as evidence, not memory truth."
+        ),
+        "spark_researcher": (
+            "Run researcher status and a read-only query probe before claiming researcher route health."
+        ),
+        "spark_swarm": (
+            "Run swarm status/doctor and repair local payload readiness before recommending Swarm."
+        ),
+    }
+    return actions.get(key, "Run a direct route probe and inspect the latest failure reason.")
 
 
 def _compact_probe_summary(value: object, limit: int = 120) -> str:

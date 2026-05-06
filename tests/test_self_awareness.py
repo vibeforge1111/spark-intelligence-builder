@@ -396,6 +396,12 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(swarm["status"], "degraded")
         self.assertEqual(swarm["evidence_status"], "last_failure_recorded")
         self.assertIn("- Spark Swarm: swarm payload_ready=False", context.to_text())
+        repairs = context.to_payload()["route_repairs"]
+        swarm_repair = next(repair for repair in repairs if repair["route_key"] == "spark_swarm")
+        self.assertIn("local payload readiness", swarm_repair["next_action"])
+        self.assertIn("fresh route probe succeeds", swarm_repair["claim_boundary"])
+        self.assertIn("Route Repairs", context.to_text())
+        self.assertIn("- Spark Swarm: Run swarm status/doctor", context.to_text())
 
     def test_self_route_probe_cli_records_evidence_for_aoc(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
