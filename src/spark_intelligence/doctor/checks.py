@@ -290,7 +290,7 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
         f"pairing_mode={summary.pairing_mode or 'unknown'}",
         f"auth_ref={summary.auth_ref}",
         f"auth={health.auth_status or 'not_checked'}",
-        f"allowed_users={summary.allowed_user_count}",
+        *summary.allowlist_detail_parts(),
     ]
     if health.bot_username:
         detail_parts.append(f"bot=@{health.bot_username}")

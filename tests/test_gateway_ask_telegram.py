@@ -4,12 +4,29 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
 from tests.test_support import SparkTestCase
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")
+        with self.state_db.connect() as conn:
+            conn.executemany(
+                "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES ('telegram', ?, 'paired_user')",
+                [("58",), ("222",), ("333",)],
+            )
+
+        summary = build_telegram_runtime_summary(self.config_manager, self.state_db)
+
+        self.assertEqual(summary.allowed_user_count, 1)
+        self.assertEqual(summary.runtime_allowlist_entry_count, 4)
+        self.assertIn("allowed_users=1", summary.to_line())
+        self.assertIn("allowlist_source=config.allowed_users", summary.to_line())
+        self.assertIn("runtime_allowlist_entries=4", summary.to_line())
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
