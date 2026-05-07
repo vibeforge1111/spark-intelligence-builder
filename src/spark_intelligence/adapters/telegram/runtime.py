@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import platform
 import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -63,7 +64,12 @@ from spark_intelligence.researcher_bridge.advisory import (
     record_researcher_bridge_result,
     try_spark_character_fallback,
 )
-from spark_intelligence.self_awareness import build_agent_operating_context, build_self_awareness_capsule
+from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
+    build_self_awareness_capsule,
+    load_capability_ledger,
+    run_route_probe_and_record,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -322,12 +328,12 @@ def _maybe_save_reply_as_draft(
 
     try:
         from pathlib import Path as _P
-        from datetime import datetime as _dt
         _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
         _dbg.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with _dbg.open("a", encoding="utf-8") as _fh:
             _fh.write(
-                f"{_dt.utcnow().isoformat()}Z user={user} iter={is_iteration} "
+                f"{timestamp}Z user={user} iter={is_iteration} "
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
     except Exception:
@@ -792,11 +798,25 @@ def _build_voice_chip_payload(
         "human_id": human_id,
         "agent_id": agent_id,
         "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+        "advisor_context": {
+            "runtime": {
+                "os": platform.system() or "unknown",
+                "machine": platform.machine() or "unknown",
+            },
+            "preferences": [],
+            "source_ledger": [
+                {
+                    "source": "builder_runtime",
+                    "role": "system_context",
+                    "claim_boundary": "Runtime facts can inform setup recommendations but cannot prove provider voice readiness.",
+                }
+            ],
+        },
     }
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
         secret_ref = getattr(provider, "secret_ref", None)
-        payload["provider"] = {
+        provider_payload = {
             "provider_id": provider.provider_id,
             "provider_kind": provider.provider_kind,
             "auth_method": provider.auth_method,
@@ -808,6 +828,19 @@ def _build_voice_chip_payload(
                 getattr(secret_ref, "ref_id", None) if secret_ref and getattr(secret_ref, "source", "") == "env" else None
             ),
         }
+        payload["provider"] = provider_payload
+        payload["advisor_context"]["active_provider"] = {
+            key: value
+            for key, value in provider_payload.items()
+            if key in {"provider_id", "provider_kind", "api_mode", "execution_transport", "base_url", "default_model"}
+        }
+        payload["advisor_context"]["source_ledger"].append(
+            {
+                "source": "builder_runtime_provider",
+                "role": "provider_context",
+                "claim_boundary": "Provider identity can guide recommendations; dedicated STT/TTS probes decide readiness.",
+            }
+        )
     except Exception as exc:
         payload["provider_error"] = str(exc)
     if normalized is not None:
@@ -876,7 +909,7 @@ def _prepare_telegram_media_input(
         )
         if execution is None:
             raise RuntimeError(
-                "No attached chip supports `voice.transcribe`. Attach and activate `domain-chip-voice-comms` first."
+                "No attached chip supports `voice.transcribe`. Attach and activate `spark-voice-comms` first."
             )
         result = execution.output.get("result") if isinstance(execution.output, dict) else None
         if not execution.ok:
@@ -2349,7 +2382,7 @@ def _synthesize_telegram_voice_reply(
         },
     )
     if execution is None:
-        raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `domain-chip-voice-comms` first.")
+        raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `spark-voice-comms` first.")
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     if not execution.ok:
         reason = ""
@@ -2758,6 +2791,139 @@ def _apply_saved_telegram_surface_style(
     )
 
 
+def _is_aoc_runtime_command(lowered: str) -> bool:
+    return lowered in {"/aoc", "/context", "/operating-context", "/agent-context"} or any(
+        lowered.startswith(f"{prefix} ")
+        for prefix in ("/aoc", "/context", "/operating-context", "/agent-context")
+    )
+
+
+def _telegram_route_probe_key(route_name: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9_-]+", "_", str(route_name or "").strip().casefold()).strip("_-")
+    return {
+        "core": "spark_intelligence_builder",
+        "builder": "spark_intelligence_builder",
+        "spark": "spark_intelligence_builder",
+        "spark_intelligence": "spark_intelligence_builder",
+        "spark_intelligence_builder": "spark_intelligence_builder",
+        "memory": "spark_memory",
+        "spark_memory": "spark_memory",
+        "researcher": "spark_researcher",
+        "spark_researcher": "spark_researcher",
+        "browser": "spark_browser",
+        "spark_browser": "spark_browser",
+        "swarm": "spark_swarm",
+        "spark_swarm": "spark_swarm",
+        "spawner": "spark_spawner",
+        "spark_spawner": "spark_spawner",
+        "local": "spark_local_work",
+        "local_work": "spark_local_work",
+        "spark_local_work": "spark_local_work",
+    }.get(normalized)
+
+
+def _render_telegram_route_probe_help(*, route_name: str) -> str:
+    if route_name:
+        prefix = f"Unknown route `{route_name}`.\n"
+    else:
+        prefix = "Route probe needs a route name.\n"
+    return (
+        f"{prefix}"
+        "Use `/probe core`, `/probe builder`, `/probe memory`, `/probe researcher`, "
+        "`/probe browser`, `/probe swarm`, or `/probe spawner`."
+    )
+
+
+def _render_telegram_route_probe_reply(probe: Any) -> str:
+    status = str(getattr(probe, "status", "") or "unknown")
+    capability_key = str(getattr(probe, "capability_key", "") or "unknown")
+    lines = [
+        f"Route probe: {capability_key}",
+        f"Status: {status}",
+    ]
+    latency = getattr(probe, "route_latency_ms", None)
+    if latency is not None:
+        lines.append(f"Latency: {latency}ms")
+    failure = str(getattr(probe, "failure_reason", "") or "").strip()
+    if failure:
+        lines.append(f"Reason: {_with_terminal_period(failure)}")
+    summary = str(getattr(probe, "probe_summary", "") or "").strip()
+    if summary:
+        lines.append(f"Evidence: {_with_terminal_period(summary)}")
+    lines.append("Boundary: this is route evidence for the ledger, not proof that a user task completed.")
+    return "\n".join(lines)
+
+
+_TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
+
+
+def _is_ledger_runtime_command(lowered: str) -> bool:
+    return lowered in {"/ledger", "/capabilities"} or any(
+        lowered.startswith(f"{prefix} ") for prefix in ("/ledger", "/capabilities")
+    )
+
+
+def _telegram_short_text(value: Any, *, limit: int = 120) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+
+def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, requested_command: str) -> str:
+    ledger = load_capability_ledger(config_manager).payload
+    entries = ledger.get("entries") if isinstance(ledger.get("entries"), dict) else {}
+    review_entries = [
+        entry
+        for entry in entries.values()
+        if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
+    ]
+    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    command_args = str(requested_command or "").strip().split(maxsplit=1)
+    read_only_note = ""
+    if len(command_args) > 1:
+        read_only_note = "Read-only: Telegram ledger review cannot activate, approve, connect credentials, or change capability state.\n"
+    if not review_entries:
+        return (
+            f"{read_only_note}"
+            "Capability ledger review (read-only)\n"
+            "No proposed, scaffolded, or probed capabilities are waiting for review.\n"
+            "Boundary: activation requires separate CLI ledger evidence with approval plus probe/eval refs."
+        )
+
+    lines = [f"{read_only_note}Capability ledger review (read-only)"]
+    for entry in review_entries[:5]:
+        packet = entry.get("proposal_packet") if isinstance(entry.get("proposal_packet"), dict) else {}
+        harness = packet.get("connector_harness") if isinstance(packet.get("connector_harness"), dict) else {}
+        key = str(entry.get("capability_ledger_key") or packet.get("capability_ledger_key") or "unknown")
+        status = str(entry.get("status") or "unknown")
+        permissions = packet.get("permissions_required") if isinstance(packet.get("permissions_required"), list) else []
+        permission_text = ", ".join(str(item) for item in permissions[:3] if str(item or "").strip())
+        if len(permissions) > 3:
+            permission_text = f"{permission_text}, +{len(permissions) - 3} more"
+        connector = str(harness.get("connector_key") or "").strip()
+        authority_stage = str(harness.get("authority_stage") or "").strip()
+        connector_text = f"{connector} ({authority_stage})" if connector else "none"
+        evidence_count = len(entry.get("activation_evidence") or [])
+        lines.extend(
+            [
+                f"- {key} [{status}]",
+                f"  route: {_telegram_short_text(packet.get('implementation_route') or entry.get('implementation_route') or 'unknown', limit=80)}",
+                f"  connector: {connector_text}",
+                f"  permissions: {_telegram_short_text(permission_text or 'none', limit=140)}",
+                f"  safe_probe: {_telegram_short_text(packet.get('safe_probe'), limit=140)}",
+                f"  approval_boundary: {_telegram_short_text(packet.get('human_approval_boundary'), limit=140)}",
+                f"  eval_or_smoke_test: {_telegram_short_text(packet.get('eval_or_smoke_test'), limit=140)}",
+                f"  rollback_path: {_telegram_short_text(packet.get('rollback_path'), limit=140)}",
+                f"  activation_evidence: {evidence_count}",
+            ]
+        )
+    if len(review_entries) > 5:
+        lines.append(f"...and {len(review_entries) - 5} more review entries.")
+    lines.append("Boundary: review only. Telegram cannot activate capabilities; activation requires separate approval plus probe/eval evidence.")
+    return "\n".join(lines)
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -2800,7 +2966,7 @@ def _handle_runtime_command(
             "reply_text": capsule.to_text(),
             "respect_voice_reply_state": True,
         }
-    if lowered in {"/context", "/operating-context", "/agent-context"}:
+    if _is_aoc_runtime_command(lowered):
         context = build_agent_operating_context(
             config_manager=config_manager,
             state_db=state_db,
@@ -2813,8 +2979,40 @@ def _handle_runtime_command(
             runner_label="telegram runtime unknown",
         )
         return {
-            "command": "/context",
+            "command": "/aoc" if lowered.startswith("/aoc") else "/context",
             "reply_text": context.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered == "/probe" or lowered.startswith("/probe "):
+        route_name = normalized[len("/probe") :].strip()
+        capability_key = _telegram_route_probe_key(route_name)
+        if capability_key is None:
+            return {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_help(route_name=route_name),
+                "respect_voice_reply_state": True,
+            }
+        probe = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key=capability_key,
+            actor_id="telegram_runtime",
+            request_id=request_id or "",
+            session_id=session_id or "",
+            human_id=human_id or f"human:telegram:{external_user_id}",
+        )
+        return {
+            "command": "/probe",
+            "reply_text": _render_telegram_route_probe_reply(probe),
+            "respect_voice_reply_state": True,
+        }
+    if _is_ledger_runtime_command(lowered):
+        return {
+            "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
+            "reply_text": _render_telegram_capability_ledger_review(
+                config_manager=config_manager,
+                requested_command=normalized,
+            ),
             "respect_voice_reply_state": True,
         }
     if lowered in {"/wiki", "/wiki status"}:
@@ -2896,6 +3094,31 @@ def _handle_runtime_command(
             fallback_reply=_render_telegram_voice_plan_reply(),
             human_id=human_id,
             agent_id=agent_id,
+        )
+    if (
+        lowered in {"/voice onboard", "/voice onboarding", "/voice setup"}
+        or lowered.startswith("/voice onboard ")
+        or lowered.startswith("/voice setup ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice onboard")
+    ):
+        if lowered.startswith("/voice onboard "):
+            route = normalized[len("/voice onboard") :].strip().lower()
+        elif lowered.startswith("/voice setup "):
+            route = normalized[len("/voice setup") :].strip().lower()
+        elif natural_voice_command and natural_voice_command[0] == "/voice onboard":
+            route = str(natural_voice_command[1] or "").strip().lower()
+        else:
+            route = ""
+        payload_extra = {"route": route} if route else None
+        return _run_voice_runtime_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            command="/voice onboard",
+            hook="voice.onboard",
+            fallback_reply=_render_telegram_voice_onboarding_reply(route or None),
+            human_id=human_id,
+            agent_id=agent_id,
+            payload_extra=payload_extra,
         )
     if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
         speak_text = (
@@ -3834,6 +4057,33 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "how will voice work",
     }:
         return ("/voice plan", None)
+    if simplified in {
+        "voice onboard",
+        "voice onboarding",
+        "voice setup",
+        "setup voice",
+        "set up voice",
+        "help me set up voice",
+        "can you help me set up voice",
+        "how do i set up voice",
+        "can i use free local tts",
+    }:
+        route = "local" if simplified == "can i use free local tts" else None
+        return ("/voice onboard", route)
+    for pattern in (
+        r"^(?:voice\s+)?(?:onboard|onboarding|setup)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
+        r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?:with|using|for)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
+        r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?P<payload>locally|local|free|offline|paid|provider|providers|production|hosted)(?:\s+for\s+.+)?$",
+        r"^(?:i\s+want|i\s+would\s+like|i\s+d\s+like)\s+(?:paid|premium|high\s+quality)(?:\s+\w+){0,8}\s+voice(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            payload = str(match.groupdict().get("payload") or "paid").strip()
+            if payload in {"locally", "free", "offline"}:
+                payload = "local"
+            if payload in {"provider", "providers", "production", "hosted"}:
+                payload = "paid"
+            return ("/voice onboard", payload)
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:speak|say|read)\s+(?:this(?: out loud)?[:\s-]+)(?P<payload>.+)$",
         r"^(?:send|reply with)\s+(?:this\s+)?(?:as\s+)?voice[:\s-]+(?P<payload>.+)$",
@@ -5069,16 +5319,20 @@ def _run_voice_runtime_command(
     fallback_reply: str,
     human_id: str | None,
     agent_id: str | None,
+    payload_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload = _build_voice_chip_payload(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if payload_extra:
+        payload.update(payload_extra)
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook=hook,
-        payload=_build_voice_chip_payload(
-            config_manager=config_manager,
-            state_db=state_db,
-            human_id=human_id,
-            agent_id=agent_id,
-        ),
+        payload=payload,
     )
     if execution is None:
         return {"command": command, "reply_text": fallback_reply}
@@ -5102,18 +5356,28 @@ def _run_voice_runtime_command(
 def _render_telegram_voice_status_reply() -> str:
     return (
         "Voice chip is not attached yet.\n"
-        "Current state: Builder can detect Telegram voice/audio, but live transcription now belongs in `domain-chip-voice-comms` instead of the main Builder repo.\n"
-        "Next: attach and activate `domain-chip-voice-comms`, then rerun `/voice`."
+        "Current state: Builder can detect Telegram voice/audio, but live transcription belongs in `spark-voice-comms` instead of the main Builder repo.\n"
+        "Next: attach and activate `spark-voice-comms`, then rerun `/voice`."
     )
 
 
 def _render_telegram_voice_plan_reply() -> str:
     return (
         "Telegram voice plan:\n"
-        "1. let Builder fetch Telegram voice/audio payloads and hand them to `domain-chip-voice-comms`.\n"
+        "1. let Builder fetch Telegram voice/audio payloads and hand them to `spark-voice-comms`.\n"
         "2. transcribe them back into the same Builder Telegram runtime used for text and persona styling.\n"
         "3. optionally add voice reply synthesis as a later chip hook without growing Builder.\n"
         "Next: attach the chip, validate `/voice`, then dogfood real Telegram voice notes."
+    )
+
+
+def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
+    suffix = f" for `{route}`" if route else ""
+    return (
+        f"Voice onboarding{suffix} is available after `spark-voice-comms` is attached.\n"
+        "Local/free path: optional faster-whisper STT plus pyttsx3 TTS.\n"
+        "Paid path: OpenAI-compatible STT plus ElevenLabs TTS.\n"
+        "Next: attach and activate `spark-voice-comms`, then run `/voice onboard local` or `/voice onboard paid`."
     )
 
 
@@ -5122,7 +5386,7 @@ def _render_telegram_voice_transcription_unavailable_reply(*, reason: str) -> st
     lines = [
         "Voice transcription is unavailable right now.",
         f"Reason: {cleaned_reason or 'the runtime could not transcribe this Telegram audio message.'}",
-        "Next: send the instruction as text for now, or finish the `domain-chip-voice-comms` setup.",
+        "Next: send the instruction as text for now, or finish the `spark-voice-comms` setup.",
     ]
     return "\n".join(lines)
 

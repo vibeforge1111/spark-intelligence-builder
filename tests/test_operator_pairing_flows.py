@@ -4165,7 +4165,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             return_value=ResearcherBridgeResult(
                 request_id="req-browser-session",
                 reply_text=(
-                    "Web search is currently unavailable because the Spark Browser Extension live session "
+                    "Web search is currently unavailable because the browser-use live session "
                     "is disconnected. Reload or reconnect the extension, then retry the search."
                 ),
                 evidence_summary="Browser search unavailable because the live browser session is disconnected.",
@@ -5518,6 +5518,155 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Telegram voice plan:", result.detail["response_text"])
         self.assertIn("domain-chip-voice-comms", result.detail["response_text"])
+
+    def test_voice_onboard_command_routes_to_voice_onboard_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.onboard")
+            self.assertIn("advisor_context", payload)
+            advisor_context = payload["advisor_context"]
+            self.assertIsInstance(advisor_context, dict)
+            self.assertIn("runtime", advisor_context)
+            self.assertIn("source_ledger", advisor_context)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "reply_text": (
+                            "Spark voice onboarding\n"
+                            "- Recommended path: local_free\n"
+                            "- Local TTS: install optional `pyttsx3` for offline TTS"
+                        )
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11810,
+                    user_id="111",
+                    username="alice",
+                    text="/voice onboard local",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["route"], "local")
+        self.assertIn("Spark voice onboarding", result.detail["response_text"])
+
+    def test_natural_language_voice_setup_routes_to_onboarding(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.onboard")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: paid_provider"}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118101,
+                    user_id="111",
+                    username="alice",
+                    text="Can you help me set up voice using paid?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["route"], "paid")
+        self.assertIn("paid_provider", result.detail["response_text"])
+
+    def test_natural_language_local_voice_setup_routes_to_onboarding(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.onboard")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: local_free"}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118102,
+                    user_id="111",
+                    username="alice",
+                    text="Can you help me set up voice locally for Spark?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["route"], "local")
+        self.assertIn("local_free", result.detail["response_text"])
+
+    def test_natural_language_paid_quality_voice_setup_routes_to_onboarding(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.onboard")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: paid_provider"}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118103,
+                    user_id="111",
+                    username="alice",
+                    text="I want paid high quality voice replies for my Spark agent",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["route"], "paid")
+        self.assertIn("paid_provider", result.detail["response_text"])
 
     def test_voice_reply_command_tracks_telegram_dm_voice_state(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
