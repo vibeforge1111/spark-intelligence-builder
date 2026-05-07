@@ -1273,9 +1273,9 @@ class MemoryOrchestratorTests(SparkTestCase):
             )
 
         self.assertEqual(result.read_method, "hybrid_memory_retrieve")
-        self.assertEqual(result.source_class, "hybrid")
+        self.assertEqual(result.source_class, "aggregate")
         self.assertEqual(result.answer, "persistent memory quality evaluation")
-        self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["source_class"], "hybrid")
+        self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["source_class"], "aggregate")
         self.assertEqual(len(fake_client.current_state_calls), 1)
 
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
