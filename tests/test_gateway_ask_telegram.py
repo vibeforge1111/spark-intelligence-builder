@@ -25,7 +25,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(summary.runtime_allowlist_entry_count, 4)
         self.assertIn("allowed_users=1", summary.to_line())
         self.assertIn("allowlist_source=config.allowed_users", summary.to_line())
-        self.assertIn("runtime_allowlist_entries=4", summary.to_line())
+        self.assertIn("raw_runtime_allowlist_entries=4", summary.to_line())
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

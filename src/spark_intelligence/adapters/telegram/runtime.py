@@ -125,7 +125,7 @@ class TelegramRuntimeSummary:
             f"allowlist_source={self.allowed_user_source}",
         ]
         if self.runtime_allowlist_entry_count != self.allowed_user_count:
-            parts.append(f"runtime_allowlist_entries={self.runtime_allowlist_entry_count}")
+            parts.append(f"raw_runtime_allowlist_entries={self.runtime_allowlist_entry_count}")
         return parts
 
 
