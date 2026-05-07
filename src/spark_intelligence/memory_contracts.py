@@ -19,6 +19,7 @@ READ_METHOD_EXPECTED_MEMORY_ROLE = {
     "get_current_state": frozenset({"current_state", "state_deletion"}),
     "get_historical_state": frozenset({"structured_evidence", "state_deletion"}),
     "retrieve_events": frozenset({"event"}),
+    "hybrid_memory_retrieve": frozenset({"aggregate"}),
 }
 WRITE_OPERATION_EXPECTED_MEMORY_ROLE = {
     "update": frozenset({"current_state"}),
@@ -37,6 +38,8 @@ MEMORY_CONTRACT_REASONS = frozenset(
 
 def normalize_memory_role(value: Any, *, allow_unknown: bool = False) -> str:
     role = str(value or "").strip().lower()
+    if role == "hybrid":
+        return "aggregate"
     if role in ALLOWED_MEMORY_ROLES:
         return role
     if allow_unknown and role in {"", "unknown"}:
@@ -114,6 +117,41 @@ def annotate_contract_trace(
 
 def is_memory_contract_reason(value: Any) -> bool:
     return str(value or "").strip().lower() in MEMORY_CONTRACT_REASONS
+
+
+def persisted_memory_contract_reason(
+    *,
+    reason: Any,
+    raw_memory_role: Any,
+    effective_role: Any,
+    operation: str | None = None,
+    method: str | None = None,
+    allow_unknown: bool = False,
+) -> str | None:
+    normalized_role = normalize_memory_role(raw_memory_role, allow_unknown=allow_unknown)
+    observed_role = normalize_memory_role(effective_role, allow_unknown=allow_unknown)
+    reason_text = str(reason or "").strip().lower()
+    raw_role = str(raw_memory_role or "").strip().lower()
+    if is_memory_contract_reason(reason_text) and observed_role == normalized_role:
+        expected = expected_memory_role(method=method) if method else None
+        if method and reason_text == "invalid_memory_role" and (expected is None or observed_role in expected):
+            return None
+        if (
+            method
+            and allow_unknown
+            and reason_text == "invalid_memory_role"
+            and normalized_role == "unknown"
+            and raw_role in {"", "unknown"}
+            and expected is None
+        ):
+            return None
+        return reason_text
+    return memory_contract_reason(
+        memory_role=observed_role,
+        operation=operation,
+        method=method,
+        allow_unknown=allow_unknown,
+    )
 
 
 def _fallback_memory_role_candidates(*, metadata: Any, provenance: Any) -> list[Any]:

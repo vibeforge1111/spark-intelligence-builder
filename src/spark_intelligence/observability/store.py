@@ -17,6 +17,7 @@ from spark_intelligence.memory_contracts import (
     is_memory_contract_reason,
     memory_contract_reason,
     normalize_memory_role,
+    persisted_memory_contract_reason,
 )
 from spark_intelligence.state.db import StateDB
 
@@ -2625,6 +2626,79 @@ def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) 
     return repaired
 
 
+def repair_memory_lane_artifact_lanes(state_db: StateDB, *, limit: int = 50000) -> int:
+    repaired = 0
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                lane_record_id,
+                artifact_lane,
+                promotion_target_lane,
+                keepability,
+                promotion_disposition,
+                evidence_json
+            FROM memory_lane_records
+            WHERE keepability IS NOT NULL
+            ORDER BY recorded_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            keepability = str(row["keepability"] or "")
+            promotion_disposition = str(row["promotion_disposition"] or "")
+            expected_lane = _artifact_lane_from_keepability(keepability)
+            expected_target_lane = _promotion_target_lane(promotion_disposition)
+            if (
+                str(row["artifact_lane"] or "") == expected_lane
+                and (row["promotion_target_lane"] or None) == expected_target_lane
+            ):
+                continue
+            evidence = _repair_memory_lane_evidence_json(
+                row["evidence_json"],
+                artifact_lane=expected_lane,
+                promotion_target_lane=expected_target_lane,
+            )
+            conn.execute(
+                """
+                UPDATE memory_lane_records
+                SET artifact_lane = ?,
+                    promotion_target_lane = ?,
+                    evidence_json = ?
+                WHERE lane_record_id = ?
+                """,
+                (expected_lane, expected_target_lane, evidence, row["lane_record_id"]),
+            )
+            repaired += 1
+        conn.commit()
+    return repaired
+
+
+def _repair_memory_lane_evidence_json(
+    value: Any,
+    *,
+    artifact_lane: str,
+    promotion_target_lane: str | None,
+) -> str | None:
+    try:
+        payload = json.loads(str(value)) if value else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["artifact_lane"] = artifact_lane
+    payload["promotion_target_lane"] = promotion_target_lane
+    facts = payload.get("facts")
+    if isinstance(facts, dict):
+        facts["artifact_lane"] = artifact_lane
+        facts["promotion_target_lane"] = promotion_target_lane
+        trace_contract = facts.get("trace_contract")
+        if isinstance(trace_contract, dict):
+            trace_contract["destination"] = promotion_target_lane or artifact_lane
+    return _json_or_none(payload)
+
+
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
     if keepability == "not_keepable":
@@ -2791,6 +2865,7 @@ def _build_config_authority_panel(state_db: StateDB) -> dict[str, Any]:
 
 def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
     terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
+    request_proof_events = {"dispatch_started", "tool_result_received", "dispatch_failed", *terminal_run_events}
     with state_db.connect() as conn:
         counts = conn.execute(
             """
@@ -2810,6 +2885,14 @@ def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
     for intent in intents:
         run_id = str(intent.get("run_id") or "")
         if not run_id:
+            request_id = str(intent.get("request_id") or "")
+            if request_id and _request_has_event_type(
+                state_db,
+                request_id=request_id,
+                excluded_event_id=str(intent.get("event_id") or ""),
+                event_types=request_proof_events,
+            ):
+                continue
             intent_without_dispatch += 1
             continue
         run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
@@ -2837,6 +2920,30 @@ def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
             "dispatch_without_result_closure": dispatch_without_result,
         }
     }
+
+
+def _request_has_event_type(
+    state_db: StateDB,
+    *,
+    request_id: str,
+    excluded_event_id: str,
+    event_types: set[str],
+) -> bool:
+    placeholders = ", ".join("?" for _ in event_types)
+    params = [request_id, excluded_event_id, *sorted(event_types)]
+    with state_db.connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT event_id
+            FROM builder_events
+            WHERE request_id = ?
+              AND event_id != ?
+              AND event_type IN ({placeholders})
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return row is not None
 
 
 def _build_delivery_truth_panel(state_db: StateDB, *, health_facts: dict[str, Any]) -> dict[str, Any]:
@@ -3617,36 +3724,32 @@ def _recent_memory_contract_events(state_db: StateDB) -> list[dict[str, Any]]:
             reason = str(facts.get("reason") or "")
             if "operation" in facts:
                 allow_unknown = int(facts.get("accepted_count") or 0) == 0
-                normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
                 effective_role = effective_memory_role(
                     facts.get("memory_role"),
                     allow_unknown=allow_unknown,
                     provenance=row.get("provenance_json"),
                 )
-                if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                    violation_reason = reason
-                else:
-                    violation_reason = memory_contract_reason(
-                        memory_role=effective_role,
-                        operation=str(facts.get("operation") or ""),
-                        allow_unknown=allow_unknown,
-                    )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=facts.get("memory_role"),
+                    effective_role=effective_role,
+                    operation=str(facts.get("operation") or ""),
+                    allow_unknown=allow_unknown,
+                )
             elif "method" in facts:
                 allow_unknown = int(facts.get("record_count") or 0) == 0
-                normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
                 effective_role = effective_memory_role(
                     facts.get("memory_role"),
                     allow_unknown=allow_unknown,
                     provenance=row.get("provenance_json"),
                 )
-                if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                    violation_reason = reason
-                else:
-                    violation_reason = memory_contract_reason(
-                        memory_role=effective_role,
-                        method=str(facts.get("method") or ""),
-                        allow_unknown=allow_unknown,
-                    )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=facts.get("memory_role"),
+                    effective_role=effective_role,
+                    method=str(facts.get("method") or ""),
+                    allow_unknown=allow_unknown,
+                )
             elif is_memory_contract_reason(reason):
                 violation_reason = reason
         if not violation_reason:
@@ -4395,26 +4498,22 @@ def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
         violation = None
         if str(facts.get("operation") or ""):
             allow_unknown = int(facts.get("accepted_count") or 0) == 0
-            normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
-            if is_memory_contract_reason(reason) and raw_role == normalized_role:
-                violation = reason
-            else:
-                violation = memory_contract_reason(
-                    memory_role=raw_role,
-                    operation=str(facts.get("operation") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=facts.get("memory_role"),
+                effective_role=raw_role,
+                operation=str(facts.get("operation") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif str(facts.get("method") or ""):
             allow_unknown = int(facts.get("record_count") or 0) == 0
-            normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
-            if is_memory_contract_reason(reason) and raw_role == normalized_role:
-                violation = reason
-            else:
-                violation = memory_contract_reason(
-                    memory_role=raw_role,
-                    method=str(facts.get("method") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=facts.get("memory_role"),
+                effective_role=raw_role,
+                method=str(facts.get("method") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif is_memory_contract_reason(reason):
             violation = reason
         if violation:

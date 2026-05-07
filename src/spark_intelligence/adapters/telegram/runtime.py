@@ -63,7 +63,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     record_researcher_bridge_result,
     try_spark_character_fallback,
 )
-from spark_intelligence.self_awareness import build_self_awareness_capsule
+from spark_intelligence.self_awareness import build_agent_operating_context, build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -2776,6 +2776,23 @@ def _handle_runtime_command(
         return {
             "command": "/self",
             "reply_text": capsule.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered in {"/context", "/operating-context", "/agent-context"}:
+        context = build_agent_operating_context(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            session_id=session_id or f"session:telegram:{external_user_id}",
+            channel_kind="telegram",
+            request_id=request_id,
+            user_message=normalized,
+            runner_writable=None,
+            runner_label="telegram runtime unknown",
+        )
+        return {
+            "command": "/context",
+            "reply_text": context.to_text(),
             "respect_voice_reply_state": True,
         }
     if lowered in {"/wiki", "/wiki status"}:

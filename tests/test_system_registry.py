@@ -100,6 +100,51 @@ class SystemRegistryTests(SparkTestCase):
             payload["summary"]["current_capabilities"],
         )
 
+    def test_build_system_registry_prefers_browser_use_adapter_when_ready(self) -> None:
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value={
+                "status": "completed",
+                "backend_kind": "browser_use_adapter",
+                "backend_label": "Browser-use Adapter",
+                "adapter_status": "ready",
+                "configured": True,
+                "package_available": True,
+                "evidence_summary": "browser-use adapter status=ready package_available=True cli_available=False",
+            },
+        ):
+            payload = build_system_registry(self.config_manager, self.state_db).to_payload()
+
+        records = {str(record["key"]): record for record in payload["records"]}
+        browser = records["spark_browser"]
+        self.assertEqual(browser["status"], "ready")
+        self.assertTrue(browser["available"])
+        self.assertFalse(browser["degraded"])
+        self.assertEqual(browser["metadata"]["backend_kind"], "browser_use_adapter")
+
+    def test_build_system_registry_marks_browser_use_adapter_standby_without_status_proof(self) -> None:
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value={
+                "status": "configured",
+                "backend_kind": "browser_use_adapter",
+                "backend_label": "Browser-use Adapter",
+                "adapter_status": "configured",
+                "configured": True,
+                "package_available": True,
+                "last_failure_reason": "browser-use adapter configured, but no passing status proof has been recorded.",
+                "evidence_summary": "browser-use adapter status=configured package_available=True cli_available=False",
+            },
+        ):
+            payload = build_system_registry(self.config_manager, self.state_db).to_payload()
+
+        records = {str(record["key"]): record for record in payload["records"]}
+        browser = records["spark_browser"]
+        self.assertEqual(browser["status"], "standby")
+        self.assertTrue(browser["available"])
+        self.assertTrue(browser["degraded"])
+        self.assertIn("no passing status proof", browser["limitations"][0])
+
     def test_build_system_registry_direct_reply_uses_verified_registry_state(self) -> None:
         create_fake_hook_chip(self.home, chip_key="startup-yc")
         create_fake_hook_chip(self.home, chip_key="spark-browser")

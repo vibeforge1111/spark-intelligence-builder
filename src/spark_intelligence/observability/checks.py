@@ -13,6 +13,7 @@ from spark_intelligence.memory_contracts import (
     is_memory_contract_reason,
     memory_contract_reason,
     normalize_memory_role,
+    persisted_memory_contract_reason,
 )
 from spark_intelligence.observability.store import (
     _environment_snapshot_disagreements,
@@ -203,15 +204,24 @@ def _config_audit_issue(state_db: StateDB) -> StopShipIssue:
 
 def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
     terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
+    proof_event_types = {"tool_result_received", "dispatch_failed", *terminal_run_events}
     intents = latest_events_by_type(state_db, event_type="intent_committed", limit=200)
     incomplete: list[str] = []
     for intent in intents:
         run_id = intent.get("run_id")
         if not run_id:
+            request_id = intent.get("request_id")
+            if request_id and _request_has_execution_proof(
+                state_db,
+                request_id=str(request_id),
+                intent_event_id=str(intent.get("event_id") or ""),
+                proof_event_types=proof_event_types,
+            ):
+                continue
             incomplete.append(str(intent.get("event_id")))
             continue
         events = {event.get("event_type") for event in events_for_run(state_db, run_id=str(run_id))}
-        if "tool_result_received" not in events and "dispatch_failed" not in events and terminal_run_events.isdisjoint(events):
+        if proof_event_types.isdisjoint(events):
             incomplete.append(str(run_id))
     if incomplete:
         return StopShipIssue(
@@ -226,6 +236,30 @@ def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
         detail="Intent packets have matching dispatch or result proof.",
         severity="critical",
     )
+
+
+def _request_has_execution_proof(
+    state_db: StateDB,
+    *,
+    request_id: str,
+    intent_event_id: str,
+    proof_event_types: set[str],
+) -> bool:
+    placeholders = ", ".join("?" for _ in proof_event_types)
+    params = [request_id, intent_event_id, *sorted(proof_event_types)]
+    with state_db.connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT event_id
+            FROM builder_events
+            WHERE request_id = ?
+              AND event_id != ?
+              AND event_type IN ({placeholders})
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return row is not None
 
 
 def _background_closure_issue(state_db: StateDB) -> StopShipIssue:
@@ -301,6 +335,10 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
         for event in provenance_events
         if str((event.get("provenance_json") or {}).get("source_kind") or "").startswith("personality_")
     ]
+    personality_provenance_recorded = bool(personality_events) or _has_provenance_mutation_source_prefix(
+        state_db,
+        prefix="personality_",
+    )
     bridge_activity = _typed_events(
         state_db,
         event_types=("dispatch_started", "tool_result_received"),
@@ -315,7 +353,7 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
                 detail="Active chip or specialization-path influence exists without provenance events.",
                 severity="critical",
             )
-    if personality_enabled and bridge_activity and not personality_events:
+    if personality_enabled and bridge_activity and not personality_provenance_recorded:
         return StopShipIssue(
             name="stop_ship_plugin_provenance",
             ok=False,
@@ -335,6 +373,21 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
         detail="Chip, path, and personality influence is recorded with provenance.",
         severity="critical",
     )
+
+
+def _has_provenance_mutation_source_prefix(state_db: StateDB, *, prefix: str) -> bool:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM provenance_mutation_log
+            WHERE source_kind LIKE ?
+            ORDER BY recorded_at DESC, mutation_id DESC
+            LIMIT 1
+            """,
+            (f"{prefix}%",),
+        ).fetchone()
+    return row is not None
 
 
 def _provenance_ledger_issue(state_db: StateDB) -> StopShipIssue:
@@ -459,13 +512,17 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
             and int(personality_row["evolution_count"]) == 0
         ):
             missing_domains.append("personality")
+    telegram_state_keys = [key for key in state_keys if key.startswith("telegram:")]
     telegram_events = _typed_events(
         state_db,
         event_types=("intent_committed", "delivery_attempted", "delivery_succeeded", "delivery_failed"),
         component="telegram_runtime",
         limit=200,
     )
-    if any(key.startswith("telegram:") for key in state_keys) and not telegram_events:
+    if telegram_state_keys and not telegram_events and not _telegram_runtime_state_has_typed_mirror(
+        state_db,
+        state_keys=telegram_state_keys,
+    ):
         missing_domains.append("telegram")
     if missing_domains:
         return StopShipIssue(
@@ -483,6 +540,28 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
         detail="Critical runtime_state keys have typed domain mirrors available.",
         severity="high",
     )
+
+
+def _telegram_runtime_state_has_typed_mirror(state_db: StateDB, *, state_keys: list[str]) -> bool:
+    # telegram:auth_state and telegram:poll_state are runtime health snapshots.
+    # Their authority mirror is the typed Telegram channel installation, not a
+    # delivery event, because healthy installs can exist before a message is sent.
+    if not state_keys:
+        return True
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT channel_id, status, auth_ref
+            FROM channel_installations
+            WHERE channel_id = 'telegram' AND channel_kind = 'telegram'
+            LIMIT 1
+            """
+        ).fetchone()
+    if not row:
+        return False
+    status = str(row["status"] or "").strip().lower()
+    auth_ref = str(row["auth_ref"] or "").strip()
+    return status in {"enabled", "active"} and bool(auth_ref)
 
 
 def _reset_integrity_issue(state_db: StateDB) -> StopShipIssue:
@@ -747,36 +826,32 @@ def _memory_contract_issue(state_db: StateDB) -> StopShipIssue:
         violation_reason: str | None = None
         if "operation" in facts:
             allow_unknown = int(facts.get("accepted_count") or 0) == 0
-            normalized_role = normalize_memory_role(raw_role, allow_unknown=allow_unknown)
             effective_role = effective_memory_role(
                 raw_role,
                 allow_unknown=allow_unknown,
                 provenance=event.get("provenance_json"),
             )
-            if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                violation_reason = reason
-            else:
-                violation_reason = memory_contract_reason(
-                    memory_role=effective_role,
-                    operation=str(facts.get("operation") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation_reason = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=raw_role,
+                effective_role=effective_role,
+                operation=str(facts.get("operation") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif "method" in facts:
             allow_unknown = int(facts.get("record_count") or 0) == 0
-            normalized_role = normalize_memory_role(raw_role, allow_unknown=allow_unknown)
             effective_role = effective_memory_role(
                 raw_role,
                 allow_unknown=allow_unknown,
                 provenance=event.get("provenance_json"),
             )
-            if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                violation_reason = reason
-            else:
-                violation_reason = memory_contract_reason(
-                    memory_role=effective_role,
-                    method=str(facts.get("method") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation_reason = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=raw_role,
+                effective_role=effective_role,
+                method=str(facts.get("method") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif is_memory_contract_reason(reason):
             violation_reason = reason
         if violation_reason:
