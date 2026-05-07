@@ -31,7 +31,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(summary.runtime_allowlist_entry_count, 4)
         self.assertIn("allowed_users=1", summary.to_line())
         self.assertIn("allowlist_source=config.allowed_users", summary.to_line())
-        self.assertIn("raw_runtime_allowlist_entries=4", summary.to_line())
+        self.assertIn("runtime_allowlist_entries=4", summary.to_line())
 
     def test_memory_doctor_contextual_trigger_signal_matrix(self) -> None:
         direct_context_loss_cases = {

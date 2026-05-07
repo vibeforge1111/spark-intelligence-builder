@@ -123,16 +123,28 @@ class TelegramRuntimeSummary:
     bot_username: str | None
     auth_status: str | None
     allowed_user_count: int
+    allowed_user_source: str = "config.allowed_users"
+    runtime_allowlist_entry_count: int = 0
 
     def to_line(self) -> str:
         if not self.configured:
             return "- telegram: not configured"
         bot_ref = f" bot=@{self.bot_username}" if self.bot_username else ""
         auth_ref = f" auth={self.auth_status or 'unknown'}"
+        allowlist_parts = self.allowlist_detail_parts()
         return (
             f"- telegram: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
-            f"auth_ref={self.auth_ref or 'missing'}{bot_ref}{auth_ref} allowed_users={self.allowed_user_count}"
+            f"auth_ref={self.auth_ref or 'missing'}{bot_ref}{auth_ref} {' '.join(allowlist_parts)}"
         )
+
+    def allowlist_detail_parts(self) -> list[str]:
+        parts = [
+            f"allowed_users={self.allowed_user_count}",
+            f"allowlist_source={self.allowed_user_source}",
+        ]
+        if self.runtime_allowlist_entry_count != self.allowed_user_count:
+            parts.append(f"runtime_allowlist_entries={self.runtime_allowlist_entry_count}")
+        return parts
 
 
 @dataclass
@@ -663,7 +675,15 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             bot_username=None,
             auth_status=None,
             allowed_user_count=0,
+            allowed_user_source="none",
+            runtime_allowlist_entry_count=0,
         )
+
+    configured_allowed_users: list[str] = []
+    for item in record.get("allowed_users") or []:
+        user_id = str(item).strip()
+        if user_id and user_id not in configured_allowed_users:
+            configured_allowed_users.append(user_id)
 
     health = read_telegram_runtime_health(state_db)
     with state_db.connect() as conn:
@@ -690,7 +710,9 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             or health.bot_username
         ),
         auth_status=health.auth_status,
-        allowed_user_count=count,
+        allowed_user_count=len(configured_allowed_users),
+        allowed_user_source="config.allowed_users",
+        runtime_allowlist_entry_count=int(count or 0),
     )
 
 
