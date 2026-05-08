@@ -4,6 +4,9 @@ import base64
 import json
 import platform
 import re
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -2421,7 +2424,7 @@ def _synthesize_telegram_voice_reply(
     if not audio_base64:
         raise RuntimeError("The voice chip returned no audio payload.")
     mime_type = str((result or {}).get("mime_type") or "audio/mpeg").strip() or "audio/mpeg"
-    return {
+    payload = {
         "audio_bytes": base64.b64decode(audio_base64),
         "mime_type": mime_type,
         "filename": str((result or {}).get("filename") or "").strip()
@@ -2436,6 +2439,7 @@ def _synthesize_telegram_voice_reply(
         "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
         "voice_compatible": bool((result or {}).get("voice_compatible")),
     }
+    return _convert_voice_payload_for_telegram_if_available(payload)
 
 
 def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool:
@@ -2446,6 +2450,55 @@ def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool
     if mime_type in {"audio/ogg", "audio/opus"}:
         return True
     return filename.endswith(".ogg") or filename.endswith(".opus")
+
+
+def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) -> dict[str, Any]:
+    if _telegram_voice_payload_is_voice_compatible(payload):
+        return payload
+    mime_type = str(payload.get("mime_type") or "").strip().lower()
+    filename = str(payload.get("filename") or "").strip()
+    if mime_type not in {"audio/wav", "audio/x-wav"} and not filename.lower().endswith(".wav"):
+        return payload
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return payload
+    try:
+        with tempfile.TemporaryDirectory(prefix="spark-voice-") as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "input.wav"
+            output_path = temp_path / "output.ogg"
+            input_path.write_bytes(bytes(payload["audio_bytes"]))
+            subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(input_path),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "64k",
+                    "-vbr",
+                    "on",
+                    "-application",
+                    "voip",
+                    str(output_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            converted = dict(payload)
+            converted["audio_bytes"] = output_path.read_bytes()
+            converted["mime_type"] = "audio/ogg"
+            converted["filename"] = f"{Path(filename or 'telegram-reply').stem}.ogg"
+            converted["voice_compatible"] = True
+            return converted
+    except (OSError, subprocess.SubprocessError, TimeoutError, ValueError):
+        return payload
 
 
 def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:

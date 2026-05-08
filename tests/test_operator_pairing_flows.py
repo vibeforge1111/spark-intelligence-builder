@@ -1,5 +1,6 @@
 import base64
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -5882,9 +5883,19 @@ class OperatorPairingFlowTests(SparkTestCase):
                 },
             )
 
+        def fake_ffmpeg_run(command, **_kwargs):
+            Path(command[-1]).write_bytes(b"fake-ogg")
+            return SimpleNamespace(returncode=0)
+
         with patch(
             "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
             side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value="ffmpeg",
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.subprocess.run",
+            side_effect=fake_ffmpeg_run,
         ):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
@@ -5900,10 +5911,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         voice_media = result.detail["voice_media"]
-        self.assertEqual(voice_media["audio_base64"], base64.b64encode(b"fake-wav").decode("ascii"))
-        self.assertEqual(voice_media["mime_type"], "audio/wav")
-        self.assertEqual(voice_media["filename"], "telegram-reply.wav")
-        self.assertFalse(voice_media["voice_compatible"])
+        self.assertEqual(voice_media["audio_base64"], base64.b64encode(b"fake-ogg").decode("ascii"))
+        self.assertEqual(voice_media["mime_type"], "audio/ogg")
+        self.assertEqual(voice_media["filename"], "telegram-reply.ogg")
+        self.assertTrue(voice_media["voice_compatible"])
         self.assertEqual(voice_media["provider_id"], "kokoro")
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
