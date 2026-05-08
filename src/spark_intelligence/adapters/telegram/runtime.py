@@ -5408,9 +5408,9 @@ def _run_voice_runtime_command(
 
 def _render_telegram_voice_status_reply() -> str:
     return (
-        "Voice chip is not attached yet.\n"
-        "Current state: Builder can detect Telegram voice/audio, but live transcription belongs in `spark-voice-comms` instead of the main Builder repo.\n"
-        "Next: attach and activate `spark-voice-comms`, then rerun `/voice`."
+        "I can see Telegram voice messages, but the voice chip is not attached to this Spark yet.\n"
+        "Attach `spark-voice-comms` first; then I can transcribe voice notes and help you choose a local or hosted voice setup.\n"
+        "After that, rerun `/voice`."
     )
 
 
@@ -5427,18 +5427,17 @@ def _render_telegram_voice_plan_reply() -> str:
 def _render_telegram_voice_install_reply(target: str | None) -> str:
     normalized_target = str(target or "").strip() or "kokoro"
     return (
-        f"Voice install target `{normalized_target}` is available after `spark-voice-comms` is attached.\n"
-        "Next: attach and activate `spark-voice-comms`, then rerun `/voice install kokoro`."
+        f"I can help install `{normalized_target}`, but this Spark needs the voice chip attached first.\n"
+        "Attach `spark-voice-comms`, then rerun `/voice install kokoro` and I will handle the local setup from there."
     )
 
 
 def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
     suffix = f" for `{route}`" if route else ""
     return (
-        f"Voice onboarding{suffix} is available after `spark-voice-comms` is attached.\n"
-        "Local/free path: optional faster-whisper STT plus pyttsx3 TTS.\n"
-        "Paid path: OpenAI-compatible STT plus ElevenLabs TTS.\n"
-        "Next: attach and activate `spark-voice-comms`, then run `/voice onboard local` or `/voice onboard paid`."
+        f"I can guide voice setup{suffix}, but the voice chip is not attached to this Spark yet.\n"
+        "Once `spark-voice-comms` is active, I can recommend the right path from inside Telegram: local/private with Kokoro, or hosted/high-quality with a paid provider.\n"
+        "Attach the chip, then run `/voice onboard local` or `/voice onboard paid`."
     )
 
 
