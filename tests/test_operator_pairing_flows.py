@@ -5856,7 +5856,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertIn("Voice reply queued.", result.detail["response_text"])
+        self.assertIn("I am sending that as a voice reply now", result.detail["response_text"])
         self.assertIn("hello from voice", result.detail["response_text"])
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
@@ -5963,7 +5963,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_voices), 1)
         self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Voice reply queued.", str(client.sent_voices[0]["caption"]))
+        self.assertIn("I am sending that as a voice reply now", str(client.sent_voices[0]["caption"]))
         self.assertEqual(client.sent_voices[0]["mime_type"], "audio/ogg")
         self.assertEqual(client.sent_voices[0]["filename"], "telegram-reply-abcdef12.ogg")
 

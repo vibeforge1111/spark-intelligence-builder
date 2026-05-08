@@ -3164,9 +3164,8 @@ def _handle_runtime_command(
         return {
             "command": "/voice speak",
             "reply_text": (
-                "Voice reply queued.\n"
-                f"Text: {speak_text}\n"
-                "Next: use `/voice reply on` if you want future replies in this DM to synthesize automatically."
+                f"I am sending that as a voice reply now: {speak_text}\n"
+                "Use `/voice reply on` if you want future replies in this DM to speak automatically."
             ),
             "force_voice": True,
             "voice_text": speak_text,
