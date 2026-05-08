@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import (
+    _apply_telegram_voice_effect_from_env,
     _prepare_voice_reply_text,
+    _synthesize_telegram_voice_reply,
     poll_telegram_updates_once,
     simulate_telegram_update,
 )
@@ -6311,6 +6313,142 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Reading that exact text as a voice reply now", str(client.sent_voices[0]["caption"]))
         self.assertEqual(client.sent_voices[0]["mime_type"], "audio/ogg")
         self.assertEqual(client.sent_voices[0]["filename"], "telegram-reply-abcdef12.ogg")
+
+    def test_telegram_voice_reply_uses_profile_tts_env_override(self) -> None:
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-opus").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-parrot.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "elevenlabs",
+                        "voice_id": "parrot-voice",
+                    }
+                },
+            )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_TELEGRAM_VOICE_TTS_PROVIDER": "elevenlabs",
+                "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID": "parrot-voice",
+                "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID": "eleven_turbo_v2_5",
+                "SPARK_TELEGRAM_VOICE_TTS_STABILITY": "0.25",
+                "SPARK_TELEGRAM_VOICE_TTS_STYLE": "0.85",
+                "SPARK_TELEGRAM_VOICE_TTS_SPEED": "1.18",
+                "SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST": "false",
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = _synthesize_telegram_voice_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human_1",
+                agent_id="agent_1",
+                text="Bright reply.",
+            )
+
+        tts = captured_payload["tts"]
+        self.assertIsInstance(tts, dict)
+        self.assertEqual(result["provider_id"], "elevenlabs")
+        self.assertEqual(result["voice_id"], "parrot-voice")
+        self.assertEqual(tts["provider_id"], "elevenlabs")
+        self.assertEqual(tts["voice_id"], "parrot-voice")
+        self.assertEqual(tts["model_id"], "eleven_turbo_v2_5")
+        self.assertEqual(tts["voice_settings"]["stability"], 0.25)
+        self.assertEqual(tts["voice_settings"]["style"], 0.85)
+        self.assertEqual(tts["voice_settings"]["speed"], 1.18)
+        self.assertFalse(tts["voice_settings"]["use_speaker_boost"])
+
+    def test_explicit_voice_tts_override_wins_over_profile_env(self) -> None:
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-wav").decode("ascii"),
+                        "mime_type": "audio/wav",
+                        "filename": "telegram-reply-kokoro.wav",
+                        "voice_compatible": False,
+                        "provider_id": "kokoro",
+                        "voice_id": "af_sarah",
+                    }
+                },
+            )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_TELEGRAM_VOICE_TTS_PROVIDER": "elevenlabs",
+                "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID": "parrot-voice",
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            _synthesize_telegram_voice_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human_1",
+                agent_id="agent_1",
+                text="Use Kokoro once.",
+                tts={"provider_id": "kokoro"},
+            )
+
+        tts = captured_payload["tts"]
+        self.assertIsInstance(tts, dict)
+        self.assertEqual(tts["provider_id"], "kokoro")
+        self.assertNotIn("voice_id", tts)
+
+    def test_parrot_voice_effect_uses_ffmpeg_filter_when_enabled(self) -> None:
+        def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+            Path(args[-1]).write_bytes(b"processed-parrot-audio")
+            return SimpleNamespace(returncode=0)
+
+        with patch.dict("os.environ", {"SPARK_TELEGRAM_VOICE_AUDIO_EFFECT": "parrot"}, clear=False), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value="ffmpeg",
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.subprocess.run",
+            side_effect=fake_run,
+        ) as run_mock:
+            result = _apply_telegram_voice_effect_from_env(
+                {
+                    "audio_bytes": b"input-audio",
+                    "mime_type": "audio/ogg",
+                    "filename": "telegram-reply.ogg",
+                    "voice_compatible": True,
+                }
+            )
+
+        self.assertEqual(result["audio_bytes"], b"processed-parrot-audio")
+        self.assertEqual(result["mime_type"], "audio/ogg")
+        self.assertEqual(result["filename"], "telegram-reply-parrot.ogg")
+        self.assertEqual(result["audio_effect"], "parrot")
+        filter_arg = run_mock.call_args.args[0][run_mock.call_args.args[0].index("-af") + 1]
+        self.assertIn("asetrate=48000*1.16", filter_arg)
+        self.assertIn("tremolo=f=7:d=0.07", filter_arg)
 
     def test_voice_reply_on_sends_runtime_command_as_audio(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")

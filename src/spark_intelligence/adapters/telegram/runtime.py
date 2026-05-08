@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import platform
 import re
 import shutil
@@ -2520,8 +2521,16 @@ def _synthesize_telegram_voice_reply(
         ),
         "text": text,
     }
+    resolved_tts = _telegram_voice_tts_override_from_env()
     if tts:
-        payload["tts"] = tts
+        env_provider_id = str((resolved_tts or {}).get("provider_id") or "").strip().lower()
+        explicit_provider_id = str(tts.get("provider_id") or "").strip().lower()
+        if env_provider_id and explicit_provider_id and env_provider_id != explicit_provider_id:
+            resolved_tts = tts
+        else:
+            resolved_tts = {**(resolved_tts or {}), **tts}
+    if resolved_tts:
+        payload["tts"] = resolved_tts
     synthesis_started = perf_counter()
     execution = run_first_chip_hook_supporting(
         config_manager,
@@ -2562,7 +2571,152 @@ def _synthesize_telegram_voice_reply(
         "spoken_text": text,
         "synthesis_ms": synthesis_ms,
     }
+    payload = _apply_telegram_voice_effect_from_env(payload)
     return _convert_voice_payload_for_telegram_if_available(payload)
+
+
+def _first_nonempty_env(*names: str) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _telegram_voice_tts_override_from_env() -> dict[str, Any] | None:
+    provider_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_PROVIDER", "SPARK_TELEGRAM_TTS_PROVIDER")
+    voice_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_ID", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID")
+    voice_name = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME")
+    model_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_MODEL_ID", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID")
+    base_url = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_BASE_URL", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_BASE_URL")
+    output_format = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT")
+    secret_env_ref = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF")
+    tts: dict[str, Any] = {}
+    if provider_id:
+        tts["provider_id"] = provider_id
+    if voice_id:
+        tts["voice_id"] = voice_id
+    if voice_name:
+        tts["voice_name"] = voice_name
+    if model_id:
+        tts["model_id"] = model_id
+    if base_url:
+        tts["base_url"] = base_url
+    if output_format:
+        tts["output_format"] = output_format
+    if secret_env_ref:
+        tts["secret_env_ref"] = secret_env_ref
+    voice_settings = _telegram_voice_settings_override_from_env()
+    if voice_settings:
+        tts["voice_settings"] = voice_settings
+    return tts or None
+
+
+def _telegram_voice_settings_override_from_env() -> dict[str, Any] | None:
+    settings: dict[str, Any] = {}
+    for key, env_name in {
+        "stability": "SPARK_TELEGRAM_VOICE_TTS_STABILITY",
+        "similarity_boost": "SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST",
+        "style": "SPARK_TELEGRAM_VOICE_TTS_STYLE",
+        "speed": "SPARK_TELEGRAM_VOICE_TTS_SPEED",
+    }.items():
+        value = _optional_float_env(env_name)
+        if value is not None:
+            settings[key] = value
+    speaker_boost = _optional_bool_env("SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST")
+    if speaker_boost is not None:
+        settings["use_speaker_boost"] = speaker_boost
+    return settings or None
+
+
+def _telegram_voice_effect_from_env() -> str:
+    effect = str(os.environ.get("SPARK_TELEGRAM_VOICE_AUDIO_EFFECT") or "").strip().lower()
+    return effect if effect in {"parrot"} else ""
+
+
+def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, Any]:
+    effect = _telegram_voice_effect_from_env()
+    if effect != "parrot":
+        return payload
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return payload
+    audio_bytes = bytes(payload.get("audio_bytes") or b"")
+    if not audio_bytes:
+        return payload
+    filename = str(payload.get("filename") or "telegram-reply.audio").strip() or "telegram-reply.audio"
+    input_suffix = Path(filename).suffix or ".ogg"
+    try:
+        with tempfile.TemporaryDirectory(prefix="spark-voice-effect-") as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / f"input{input_suffix}"
+            output_path = temp_path / "parrot.ogg"
+            input_path.write_bytes(audio_bytes)
+            subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(input_path),
+                    "-af",
+                    (
+                        "asetrate=48000*1.16,aresample=48000,atempo=0.96,"
+                        "highpass=f=360,lowpass=f=7600,"
+                        "equalizer=f=2600:t=q:w=1:g=2.5,"
+                        "equalizer=f=4300:t=q:w=1:g=3.5,"
+                        "tremolo=f=7:d=0.07,"
+                        "acompressor=threshold=-18dB:ratio=1.8:attack=5:release=80"
+                    ),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "64k",
+                    "-vbr",
+                    "on",
+                    "-application",
+                    "voip",
+                    str(output_path),
+                ],
+                check=True,
+            )
+            processed = output_path.read_bytes()
+            if not processed:
+                return payload
+            stem = Path(filename).stem or "telegram-reply"
+            return {
+                **payload,
+                "audio_bytes": processed,
+                "mime_type": "audio/ogg",
+                "filename": f"{stem}-parrot.ogg",
+                "voice_compatible": True,
+                "audio_effect": "parrot",
+            }
+    except Exception:
+        return payload
+
+
+def _optional_float_env(name: str) -> float | None:
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _optional_bool_env(name: str) -> bool | None:
+    value = str(os.environ.get(name) or "").strip().lower()
+    if not value:
+        return None
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _voice_tts_override_from_text(text: str) -> dict[str, str] | None:
