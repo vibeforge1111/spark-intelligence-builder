@@ -3096,6 +3096,35 @@ def _handle_runtime_command(
             agent_id=agent_id,
         )
     if (
+        lowered == "/voice install"
+        or lowered.startswith("/voice install ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice install")
+    ):
+        if lowered.startswith("/voice install "):
+            target = normalized[len("/voice install") :].strip().lower()
+        elif natural_voice_command and natural_voice_command[0] == "/voice install":
+            target = str(natural_voice_command[1] or "").strip().lower()
+        else:
+            target = ""
+        if not target:
+            return {
+                "command": "/voice install",
+                "reply_text": "Voice install needs a target. Use `/voice install kokoro` for local neural TTS.",
+                "respect_voice_reply_state": False,
+            }
+        if target in {"local", "local voice", "local tts", "kokoro voice", "kokoro tts", "kokoro locally"}:
+            target = "kokoro"
+        return _run_voice_runtime_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            command="/voice install",
+            hook="voice.install",
+            fallback_reply=_render_telegram_voice_install_reply(target),
+            human_id=human_id,
+            agent_id=agent_id,
+            payload_extra={"target": target},
+        )
+    if (
         lowered in {"/voice onboard", "/voice onboarding", "/voice setup"}
         or lowered.startswith("/voice onboard ")
         or lowered.startswith("/voice setup ")
@@ -4018,6 +4047,30 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "is voice reply on",
     }:
         return ("/voice reply", None)
+    if simplified in {
+        "install kokoro",
+        "install kokoro voice",
+        "install kokoro tts",
+        "install kokoro voice locally",
+        "install local voice",
+        "install local tts",
+        "add kokoro",
+        "add kokoro voice",
+        "add local tts",
+        "can you install kokoro",
+        "can you install kokoro voice",
+        "can you install kokoro voice locally",
+        "can you install local voice",
+        "can you install local tts",
+    }:
+        return ("/voice install", "kokoro")
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>kokoro|kokoro\s+voice|kokoro\s+tts|local\s+voice|local\s+tts)(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:install|add)\s+(?P<payload>kokoro)(?:\s+voice)?\s+(?:locally|local)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice install", "kokoro")
     if simplified in {
         "turn voice replies on",
         "enable voice replies",
@@ -5368,6 +5421,14 @@ def _render_telegram_voice_plan_reply() -> str:
         "2. transcribe them back into the same Builder Telegram runtime used for text and persona styling.\n"
         "3. optionally add voice reply synthesis as a later chip hook without growing Builder.\n"
         "Next: attach the chip, validate `/voice`, then dogfood real Telegram voice notes."
+    )
+
+
+def _render_telegram_voice_install_reply(target: str | None) -> str:
+    normalized_target = str(target or "").strip() or "kokoro"
+    return (
+        f"Voice install target `{normalized_target}` is available after `spark-voice-comms` is attached.\n"
+        "Next: attach and activate `spark-voice-comms`, then rerun `/voice install kokoro`."
     )
 
 

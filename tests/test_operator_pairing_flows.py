@@ -5634,6 +5634,74 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(captured_payload["route"], "local")
         self.assertIn("local_free", result.detail["response_text"])
 
+    def test_voice_install_kokoro_command_routes_to_voice_install_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.install")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Kokoro local TTS install\nStatus: package install completed."}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118104,
+                    user_id="111",
+                    username="alice",
+                    text="/voice install kokoro",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["target"], "kokoro")
+        self.assertIn("Kokoro local TTS install", result.detail["response_text"])
+
+    def test_natural_language_kokoro_install_routes_to_voice_install_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
+            captured_payload.update(payload)
+            self.assertEqual(hook, "voice.install")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Kokoro local TTS install\nStatus: package install completed."}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_run_first,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118105,
+                    user_id="111",
+                    username="alice",
+                    text="Can you install Kokoro voice locally?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured_payload["target"], "kokoro")
+        self.assertIn("Kokoro local TTS install", result.detail["response_text"])
+
     def test_natural_language_paid_quality_voice_setup_routes_to_onboarding(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured_payload: dict[str, object] = {}
