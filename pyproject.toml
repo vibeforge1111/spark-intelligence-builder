@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Spark-native persistent agent runtime shell"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "AGPL-3.0-only"
 dependencies = [
   "PyNaCl>=1.6.2",
   "PyYAML>=6.0",
