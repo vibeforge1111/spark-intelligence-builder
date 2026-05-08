@@ -1024,6 +1024,7 @@ def simulate_telegram_update(
     transcript_text = None
     bridge_voice_media: dict[str, Any] | None = None
     bridge_voice_error: str | None = None
+    respect_voice_reply_state_for_bridge = True
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -1048,6 +1049,7 @@ def simulate_telegram_update(
             active_chip_task_type = None
             active_chip_evaluate_used = False
             evidence_summary = None
+            respect_voice_reply_state_for_bridge = False
         else:
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
@@ -1081,6 +1083,7 @@ def simulate_telegram_update(
             active_chip_task_type = None
             active_chip_evaluate_used = False
             evidence_summary = None
+            respect_voice_reply_state_for_bridge = bool(command_result.get("respect_voice_reply_state", True))
             if not simulation and bool(command_result.get("force_voice", False)):
                 spoken_source = str(command_result.get("voice_text") or outbound_text)
                 spoken_text = _prepare_voice_reply_text(spoken_source)
@@ -1531,7 +1534,16 @@ def simulate_telegram_update(
             surface="telegram_chat",
         )
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
-        if not simulation and voice_origin_reply and bridge_voice_media is None:
+        voice_reply_state_enabled = _voice_reply_enabled_for_user(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+        )
+        voice_bridge_requested = voice_origin_reply or (
+            respect_voice_reply_state_for_bridge and voice_reply_state_enabled
+        )
+        if not simulation and voice_bridge_requested:
+            outbound_text = _repair_voice_delivery_denial(outbound_text, voice_available=True)
+        if not simulation and voice_bridge_requested and bridge_voice_media is None:
             spoken_text = _prepare_voice_reply_text(outbound_text)
             if spoken_text:
                 try:
@@ -2576,6 +2588,44 @@ def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
     return spoken
 
 
+def _repair_voice_delivery_denial(text: str, *, voice_available: bool) -> str:
+    if not voice_available:
+        return text
+    raw = str(text or "").strip()
+    lowered = raw.lower()
+    denial_markers = (
+        "i can't send voice",
+        "i cannot send voice",
+        "i can't send audio",
+        "i cannot send audio",
+        "i don't have the ability to generate and send audio",
+        "i do not have the ability to generate and send audio",
+        "i can only generate text",
+        "don't have a path to push audio",
+        "do not have a path to push audio",
+        "can't trigger it directly",
+        "cannot trigger it directly",
+        "sending a voice reply isn't something i can trigger",
+        "sending a voice reply is not something i can trigger",
+        "wire up the voice.speak hook",
+        "voice-speak hook exists",
+        "supported surface or session",
+        "different surface or setup step",
+        "route it through the telegram bot api",
+        "sendvoice endpoint",
+    )
+    denial_pattern = re.search(
+        r"\b(?:can(?:not|'t)|don't|do not|unable|not able|only generate text|isn't something i can|is not something i can)\b"
+        r".{0,180}\b(?:send|generate|trigger|push|deliver|outbound|voice|audio|speech|spoken|surface)\b",
+        lowered,
+    )
+    if not any(marker in lowered for marker in denial_markers) and not denial_pattern:
+        return text
+    if not any(marker in lowered for marker in ("voice", "audio", "tts", "sendvoice")):
+        return text
+    return "Voice is working here. I can send spoken replies through this Telegram chat now."
+
+
 def _send_telegram_reply(
     *,
     config_manager: ConfigManager,
@@ -2627,6 +2677,12 @@ def _send_telegram_reply(
         reply_text=filtered_text,
         surface="telegram_chat",
     )
+    voice_requested = force_voice or (
+        respect_voice_reply_state
+        and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
+    )
+    if voice_requested:
+        filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
     guarded = prepare_outbound_text(
         config_manager=config_manager,
         state_db=state_db,
@@ -2645,10 +2701,6 @@ def _send_telegram_reply(
         guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
     if filtered_text != visible_text:
         guarded["actions"] = ["strip_swarm_routing_note", *list(guarded["actions"])]
-    voice_requested = force_voice or (
-        respect_voice_reply_state
-        and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
-    )
     delivery_medium = "text"
     voice_error: str | None = None
     voice_payload: dict[str, Any] | None = None
@@ -4264,6 +4316,17 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
             payload = " ".join(str(match.group("payload") or "").strip().split())
             if payload:
                 return ("/voice speak", payload)
+    if simplified in {
+        "send a short telegram voice note",
+        "send a short voice note",
+        "send me a short telegram voice note",
+        "send me a short voice note",
+        "can you send a short telegram voice note",
+        "can you send a short voice note",
+        "send a telegram voice note",
+        "send a voice note",
+    }:
+        return ("/voice speak", "Voice is working here. I can send spoken replies through this Telegram chat now.")
     return None
 
 

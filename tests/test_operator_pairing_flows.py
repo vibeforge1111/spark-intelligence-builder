@@ -5859,6 +5859,144 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Sending that as a voice reply now", result.detail["response_text"])
 
+    def test_natural_short_voice_note_request_returns_bridge_voice_media(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-short-note").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-short.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "openai-realtime",
+                        "voice_id": "sage",
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118171,
+                    user_id="111",
+                    username="alice",
+                    text="Send a short Telegram voice note.",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Sending that as a voice reply now", result.detail["response_text"])
+        self.assertEqual(
+            captured_payload["text"],
+            "Voice is working here. I can send spoken replies through this Telegram chat now.",
+        )
+        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
+        self.assertEqual(result.detail["voice_media"]["mime_type"], "audio/ogg")
+
+    def test_voice_reply_on_live_bridge_repairs_false_audio_denial_and_returns_media(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118172,
+                user_id="111",
+                username="alice",
+                text="/voice reply on",
+            ),
+        )
+
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-auto-reply").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-auto.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "openai-realtime",
+                        "voice_id": "sage",
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-voice-reply-on",
+                reply_text=(
+                    "I have voice capability wired up, but from this current conversation surface I can only generate text. "
+                    "The voice-speak hook exists, but I can't trigger it directly from this reply mode."
+                ),
+                evidence_summary="status=under_supported",
+                escalation_hint=None,
+                trace_ref="trace:voice-reply-on",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118173,
+                    user_id="111",
+                    username="alice",
+                    text="Can you send me a voice reply?",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("can only generate text", result.detail["response_text"].lower())
+        self.assertIn("Voice is working here", result.detail["response_text"])
+        self.assertEqual(
+            captured_payload["text"],
+            "Voice is working here. I can send spoken replies through this Telegram chat now.",
+        )
+        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
+        self.assertEqual(result.detail["voice_media"]["mime_type"], "audio/ogg")
+
     def test_live_bridge_voice_speak_returns_media_payload(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
