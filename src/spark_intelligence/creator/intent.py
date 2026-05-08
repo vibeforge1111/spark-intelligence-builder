@@ -35,6 +35,7 @@ _STOPWORDS = {
     "on",
     "path",
     "please",
+    "private",
     "specialization",
     "specialisation",
     "system",
@@ -42,6 +43,8 @@ _STOPWORDS = {
     "the",
     "this",
     "to",
+    "use",
+    "using",
     "with",
 }
 
@@ -168,7 +171,7 @@ def _infer_domain(lower: str) -> str:
             return domain
 
     match = re.search(
-        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|with|which|so|to|and|from)\b|[,.]|$)",
+        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
         lower,
     )
     if match:
