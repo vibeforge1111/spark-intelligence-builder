@@ -5906,6 +5906,46 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(profile["voice_settings"]["speed"], 1.04)
         self.assertEqual(profile["voice_settings"]["similarity_boost"], 0.8)
 
+    def test_short_voice_mutation_followup_updates_saved_profile_settings(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118170,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        mutated = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118171,
+                user_id="111",
+                username="alice",
+                text="a little faster",
+            ),
+        )
+
+        self.assertIn("I tuned Elise", mutated.detail["response_text"])
+        self.assertIn("a little faster", mutated.detail["response_text"])
+
     def test_dm_voice_provider_state_overrides_profile_tts_env(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         simulate_telegram_update(

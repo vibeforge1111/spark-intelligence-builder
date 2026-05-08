@@ -4905,6 +4905,12 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
             return ("/voice audition", str(match.group("payload") or "").strip() or None)
+    if re.match(
+        r"^(?:a\s+)?(?:little\s+)?(?:warmer|softer|gentler|geekier|clearer|crisper|calmer|brighter|more\s+natural|faster|slower|less\s+polished|more\s+expressive)\b",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return ("/voice mutate", simplified)
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+(?:for|as|with)\s+(?:voice|tts|voice\s+provider))?(?:\s+.+)?$",
         r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|as|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
