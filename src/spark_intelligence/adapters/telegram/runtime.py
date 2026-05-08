@@ -6053,7 +6053,7 @@ def _mask_voice_id(voice_id: str) -> str:
     value = str(voice_id or "").strip()
     if len(value) <= 8:
         return value
-    return f"{value[:6]}...{value[-4:]}"
+    return f"{value[:6]}-{value[-4:]}"
 
 
 def _render_telegram_voice_plan_reply() -> str:
