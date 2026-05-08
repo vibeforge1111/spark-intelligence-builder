@@ -5865,7 +5865,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
-            self.assertEqual(payload["text"], "Hello from bridge.")
+            self.assertEqual(payload["text"], "Hello from bridge with Kokoro.")
+            self.assertEqual(payload["tts"], {"provider_id": "kokoro"})
             return SimpleNamespace(
                 ok=True,
                 chip_key="spark-voice-comms",
@@ -5904,7 +5905,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                     update_id=11818,
                     user_id="111",
                     username="alice",
-                    text="/voice speak Hello from bridge",
+                    text="/voice speak Hello from bridge with Kokoro",
                 ),
                 simulation=False,
             )
@@ -5916,6 +5917,53 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(voice_media["filename"], "telegram-reply.ogg")
         self.assertTrue(voice_media["voice_compatible"])
         self.assertEqual(voice_media["provider_id"], "kokoro")
+
+    def test_voice_speak_can_target_openai_realtime_explicitly(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            self.assertEqual(payload["text"], "Hello from GPT Realtime 2.")
+            self.assertEqual(payload["tts"], {"provider_id": "openai-realtime"})
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-wav").decode("ascii"),
+                        "mime_type": "audio/wav",
+                        "filename": "telegram-reply.wav",
+                        "voice_compatible": False,
+                        "provider_id": "openai-realtime",
+                        "voice_id": "sage",
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value=None,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11819,
+                    user_id="111",
+                    username="alice",
+                    text="/voice speak Hello from GPT Realtime 2",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")

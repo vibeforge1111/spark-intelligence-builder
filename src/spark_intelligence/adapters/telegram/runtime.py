@@ -1091,6 +1091,7 @@ def simulate_telegram_update(
                         human_id=resolution.human_id,
                         agent_id=resolution.agent_id,
                         text=spoken_text,
+                        tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -2409,19 +2410,23 @@ def _synthesize_telegram_voice_reply(
     text: str,
     human_id: str | None,
     agent_id: str | None,
+    tts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload = {
+        **_build_voice_chip_payload(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        ),
+        "text": text,
+    }
+    if tts:
+        payload["tts"] = tts
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.speak",
-        payload={
-            **_build_voice_chip_payload(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                agent_id=agent_id,
-            ),
-            "text": text,
-        },
+        payload=payload,
     )
     if execution is None:
         raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `spark-voice-comms` first.")
@@ -2455,6 +2460,19 @@ def _synthesize_telegram_voice_reply(
         "voice_compatible": bool((result or {}).get("voice_compatible")),
     }
     return _convert_voice_payload_for_telegram_if_available(payload)
+
+
+def _voice_tts_override_from_text(text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    if not normalized:
+        return None
+    if re.search(r"\b(?:kokoro|kokoro[-\s]*onnx|local[-\s]*kokoro)\b", normalized):
+        return {"provider_id": "kokoro"}
+    if re.search(r"\b(?:gpt[-\s]*realtime[-\s]*2|openai[-\s]*realtime|realtime[-\s]*2)\b", normalized):
+        return {"provider_id": "openai-realtime"}
+    if re.search(r"\beleven\s*labs\b|\belevenlabs\b", normalized):
+        return {"provider_id": "elevenlabs"}
+    return None
 
 
 def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool:
@@ -3269,6 +3287,7 @@ def _handle_runtime_command(
             "reply_text": f"Sending that as a voice reply now.",
             "force_voice": True,
             "voice_text": speak_text,
+            "voice_tts": _voice_tts_override_from_text(speak_text),
             "respect_voice_reply_state": False,
         }
     if lowered in {"/think", "/think on", "/think off"} or natural_think_command in {
