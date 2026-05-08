@@ -5486,6 +5486,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
     def test_voice_status_shows_profile_voice_registry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.paths.env_file.write_text(
+            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=test-key\n",
+            encoding="utf-8",
+        )
         registry_path = self.home / "telegram-voice-profiles.json"
         registry_path.write_text(
             json.dumps(
@@ -5516,6 +5520,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             {
                 "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
                 "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
+                "ELEVENLABS_API_KEY": "",
             },
             clear=False,
         ), patch(
@@ -5527,6 +5532,9 @@ class OperatorPairingFlowTests(SparkTestCase):
                 stderr="",
                 output={"result": {"reply_text": "Voice chip is ready."}},
             ),
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value="ffmpeg",
         ):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
@@ -5549,6 +5557,68 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("M1Wq", reply)
         self.assertIn("Effect: parrot", reply)
         self.assertIn("Source: registry", reply)
+        self.assertIn("Preflight:", reply)
+        self.assertIn("ElevenLabs secret: present (ELEVENLABS_API_KEY)", reply)
+        self.assertIn("ElevenLabs voice id: configured", reply)
+        self.assertIn("Parrot effect: ready (ffmpeg found)", reply)
+
+    def test_voice_status_warns_when_profile_preflight_is_missing_requirements(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        registry_path = self.home / "telegram-voice-profiles.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "profiles": {
+                        "parrotcovebird": {
+                            "provider_id": "elevenlabs",
+                            "voice_name": "Parrot Cove Bird",
+                            "model_id": "eleven_turbo_v2_5",
+                            "audio_effect": "parrot",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
+                "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
+                "ELEVENLABS_API_KEY": "",
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Voice chip is ready."}},
+            ),
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value=None,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11802,
+                    user_id="111",
+                    username="alice",
+                    text="/voice status",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        reply = result.detail["response_text"]
+        self.assertIn("Preflight:", reply)
+        self.assertIn("ElevenLabs secret: missing (ELEVENLABS_API_KEY)", reply)
+        self.assertIn("ElevenLabs voice id: missing", reply)
+        self.assertIn("Parrot effect: ffmpeg missing; raw TTS audio will be sent", reply)
 
     def test_voice_plan_command_returns_concrete_pipeline_steps(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

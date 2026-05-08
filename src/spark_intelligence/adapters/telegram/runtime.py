@@ -5895,9 +5895,9 @@ def _run_voice_runtime_command(
     reply_text = str((result or {}).get("reply_text") or "").strip()
     if command in {"/voice", "/voice status"}:
         if reply_text:
-            reply_text = _append_telegram_voice_profile_status(reply_text)
+            reply_text = _append_telegram_voice_profile_status(reply_text, config_manager=config_manager)
         else:
-            fallback_reply = _append_telegram_voice_profile_status(fallback_reply)
+            fallback_reply = _append_telegram_voice_profile_status(fallback_reply, config_manager=config_manager)
     if reply_text:
         return {"command": command, "reply_text": reply_text}
     if execution.ok:
@@ -5921,7 +5921,7 @@ def _render_telegram_voice_status_reply() -> str:
     )
 
 
-def _append_telegram_voice_profile_status(reply_text: str) -> str:
+def _append_telegram_voice_profile_status(reply_text: str, *, config_manager: ConfigManager | None = None) -> str:
     profile = _telegram_voice_status_profile()
     if not profile:
         return reply_text
@@ -5948,6 +5948,11 @@ def _append_telegram_voice_profile_status(reply_text: str) -> str:
     source = str(profile.get("source") or "").strip()
     if source:
         lines.append(f"- Source: {source}")
+    preflight = _telegram_voice_profile_preflight(profile=profile, config_manager=config_manager)
+    if preflight:
+        lines.append("")
+        lines.append("Preflight:")
+        lines.extend(f"- {item}" for item in preflight)
     return f"{reply_text.rstrip()}\n" + "\n".join(lines)
 
 
@@ -5958,6 +5963,7 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
     voice_id = str(tts.get("voice_id") or "").strip()
     voice_name = str(tts.get("voice_name") or "").strip()
     model_id = str(tts.get("model_id") or "").strip()
+    secret_env_ref = str(tts.get("secret_env_ref") or "").strip()
     effect = _telegram_voice_effect_from_env()
     settings = tts.get("voice_settings") if isinstance(tts.get("voice_settings"), dict) else {}
     if not any([provider_id, voice_id, voice_name, model_id, effect, settings]):
@@ -5976,6 +5982,15 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
             "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
             "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID",
             "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_BASE_URL",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_BASE_URL",
+            "SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT",
+            "SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF",
+            "SPARK_TELEGRAM_VOICE_TTS_STABILITY",
+            "SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST",
+            "SPARK_TELEGRAM_VOICE_TTS_STYLE",
+            "SPARK_TELEGRAM_VOICE_TTS_SPEED",
+            "SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST",
             "SPARK_TELEGRAM_VOICE_AUDIO_EFFECT",
         )
     ):
@@ -5986,10 +6001,52 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
         "voice_id": voice_id,
         "voice_name": voice_name or "default",
         "model_id": model_id,
+        "secret_env_ref": secret_env_ref,
         "voice_settings": settings,
         "audio_effect": effect,
         "source": "+".join(source_parts) if source_parts else "default",
     }
+
+
+def _telegram_voice_profile_preflight(
+    *,
+    profile: dict[str, Any],
+    config_manager: ConfigManager | None = None,
+) -> list[str]:
+    checks: list[str] = []
+    provider_id = str(profile.get("provider_id") or "").strip().lower()
+    voice_id = str(profile.get("voice_id") or "").strip()
+    if provider_id == "elevenlabs":
+        secret_env_ref = str(profile.get("secret_env_ref") or "ELEVENLABS_API_KEY").strip() or "ELEVENLABS_API_KEY"
+        secret_status = "present" if _telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager) else "missing"
+        checks.append(f"ElevenLabs secret: {secret_status} ({secret_env_ref})")
+        checks.append("ElevenLabs voice id: configured" if voice_id else "ElevenLabs voice id: missing")
+    effect = str(profile.get("audio_effect") or "").strip().lower()
+    if effect == "parrot":
+        checks.append(
+            "Parrot effect: ready (ffmpeg found)"
+            if shutil.which("ffmpeg")
+            else "Parrot effect: ffmpeg missing; raw TTS audio will be sent"
+        )
+    return checks
+
+
+def _telegram_voice_secret_is_available(
+    secret_env_ref: str,
+    *,
+    config_manager: ConfigManager | None = None,
+) -> bool:
+    env_name = str(secret_env_ref or "").strip()
+    if not env_name:
+        return False
+    if str(os.environ.get(env_name) or "").strip():
+        return True
+    if config_manager is None:
+        return False
+    try:
+        return bool(str(config_manager.read_env_map().get(env_name) or "").strip())
+    except Exception:
+        return False
 
 
 def _mask_voice_id(voice_id: str) -> str:

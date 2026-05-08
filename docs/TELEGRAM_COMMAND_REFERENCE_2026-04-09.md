@@ -159,6 +159,7 @@ Telegram profiles can override voice delivery without changing Builder's global 
 - `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID`
 - `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME`
 - `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID`
+- `SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF`
 - `SPARK_TELEGRAM_VOICE_TTS_STABILITY`
 - `SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST`
 - `SPARK_TELEGRAM_VOICE_TTS_STYLE`
@@ -193,7 +194,7 @@ Registry shape:
 }
 ```
 
-`/voice` and `/voice status` append the active profile voice summary when a registry or profile env override is present. Voice IDs are masked in the status reply.
+`/voice` and `/voice status` append the active profile voice summary when a registry or profile env override is present. Voice IDs are masked in the status reply. Profile status also runs a read-only preflight for the selected provider and effect, for example whether the ElevenLabs secret env ref is available and whether `ffmpeg` is available for the parrot effect. This preflight never calls the TTS provider and never prints secret values.
 
 Current Parrot Cove Bird recipe:
 
