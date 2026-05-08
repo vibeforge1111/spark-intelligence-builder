@@ -14,6 +14,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
@@ -2683,7 +2684,11 @@ def _telegram_voice_tts_override_for_user_from_state(
     state_db: StateDB,
     external_user_id: str,
 ) -> dict[str, Any] | None:
-    provider_id = _voice_tts_provider_for_user(state_db=state_db, external_user_id=external_user_id)
+    profile = _voice_tts_profile_for_user(state_db=state_db, external_user_id=external_user_id)
+    provider_id = _normalize_telegram_voice_provider_id(str(profile.get("provider_id") or "")) or _voice_tts_provider_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+    )
     if not provider_id:
         return None
     tts: dict[str, Any] = {"provider_id": provider_id}
@@ -2724,6 +2729,25 @@ def _telegram_voice_tts_override_for_user_from_state(
             tts["model_id"] = model_id
         if secret_env_ref:
             tts["secret_env_ref"] = secret_env_ref
+    if profile:
+        for key in ("voice_id", "voice_name", "model_id", "base_url", "output_format", "secret_env_ref"):
+            value = str(profile.get(key) or "").strip()
+            if value:
+                tts[key] = value
+        voice_settings = profile.get("voice_settings")
+        if isinstance(voice_settings, dict):
+            clean_settings: dict[str, Any] = {}
+            for key in ("stability", "similarity_boost", "style", "speed"):
+                try:
+                    clean_settings[key] = float(voice_settings[key])
+                except (KeyError, TypeError, ValueError):
+                    pass
+            if "use_speaker_boost" in voice_settings:
+                clean_settings["use_speaker_boost"] = bool(voice_settings.get("use_speaker_boost"))
+            if clean_settings:
+                tts["voice_settings"] = clean_settings
+        if provider_id == "elevenlabs" and not str(tts.get("secret_env_ref") or "").strip():
+            tts["secret_env_ref"] = "ELEVENLABS_API_KEY"
     return tts
 
 
@@ -3758,6 +3782,97 @@ def _handle_runtime_command(
             "respect_voice_reply_state": False,
         }
     if (
+        lowered == "/voice voices"
+        or lowered.startswith("/voice voices ")
+        or lowered.startswith("/voice find ")
+        or lowered.startswith("/voice search ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice voices")
+    ):
+        if lowered.startswith("/voice voices "):
+            prompt = normalized[len("/voice voices") :].strip()
+        elif lowered.startswith("/voice find "):
+            prompt = normalized[len("/voice find") :].strip()
+        elif lowered.startswith("/voice search "):
+            prompt = normalized[len("/voice search") :].strip()
+        elif natural_voice_command and natural_voice_command[0] == "/voice voices":
+            prompt = str(natural_voice_command[1] or "").strip()
+        else:
+            prompt = ""
+        return {
+            "command": "/voice voices",
+            "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
+            "respect_voice_reply_state": False,
+        }
+    if (
+        lowered.startswith("/voice voice ")
+        or lowered.startswith("/voice choose ")
+        or lowered.startswith("/voice select ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice voice")
+    ):
+        if lowered.startswith("/voice voice "):
+            target = normalized[len("/voice voice") :].strip()
+        elif lowered.startswith("/voice choose "):
+            target = normalized[len("/voice choose") :].strip()
+        elif lowered.startswith("/voice select "):
+            target = normalized[len("/voice select") :].strip()
+        else:
+            target = str(natural_voice_command[1] or "").strip()
+        return {
+            "command": "/voice voice",
+            "reply_text": _select_elevenlabs_voice_for_telegram_dm(
+                state_db=state_db,
+                external_user_id=external_user_id,
+                target=target,
+                config_manager=config_manager,
+            ),
+            "respect_voice_reply_state": False,
+        }
+    if (
+        lowered == "/voice mutate"
+        or lowered.startswith("/voice mutate ")
+        or lowered.startswith("/voice tune ")
+        or lowered.startswith("/voice calibrate ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice mutate")
+    ):
+        if lowered.startswith("/voice mutate "):
+            style = normalized[len("/voice mutate") :].strip()
+        elif lowered.startswith("/voice tune "):
+            style = normalized[len("/voice tune") :].strip()
+        elif lowered.startswith("/voice calibrate "):
+            style = normalized[len("/voice calibrate") :].strip()
+        elif natural_voice_command and natural_voice_command[0] == "/voice mutate":
+            style = str(natural_voice_command[1] or "").strip()
+        else:
+            style = "warmer, natural, clear"
+        return {
+            "command": "/voice mutate",
+            "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
+                state_db=state_db,
+                external_user_id=external_user_id,
+                style=style,
+            ),
+            "respect_voice_reply_state": False,
+        }
+    if (
+        lowered == "/voice audition"
+        or lowered.startswith("/voice audition ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice audition")
+    ):
+        if lowered.startswith("/voice audition "):
+            prompt = normalized[len("/voice audition") :].strip()
+        elif natural_voice_command and natural_voice_command[0] == "/voice audition":
+            prompt = str(natural_voice_command[1] or "").strip()
+        else:
+            prompt = ""
+        voice_text = _elevenlabs_audition_text(prompt)
+        return {
+            "command": "/voice audition",
+            "reply_text": "I’m auditioning the current voice now.\n\nIf it feels close, say `make it warmer`, `make it clearer`, or `make it more geeky`.",
+            "force_voice": True,
+            "voice_text": voice_text,
+            "respect_voice_reply_state": False,
+        }
+    if (
         lowered == "/voice install"
         or lowered.startswith("/voice install ")
         or (natural_voice_command and natural_voice_command[0] == "/voice install")
@@ -4747,6 +4862,49 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "which voice provider are you using",
     }:
         return ("/voice provider", None)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:find|search|look\s+for|choose|pick)\s+(?:me\s+)?(?:a\s+)?(?P<payload>.+?\s+)?(?:voice|tts\s+voice)(?:\s+for\s+.+)?$",
+        r"^(?:i\s+want|i\s+d\s+like|i\s+would\s+like)\s+(?:a\s+)?(?P<payload>.+?\s+)?(?:voice|tts\s+voice)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            payload = str(match.group("payload") or simplified).strip()
+            if any(token in simplified for token in ("eleven", "girl", "female", "woman", "geek", "qa", "tester", "natural", "warm")):
+                return ("/voice voices", payload)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick|set|switch\s+to)\s+(?:the\s+)?(?:voice\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})(?:\s+(?:for|as)\s+(?:voice|tts))?$",
+        r"^(?:please\s+|can you\s+)?(?:set|switch|change)\s+(?:my\s+)?voice\s+(?:to|as)\s+(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            payload = str(match.group("payload") or "").strip()
+            if payload and _normalize_telegram_voice_provider_id(payload) is None:
+                return ("/voice voice", payload)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:make|tune|calibrate|mutate)\s+(?:the\s+)?(?:voice|it)\s+(?P<payload>.+)$",
+        r"^(?:please\s+|can you\s+)?(?:make)\s+(?P<payload>it\s+.+)$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match and any(
+            token in simplified
+            for token in ("warmer", "warm", "geek", "qa", "tester", "calm", "clear", "crisp", "bright", "natural", "faster", "slower")
+        ):
+            return ("/voice mutate", str(match.group("payload") or "").strip())
+    if simplified in {
+        "audition voice",
+        "audition the voice",
+        "test voice",
+        "test the voice",
+        "try voice",
+        "try the voice",
+    }:
+        return ("/voice audition", None)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:audition|test|try)\s+(?:the\s+)?voice(?:\s+(?P<payload>.+))?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice audition", str(match.group("payload") or "").strip() or None)
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+(?:for|as|with)\s+(?:voice|tts|voice\s+provider))?(?:\s+.+)?$",
         r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|as|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
@@ -6120,9 +6278,9 @@ def _run_voice_runtime_command(
     reply_text = str((result or {}).get("reply_text") or "").strip()
     if command in {"/voice", "/voice status"}:
         if reply_text:
-            reply_text = _append_telegram_voice_profile_status(reply_text)
+            reply_text = _append_telegram_voice_profile_status(reply_text, config_manager=config_manager)
         else:
-            fallback_reply = _append_telegram_voice_profile_status(fallback_reply)
+            fallback_reply = _append_telegram_voice_profile_status(fallback_reply, config_manager=config_manager)
     if reply_text:
         return {"command": command, "reply_text": reply_text}
     if execution.ok:
@@ -6146,7 +6304,7 @@ def _render_telegram_voice_status_reply() -> str:
     )
 
 
-def _append_telegram_voice_profile_status(reply_text: str) -> str:
+def _append_telegram_voice_profile_status(reply_text: str, *, config_manager: ConfigManager | None = None) -> str:
     profile = _telegram_voice_status_profile()
     if not profile:
         return reply_text
@@ -6173,6 +6331,11 @@ def _append_telegram_voice_profile_status(reply_text: str) -> str:
     source = str(profile.get("source") or "").strip()
     if source:
         lines.append(f"- Source: {source}")
+    preflight = _telegram_voice_profile_preflight(profile=profile, config_manager=config_manager)
+    if preflight:
+        lines.append("")
+        lines.append("Preflight:")
+        lines.extend(f"- {item}" for item in preflight)
     return f"{reply_text.rstrip()}\n" + "\n".join(lines)
 
 
@@ -6183,6 +6346,7 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
     voice_id = str(tts.get("voice_id") or "").strip()
     voice_name = str(tts.get("voice_name") or "").strip()
     model_id = str(tts.get("model_id") or "").strip()
+    secret_env_ref = str(tts.get("secret_env_ref") or "").strip()
     effect = _telegram_voice_effect_from_env()
     settings = tts.get("voice_settings") if isinstance(tts.get("voice_settings"), dict) else {}
     if not any([provider_id, voice_id, voice_name, model_id, effect, settings]):
@@ -6201,6 +6365,17 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
             "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
             "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID",
             "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_BASE_URL",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_BASE_URL",
+            "SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_OUTPUT_FORMAT",
+            "SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_SECRET_ENV_REF",
+            "SPARK_TELEGRAM_VOICE_TTS_STABILITY",
+            "SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST",
+            "SPARK_TELEGRAM_VOICE_TTS_STYLE",
+            "SPARK_TELEGRAM_VOICE_TTS_SPEED",
+            "SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST",
             "SPARK_TELEGRAM_VOICE_AUDIO_EFFECT",
         )
     ):
@@ -6211,17 +6386,71 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
         "voice_id": voice_id,
         "voice_name": voice_name or "default",
         "model_id": model_id,
+        "secret_env_ref": secret_env_ref,
         "voice_settings": settings,
         "audio_effect": effect,
         "source": "+".join(source_parts) if source_parts else "default",
     }
 
 
+def _telegram_voice_profile_preflight(
+    *,
+    profile: dict[str, Any],
+    config_manager: ConfigManager | None = None,
+) -> list[str]:
+    checks: list[str] = []
+    provider_id = str(profile.get("provider_id") or "").strip().lower()
+    voice_id = str(profile.get("voice_id") or "").strip()
+    if provider_id == "elevenlabs":
+        secret_env_ref = str(profile.get("secret_env_ref") or "ELEVENLABS_API_KEY").strip() or "ELEVENLABS_API_KEY"
+        secret_status = "present" if _telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager) else "missing"
+        checks.append(f"ElevenLabs secret: {secret_status} ({secret_env_ref})")
+        checks.append("ElevenLabs voice id: configured" if voice_id else "ElevenLabs voice id: missing")
+    effect = str(profile.get("audio_effect") or "").strip().lower()
+    if effect == "parrot":
+        checks.append(
+            "Parrot effect: ready (ffmpeg found)"
+            if shutil.which("ffmpeg")
+            else "Parrot effect: ffmpeg missing; raw TTS audio will be sent"
+        )
+    return checks
+
+
+def _telegram_voice_secret_is_available(
+    secret_env_ref: str,
+    *,
+    config_manager: ConfigManager | None = None,
+) -> bool:
+    env_name = str(secret_env_ref or "").strip()
+    if not env_name:
+        return False
+    if str(os.environ.get(env_name) or "").strip():
+        return True
+    if config_manager is None:
+        return False
+    try:
+        return bool(str(config_manager.read_env_map().get(env_name) or "").strip())
+    except Exception:
+        return False
+
+
+def _telegram_voice_env_value(env_name: str, *, config_manager: ConfigManager | None = None) -> str:
+    value = _first_nonempty_env(env_name)
+    if value:
+        return value
+    if config_manager is None:
+        return ""
+    try:
+        return str(config_manager.read_env_map().get(env_name) or "").strip()
+    except Exception:
+        return ""
+
+
 def _mask_voice_id(voice_id: str) -> str:
     value = str(voice_id or "").strip()
     if len(value) <= 8:
         return value
-    return f"{value[:6]}...{value[-4:]}"
+    return f"{value[:6]}-{value[-4:]}"
 
 
 def _render_telegram_voice_plan_reply() -> str:
@@ -6253,15 +6482,31 @@ def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
 
 def _render_telegram_voice_provider_status(*, state_db: StateDB, external_user_id: str) -> str:
     saved_provider_id = _voice_tts_provider_for_user(state_db=state_db, external_user_id=external_user_id)
+    saved_profile = _voice_tts_profile_for_user(state_db=state_db, external_user_id=external_user_id)
     env_provider_id = str((_telegram_voice_tts_override_from_env() or {}).get("provider_id") or "").strip().lower()
-    active_provider_id = saved_provider_id or env_provider_id or "elevenlabs"
+    profile_provider_id = _normalize_telegram_voice_provider_id(str(saved_profile.get("provider_id") or ""))
+    active_provider_id = profile_provider_id or saved_provider_id or env_provider_id or "elevenlabs"
     lines = [
         f"Voice is set to {_telegram_voice_provider_label(active_provider_id)} for this DM.",
         "",
         _format_voice_readiness_note(active_provider_id),
-        "",
-        "You can say `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`.",
     ]
+    voice_name = str(saved_profile.get("voice_name") or "").strip()
+    voice_id = str(saved_profile.get("voice_id") or "").strip()
+    if voice_name or voice_id:
+        lines.extend(
+            [
+                "",
+                f"Current voice: {voice_name or 'selected'}" + (f" ({_mask_voice_id(voice_id)})" if voice_id else ""),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "You can say `find me a natural geeky QA tester voice`, `use voice Elise`, or `make it warmer`.",
+            "Provider switches still work too: `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`.",
+        ]
+    )
     if active_provider_id == "elevenlabs":
         lines.extend(
             [
@@ -6287,8 +6532,9 @@ def _render_telegram_voice_provider_guide(*, provider_id: str | None) -> str:
     if provider_id == "elevenlabs":
         return (
             "ElevenLabs is the voice path I would tune first for a polished Spark agent.\n\n"
-            "Pick or create a voice in ElevenLabs, save the API key and voice ID in local config, then say `switch my voice to ElevenLabs` here.\n\n"
-            "For calibration, start natural: medium stability, high similarity, low style, and speed near 1.0. Then test one short warm reply and one longer explanation."
+            "You can describe the voice you want directly here. Try `find me a natural geeky QA tester voice`, then pick one with `use voice Elise` or another name.\n\n"
+            "After that, tune it conversationally: `make it warmer`, `make it clearer`, `a little faster`, or `audition the voice`.\n\n"
+            "Keep the API key local. Telegram should help you choose and calibrate; it should not become the place where secrets get pasted."
         )
     if provider_id == "kokoro":
         return (
@@ -6328,6 +6574,288 @@ def _render_telegram_voice_provider_switched(*, provider_id: str) -> str:
         f"{_format_voice_readiness_note(provider_id)}\n\n"
         "This is the hosted OpenAI path. If the voice still feels too synthetic, I would move back to ElevenLabs for the main polished experience.\n\n"
         "Next: try `/voice ask Say one short warm sentence with the current voice.`"
+    )
+
+
+def _render_elevenlabs_voice_search_reply(*, prompt: str, config_manager: ConfigManager | None = None) -> str:
+    prompt = " ".join(str(prompt or "").strip().split())
+    if not prompt:
+        prompt = "natural, warm, clear Spark agent voice"
+    voices, error = _list_elevenlabs_voices(config_manager=config_manager)
+    if error:
+        return (
+            "I can search ElevenLabs voices, but I can’t reach the voice list yet.\n\n"
+            f"Reason: {error}\n\n"
+            "Once the key is available locally, say something like `find me a natural geeky QA tester voice`."
+        )
+    ranked = _rank_elevenlabs_voices(voices, prompt=prompt)
+    if not ranked:
+        return (
+            "I could reach ElevenLabs, but I didn’t find a useful voice match.\n\n"
+            "Try a more specific description, like `natural young woman, friendly QA tester, clear but not corporate`."
+        )
+    lines = [
+        f"I found a few ElevenLabs voices that fit: {prompt}.",
+        "",
+    ]
+    for index, voice in enumerate(ranked[:5], start=1):
+        description = _describe_elevenlabs_voice(voice)
+        lines.append(f"{index}. {voice['name']} - {description}")
+    best_name = str(ranked[0]["name"])
+    lines.extend(
+        [
+            "",
+            f"My first pick is {best_name}. Say `use voice {best_name}` to try it, or `find a softer voice` if you want a different direction.",
+            "",
+            "After that, you can say `make it warmer`, `make it more geeky`, or `audition the voice`.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _select_elevenlabs_voice_for_telegram_dm(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    target: str,
+    config_manager: ConfigManager | None = None,
+) -> str:
+    target = " ".join(str(target or "").strip().split())
+    if not target:
+        return "Tell me the voice name or vibe. For example: `use voice Elise` or `find me a natural geeky QA tester voice`."
+    voices, error = _list_elevenlabs_voices(config_manager=config_manager)
+    if error:
+        return f"I can’t pick an ElevenLabs voice yet.\n\nReason: {error}"
+    voice = _find_elevenlabs_voice(voices, target=target)
+    if voice is None:
+        ranked = _rank_elevenlabs_voices(voices, prompt=target)
+        if not ranked:
+            return f"I couldn’t find a close ElevenLabs match for `{target}`. Try `/voice voices {target}` and pick one of the names."
+        voice = ranked[0]
+    settings = _elevenlabs_voice_settings_for_style(target or str(voice.get("name") or ""))
+    _set_voice_tts_profile_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        profile={
+            "provider_id": "elevenlabs",
+            "voice_id": str(voice.get("voice_id") or ""),
+            "voice_name": str(voice.get("name") or ""),
+            "model_id": "eleven_turbo_v2_5",
+            "secret_env_ref": "ELEVENLABS_API_KEY",
+            "voice_settings": settings,
+        },
+    )
+    _set_voice_tts_provider_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        provider_id="elevenlabs",
+    )
+    return (
+        f"Done, I set this DM to {voice['name']} on ElevenLabs.\n\n"
+        f"I’m starting with a natural calibration: {_format_elevenlabs_voice_settings(settings)}.\n\n"
+        "Try `audition the voice`, then tell me what to change in plain language: `make it warmer`, `less polished`, `more geeky`, or `a little faster`."
+    )
+
+
+def _mutate_elevenlabs_voice_for_telegram_dm(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    style: str,
+) -> str:
+    style = " ".join(str(style or "").strip().split()) or "warmer, natural, clear"
+    profile = _voice_tts_profile_for_user(state_db=state_db, external_user_id=external_user_id)
+    if not profile or _normalize_telegram_voice_provider_id(str(profile.get("provider_id") or "")) != "elevenlabs":
+        return (
+            "I can tune an ElevenLabs voice after one is selected for this DM.\n\n"
+            "Say `find me a natural geeky QA tester voice`, then `use voice Elise` or another voice name."
+        )
+    current = profile.get("voice_settings") if isinstance(profile.get("voice_settings"), dict) else {}
+    settings = _elevenlabs_voice_settings_for_style(style, base=current)
+    profile["voice_settings"] = settings
+    _set_voice_tts_profile_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        profile=profile,
+    )
+    voice_name = str(profile.get("voice_name") or "the current ElevenLabs voice").strip()
+    return (
+        f"Good, I tuned {voice_name} toward: {style}.\n\n"
+        f"Current calibration: {_format_elevenlabs_voice_settings(settings)}.\n\n"
+        "Try `audition the voice` or ask a normal question with voice replies on."
+    )
+
+
+def _elevenlabs_audition_text(prompt: str | None = None) -> str:
+    vibe = " ".join(str(prompt or "").strip().split()).lower()
+    if "qa" in vibe or "test" in vibe or "geek" in vibe:
+        return "Quick QA check: I found the rough edge, I can explain it clearly, and I will keep the tone warm while we tighten the build."
+    if "warm" in vibe or "soft" in vibe:
+        return "Hey Cem, I’m here with you. We can slow the pace down, keep it clear, and make the next step feel simple."
+    return "Here is my current Spark voice: clear, warm, a little curious, and ready to help without sounding like a phone menu."
+
+
+def _list_elevenlabs_voices(*, config_manager: ConfigManager | None = None) -> tuple[list[dict[str, Any]], str | None]:
+    api_key = _telegram_voice_env_value("ELEVENLABS_API_KEY", config_manager=config_manager)
+    if not api_key:
+        return [], "ELEVENLABS_API_KEY is not available in local config."
+    try:
+        request = Request("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key})
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return [], f"ElevenLabs returned HTTP {exc.code}."
+    except URLError as exc:
+        return [], f"ElevenLabs is unreachable: {_safe_voice_error_message(exc)}"
+    except Exception as exc:
+        return [], _safe_voice_error_message(exc)
+    raw_voices = payload.get("voices") if isinstance(payload, dict) else None
+    if not isinstance(raw_voices, list):
+        return [], "ElevenLabs returned an unexpected voice list."
+    voices: list[dict[str, Any]] = []
+    for raw_voice in raw_voices:
+        if not isinstance(raw_voice, dict):
+            continue
+        voice_id = str(raw_voice.get("voice_id") or "").strip()
+        name = str(raw_voice.get("name") or "").strip()
+        if not voice_id or not name:
+            continue
+        labels = raw_voice.get("labels") if isinstance(raw_voice.get("labels"), dict) else {}
+        voices.append(
+            {
+                "voice_id": voice_id,
+                "name": name,
+                "category": str(raw_voice.get("category") or "").strip(),
+                "description": str(raw_voice.get("description") or "").strip(),
+                "labels": {str(key): str(value) for key, value in labels.items()},
+            }
+        )
+    return voices, None
+
+
+def _rank_elevenlabs_voices(voices: list[dict[str, Any]], *, prompt: str) -> list[dict[str, Any]]:
+    return sorted(
+        voices,
+        key=lambda voice: (_score_elevenlabs_voice(voice, prompt=prompt), str(voice.get("name") or "")),
+        reverse=True,
+    )
+
+
+def _score_elevenlabs_voice(voice: dict[str, Any], *, prompt: str) -> int:
+    prompt_text = f" {str(prompt or '').lower()} "
+    labels = voice.get("labels") if isinstance(voice.get("labels"), dict) else {}
+    haystack = " ".join(
+        [
+            str(voice.get("name") or ""),
+            str(voice.get("category") or ""),
+            str(voice.get("description") or ""),
+            " ".join(str(value) for value in labels.values()),
+        ]
+    ).lower()
+    score = 0
+    for token in ("natural", "warm", "clear", "friendly", "conversational", "professional"):
+        if token in haystack:
+            score += 4
+        if token in prompt_text and token in haystack:
+            score += 5
+    if any(token in prompt_text for token in ("girl", "female", "woman", "lady")):
+        score += 12 if "female" in haystack or "woman" in haystack else -12
+    if any(token in prompt_text for token in ("qa", "tester", "geek", "technical", "developer", "dev")):
+        for token in ("educational", "informative", "professional", "clear", "conversational", "young"):
+            if token in haystack:
+                score += 4
+        for token in ("child", "cartoon", "dramatic", "parrot", "monster", "villain"):
+            if token in haystack:
+                score -= 8
+    if "american" in haystack:
+        score += 2
+    if "british" in haystack and "british" not in prompt_text:
+        score -= 1
+    return score
+
+
+def _describe_elevenlabs_voice(voice: dict[str, Any]) -> str:
+    labels = voice.get("labels") if isinstance(voice.get("labels"), dict) else {}
+    parts = []
+    for key in ("gender", "age", "accent", "use_case"):
+        value = str(labels.get(key) or "").replace("_", " ").strip()
+        if value:
+            parts.append(value)
+    description = str(voice.get("description") or "").strip()
+    if description:
+        parts.append(" ".join(description.split())[:110])
+    return ", ".join(parts[:4]) or "worth auditioning"
+
+
+def _find_elevenlabs_voice(voices: list[dict[str, Any]], *, target: str) -> dict[str, Any] | None:
+    normalized_target = _normalize_voice_choice_text(target)
+    if not normalized_target:
+        return None
+    exact = [
+        voice
+        for voice in voices
+        if _normalize_voice_choice_text(str(voice.get("name") or "")) == normalized_target
+    ]
+    if exact:
+        return exact[0]
+    contains = [
+        voice
+        for voice in voices
+        if normalized_target in _normalize_voice_choice_text(str(voice.get("name") or ""))
+        or _normalize_voice_choice_text(str(voice.get("name") or "")) in normalized_target
+    ]
+    return contains[0] if contains else None
+
+
+def _normalize_voice_choice_text(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
+
+
+def _elevenlabs_voice_settings_for_style(
+    style: str,
+    *,
+    base: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    settings = {
+        "stability": 0.42,
+        "similarity_boost": 0.78,
+        "style": 0.28,
+        "speed": 1.03,
+        "use_speaker_boost": False,
+    }
+    if isinstance(base, dict):
+        for key in ("stability", "similarity_boost", "style", "speed"):
+            try:
+                settings[key] = float(base[key])
+            except (KeyError, TypeError, ValueError):
+                pass
+        if "use_speaker_boost" in base:
+            settings["use_speaker_boost"] = bool(base.get("use_speaker_boost"))
+    text = str(style or "").lower()
+    if any(token in text for token in ("warm", "soft", "gentle", "kind")):
+        settings.update({"stability": 0.38, "style": 0.34, "speed": 1.0})
+    if any(token in text for token in ("geek", "qa", "tester", "technical", "dev", "curious")):
+        settings.update({"stability": 0.4, "similarity_boost": 0.8, "style": 0.3, "speed": 1.04})
+    if any(token in text for token in ("calm", "steady", "less energetic")):
+        settings.update({"stability": 0.56, "style": 0.18, "speed": 0.98})
+    if any(token in text for token in ("bright", "playful", "alive", "expressive")):
+        settings.update({"stability": 0.34, "style": 0.42, "speed": 1.06})
+    if "faster" in text or "snappier" in text:
+        settings["speed"] = min(1.2, float(settings["speed"]) + 0.05)
+    if "slower" in text or "slower pace" in text:
+        settings["speed"] = max(0.8, float(settings["speed"]) - 0.05)
+    if "clear" in text or "crisp" in text:
+        settings["similarity_boost"] = 0.84
+        settings["style"] = min(0.3, float(settings["style"]))
+    return {key: round(value, 2) if isinstance(value, float) else value for key, value in settings.items()}
+
+
+def _format_elevenlabs_voice_settings(settings: dict[str, Any]) -> str:
+    return (
+        f"stability {settings.get('stability')}, "
+        f"similarity {settings.get('similarity_boost')}, "
+        f"style {settings.get('style')}, "
+        f"speed {settings.get('speed')}"
     )
 
 
@@ -8511,6 +9039,10 @@ def _voice_tts_provider_state_key(*, external_user_id: str) -> str:
     return f"telegram:voice_tts_provider:{external_user_id}"
 
 
+def _voice_tts_profile_state_key(*, external_user_id: str) -> str:
+    return f"telegram:voice_tts_profile:{external_user_id}"
+
+
 def _voice_tts_provider_for_user(*, state_db: StateDB, external_user_id: str) -> str | None:
     payload = _load_runtime_json_object(state_db, _voice_tts_provider_state_key(external_user_id=external_user_id))
     provider_id = _normalize_telegram_voice_provider_id(str(payload.get("provider_id") or ""))
@@ -8530,6 +9062,41 @@ def _set_voice_tts_provider_for_user(
         state_db=state_db,
         state_key=_voice_tts_provider_state_key(external_user_id=external_user_id),
         value=json.dumps({"provider_id": normalized_provider_id}, sort_keys=True),
+    )
+
+
+def _voice_tts_profile_for_user(*, state_db: StateDB, external_user_id: str) -> dict[str, Any]:
+    payload = _load_runtime_json_object(state_db, _voice_tts_profile_state_key(external_user_id=external_user_id))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _set_voice_tts_profile_for_user(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    profile: dict[str, Any],
+) -> None:
+    clean_profile: dict[str, Any] = {}
+    for key in ("provider_id", "voice_id", "voice_name", "model_id", "base_url", "output_format", "secret_env_ref"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            clean_profile[key] = value
+    settings = profile.get("voice_settings")
+    if isinstance(settings, dict):
+        clean_settings: dict[str, Any] = {}
+        for key in ("stability", "similarity_boost", "style", "speed"):
+            try:
+                clean_settings[key] = float(settings[key])
+            except (KeyError, TypeError, ValueError):
+                pass
+        if "use_speaker_boost" in settings:
+            clean_settings["use_speaker_boost"] = bool(settings.get("use_speaker_boost"))
+        if clean_settings:
+            clean_profile["voice_settings"] = clean_settings
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_tts_profile_state_key(external_user_id=external_user_id),
+        value=json.dumps(clean_profile, sort_keys=True),
     )
 
 
