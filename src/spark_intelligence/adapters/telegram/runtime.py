@@ -3163,10 +3163,7 @@ def _handle_runtime_command(
             }
         return {
             "command": "/voice speak",
-            "reply_text": (
-                f"I am sending that as a voice reply now: {speak_text}\n"
-                "Use `/voice reply on` if you want future replies in this DM to speak automatically."
-            ),
+            "reply_text": f"Sending that as a voice reply now.",
             "force_voice": True,
             "voice_text": speak_text,
             "respect_voice_reply_state": False,
