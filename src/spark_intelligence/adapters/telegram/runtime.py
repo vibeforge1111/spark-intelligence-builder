@@ -1529,6 +1529,21 @@ def simulate_telegram_update(
             reply_text=outbound_text,
             surface="telegram_chat",
         )
+        voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
+        if not simulation and voice_origin_reply and bridge_voice_media is None:
+            spoken_text = _prepare_voice_reply_text(outbound_text)
+            if spoken_text:
+                try:
+                    voice_payload = _synthesize_telegram_voice_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        text=spoken_text,
+                    )
+                    bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
+                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    bridge_voice_error = str(exc)
     else:
         trace_ref = None
         bridge_mode = None
