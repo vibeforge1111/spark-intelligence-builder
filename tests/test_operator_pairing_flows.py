@@ -5556,10 +5556,75 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Voice ID: ZWw77c-M1Wq", reply)
         self.assertIn("Effect: parrot", reply)
         self.assertIn("Source: registry", reply)
+        self.assertIn("Fingerprint:", reply)
+        self.assertIn("matches saved profile", reply)
         self.assertIn("Preflight:", reply)
         self.assertIn("ElevenLabs secret: present (ELEVENLABS_API_KEY)", reply)
         self.assertIn("ElevenLabs voice id: configured", reply)
         self.assertIn("Parrot effect: ready (ffmpeg found)", reply)
+
+    def test_voice_status_warns_when_profile_voice_drifts_from_saved_fingerprint(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        registry_path = self.home / "telegram-voice-profiles.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "profiles": {
+                        "parrotcovebird": {
+                            "provider_id": "elevenlabs",
+                            "voice_id": "ZWw77cKDlDtiE9JYM1Wq",
+                            "voice_name": "Parrot Cove Bird",
+                            "model_id": "eleven_turbo_v2_5",
+                            "voice_settings": {
+                                "stability": 0.48,
+                                "similarity_boost": 0.7,
+                                "style": 0.44,
+                                "speed": 1.06,
+                                "use_speaker_boost": False,
+                            },
+                            "audio_effect": "parrot",
+                            "voice_fingerprint": "saved-base",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
+                "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
+                "SPARK_TELEGRAM_VOICE_TTS_STYLE": "0.2",
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Voice chip is ready."}},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118011,
+                    user_id="111",
+                    username="alice",
+                    text="/voice status",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        reply = result.detail["response_text"]
+        self.assertIn("Fingerprint:", reply)
+        self.assertIn("drift from saved profile saved-base", reply)
+        self.assertIn("Drift fields: voice_settings", reply)
 
     def test_voice_status_warns_when_profile_preflight_is_missing_requirements(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6508,6 +6573,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(tts["voice_settings"]["style"], 0.85)
         self.assertEqual(tts["voice_settings"]["speed"], 1.18)
         self.assertFalse(tts["voice_settings"]["use_speaker_boost"])
+        self.assertIn("voice_profile_status", captured_payload)
+        self.assertTrue(str(result["voice_profile_fingerprint"]))
+        self.assertEqual(result["voice_profile_fingerprint_status"], "no saved registry baseline")
 
     def test_explicit_voice_tts_override_wins_over_profile_env(self) -> None:
         captured_payload: dict[str, object] = {}
@@ -6581,6 +6649,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result["mime_type"], "audio/ogg")
         self.assertEqual(result["filename"], "telegram-reply-parrot.ogg")
         self.assertEqual(result["audio_effect"], "parrot")
+        self.assertEqual(result["audio_effect_version"], "parrot-balanced-v1")
         filter_arg = run_mock.call_args.args[0][run_mock.call_args.args[0].index("-af") + 1]
         self.assertIn("asetrate=48000*1.10", filter_arg)
         self.assertIn("tremolo=f=6:d=0.035", filter_arg)

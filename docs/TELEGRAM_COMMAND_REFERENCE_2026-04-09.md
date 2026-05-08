@@ -196,6 +196,8 @@ Registry shape:
 
 `/voice` and `/voice status` append the active profile voice summary when a registry or profile env override is present. Voice IDs are masked in the status reply. Profile status also runs a read-only preflight for the selected provider and effect, for example whether the ElevenLabs secret env ref is available and whether `ffmpeg` is available for the parrot effect. This preflight never calls the TTS provider and never prints secret values.
 
+Profile status also shows a short voice fingerprint built from provider, voice id, model, voice settings, and profile-scoped audio effect. A registry profile can pin `voice_fingerprint`; if env overrides or recipe edits drift from the saved base, `/voice status` reports the drift fields before any speech generation guesswork.
+
 Current Parrot Cove Bird recipe:
 
 - ElevenLabs voice: `Parrot Cove Bird`

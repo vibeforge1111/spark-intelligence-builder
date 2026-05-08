@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import platform
@@ -104,6 +105,9 @@ from spark_intelligence.swarm_bridge import (
     swarm_status,
     sync_swarm_collective,
 )
+
+
+TELEGRAM_PARROT_EFFECT_VERSION = "parrot-balanced-v1"
 
 
 @dataclass
@@ -2531,6 +2535,11 @@ def _synthesize_telegram_voice_reply(
             resolved_tts = {**(resolved_tts or {}), **tts}
     if resolved_tts:
         payload["tts"] = resolved_tts
+    voice_profile_status: dict[str, Any] | None = None
+    voice_status_profile = _telegram_voice_status_profile()
+    if voice_status_profile:
+        voice_profile_status = _telegram_voice_profile_fingerprint_status(voice_status_profile)
+        payload["voice_profile_status"] = voice_profile_status
     synthesis_started = perf_counter()
     execution = run_first_chip_hook_supporting(
         config_manager,
@@ -2571,6 +2580,11 @@ def _synthesize_telegram_voice_reply(
         "spoken_text": text,
         "synthesis_ms": synthesis_ms,
     }
+    profile_status = voice_profile_status
+    if isinstance(profile_status, dict):
+        payload["voice_profile_fingerprint"] = profile_status.get("fingerprint")
+        payload["voice_profile_fingerprint_status"] = profile_status.get("status")
+        payload["voice_profile_fingerprint_fields"] = profile_status.get("fields")
     payload = _apply_telegram_voice_effect_from_env(payload)
     return _convert_voice_payload_for_telegram_if_available(payload)
 
@@ -2725,6 +2739,7 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                 "filename": f"{stem}-parrot.ogg",
                 "voice_compatible": True,
                 "audio_effect": "parrot",
+                "audio_effect_version": TELEGRAM_PARROT_EFFECT_VERSION,
             }
     except Exception:
         return payload
@@ -2833,6 +2848,8 @@ def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "voice_id": payload.get("voice_id"),
         "spoken_text": str(payload.get("spoken_text") or ""),
         "synthesis_ms": payload.get("synthesis_ms"),
+        "voice_profile_fingerprint": payload.get("voice_profile_fingerprint"),
+        "voice_profile_fingerprint_status": payload.get("voice_profile_fingerprint_status"),
     }
 
 
@@ -5948,6 +5965,12 @@ def _append_telegram_voice_profile_status(reply_text: str, *, config_manager: Co
     source = str(profile.get("source") or "").strip()
     if source:
         lines.append(f"- Source: {source}")
+    fingerprint_status = _telegram_voice_profile_fingerprint_status(profile)
+    if fingerprint_status:
+        lines.append(f"- Fingerprint: {fingerprint_status['fingerprint']} ({fingerprint_status['status']})")
+        drift_fields = fingerprint_status.get("drift_fields")
+        if drift_fields:
+            lines.append(f"- Drift fields: {', '.join(drift_fields)}")
     preflight = _telegram_voice_profile_preflight(profile=profile, config_manager=config_manager)
     if preflight:
         lines.append("")
@@ -6006,6 +6029,56 @@ def _telegram_voice_status_profile() -> dict[str, Any]:
         "audio_effect": effect,
         "source": "+".join(source_parts) if source_parts else "default",
     }
+
+
+def _telegram_voice_profile_fingerprint_status(profile: dict[str, Any]) -> dict[str, Any]:
+    fields = _telegram_voice_profile_fingerprint_fields(profile)
+    fingerprint = _telegram_voice_profile_fingerprint(fields)
+    registry_profile = _telegram_voice_registry_profile()
+    if not registry_profile:
+        return {
+            "fingerprint": fingerprint,
+            "status": "no saved registry baseline",
+            "fields": fields,
+            "baseline_fingerprint": None,
+            "drift_fields": [],
+        }
+    baseline_fields = _telegram_voice_profile_fingerprint_fields(registry_profile)
+    baseline_fingerprint = _telegram_voice_profile_fingerprint(baseline_fields)
+    expected_fingerprint = str(registry_profile.get("voice_fingerprint") or baseline_fingerprint).strip()
+    drift_fields = [
+        key
+        for key in ("provider_id", "voice_id", "model_id", "voice_settings", "audio_effect", "audio_effect_version")
+        if fields.get(key) != baseline_fields.get(key)
+    ]
+    if fingerprint != expected_fingerprint and not drift_fields:
+        drift_fields = ["voice_fingerprint"]
+    return {
+        "fingerprint": fingerprint,
+        "status": "matches saved profile" if fingerprint == expected_fingerprint else f"drift from saved profile {expected_fingerprint}",
+        "fields": fields,
+        "baseline_fingerprint": expected_fingerprint,
+        "drift_fields": drift_fields,
+    }
+
+
+def _telegram_voice_profile_fingerprint_fields(profile: dict[str, Any]) -> dict[str, Any]:
+    effect = str(profile.get("audio_effect") or "").strip().lower()
+    settings = profile.get("voice_settings") if isinstance(profile.get("voice_settings"), dict) else {}
+    normalized_settings = {str(key): settings[key] for key in sorted(settings)}
+    return {
+        "provider_id": str(profile.get("provider_id") or "").strip().lower(),
+        "voice_id": str(profile.get("voice_id") or "").strip(),
+        "model_id": str(profile.get("model_id") or "").strip(),
+        "voice_settings": normalized_settings,
+        "audio_effect": effect,
+        "audio_effect_version": TELEGRAM_PARROT_EFFECT_VERSION if effect == "parrot" else "",
+    }
+
+
+def _telegram_voice_profile_fingerprint(fields: dict[str, Any]) -> str:
+    payload = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def _telegram_voice_profile_preflight(
