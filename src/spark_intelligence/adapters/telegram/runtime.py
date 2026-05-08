@@ -2663,12 +2663,13 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                     str(input_path),
                     "-af",
                     (
-                        "asetrate=48000*1.16,aresample=48000,atempo=0.96,"
-                        "highpass=f=360,lowpass=f=7600,"
-                        "equalizer=f=2600:t=q:w=1:g=2.5,"
-                        "equalizer=f=4300:t=q:w=1:g=3.5,"
-                        "tremolo=f=7:d=0.07,"
-                        "acompressor=threshold=-18dB:ratio=1.8:attack=5:release=80"
+                        "asetrate=48000*1.10,aresample=48000,atempo=0.99,"
+                        "highpass=f=320,lowpass=f=7000,"
+                        "equalizer=f=1800:t=q:w=1:g=1.2,"
+                        "equalizer=f=3600:t=q:w=1:g=2.0,"
+                        "equalizer=f=5600:t=q:w=1:g=0.6,"
+                        "tremolo=f=6:d=0.035,"
+                        "acompressor=threshold=-18dB:ratio=1.45:attack=6:release=95"
                     ),
                     "-c:a",
                     "libopus",

@@ -6447,8 +6447,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result["filename"], "telegram-reply-parrot.ogg")
         self.assertEqual(result["audio_effect"], "parrot")
         filter_arg = run_mock.call_args.args[0][run_mock.call_args.args[0].index("-af") + 1]
-        self.assertIn("asetrate=48000*1.16", filter_arg)
-        self.assertIn("tremolo=f=7:d=0.07", filter_arg)
+        self.assertIn("asetrate=48000*1.10", filter_arg)
+        self.assertIn("tremolo=f=6:d=0.035", filter_arg)
 
     def test_voice_reply_on_sends_runtime_command_as_audio(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
