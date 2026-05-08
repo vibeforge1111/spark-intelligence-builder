@@ -5858,6 +5858,54 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Sending that as a voice reply now", result.detail["response_text"])
 
+    def test_live_bridge_voice_speak_returns_media_payload(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            self.assertEqual(payload["text"], "Hello from bridge.")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-wav").decode("ascii"),
+                        "mime_type": "audio/wav",
+                        "filename": "telegram-reply.wav",
+                        "voice_compatible": False,
+                        "provider_id": "kokoro",
+                        "voice_id": "af_sarah",
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11818,
+                    user_id="111",
+                    username="alice",
+                    text="/voice speak Hello from bridge",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        voice_media = result.detail["voice_media"]
+        self.assertEqual(voice_media["audio_base64"], base64.b64encode(b"fake-wav").decode("ascii"))
+        self.assertEqual(voice_media["mime_type"], "audio/wav")
+        self.assertEqual(voice_media["filename"], "telegram-reply.wav")
+        self.assertFalse(voice_media["voice_compatible"])
+        self.assertEqual(voice_media["provider_id"], "kokoro")
+
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
 

@@ -1019,6 +1019,8 @@ def simulate_telegram_update(
     delivery_primary_route: dict[str, str] = {}
     effective_text = normalized.text
     transcript_text = None
+    bridge_voice_media: dict[str, Any] | None = None
+    bridge_voice_error: str | None = None
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -1076,6 +1078,24 @@ def simulate_telegram_update(
             active_chip_task_type = None
             active_chip_evaluate_used = False
             evidence_summary = None
+            if not simulation and bool(command_result.get("force_voice", False)):
+                spoken_source = str(command_result.get("voice_text") or outbound_text)
+                spoken_text = _prepare_voice_reply_text(spoken_source)
+                try:
+                    voice_payload = _synthesize_telegram_voice_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        text=spoken_text,
+                    )
+                    bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
+                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    bridge_voice_error = str(exc)
+                    outbound_text = (
+                        "I tried to make that voice reply, but the audio step failed.\n\n"
+                        "Run `/voice onboard local`, then try `/voice speak ...` again."
+                    )
         else:
             # P2-13: enter the v2 onboarding state machine whenever the
             # pairing welcome is still pending (fresh pair, existing
@@ -1548,6 +1568,10 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    if bridge_voice_media is not None:
+        detail["voice_media"] = bridge_voice_media
+    if bridge_voice_error:
+        detail["voice_error"] = bridge_voice_error
     if resolution.allowed:
         append_gateway_trace(
             config_manager,
@@ -2422,6 +2446,17 @@ def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool
     if mime_type in {"audio/ogg", "audio/opus"}:
         return True
     return filename.endswith(".ogg") or filename.endswith(".opus")
+
+
+def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "audio_base64": base64.b64encode(payload["audio_bytes"]).decode("ascii"),
+        "mime_type": str(payload.get("mime_type") or "audio/mpeg"),
+        "filename": str(payload.get("filename") or "telegram-reply.audio"),
+        "voice_compatible": _telegram_voice_payload_is_voice_compatible(payload),
+        "provider_id": payload.get("provider_id"),
+        "voice_id": payload.get("voice_id"),
+    }
 
 
 def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
