@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import platform
 import re
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
 from uuid import uuid4
@@ -63,7 +69,12 @@ from spark_intelligence.researcher_bridge.advisory import (
     record_researcher_bridge_result,
     try_spark_character_fallback,
 )
-from spark_intelligence.self_awareness import build_self_awareness_capsule
+from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
+    build_self_awareness_capsule,
+    load_capability_ledger,
+    run_route_probe_and_record,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -310,12 +321,12 @@ def _maybe_save_reply_as_draft(
 
     try:
         from pathlib import Path as _P
-        from datetime import datetime as _dt
         _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
         _dbg.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with _dbg.open("a", encoding="utf-8") as _fh:
             _fh.write(
-                f"{_dt.utcnow().isoformat()}Z user={user} iter={is_iteration} "
+                f"{timestamp}Z user={user} iter={is_iteration} "
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
     except Exception:
@@ -770,11 +781,25 @@ def _build_voice_chip_payload(
         "human_id": human_id,
         "agent_id": agent_id,
         "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+        "advisor_context": {
+            "runtime": {
+                "os": platform.system() or "unknown",
+                "machine": platform.machine() or "unknown",
+            },
+            "preferences": [],
+            "source_ledger": [
+                {
+                    "source": "builder_runtime",
+                    "role": "system_context",
+                    "claim_boundary": "Runtime facts can inform setup recommendations but cannot prove provider voice readiness.",
+                }
+            ],
+        },
     }
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
         secret_ref = getattr(provider, "secret_ref", None)
-        payload["provider"] = {
+        provider_payload = {
             "provider_id": provider.provider_id,
             "provider_kind": provider.provider_kind,
             "auth_method": provider.auth_method,
@@ -786,6 +811,19 @@ def _build_voice_chip_payload(
                 getattr(secret_ref, "ref_id", None) if secret_ref and getattr(secret_ref, "source", "") == "env" else None
             ),
         }
+        payload["provider"] = provider_payload
+        payload["advisor_context"]["active_provider"] = {
+            key: value
+            for key, value in provider_payload.items()
+            if key in {"provider_id", "provider_kind", "api_mode", "execution_transport", "base_url", "default_model"}
+        }
+        payload["advisor_context"]["source_ledger"].append(
+            {
+                "source": "builder_runtime_provider",
+                "role": "provider_context",
+                "claim_boundary": "Provider identity can guide recommendations; dedicated STT/TTS probes decide readiness.",
+            }
+        )
     except Exception as exc:
         payload["provider_error"] = str(exc)
     if normalized is not None:
@@ -803,6 +841,77 @@ def _build_voice_chip_payload(
     return payload
 
 
+def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None:
+    encoded = str(getattr(normalized, "media_audio_base64", "") or "").strip()
+    if not encoded:
+        return None
+    try:
+        audio_bytes = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise RuntimeError("Telegram runner provided invalid embedded audio bytes.") from exc
+    if not audio_bytes:
+        raise RuntimeError("Telegram runner provided empty embedded audio bytes.")
+    filename = str(getattr(normalized, "media_filename", "") or "").strip()
+    return audio_bytes, filename
+
+
+def _transcribe_telegram_audio_bytes(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    normalized: Any,
+    audio_bytes: bytes,
+    file_path: str,
+) -> dict[str, Any]:
+    transcribe_started = perf_counter()
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.transcribe",
+        payload=_build_voice_chip_payload(
+            config_manager=config_manager,
+            state_db=state_db,
+            normalized=normalized,
+            audio_bytes=audio_bytes,
+            file_path=file_path,
+        ),
+    )
+    transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
+    if execution is None:
+        raise RuntimeError(
+            "No attached chip supports `voice.transcribe`. Attach and activate `spark-voice-comms` first."
+        )
+    result = execution.output.get("result") if isinstance(execution.output, dict) else None
+    if not execution.ok:
+        error_text = ""
+        if isinstance(result, dict):
+            error_text = str(result.get("error") or result.get("reply_text") or "").strip()
+        if not error_text and isinstance(execution.output, dict):
+            error_text = str(execution.output.get("error") or "").strip()
+        if not error_text:
+            error_text = str(execution.stderr or execution.stdout or "").strip()
+        raise RuntimeError(error_text or f"Voice chip '{execution.chip_key}' could not transcribe the message.")
+    transcript_text = str((result or {}).get("transcript_text") or "").strip()
+    if not transcript_text:
+        raise RuntimeError("The voice chip returned no transcript text.")
+    effective_text = transcript_text
+    if normalized.caption_text:
+        effective_text = f"{normalized.caption_text}\n\nVoice transcript: {transcript_text}"
+    return {
+        "effective_text": effective_text,
+        "transcript_text": transcript_text,
+        "routing_decision": "voice_transcribed",
+        "reply_text": None,
+        "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
+        "provider_model": str((result or {}).get("model") or "").strip() or None,
+        "provider_mode": str((result or {}).get("mode") or "").strip() or None,
+        "voice_timing": {
+            "transcribe_hook_ms": transcribe_ms,
+            "audio_bytes": len(audio_bytes),
+            "audio_source": str(getattr(normalized, "media_source", "") or "telegram_client"),
+        },
+    }
+
+
 def _prepare_telegram_media_input(
     *,
     config_manager: ConfigManager,
@@ -815,6 +924,25 @@ def _prepare_telegram_media_input(
             "effective_text": normalized.text,
             "transcript_text": None,
             "routing_decision": None,
+        }
+    try:
+        embedded_audio = _decode_embedded_telegram_audio(normalized)
+        if embedded_audio is not None:
+            audio_bytes, file_path = embedded_audio
+            return _transcribe_telegram_audio_bytes(
+                config_manager=config_manager,
+                state_db=state_db,
+                normalized=normalized,
+                audio_bytes=audio_bytes,
+                file_path=file_path,
+            )
+    except Exception as exc:
+        return {
+            "effective_text": None,
+            "transcript_text": None,
+            "routing_decision": "voice_transcription_unavailable",
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
+            "error": str(exc),
         }
     media_client = client or _resolve_telegram_client(config_manager)
     if media_client is None:
@@ -841,46 +969,13 @@ def _prepare_telegram_media_input(
         if not file_path:
             raise RuntimeError("Telegram did not return a file path for the media payload.")
         audio_bytes = media_client.download_file(file_path=file_path)
-        execution = run_first_chip_hook_supporting(
-            config_manager,
-            hook="voice.transcribe",
-            payload=_build_voice_chip_payload(
-                config_manager=config_manager,
-                state_db=state_db,
-                normalized=normalized,
-                audio_bytes=audio_bytes,
-                file_path=file_path,
-            ),
+        return _transcribe_telegram_audio_bytes(
+            config_manager=config_manager,
+            state_db=state_db,
+            normalized=normalized,
+            audio_bytes=audio_bytes,
+            file_path=file_path,
         )
-        if execution is None:
-            raise RuntimeError(
-                "No attached chip supports `voice.transcribe`. Attach and activate `domain-chip-voice-comms` first."
-            )
-        result = execution.output.get("result") if isinstance(execution.output, dict) else None
-        if not execution.ok:
-            error_text = ""
-            if isinstance(result, dict):
-                error_text = str(result.get("error") or result.get("reply_text") or "").strip()
-            if not error_text and isinstance(execution.output, dict):
-                error_text = str(execution.output.get("error") or "").strip()
-            if not error_text:
-                error_text = str(execution.stderr or execution.stdout or "").strip()
-            raise RuntimeError(error_text or f"Voice chip '{execution.chip_key}' could not transcribe the message.")
-        transcript_text = str((result or {}).get("transcript_text") or "").strip()
-        if not transcript_text:
-            raise RuntimeError("The voice chip returned no transcript text.")
-        effective_text = transcript_text
-        if normalized.caption_text:
-            effective_text = f"{normalized.caption_text}\n\nVoice transcript: {transcript_text}"
-        return {
-            "effective_text": effective_text,
-            "transcript_text": transcript_text,
-            "routing_decision": "voice_transcribed",
-            "reply_text": None,
-            "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
-            "provider_model": str((result or {}).get("model") or "").strip() or None,
-            "provider_mode": str((result or {}).get("mode") or "").strip() or None,
-        }
     except Exception as exc:
         return {
             "effective_text": None,
@@ -964,6 +1059,11 @@ def simulate_telegram_update(
     delivery_primary_route: dict[str, str] = {}
     effective_text = normalized.text
     transcript_text = None
+    bridge_voice_media: dict[str, Any] | None = None
+    bridge_voice_error: str | None = None
+    respect_voice_reply_state_for_bridge = True
+    voice_answer_requested_for_bridge = False
+    media_input: dict[str, Any] = {}
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -988,9 +1088,14 @@ def simulate_telegram_update(
             active_chip_task_type = None
             active_chip_evaluate_used = False
             evidence_summary = None
+            respect_voice_reply_state_for_bridge = False
         else:
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
+        voice_answer_request = _extract_voice_answer_request(effective_text)
+        if voice_answer_request:
+            effective_text = voice_answer_request
+            voice_answer_requested_for_bridge = True
         command_result = _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -1021,6 +1126,31 @@ def simulate_telegram_update(
             active_chip_task_type = None
             active_chip_evaluate_used = False
             evidence_summary = None
+            respect_voice_reply_state_for_bridge = bool(command_result.get("respect_voice_reply_state", True))
+            if not simulation and bool(command_result.get("force_voice", False)):
+                spoken_source = str(command_result.get("voice_text") or outbound_text)
+                spoken_text = _prepare_voice_reply_text(spoken_source)
+                try:
+                    voice_payload = _synthesize_telegram_voice_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        external_user_id=normalized.telegram_user_id,
+                        text=spoken_text,
+                        tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
+                    )
+                    bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
+                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    bridge_voice_error = str(exc)
+                    outbound_text = (
+                        "I answered in text because the voice audio step is not ready yet.\n\n"
+                        f"Reason: {_safe_voice_error_message(exc)}"
+                    )
+                    outbound_text = (
+                        "I tried to make that voice reply, but the audio step failed.\n\n"
+                        "Run `/voice onboard local`, then try `/voice speak ...` again."
+                    )
         else:
             # P2-13: enter the v2 onboarding state machine whenever the
             # pairing welcome is still pending (fresh pair, existing
@@ -1323,6 +1453,7 @@ def simulate_telegram_update(
                     and _instruction_intent is None
                     and _generic_memory_observation is None
                     and not _mission_control_query
+                    and not voice_answer_requested_for_bridge
                     and effective_text
                 ):
                     try:
@@ -1451,6 +1582,37 @@ def simulate_telegram_update(
             reply_text=outbound_text,
             surface="telegram_chat",
         )
+        voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
+        voice_reply_state_enabled = _voice_reply_enabled_for_user(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+        )
+        voice_bridge_requested = (
+            voice_origin_reply
+            or voice_answer_requested_for_bridge
+            or (respect_voice_reply_state_for_bridge and voice_reply_state_enabled)
+        )
+        if not simulation and voice_bridge_requested:
+            outbound_text = _repair_voice_delivery_denial(outbound_text, voice_available=True)
+        if not simulation and voice_bridge_requested and bridge_voice_media is None:
+            spoken_text = _prepare_voice_reply_text(outbound_text)
+            if spoken_text:
+                try:
+                    voice_payload = _synthesize_telegram_voice_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        external_user_id=normalized.telegram_user_id,
+                        text=spoken_text,
+                    )
+                    bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
+                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    bridge_voice_error = str(exc)
+                    outbound_text = (
+                        "I answered in text because the voice audio step is not ready yet.\n\n"
+                        f"Reason: {_safe_voice_error_message(exc)}"
+                    )
     else:
         trace_ref = None
         bridge_mode = None
@@ -1470,6 +1632,11 @@ def simulate_telegram_update(
         trace_ref=trace_ref,
         session_id=resolution.session_id,
     )
+    if bridge_voice_media is not None:
+        voice_caption_text = _strip_delivery_chunk_markers(sanitized_outbound_text)
+        if voice_caption_text != sanitized_outbound_text:
+            sanitized_outbound_text = voice_caption_text
+            _outbound_actions = ["strip_voice_caption_chunk_markers", *_outbound_actions]
     detail = {
         "request_id": request_id,
         "simulation": simulation,
@@ -1493,6 +1660,20 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    voice_timing = (
+        dict(media_input.get("voice_timing"))
+        if isinstance(media_input, dict) and isinstance(media_input.get("voice_timing"), dict)
+        else {}
+    )
+    if bridge_voice_media is not None:
+        detail["voice_media"] = bridge_voice_media
+        synthesis_ms = bridge_voice_media.get("synthesis_ms")
+        if synthesis_ms is not None:
+            voice_timing["synthesis_ms"] = synthesis_ms
+    if bridge_voice_error:
+        detail["voice_error"] = bridge_voice_error
+    if voice_timing:
+        detail["voice_timing"] = voice_timing
     if resolution.allowed:
         append_gateway_trace(
             config_manager,
@@ -1868,6 +2049,11 @@ def poll_telegram_updates_once(
         effective_text = str(media_input.get("effective_text") or normalized.text)
         transcript_text = media_input.get("transcript_text")
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
+        voice_answer_requested_for_bridge = False
+        voice_answer_request = _extract_voice_answer_request(effective_text)
+        if voice_answer_request:
+            effective_text = voice_answer_request
+            voice_answer_requested_for_bridge = True
 
         command_result = _handle_runtime_command(
             config_manager=config_manager,
@@ -1927,16 +2113,16 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
-                human_id=resolution.human_id,
-                agent_id=resolution.agent_id,
-                force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply,
-                voice_text=(
-                    str(command_result.get("voice_text")).strip()
-                    if command_result.get("voice_text") is not None
-                    else (outbound_text if voice_origin_reply else None)
-                ),
-                respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
-                user_message=effective_text,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
+            voice_text=(
+                str(command_result.get("voice_text")).strip()
+                if command_result.get("voice_text") is not None
+                else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
+            ),
+            respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
+            user_message=effective_text,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -2202,8 +2388,8 @@ def poll_telegram_updates_once(
             promotion_disposition=bridge_result.promotion_disposition,
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
-            force_voice=voice_origin_reply,
-            voice_text=outbound_text if voice_origin_reply else None,
+            force_voice=voice_origin_reply or voice_answer_requested_for_bridge,
+            voice_text=outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None,
             user_message=effective_text,
         )
         processed_count += 1
@@ -2312,22 +2498,40 @@ def _synthesize_telegram_voice_reply(
     text: str,
     human_id: str | None,
     agent_id: str | None,
+    external_user_id: str | None = None,
+    tts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload = {
+        **_build_voice_chip_payload(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        ),
+        "text": text,
+    }
+    resolved_tts = _telegram_voice_tts_override_from_env()
+    if external_user_id:
+        resolved_tts = _merge_telegram_tts_overrides(
+            resolved_tts,
+            _telegram_voice_tts_override_for_user_from_state(
+                state_db=state_db,
+                external_user_id=external_user_id,
+            ),
+        )
+    if tts:
+        resolved_tts = _merge_telegram_tts_overrides(resolved_tts, tts)
+    if resolved_tts:
+        payload["tts"] = resolved_tts
+    synthesis_started = perf_counter()
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.speak",
-        payload={
-            **_build_voice_chip_payload(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                agent_id=agent_id,
-            ),
-            "text": text,
-        },
+        payload=payload,
     )
+    synthesis_ms = int((perf_counter() - synthesis_started) * 1000)
     if execution is None:
-        raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `domain-chip-voice-comms` first.")
+        raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `spark-voice-comms` first.")
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     if not execution.ok:
         reason = ""
@@ -2342,7 +2546,7 @@ def _synthesize_telegram_voice_reply(
     if not audio_base64:
         raise RuntimeError("The voice chip returned no audio payload.")
     mime_type = str((result or {}).get("mime_type") or "audio/mpeg").strip() or "audio/mpeg"
-    return {
+    payload = {
         "audio_bytes": base64.b64decode(audio_base64),
         "mime_type": mime_type,
         "filename": str((result or {}).get("filename") or "").strip()
@@ -2356,7 +2560,346 @@ def _synthesize_telegram_voice_reply(
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
         "voice_compatible": bool((result or {}).get("voice_compatible")),
+        "spoken_text": text,
+        "synthesis_ms": synthesis_ms,
     }
+    payload = _apply_telegram_voice_effect_from_env(payload)
+    return _convert_voice_payload_for_telegram_if_available(payload)
+
+
+def _merge_telegram_tts_overrides(
+    base: dict[str, Any] | None,
+    override: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not override:
+        return base
+    if not base:
+        return dict(override)
+    base_provider_id = str(base.get("provider_id") or "").strip().lower()
+    override_provider_id = str(override.get("provider_id") or "").strip().lower()
+    if base_provider_id and override_provider_id and base_provider_id != override_provider_id:
+        return dict(override)
+    return {**base, **override}
+
+
+def _first_nonempty_env(*names: str) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _telegram_voice_profile_registry_path() -> Path:
+    configured = str(os.environ.get("SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    home = Path(str(os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~")).expanduser()
+    return home / ".spark" / "config" / "telegram-voice-profiles.json"
+
+
+def _telegram_voice_registry_profile() -> dict[str, Any]:
+    registry_path = _telegram_voice_profile_registry_path()
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    profiles = payload.get("profiles") if isinstance(payload, dict) else None
+    if not isinstance(profiles, dict):
+        return {}
+    profile_key = str(os.environ.get("SPARK_TELEGRAM_PROFILE") or "default").strip() or "default"
+    profile = profiles.get(profile_key)
+    if not isinstance(profile, dict) and profile_key != "default":
+        profile = profiles.get("default")
+    if not isinstance(profile, dict):
+        return {}
+    return {str(key): value for key, value in profile.items()}
+
+
+def _telegram_voice_tts_override_from_env() -> dict[str, Any] | None:
+    registry_profile = _telegram_voice_registry_profile()
+    provider_id = _normalize_telegram_voice_provider_id(
+        _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_PROVIDER", "SPARK_TELEGRAM_TTS_PROVIDER")
+        or str(registry_profile.get("provider_id") or "").strip()
+    )
+    if provider_id == "elevenlabs":
+        voice_id = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_ID",
+        )
+        voice_name = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
+            "VOICE_TTS_ELEVENLABS_VOICE_NAME",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME",
+        )
+        model_id = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID",
+        )
+        base_url = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_BASE_URL",
+            "VOICE_TTS_ELEVENLABS_BASE_URL",
+            "SPARK_TELEGRAM_VOICE_TTS_BASE_URL",
+        )
+        output_format = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_OUTPUT_FORMAT", "SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT")
+        secret_env_ref = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_SECRET_ENV_REF",
+            "VOICE_TTS_ELEVENLABS_SECRET_ENV_REF",
+        ) or "ELEVENLABS_API_KEY"
+    else:
+        voice_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_ID", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID")
+        voice_name = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME")
+        model_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_MODEL_ID", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID")
+        base_url = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_BASE_URL", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_BASE_URL")
+        output_format = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT")
+        secret_env_ref = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF")
+    tts: dict[str, Any] = {}
+    for output_key, registry_key, env_value in (
+        ("provider_id", "provider_id", provider_id),
+        ("voice_id", "voice_id", voice_id),
+        ("voice_name", "voice_name", voice_name),
+        ("model_id", "model_id", model_id),
+        ("base_url", "base_url", base_url),
+        ("output_format", "output_format", output_format),
+        ("secret_env_ref", "secret_env_ref", secret_env_ref),
+    ):
+        value = env_value or str(registry_profile.get(registry_key) or "").strip()
+        if value:
+            tts[output_key] = value
+    voice_settings = _telegram_voice_settings_override_from_env()
+    if not voice_settings:
+        registry_settings = registry_profile.get("voice_settings")
+        if isinstance(registry_settings, dict):
+            voice_settings = dict(registry_settings)
+    if voice_settings:
+        tts["voice_settings"] = voice_settings
+    return tts or None
+
+
+def _telegram_voice_tts_override_for_user_from_state(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+) -> dict[str, Any] | None:
+    provider_id = _voice_tts_provider_for_user(state_db=state_db, external_user_id=external_user_id)
+    if not provider_id:
+        return None
+    tts: dict[str, Any] = {"provider_id": provider_id}
+    if provider_id == "elevenlabs":
+        secret_env_ref = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_SECRET_ENV_REF",
+            "VOICE_TTS_ELEVENLABS_SECRET_ENV_REF",
+        ) or "ELEVENLABS_API_KEY"
+        voice_id = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "VOICE_TTS_ELEVENLABS_VOICE_ID",
+        )
+        voice_name = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
+            "VOICE_TTS_ELEVENLABS_VOICE_NAME",
+        )
+        model_id = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "VOICE_TTS_ELEVENLABS_MODEL_ID",
+        )
+        tts["secret_env_ref"] = secret_env_ref
+        if voice_id:
+            tts["voice_id"] = voice_id
+        if voice_name:
+            tts["voice_name"] = voice_name
+        if model_id:
+            tts["model_id"] = model_id
+    if provider_id == "openai-realtime":
+        voice_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_ID", "VOICE_TTS_OPENAI_REALTIME_VOICE")
+        model_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_MODEL_ID", "VOICE_TTS_OPENAI_REALTIME_MODEL_ID")
+        secret_env_ref = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF",
+            "VOICE_TTS_OPENAI_REALTIME_SECRET_ENV_REF",
+        )
+        if voice_id:
+            tts["voice_id"] = voice_id
+        if model_id:
+            tts["model_id"] = model_id
+        if secret_env_ref:
+            tts["secret_env_ref"] = secret_env_ref
+    return tts
+
+
+def _telegram_voice_provider_readiness(provider_id: str) -> dict[str, Any]:
+    normalized_provider_id = _normalize_telegram_voice_provider_id(provider_id) or provider_id
+    if normalized_provider_id == "elevenlabs":
+        missing: list[str] = []
+        if not _first_nonempty_env("ELEVENLABS_API_KEY"):
+            missing.append("ELEVENLABS_API_KEY")
+        if not _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "VOICE_TTS_ELEVENLABS_VOICE_ID",
+        ):
+            missing.append("VOICE_TTS_ELEVENLABS_VOICE_ID")
+        return {"ready": not missing, "missing": missing}
+    if normalized_provider_id == "openai-realtime":
+        missing = []
+        secret_ref = _first_nonempty_env(
+            "SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF",
+            "VOICE_TTS_OPENAI_REALTIME_SECRET_ENV_REF",
+        ) or "OPENAI_API_KEY"
+        if not _first_nonempty_env(secret_ref):
+            missing.append(secret_ref)
+        return {"ready": not missing, "missing": missing}
+    if normalized_provider_id == "kokoro":
+        missing = []
+        if not _first_nonempty_env("VOICE_TTS_KOKORO_MODEL_PATH"):
+            missing.append("VOICE_TTS_KOKORO_MODEL_PATH")
+        if not _first_nonempty_env("VOICE_TTS_KOKORO_VOICES_PATH"):
+            missing.append("VOICE_TTS_KOKORO_VOICES_PATH")
+        return {"ready": not missing, "missing": missing}
+    return {"ready": True, "missing": []}
+
+
+def _format_voice_readiness_note(provider_id: str) -> str:
+    readiness = _telegram_voice_provider_readiness(provider_id)
+    if readiness.get("ready"):
+        return "I can see the local config references for this provider. The first voice test will verify the provider accepts them."
+    missing = ", ".join(str(item) for item in readiness.get("missing") or [])
+    return f"I saved the preference, but this provider is not ready yet. Missing local config: {missing}."
+
+
+def _safe_voice_error_message(error: Exception) -> str:
+    message = " ".join(str(error or "").strip().split())
+    if not message:
+        return "the voice provider did not return audio."
+    message = re.sub(
+        r"(?i)\b(api[_-]?key|token|secret|authorization)\b\s*[:=]\s*[^,\n ]+",
+        r"\1=***",
+        message,
+    )
+    message = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", message)
+    return message[:220]
+
+
+def _telegram_voice_settings_override_from_env() -> dict[str, Any] | None:
+    settings: dict[str, Any] = {}
+    for key, env_name in {
+        "stability": "SPARK_TELEGRAM_VOICE_TTS_STABILITY",
+        "similarity_boost": "SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST",
+        "style": "SPARK_TELEGRAM_VOICE_TTS_STYLE",
+        "speed": "SPARK_TELEGRAM_VOICE_TTS_SPEED",
+    }.items():
+        value = _optional_float_env(env_name)
+        if value is not None:
+            settings[key] = value
+    speaker_boost = _optional_bool_env("SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST")
+    if speaker_boost is not None:
+        settings["use_speaker_boost"] = speaker_boost
+    return settings or None
+
+
+def _telegram_voice_effect_from_env() -> str:
+    effect = str(os.environ.get("SPARK_TELEGRAM_VOICE_AUDIO_EFFECT") or "").strip().lower()
+    if not effect:
+        effect = str(_telegram_voice_registry_profile().get("audio_effect") or "").strip().lower()
+    return effect if effect in {"parrot"} else ""
+
+
+def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, Any]:
+    effect = _telegram_voice_effect_from_env()
+    if effect != "parrot":
+        return payload
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return payload
+    audio_bytes = bytes(payload.get("audio_bytes") or b"")
+    if not audio_bytes:
+        return payload
+    filename = str(payload.get("filename") or "telegram-reply.audio").strip() or "telegram-reply.audio"
+    input_suffix = Path(filename).suffix or ".ogg"
+    try:
+        with tempfile.TemporaryDirectory(prefix="spark-voice-effect-") as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / f"input{input_suffix}"
+            output_path = temp_path / "parrot.ogg"
+            input_path.write_bytes(audio_bytes)
+            subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(input_path),
+                    "-af",
+                    (
+                        "asetrate=48000*1.10,aresample=48000,atempo=0.99,"
+                        "highpass=f=320,lowpass=f=7000,"
+                        "equalizer=f=1800:t=q:w=1:g=1.2,"
+                        "equalizer=f=3600:t=q:w=1:g=2.0,"
+                        "equalizer=f=5600:t=q:w=1:g=0.6,"
+                        "tremolo=f=6:d=0.035,"
+                        "acompressor=threshold=-18dB:ratio=1.45:attack=6:release=95"
+                    ),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "64k",
+                    "-vbr",
+                    "on",
+                    "-application",
+                    "voip",
+                    str(output_path),
+                ],
+                check=True,
+            )
+            processed = output_path.read_bytes()
+            if not processed:
+                return payload
+            stem = Path(filename).stem or "telegram-reply"
+            return {
+                **payload,
+                "audio_bytes": processed,
+                "mime_type": "audio/ogg",
+                "filename": f"{stem}-parrot.ogg",
+                "voice_compatible": True,
+                "audio_effect": "parrot",
+            }
+    except Exception:
+        return payload
+
+
+def _optional_float_env(name: str) -> float | None:
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _optional_bool_env(name: str) -> bool | None:
+    value = str(os.environ.get(name) or "").strip().lower()
+    if not value:
+        return None
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _voice_tts_override_from_text(text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    if not normalized:
+        return None
+    if re.search(r"\b(?:kokoro|kokoro[-\s]*onnx|local[-\s]*kokoro)\b", normalized):
+        return {"provider_id": "kokoro"}
+    if re.search(r"\b(?:gpt[-\s]*realtime[-\s]*2|openai[-\s]*realtime|realtime[-\s]*2)\b", normalized):
+        return {"provider_id": "openai-realtime"}
+    if re.search(r"\beleven\s*labs\b|\belevenlabs\b", normalized):
+        return {"provider_id": "elevenlabs"}
+    return None
 
 
 def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool:
@@ -2367,6 +2910,68 @@ def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool
     if mime_type in {"audio/ogg", "audio/opus"}:
         return True
     return filename.endswith(".ogg") or filename.endswith(".opus")
+
+
+def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) -> dict[str, Any]:
+    if _telegram_voice_payload_is_voice_compatible(payload):
+        return payload
+    mime_type = str(payload.get("mime_type") or "").strip().lower()
+    filename = str(payload.get("filename") or "").strip()
+    if mime_type not in {"audio/wav", "audio/x-wav"} and not filename.lower().endswith(".wav"):
+        return payload
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return payload
+    try:
+        with tempfile.TemporaryDirectory(prefix="spark-voice-") as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "input.wav"
+            output_path = temp_path / "output.ogg"
+            input_path.write_bytes(bytes(payload["audio_bytes"]))
+            subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(input_path),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "64k",
+                    "-vbr",
+                    "on",
+                    "-application",
+                    "voip",
+                    str(output_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            converted = dict(payload)
+            converted["audio_bytes"] = output_path.read_bytes()
+            converted["mime_type"] = "audio/ogg"
+            converted["filename"] = f"{Path(filename or 'telegram-reply').stem}.ogg"
+            converted["voice_compatible"] = True
+            return converted
+    except (OSError, subprocess.SubprocessError, TimeoutError, ValueError):
+        return payload
+
+
+def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "audio_base64": base64.b64encode(payload["audio_bytes"]).decode("ascii"),
+        "mime_type": str(payload.get("mime_type") or "audio/mpeg"),
+        "filename": str(payload.get("filename") or "telegram-reply.audio"),
+        "voice_compatible": _telegram_voice_payload_is_voice_compatible(payload),
+        "provider_id": payload.get("provider_id"),
+        "voice_id": payload.get("voice_id"),
+        "spoken_text": str(payload.get("spoken_text") or ""),
+        "synthesis_ms": payload.get("synthesis_ms"),
+    }
 
 
 def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
@@ -2398,6 +3003,44 @@ def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
     if spoken and spoken[-1] not in ".!?":
         spoken = f"{spoken}."
     return spoken
+
+
+def _repair_voice_delivery_denial(text: str, *, voice_available: bool) -> str:
+    if not voice_available:
+        return text
+    raw = str(text or "").strip()
+    lowered = raw.lower()
+    denial_markers = (
+        "i can't send voice",
+        "i cannot send voice",
+        "i can't send audio",
+        "i cannot send audio",
+        "i don't have the ability to generate and send audio",
+        "i do not have the ability to generate and send audio",
+        "i can only generate text",
+        "don't have a path to push audio",
+        "do not have a path to push audio",
+        "can't trigger it directly",
+        "cannot trigger it directly",
+        "sending a voice reply isn't something i can trigger",
+        "sending a voice reply is not something i can trigger",
+        "wire up the voice.speak hook",
+        "voice-speak hook exists",
+        "supported surface or session",
+        "different surface or setup step",
+        "route it through the telegram bot api",
+        "sendvoice endpoint",
+    )
+    denial_pattern = re.search(
+        r"\b(?:can(?:not|'t)|don't|do not|unable|not able|only generate text|isn't something i can|is not something i can)\b"
+        r".{0,180}\b(?:send|generate|trigger|push|deliver|outbound|voice|audio|speech|spoken|surface)\b",
+        lowered,
+    )
+    if not any(marker in lowered for marker in denial_markers) and not denial_pattern:
+        return text
+    if not any(marker in lowered for marker in ("voice", "audio", "tts", "sendvoice")):
+        return text
+    return "Voice is working here. I can send spoken replies through this Telegram chat now."
 
 
 def _send_telegram_reply(
@@ -2451,6 +3094,12 @@ def _send_telegram_reply(
         reply_text=filtered_text,
         surface="telegram_chat",
     )
+    voice_requested = force_voice or (
+        respect_voice_reply_state
+        and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
+    )
+    if voice_requested:
+        filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
     guarded = prepare_outbound_text(
         config_manager=config_manager,
         state_db=state_db,
@@ -2469,10 +3118,6 @@ def _send_telegram_reply(
         guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
     if filtered_text != visible_text:
         guarded["actions"] = ["strip_swarm_routing_note", *list(guarded["actions"])]
-    voice_requested = force_voice or (
-        respect_voice_reply_state
-        and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
-    )
     delivery_medium = "text"
     voice_error: str | None = None
     voice_payload: dict[str, Any] | None = None
@@ -2494,11 +3139,19 @@ def _send_telegram_reply(
                     text=spoken_text,
                     human_id=human_id,
                     agent_id=agent_id,
+                    external_user_id=telegram_user_id,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
                 voice_error = str(exc)
                 guarded["actions"] = ["voice_reply_fallback_to_text", *list(guarded["actions"])]
+                if force_voice:
+                    fallback_text = (
+                        "I answered in text because the voice audio step is not ready yet.\n\n"
+                        f"Reason: {_safe_voice_error_message(exc)}"
+                    )
+                    guarded["text"] = fallback_text
+                    guarded["chunks"] = [fallback_text]
     error: str | None = None
     ok = True
     record_event(
@@ -2537,13 +3190,14 @@ def _send_telegram_reply(
     )
     try:
         if voice_payload is not None:
+            voice_caption_text = _strip_delivery_chunk_markers(str(guarded["text"]))
             if _telegram_voice_payload_is_voice_compatible(voice_payload):
                 client.send_voice(
                     chat_id=chat_id,
                     voice_bytes=voice_payload["audio_bytes"],
                     filename=str(voice_payload["filename"]),
                     mime_type=str(voice_payload["mime_type"]),
-                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                    caption=voice_caption_text if len(voice_caption_text) <= 1024 else None,
                 )
             else:
                 client.send_document(
@@ -2551,7 +3205,7 @@ def _send_telegram_reply(
                     document_bytes=voice_payload["audio_bytes"],
                     filename=str(voice_payload["filename"]),
                     mime_type=str(voice_payload["mime_type"]),
-                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                    caption=voice_caption_text if len(voice_caption_text) <= 1024 else None,
                 )
         else:
             for _chunk in (guarded.get("chunks") or [guarded["text"]]):
@@ -2662,6 +3316,13 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     return f"{compact[: limit - 3]}..."
 
 
+def _strip_delivery_chunk_markers(text: str) -> str:
+    value = str(text or "")
+    if not value:
+        return ""
+    return re.sub(r"(?m)^\((?:\d+)\/(?:\d+)\)\s*", "", value).strip()
+
+
 def _prepare_simulate_outbound(
     *,
     config_manager: ConfigManager,
@@ -2736,6 +3397,139 @@ def _apply_saved_telegram_surface_style(
     )
 
 
+def _is_aoc_runtime_command(lowered: str) -> bool:
+    return lowered in {"/aoc", "/context", "/operating-context", "/agent-context"} or any(
+        lowered.startswith(f"{prefix} ")
+        for prefix in ("/aoc", "/context", "/operating-context", "/agent-context")
+    )
+
+
+def _telegram_route_probe_key(route_name: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9_-]+", "_", str(route_name or "").strip().casefold()).strip("_-")
+    return {
+        "core": "spark_intelligence_builder",
+        "builder": "spark_intelligence_builder",
+        "spark": "spark_intelligence_builder",
+        "spark_intelligence": "spark_intelligence_builder",
+        "spark_intelligence_builder": "spark_intelligence_builder",
+        "memory": "spark_memory",
+        "spark_memory": "spark_memory",
+        "researcher": "spark_researcher",
+        "spark_researcher": "spark_researcher",
+        "browser": "spark_browser",
+        "spark_browser": "spark_browser",
+        "swarm": "spark_swarm",
+        "spark_swarm": "spark_swarm",
+        "spawner": "spark_spawner",
+        "spark_spawner": "spark_spawner",
+        "local": "spark_local_work",
+        "local_work": "spark_local_work",
+        "spark_local_work": "spark_local_work",
+    }.get(normalized)
+
+
+def _render_telegram_route_probe_help(*, route_name: str) -> str:
+    if route_name:
+        prefix = f"Unknown route `{route_name}`.\n"
+    else:
+        prefix = "Route probe needs a route name.\n"
+    return (
+        f"{prefix}"
+        "Use `/probe core`, `/probe builder`, `/probe memory`, `/probe researcher`, "
+        "`/probe browser`, `/probe swarm`, or `/probe spawner`."
+    )
+
+
+def _render_telegram_route_probe_reply(probe: Any) -> str:
+    status = str(getattr(probe, "status", "") or "unknown")
+    capability_key = str(getattr(probe, "capability_key", "") or "unknown")
+    lines = [
+        f"Route probe: {capability_key}",
+        f"Status: {status}",
+    ]
+    latency = getattr(probe, "route_latency_ms", None)
+    if latency is not None:
+        lines.append(f"Latency: {latency}ms")
+    failure = str(getattr(probe, "failure_reason", "") or "").strip()
+    if failure:
+        lines.append(f"Reason: {_with_terminal_period(failure)}")
+    summary = str(getattr(probe, "probe_summary", "") or "").strip()
+    if summary:
+        lines.append(f"Evidence: {_with_terminal_period(summary)}")
+    lines.append("Boundary: this is route evidence for the ledger, not proof that a user task completed.")
+    return "\n".join(lines)
+
+
+_TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
+
+
+def _is_ledger_runtime_command(lowered: str) -> bool:
+    return lowered in {"/ledger", "/capabilities"} or any(
+        lowered.startswith(f"{prefix} ") for prefix in ("/ledger", "/capabilities")
+    )
+
+
+def _telegram_short_text(value: Any, *, limit: int = 120) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+
+def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, requested_command: str) -> str:
+    ledger = load_capability_ledger(config_manager).payload
+    entries = ledger.get("entries") if isinstance(ledger.get("entries"), dict) else {}
+    review_entries = [
+        entry
+        for entry in entries.values()
+        if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
+    ]
+    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    command_args = str(requested_command or "").strip().split(maxsplit=1)
+    read_only_note = ""
+    if len(command_args) > 1:
+        read_only_note = "Read-only: Telegram ledger review cannot activate, approve, connect credentials, or change capability state.\n"
+    if not review_entries:
+        return (
+            f"{read_only_note}"
+            "Capability ledger review (read-only)\n"
+            "No proposed, scaffolded, or probed capabilities are waiting for review.\n"
+            "Boundary: activation requires separate CLI ledger evidence with approval plus probe/eval refs."
+        )
+
+    lines = [f"{read_only_note}Capability ledger review (read-only)"]
+    for entry in review_entries[:5]:
+        packet = entry.get("proposal_packet") if isinstance(entry.get("proposal_packet"), dict) else {}
+        harness = packet.get("connector_harness") if isinstance(packet.get("connector_harness"), dict) else {}
+        key = str(entry.get("capability_ledger_key") or packet.get("capability_ledger_key") or "unknown")
+        status = str(entry.get("status") or "unknown")
+        permissions = packet.get("permissions_required") if isinstance(packet.get("permissions_required"), list) else []
+        permission_text = ", ".join(str(item) for item in permissions[:3] if str(item or "").strip())
+        if len(permissions) > 3:
+            permission_text = f"{permission_text}, +{len(permissions) - 3} more"
+        connector = str(harness.get("connector_key") or "").strip()
+        authority_stage = str(harness.get("authority_stage") or "").strip()
+        connector_text = f"{connector} ({authority_stage})" if connector else "none"
+        evidence_count = len(entry.get("activation_evidence") or [])
+        lines.extend(
+            [
+                f"- {key} [{status}]",
+                f"  route: {_telegram_short_text(packet.get('implementation_route') or entry.get('implementation_route') or 'unknown', limit=80)}",
+                f"  connector: {connector_text}",
+                f"  permissions: {_telegram_short_text(permission_text or 'none', limit=140)}",
+                f"  safe_probe: {_telegram_short_text(packet.get('safe_probe'), limit=140)}",
+                f"  approval_boundary: {_telegram_short_text(packet.get('human_approval_boundary'), limit=140)}",
+                f"  eval_or_smoke_test: {_telegram_short_text(packet.get('eval_or_smoke_test'), limit=140)}",
+                f"  rollback_path: {_telegram_short_text(packet.get('rollback_path'), limit=140)}",
+                f"  activation_evidence: {evidence_count}",
+            ]
+        )
+    if len(review_entries) > 5:
+        lines.append(f"...and {len(review_entries) - 5} more review entries.")
+    lines.append("Boundary: review only. Telegram cannot activate capabilities; activation requires separate approval plus probe/eval evidence.")
+    return "\n".join(lines)
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -2776,6 +3570,55 @@ def _handle_runtime_command(
         return {
             "command": "/self",
             "reply_text": capsule.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if _is_aoc_runtime_command(lowered):
+        context = build_agent_operating_context(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            session_id=session_id or f"session:telegram:{external_user_id}",
+            channel_kind="telegram",
+            request_id=request_id,
+            user_message=normalized,
+            runner_writable=None,
+            runner_label="telegram runtime unknown",
+        )
+        return {
+            "command": "/aoc" if lowered.startswith("/aoc") else "/context",
+            "reply_text": context.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered == "/probe" or lowered.startswith("/probe "):
+        route_name = normalized[len("/probe") :].strip()
+        capability_key = _telegram_route_probe_key(route_name)
+        if capability_key is None:
+            return {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_help(route_name=route_name),
+                "respect_voice_reply_state": True,
+            }
+        probe = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key=capability_key,
+            actor_id="telegram_runtime",
+            request_id=request_id or "",
+            session_id=session_id or "",
+            human_id=human_id or f"human:telegram:{external_user_id}",
+        )
+        return {
+            "command": "/probe",
+            "reply_text": _render_telegram_route_probe_reply(probe),
+            "respect_voice_reply_state": True,
+        }
+    if _is_ledger_runtime_command(lowered):
+        return {
+            "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
+            "reply_text": _render_telegram_capability_ledger_review(
+                config_manager=config_manager,
+                requested_command=normalized,
+            ),
             "respect_voice_reply_state": True,
         }
     if lowered in {"/wiki", "/wiki status"}:
@@ -2824,7 +3667,7 @@ def _handle_runtime_command(
             "reply_text": (
                 f"Voice replies are currently {state_text} for this Telegram DM. "
                 "Use `/voice reply on` to send future replies as audio, `/voice reply off` to stay text-only, "
-                "or `/voice speak <text>` for a one-shot spoken reply."
+                "`/voice ask <question>` for a generated voice answer, or `/voice speak <text>` to read exact text."
             ),
             "respect_voice_reply_state": False,
         }
@@ -2842,9 +3685,10 @@ def _handle_runtime_command(
             "command": lowered,
             "reply_text": (
                 "Voice replies enabled for this Telegram DM. "
-                "Next: ask a normal question or use `/voice speak <text>` to test the voice path."
+                "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
+                "or `/voice speak <text>` to read exact text."
                 if enabled
-                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice speak <text>`."
+                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
             ),
             "respect_voice_reply_state": False,
         }
@@ -2858,6 +3702,121 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
+    if (
+        lowered in {"/voice provider", "/voice providers", "/voice tts"}
+        or natural_voice_command == ("/voice provider", None)
+    ):
+        return {
+            "command": "/voice provider",
+            "reply_text": _render_telegram_voice_provider_status(
+                state_db=state_db,
+                external_user_id=external_user_id,
+            ),
+            "respect_voice_reply_state": False,
+        }
+    if lowered.startswith("/voice guide ") or (natural_voice_command and natural_voice_command[0] == "/voice guide"):
+        provider_target = (
+            normalized[len("/voice guide") :].strip()
+            if lowered.startswith("/voice guide ")
+            else str(natural_voice_command[1] or "").strip()
+        )
+        provider_id = _normalize_telegram_voice_provider_id(provider_target)
+        return {
+            "command": "/voice guide",
+            "reply_text": _render_telegram_voice_provider_guide(provider_id=provider_id),
+            "respect_voice_reply_state": False,
+        }
+    if (
+        lowered.startswith("/voice provider ")
+        or lowered.startswith("/voice switch ")
+        or lowered.startswith("/voice use ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice provider")
+    ):
+        if lowered.startswith("/voice provider "):
+            provider_target = normalized[len("/voice provider") :].strip()
+        elif lowered.startswith("/voice switch "):
+            provider_target = normalized[len("/voice switch") :].strip()
+        elif lowered.startswith("/voice use "):
+            provider_target = normalized[len("/voice use") :].strip()
+        else:
+            provider_target = str(natural_voice_command[1] or "").strip()
+        provider_id = _normalize_telegram_voice_provider_id(provider_target)
+        if not provider_id:
+            return {
+                "command": "/voice provider",
+                "reply_text": _render_telegram_voice_provider_help(),
+                "respect_voice_reply_state": False,
+            }
+        _set_voice_tts_provider_for_user(
+            state_db=state_db,
+            external_user_id=external_user_id,
+            provider_id=provider_id,
+        )
+        return {
+            "command": "/voice provider",
+            "reply_text": _render_telegram_voice_provider_switched(provider_id=provider_id),
+            "respect_voice_reply_state": False,
+        }
+    if (
+        lowered == "/voice install"
+        or lowered.startswith("/voice install ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice install")
+    ):
+        if lowered.startswith("/voice install "):
+            target = normalized[len("/voice install") :].strip().lower()
+        elif natural_voice_command and natural_voice_command[0] == "/voice install":
+            target = str(natural_voice_command[1] or "").strip().lower()
+        else:
+            target = ""
+        if not target:
+            return {
+                "command": "/voice install",
+                "reply_text": "Voice install needs a target. Use `/voice install kokoro` for local neural TTS.",
+                "respect_voice_reply_state": False,
+            }
+        if target in {"local", "local voice", "local tts", "kokoro voice", "kokoro tts", "kokoro locally"}:
+            target = "kokoro"
+        return _run_voice_runtime_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            command="/voice install",
+            hook="voice.install",
+            fallback_reply=_render_telegram_voice_install_reply(target),
+            human_id=human_id,
+            agent_id=agent_id,
+            payload_extra={"target": target},
+        )
+    if (
+        lowered in {"/voice onboard", "/voice onboarding", "/voice setup"}
+        or lowered.startswith("/voice onboard ")
+        or lowered.startswith("/voice setup ")
+        or (natural_voice_command and natural_voice_command[0] == "/voice onboard")
+    ):
+        if lowered.startswith("/voice onboard "):
+            route = normalized[len("/voice onboard") :].strip().lower()
+        elif lowered.startswith("/voice setup "):
+            route = normalized[len("/voice setup") :].strip().lower()
+        elif natural_voice_command and natural_voice_command[0] == "/voice onboard":
+            route = str(natural_voice_command[1] or "").strip().lower()
+        else:
+            route = ""
+        payload_extra = {"route": route} if route else None
+        return _run_voice_runtime_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            command="/voice onboard",
+            hook="voice.onboard",
+            fallback_reply=_render_telegram_voice_onboarding_reply(route or None),
+            human_id=human_id,
+            agent_id=agent_id,
+            payload_extra=payload_extra,
+        )
+    if lowered in {"/voice ask", "/voice answer"}:
+        return {
+            "command": "/voice ask",
+            "reply_text": "Voice ask needs a question. Use `/voice ask what should I focus on today?`.",
+            "respect_voice_reply_state": False,
+        }
     if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
         speak_text = (
             normalized[len("/voice speak") :].strip()
@@ -2867,18 +3826,18 @@ def _handle_runtime_command(
         if not speak_text:
             return {
                 "command": "/voice speak",
-                "reply_text": "Voice speak needs text. Use `/voice speak <what you want me to say>`.",
+                "reply_text": (
+                    "Voice speak reads exact text. Use `/voice speak <words to read>`.\n\n"
+                    "For a generated spoken answer, use `/voice ask <question>`."
+                ),
                 "respect_voice_reply_state": False,
             }
         return {
             "command": "/voice speak",
-            "reply_text": (
-                "Voice reply queued.\n"
-                f"Text: {speak_text}\n"
-                "Next: use `/voice reply on` if you want future replies in this DM to synthesize automatically."
-            ),
+            "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
             "force_voice": True,
             "voice_text": speak_text,
+            "voice_tts": _voice_tts_override_from_text(speak_text),
             "respect_voice_reply_state": False,
         }
     if lowered in {"/think", "/think on", "/think off"} or natural_think_command in {
@@ -3734,6 +4693,30 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
     return None
 
 
+def _extract_voice_answer_request(inbound_text: str) -> str | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    for prefix in ("/voice ask", "/voice answer"):
+        if lowered.startswith(f"{prefix} "):
+            prompt = normalized[len(prefix) :].strip()
+            return prompt or None
+
+    for pattern in (
+        r"^(?P<prompt>.+?)\s+(?:as|in|with)\s+(?:a\s+)?(?:voice|audio|spoken)\s+(?:message|reply|note)$",
+        r"^(?:send|reply)\s+(?:me\s+)?(?:a\s+)?(?:voice|audio|spoken)\s+(?:message|reply|note)\s+(?:about|on|for)\s+(?P<prompt>.+)$",
+        r"^(?:answer|respond\s+to)\s+(?P<prompt>.+?)\s+(?:by|with|in)\s+(?:voice|audio|speech)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        prompt = " ".join(str(match.group("prompt") or "").strip().split())
+        if prompt:
+            return prompt
+    return None
+
+
 def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
@@ -3757,10 +4740,75 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
     }:
         return ("/voice reply", None)
     if simplified in {
+        "voice provider",
+        "voice providers",
+        "voice tts",
+        "what voice provider are you using",
+        "which voice provider are you using",
+    }:
+        return ("/voice provider", None)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+(?:for|as|with)\s+(?:voice|tts|voice\s+provider))?(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|as|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+        r"^(?:i\s+want|i\s+d\s+like|i\s+would\s+like)\s+(?:to\s+)?(?:switch|change|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+        r"^(?:can you\s+)?(?:help me\s+)?(?:switch|change|set up|setup)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)\s+(?:to|for|using)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice provider", str(match.group("payload") or "").strip())
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:guide|walk)\s+(?:me\s+)?(?:through|on|for)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts|setup|onboarding))?(?:\s+.+)?$",
+        r"^(?:how\s+do\s+i|can you help me)\s+(?:set\s+up|setup|configure)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts))?(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice guide", str(match.group("payload") or "").strip())
+    if simplified in {
+        "install kokoro",
+        "install kokoro voice",
+        "install kokoro tts",
+        "install kokoro voice locally",
+        "install local voice",
+        "install local tts",
+        "add kokoro",
+        "add kokoro voice",
+        "add local tts",
+        "can you install kokoro",
+        "can you install kokoro voice",
+        "can you install kokoro voice locally",
+        "can you install local voice",
+        "can you install local tts",
+    }:
+        return ("/voice install", "kokoro")
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>kokoro|kokoro\s+voice|kokoro\s+tts|local\s+voice|local\s+tts)(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:install|add)\s+(?P<payload>kokoro)(?:\s+voice)?\s+(?:locally|local)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice install", "kokoro")
+    if simplified in {
         "turn voice replies on",
         "enable voice replies",
         "reply with voice",
         "reply in voice",
+        "install voice",
+        "install a voice",
+        "install voice to yourself",
+        "install a voice to yourself",
+        "install voice to youself",
+        "install a voice to youself",
+        "can you install voice to yourself right now",
+        "can you install a voice to yourself right now",
+        "can you install voice to youself right now",
+        "can you install a voice to youself right now",
+        "give yourself a voice",
+        "give youself a voice",
+        "give you a voice",
+        "add voice to yourself",
+        "add a voice to yourself",
+        "add voice to youself",
+        "add a voice to youself",
     }:
         return ("/voice reply on", None)
     if simplified in {
@@ -3778,6 +4826,33 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "how will voice work",
     }:
         return ("/voice plan", None)
+    if simplified in {
+        "voice onboard",
+        "voice onboarding",
+        "voice setup",
+        "setup voice",
+        "set up voice",
+        "help me set up voice",
+        "can you help me set up voice",
+        "how do i set up voice",
+        "can i use free local tts",
+    }:
+        route = "local" if simplified == "can i use free local tts" else None
+        return ("/voice onboard", route)
+    for pattern in (
+        r"^(?:voice\s+)?(?:onboard|onboarding|setup)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
+        r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?:with|using|for)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
+        r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?P<payload>locally|local|free|offline|paid|provider|providers|production|hosted)(?:\s+for\s+.+)?$",
+        r"^(?:i\s+want|i\s+would\s+like|i\s+d\s+like)\s+(?:paid|premium|high\s+quality)(?:\s+\w+){0,8}\s+voice(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            payload = str(match.groupdict().get("payload") or "paid").strip()
+            if payload in {"locally", "free", "offline"}:
+                payload = "local"
+            if payload in {"provider", "providers", "production", "hosted"}:
+                payload = "paid"
+            return ("/voice onboard", payload)
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:speak|say|read)\s+(?:this(?: out loud)?[:\s-]+)(?P<payload>.+)$",
         r"^(?:send|reply with)\s+(?:this\s+)?(?:as\s+)?voice[:\s-]+(?P<payload>.+)$",
@@ -3787,6 +4862,17 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
             payload = " ".join(str(match.group("payload") or "").strip().split())
             if payload:
                 return ("/voice speak", payload)
+    if simplified in {
+        "send a short telegram voice note",
+        "send a short voice note",
+        "send me a short telegram voice note",
+        "send me a short voice note",
+        "can you send a short telegram voice note",
+        "can you send a short voice note",
+        "send a telegram voice note",
+        "send a voice note",
+    }:
+        return ("/voice speak", "Voice is working here. I can send spoken replies through this Telegram chat now.")
     return None
 
 
@@ -5013,21 +6099,30 @@ def _run_voice_runtime_command(
     fallback_reply: str,
     human_id: str | None,
     agent_id: str | None,
+    payload_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload = _build_voice_chip_payload(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if payload_extra:
+        payload.update(payload_extra)
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook=hook,
-        payload=_build_voice_chip_payload(
-            config_manager=config_manager,
-            state_db=state_db,
-            human_id=human_id,
-            agent_id=agent_id,
-        ),
+        payload=payload,
     )
     if execution is None:
         return {"command": command, "reply_text": fallback_reply}
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     reply_text = str((result or {}).get("reply_text") or "").strip()
+    if command in {"/voice", "/voice status"}:
+        if reply_text:
+            reply_text = _append_telegram_voice_profile_status(reply_text)
+        else:
+            fallback_reply = _append_telegram_voice_profile_status(fallback_reply)
     if reply_text:
         return {"command": command, "reply_text": reply_text}
     if execution.ok:
@@ -5045,20 +6140,219 @@ def _run_voice_runtime_command(
 
 def _render_telegram_voice_status_reply() -> str:
     return (
-        "Voice chip is not attached yet.\n"
-        "Current state: Builder can detect Telegram voice/audio, but live transcription now belongs in `domain-chip-voice-comms` instead of the main Builder repo.\n"
-        "Next: attach and activate `domain-chip-voice-comms`, then rerun `/voice`."
+        "I can see Telegram voice messages, but the voice chip is not attached to this Spark yet.\n"
+        "Attach `spark-voice-comms` first; then I can transcribe voice notes and help you choose a local or hosted voice setup.\n"
+        "After that, rerun `/voice`."
     )
+
+
+def _append_telegram_voice_profile_status(reply_text: str) -> str:
+    profile = _telegram_voice_status_profile()
+    if not profile:
+        return reply_text
+    lines = [
+        "",
+        "Profile voice:",
+        f"- Telegram profile: {profile['telegram_profile']}",
+        f"- Provider: {profile['provider_id']}",
+        f"- Voice: {profile['voice_name']}",
+    ]
+    voice_id = str(profile.get("voice_id") or "").strip()
+    if voice_id:
+        lines.append(f"- Voice ID: {_mask_voice_id(voice_id)}")
+    model_id = str(profile.get("model_id") or "").strip()
+    if model_id:
+        lines.append(f"- Model: {model_id}")
+    settings = profile.get("voice_settings") if isinstance(profile.get("voice_settings"), dict) else {}
+    if settings:
+        rendered = ", ".join(f"{key}={settings[key]}" for key in sorted(settings))
+        lines.append(f"- Settings: {rendered}")
+    effect = str(profile.get("audio_effect") or "").strip()
+    if effect:
+        lines.append(f"- Effect: {effect}")
+    source = str(profile.get("source") or "").strip()
+    if source:
+        lines.append(f"- Source: {source}")
+    return f"{reply_text.rstrip()}\n" + "\n".join(lines)
+
+
+def _telegram_voice_status_profile() -> dict[str, Any]:
+    registry_profile = _telegram_voice_registry_profile()
+    tts = _telegram_voice_tts_override_from_env() or {}
+    provider_id = str(tts.get("provider_id") or "").strip()
+    voice_id = str(tts.get("voice_id") or "").strip()
+    voice_name = str(tts.get("voice_name") or "").strip()
+    model_id = str(tts.get("model_id") or "").strip()
+    effect = _telegram_voice_effect_from_env()
+    settings = tts.get("voice_settings") if isinstance(tts.get("voice_settings"), dict) else {}
+    if not any([provider_id, voice_id, voice_name, model_id, effect, settings]):
+        return {}
+    source_parts = []
+    if registry_profile:
+        source_parts.append("registry")
+    if any(
+        str(os.environ.get(name) or "").strip()
+        for name in (
+            "SPARK_TELEGRAM_VOICE_TTS_PROVIDER",
+            "SPARK_TELEGRAM_TTS_PROVIDER",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
+            "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_AUDIO_EFFECT",
+        )
+    ):
+        source_parts.append("env")
+    return {
+        "telegram_profile": str(os.environ.get("SPARK_TELEGRAM_PROFILE") or "default").strip() or "default",
+        "provider_id": provider_id or "default",
+        "voice_id": voice_id,
+        "voice_name": voice_name or "default",
+        "model_id": model_id,
+        "voice_settings": settings,
+        "audio_effect": effect,
+        "source": "+".join(source_parts) if source_parts else "default",
+    }
+
+
+def _mask_voice_id(voice_id: str) -> str:
+    value = str(voice_id or "").strip()
+    if len(value) <= 8:
+        return value
+    return f"{value[:6]}...{value[-4:]}"
 
 
 def _render_telegram_voice_plan_reply() -> str:
     return (
         "Telegram voice plan:\n"
-        "1. let Builder fetch Telegram voice/audio payloads and hand them to `domain-chip-voice-comms`.\n"
+        "1. let Builder fetch Telegram voice/audio payloads and hand them to `spark-voice-comms`.\n"
         "2. transcribe them back into the same Builder Telegram runtime used for text and persona styling.\n"
         "3. optionally add voice reply synthesis as a later chip hook without growing Builder.\n"
         "Next: attach the chip, validate `/voice`, then dogfood real Telegram voice notes."
     )
+
+
+def _render_telegram_voice_install_reply(target: str | None) -> str:
+    normalized_target = str(target or "").strip() or "kokoro"
+    return (
+        f"I can help install `{normalized_target}`, but this Spark needs the voice chip attached first.\n"
+        "Attach `spark-voice-comms`, then rerun `/voice install kokoro` and I will handle the local setup from there."
+    )
+
+
+def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
+    suffix = f" for `{route}`" if route else ""
+    return (
+        f"I can guide voice setup{suffix}, but the voice chip is not attached to this Spark yet.\n"
+        "Once `spark-voice-comms` is active, I can recommend the right path from inside Telegram: local/private with Kokoro, or hosted/high-quality with a paid provider.\n"
+        "Attach the chip, then run `/voice onboard local` or `/voice onboard paid`."
+    )
+
+
+def _render_telegram_voice_provider_status(*, state_db: StateDB, external_user_id: str) -> str:
+    saved_provider_id = _voice_tts_provider_for_user(state_db=state_db, external_user_id=external_user_id)
+    env_provider_id = str((_telegram_voice_tts_override_from_env() or {}).get("provider_id") or "").strip().lower()
+    active_provider_id = saved_provider_id or env_provider_id or "elevenlabs"
+    lines = [
+        f"Voice is set to {_telegram_voice_provider_label(active_provider_id)} for this DM.",
+        "",
+        _format_voice_readiness_note(active_provider_id),
+        "",
+        "You can say `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`.",
+    ]
+    if active_provider_id == "elevenlabs":
+        lines.extend(
+            [
+                "",
+                "For ElevenLabs, keep the API key and voice ID in local config, then test with `/voice ask say one warm sentence`.",
+            ]
+        )
+    elif active_provider_id == "kokoro":
+        lines.extend(["", "For Kokoro, keep the model and voices paths local, then test with `/voice speak hello from Kokoro`."])
+    elif active_provider_id == "openai-realtime":
+        lines.extend(["", "For OpenAI, try `coral`, `shimmer`, or `marin` as voice IDs if you want a different feel."])
+    return "\n".join(lines)
+
+
+def _render_telegram_voice_provider_help() -> str:
+    return (
+        "Tell me which voice provider to use.\n\n"
+        "Try `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`."
+    )
+
+
+def _render_telegram_voice_provider_guide(*, provider_id: str | None) -> str:
+    if provider_id == "elevenlabs":
+        return (
+            "ElevenLabs is the voice path I would tune first for a polished Spark agent.\n\n"
+            "Pick or create a voice in ElevenLabs, save the API key and voice ID in local config, then say `switch my voice to ElevenLabs` here.\n\n"
+            "For calibration, start natural: medium stability, high similarity, low style, and speed near 1.0. Then test one short warm reply and one longer explanation."
+        )
+    if provider_id == "kokoro":
+        return (
+            "Kokoro is the private/free local path.\n\n"
+            "Install the local package, connect the Kokoro model and voices files on this machine, then say `use Kokoro for voice` here.\n\n"
+            "It is the best first choice for people who care about local control and zero hosted TTS spend."
+        )
+    if provider_id == "openai-realtime":
+        return (
+            "GPT Realtime 2 is useful for hosted OpenAI voice, but I would treat it as one option, not the default personality voice.\n\n"
+            "Save the OpenAI key locally, choose a voice like `coral`, `shimmer`, or `marin`, then say `use GPT Realtime 2 for voice` here."
+        )
+    return (
+        "I can guide ElevenLabs, Kokoro, or GPT Realtime 2.\n\n"
+        "Try `guide me through ElevenLabs`, `guide me through Kokoro`, or `guide me through GPT Realtime 2`."
+    )
+
+
+def _render_telegram_voice_provider_switched(*, provider_id: str) -> str:
+    label = _telegram_voice_provider_label(provider_id)
+    if provider_id == "elevenlabs":
+        return (
+            f"Done, I will use {label} for voice replies in this DM.\n\n"
+            f"{_format_voice_readiness_note(provider_id)}\n\n"
+            "That is the path I would tune first for a polished Spark voice. Keep `ELEVENLABS_API_KEY` and the voice ID in local config, not Telegram.\n\n"
+            "Next: try `/voice ask Say one short warm sentence with the current voice.`"
+        )
+    if provider_id == "kokoro":
+        return (
+            f"Done, I will use {label} for voice replies in this DM.\n\n"
+            f"{_format_voice_readiness_note(provider_id)}\n\n"
+            "This is the private/free path. If Kokoro model files are connected, it should speak locally without hosted TTS.\n\n"
+            "Next: try `/voice speak Say one short warm sentence with Kokoro.`"
+        )
+    return (
+        f"Done, I will use {label} for voice replies in this DM.\n\n"
+        f"{_format_voice_readiness_note(provider_id)}\n\n"
+        "This is the hosted OpenAI path. If the voice still feels too synthetic, I would move back to ElevenLabs for the main polished experience.\n\n"
+        "Next: try `/voice ask Say one short warm sentence with the current voice.`"
+    )
+
+
+def _telegram_voice_provider_label(provider_id: str) -> str:
+    return {
+        "elevenlabs": "ElevenLabs",
+        "kokoro": "Kokoro",
+        "openai-realtime": "GPT Realtime 2",
+        "pyttsx3": "local system TTS",
+    }.get(str(provider_id or "").strip().lower(), str(provider_id or "the configured provider"))
+
+
+def _normalize_telegram_voice_provider_id(value: str) -> str | None:
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
+    if not normalized:
+        return None
+    if "eleven" in normalized or "11labs" in normalized:
+        return "elevenlabs"
+    if "kokoro" in normalized or "local neural" in normalized:
+        return "kokoro"
+    if "openai" in normalized or "realtime" in normalized or "gpt" in normalized:
+        return "openai-realtime"
+    if "pyttsx3" in normalized or "system voice" in normalized:
+        return "pyttsx3"
+    return None
 
 
 def _render_telegram_voice_transcription_unavailable_reply(*, reason: str) -> str:
@@ -5066,7 +6360,7 @@ def _render_telegram_voice_transcription_unavailable_reply(*, reason: str) -> st
     lines = [
         "Voice transcription is unavailable right now.",
         f"Reason: {cleaned_reason or 'the runtime could not transcribe this Telegram audio message.'}",
-        "Next: send the instruction as text for now, or finish the `domain-chip-voice-comms` setup.",
+        "Next: send the instruction as text for now, or finish the `spark-voice-comms` setup.",
     ]
     return "\n".join(lines)
 
@@ -7211,6 +8505,32 @@ def _think_state_key(*, external_user_id: str) -> str:
 
 def _voice_reply_state_key(*, external_user_id: str) -> str:
     return f"telegram:voice_reply:{external_user_id}"
+
+
+def _voice_tts_provider_state_key(*, external_user_id: str) -> str:
+    return f"telegram:voice_tts_provider:{external_user_id}"
+
+
+def _voice_tts_provider_for_user(*, state_db: StateDB, external_user_id: str) -> str | None:
+    payload = _load_runtime_json_object(state_db, _voice_tts_provider_state_key(external_user_id=external_user_id))
+    provider_id = _normalize_telegram_voice_provider_id(str(payload.get("provider_id") or ""))
+    return provider_id
+
+
+def _set_voice_tts_provider_for_user(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    provider_id: str,
+) -> None:
+    normalized_provider_id = _normalize_telegram_voice_provider_id(provider_id)
+    if not normalized_provider_id:
+        return
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_tts_provider_state_key(external_user_id=external_user_id),
+        value=json.dumps({"provider_id": normalized_provider_id}, sort_keys=True),
+    )
 
 
 def _voice_reply_enabled_for_user(*, state_db: StateDB, external_user_id: str) -> bool:
