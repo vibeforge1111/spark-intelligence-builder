@@ -861,6 +861,70 @@ def _build_voice_chip_payload(
     return payload
 
 
+def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None:
+    encoded = str(getattr(normalized, "media_audio_base64", "") or "").strip()
+    if not encoded:
+        return None
+    try:
+        audio_bytes = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise RuntimeError("Telegram runner provided invalid embedded audio bytes.") from exc
+    if not audio_bytes:
+        raise RuntimeError("Telegram runner provided empty embedded audio bytes.")
+    filename = str(getattr(normalized, "media_filename", "") or "").strip()
+    return audio_bytes, filename
+
+
+def _transcribe_telegram_audio_bytes(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    normalized: Any,
+    audio_bytes: bytes,
+    file_path: str,
+) -> dict[str, Any]:
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.transcribe",
+        payload=_build_voice_chip_payload(
+            config_manager=config_manager,
+            state_db=state_db,
+            normalized=normalized,
+            audio_bytes=audio_bytes,
+            file_path=file_path,
+        ),
+    )
+    if execution is None:
+        raise RuntimeError(
+            "No attached chip supports `voice.transcribe`. Attach and activate `spark-voice-comms` first."
+        )
+    result = execution.output.get("result") if isinstance(execution.output, dict) else None
+    if not execution.ok:
+        error_text = ""
+        if isinstance(result, dict):
+            error_text = str(result.get("error") or result.get("reply_text") or "").strip()
+        if not error_text and isinstance(execution.output, dict):
+            error_text = str(execution.output.get("error") or "").strip()
+        if not error_text:
+            error_text = str(execution.stderr or execution.stdout or "").strip()
+        raise RuntimeError(error_text or f"Voice chip '{execution.chip_key}' could not transcribe the message.")
+    transcript_text = str((result or {}).get("transcript_text") or "").strip()
+    if not transcript_text:
+        raise RuntimeError("The voice chip returned no transcript text.")
+    effective_text = transcript_text
+    if normalized.caption_text:
+        effective_text = f"{normalized.caption_text}\n\nVoice transcript: {transcript_text}"
+    return {
+        "effective_text": effective_text,
+        "transcript_text": transcript_text,
+        "routing_decision": "voice_transcribed",
+        "reply_text": None,
+        "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
+        "provider_model": str((result or {}).get("model") or "").strip() or None,
+        "provider_mode": str((result or {}).get("mode") or "").strip() or None,
+    }
+
+
 def _prepare_telegram_media_input(
     *,
     config_manager: ConfigManager,
@@ -873,6 +937,25 @@ def _prepare_telegram_media_input(
             "effective_text": normalized.text,
             "transcript_text": None,
             "routing_decision": None,
+        }
+    try:
+        embedded_audio = _decode_embedded_telegram_audio(normalized)
+        if embedded_audio is not None:
+            audio_bytes, file_path = embedded_audio
+            return _transcribe_telegram_audio_bytes(
+                config_manager=config_manager,
+                state_db=state_db,
+                normalized=normalized,
+                audio_bytes=audio_bytes,
+                file_path=file_path,
+            )
+    except Exception as exc:
+        return {
+            "effective_text": None,
+            "transcript_text": None,
+            "routing_decision": "voice_transcription_unavailable",
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
+            "error": str(exc),
         }
     media_client = client or _resolve_telegram_client(config_manager)
     if media_client is None:
@@ -899,46 +982,13 @@ def _prepare_telegram_media_input(
         if not file_path:
             raise RuntimeError("Telegram did not return a file path for the media payload.")
         audio_bytes = media_client.download_file(file_path=file_path)
-        execution = run_first_chip_hook_supporting(
-            config_manager,
-            hook="voice.transcribe",
-            payload=_build_voice_chip_payload(
-                config_manager=config_manager,
-                state_db=state_db,
-                normalized=normalized,
-                audio_bytes=audio_bytes,
-                file_path=file_path,
-            ),
+        return _transcribe_telegram_audio_bytes(
+            config_manager=config_manager,
+            state_db=state_db,
+            normalized=normalized,
+            audio_bytes=audio_bytes,
+            file_path=file_path,
         )
-        if execution is None:
-            raise RuntimeError(
-                "No attached chip supports `voice.transcribe`. Attach and activate `spark-voice-comms` first."
-            )
-        result = execution.output.get("result") if isinstance(execution.output, dict) else None
-        if not execution.ok:
-            error_text = ""
-            if isinstance(result, dict):
-                error_text = str(result.get("error") or result.get("reply_text") or "").strip()
-            if not error_text and isinstance(execution.output, dict):
-                error_text = str(execution.output.get("error") or "").strip()
-            if not error_text:
-                error_text = str(execution.stderr or execution.stdout or "").strip()
-            raise RuntimeError(error_text or f"Voice chip '{execution.chip_key}' could not transcribe the message.")
-        transcript_text = str((result or {}).get("transcript_text") or "").strip()
-        if not transcript_text:
-            raise RuntimeError("The voice chip returned no transcript text.")
-        effective_text = transcript_text
-        if normalized.caption_text:
-            effective_text = f"{normalized.caption_text}\n\nVoice transcript: {transcript_text}"
-        return {
-            "effective_text": effective_text,
-            "transcript_text": transcript_text,
-            "routing_decision": "voice_transcribed",
-            "reply_text": None,
-            "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
-            "provider_model": str((result or {}).get("model") or "").strip() or None,
-            "provider_mode": str((result or {}).get("mode") or "").strip() or None,
-        }
     except Exception as exc:
         return {
             "effective_text": None,
