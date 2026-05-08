@@ -10,6 +10,7 @@ import tempfile
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
 from uuid import uuid4
@@ -883,6 +884,7 @@ def _transcribe_telegram_audio_bytes(
     audio_bytes: bytes,
     file_path: str,
 ) -> dict[str, Any]:
+    transcribe_started = perf_counter()
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.transcribe",
@@ -894,6 +896,7 @@ def _transcribe_telegram_audio_bytes(
             file_path=file_path,
         ),
     )
+    transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
     if execution is None:
         raise RuntimeError(
             "No attached chip supports `voice.transcribe`. Attach and activate `spark-voice-comms` first."
@@ -922,6 +925,11 @@ def _transcribe_telegram_audio_bytes(
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "provider_model": str((result or {}).get("model") or "").strip() or None,
         "provider_mode": str((result or {}).get("mode") or "").strip() or None,
+        "voice_timing": {
+            "transcribe_hook_ms": transcribe_ms,
+            "audio_bytes": len(audio_bytes),
+            "audio_source": str(getattr(normalized, "media_source", "") or "telegram_client"),
+        },
     }
 
 
@@ -1075,6 +1083,7 @@ def simulate_telegram_update(
     bridge_voice_media: dict[str, Any] | None = None
     bridge_voice_error: str | None = None
     respect_voice_reply_state_for_bridge = True
+    media_input: dict[str, Any] = {}
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -1649,10 +1658,20 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    voice_timing = (
+        dict(media_input.get("voice_timing"))
+        if isinstance(media_input, dict) and isinstance(media_input.get("voice_timing"), dict)
+        else {}
+    )
     if bridge_voice_media is not None:
         detail["voice_media"] = bridge_voice_media
+        synthesis_ms = bridge_voice_media.get("synthesis_ms")
+        if synthesis_ms is not None:
+            voice_timing["synthesis_ms"] = synthesis_ms
     if bridge_voice_error:
         detail["voice_error"] = bridge_voice_error
+    if voice_timing:
+        detail["voice_timing"] = voice_timing
     if resolution.allowed:
         append_gateway_trace(
             config_manager,
@@ -2485,11 +2504,13 @@ def _synthesize_telegram_voice_reply(
     }
     if tts:
         payload["tts"] = tts
+    synthesis_started = perf_counter()
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.speak",
         payload=payload,
     )
+    synthesis_ms = int((perf_counter() - synthesis_started) * 1000)
     if execution is None:
         raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `spark-voice-comms` first.")
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
@@ -2520,6 +2541,8 @@ def _synthesize_telegram_voice_reply(
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
         "voice_compatible": bool((result or {}).get("voice_compatible")),
+        "spoken_text": text,
+        "synthesis_ms": synthesis_ms,
     }
     return _convert_voice_payload_for_telegram_if_available(payload)
 
@@ -2604,6 +2627,8 @@ def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "voice_compatible": _telegram_voice_payload_is_voice_compatible(payload),
         "provider_id": payload.get("provider_id"),
         "voice_id": payload.get("voice_id"),
+        "spoken_text": str(payload.get("spoken_text") or ""),
+        "synthesis_ms": payload.get("synthesis_ms"),
     }
 
 

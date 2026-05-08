@@ -6102,6 +6102,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
+        self.assertEqual(result.detail["voice_media"]["spoken_text"], "Hello from GPT Realtime 2.")
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
@@ -6535,6 +6536,13 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.detail["transcript_text"], "how calibrated is voice")
         self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
         self.assertEqual(result.detail["voice_media"]["audio_base64"], base64.b64encode(b"fake-live-voice").decode("ascii"))
+        self.assertEqual(
+            result.detail["voice_media"]["spoken_text"],
+            "Voice is calibrated enough for a first live pass.",
+        )
+        self.assertEqual(result.detail["voice_timing"]["audio_source"], "telegram_client")
+        self.assertIn("transcribe_hook_ms", result.detail["voice_timing"])
+        self.assertIn("synthesis_ms", result.detail["voice_timing"])
 
     def test_voice_message_poll_trace_records_bounded_transcript_telemetry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
