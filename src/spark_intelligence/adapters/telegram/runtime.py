@@ -1083,6 +1083,7 @@ def simulate_telegram_update(
     bridge_voice_media: dict[str, Any] | None = None
     bridge_voice_error: str | None = None
     respect_voice_reply_state_for_bridge = True
+    voice_answer_requested_for_bridge = False
     media_input: dict[str, Any] = {}
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
@@ -1112,6 +1113,10 @@ def simulate_telegram_update(
         else:
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
+        voice_answer_request = _extract_voice_answer_request(effective_text)
+        if voice_answer_request:
+            effective_text = voice_answer_request
+            voice_answer_requested_for_bridge = True
         command_result = _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -1464,6 +1469,7 @@ def simulate_telegram_update(
                     and _instruction_intent is None
                     and _generic_memory_observation is None
                     and not _mission_control_query
+                    and not voice_answer_requested_for_bridge
                     and effective_text
                 ):
                     try:
@@ -1597,8 +1603,10 @@ def simulate_telegram_update(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
         )
-        voice_bridge_requested = voice_origin_reply or (
-            respect_voice_reply_state_for_bridge and voice_reply_state_enabled
+        voice_bridge_requested = (
+            voice_origin_reply
+            or voice_answer_requested_for_bridge
+            or (respect_voice_reply_state_for_bridge and voice_reply_state_enabled)
         )
         if not simulation and voice_bridge_requested:
             outbound_text = _repair_voice_delivery_denial(outbound_text, voice_available=True)
@@ -1635,6 +1643,11 @@ def simulate_telegram_update(
         trace_ref=trace_ref,
         session_id=resolution.session_id,
     )
+    if bridge_voice_media is not None:
+        voice_caption_text = _strip_delivery_chunk_markers(sanitized_outbound_text)
+        if voice_caption_text != sanitized_outbound_text:
+            sanitized_outbound_text = voice_caption_text
+            _outbound_actions = ["strip_voice_caption_chunk_markers", *_outbound_actions]
     detail = {
         "request_id": request_id,
         "simulation": simulation,
@@ -2047,6 +2060,11 @@ def poll_telegram_updates_once(
         effective_text = str(media_input.get("effective_text") or normalized.text)
         transcript_text = media_input.get("transcript_text")
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
+        voice_answer_requested_for_bridge = False
+        voice_answer_request = _extract_voice_answer_request(effective_text)
+        if voice_answer_request:
+            effective_text = voice_answer_request
+            voice_answer_requested_for_bridge = True
 
         command_result = _handle_runtime_command(
             config_manager=config_manager,
@@ -2108,11 +2126,11 @@ def poll_telegram_updates_once(
                 trace_ref=None,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
-                force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply,
+                force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
                 voice_text=(
                     str(command_result.get("voice_text")).strip()
                     if command_result.get("voice_text") is not None
-                    else (outbound_text if voice_origin_reply else None)
+                    else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
                 ),
                 respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
                 user_message=effective_text,
@@ -2381,8 +2399,8 @@ def poll_telegram_updates_once(
             promotion_disposition=bridge_result.promotion_disposition,
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
-            force_voice=voice_origin_reply,
-            voice_text=outbound_text if voice_origin_reply else None,
+            force_voice=voice_origin_reply or voice_answer_requested_for_bridge,
+            voice_text=outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None,
             user_message=effective_text,
         )
         processed_count += 1
@@ -2840,13 +2858,14 @@ def _send_telegram_reply(
     )
     try:
         if voice_payload is not None:
+            voice_caption_text = _strip_delivery_chunk_markers(str(guarded["text"]))
             if _telegram_voice_payload_is_voice_compatible(voice_payload):
                 client.send_voice(
                     chat_id=chat_id,
                     voice_bytes=voice_payload["audio_bytes"],
                     filename=str(voice_payload["filename"]),
                     mime_type=str(voice_payload["mime_type"]),
-                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                    caption=voice_caption_text if len(voice_caption_text) <= 1024 else None,
                 )
             else:
                 client.send_document(
@@ -2854,7 +2873,7 @@ def _send_telegram_reply(
                     document_bytes=voice_payload["audio_bytes"],
                     filename=str(voice_payload["filename"]),
                     mime_type=str(voice_payload["mime_type"]),
-                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                    caption=voice_caption_text if len(voice_caption_text) <= 1024 else None,
                 )
         else:
             for _chunk in (guarded.get("chunks") or [guarded["text"]]):
@@ -2963,6 +2982,13 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _strip_delivery_chunk_markers(text: str) -> str:
+    value = str(text or "")
+    if not value:
+        return ""
+    return re.sub(r"(?m)^\((?:\d+)\/(?:\d+)\)\s*", "", value).strip()
 
 
 def _prepare_simulate_outbound(
@@ -3309,7 +3335,7 @@ def _handle_runtime_command(
             "reply_text": (
                 f"Voice replies are currently {state_text} for this Telegram DM. "
                 "Use `/voice reply on` to send future replies as audio, `/voice reply off` to stay text-only, "
-                "or `/voice speak <text>` for a one-shot spoken reply."
+                "`/voice ask <question>` for a generated voice answer, or `/voice speak <text>` to read exact text."
             ),
             "respect_voice_reply_state": False,
         }
@@ -3327,9 +3353,10 @@ def _handle_runtime_command(
             "command": lowered,
             "reply_text": (
                 "Voice replies enabled for this Telegram DM. "
-                "Next: ask a normal question or use `/voice speak <text>` to test the voice path."
+                "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
+                "or `/voice speak <text>` to read exact text."
                 if enabled
-                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice speak <text>`."
+                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
             ),
             "respect_voice_reply_state": False,
         }
@@ -3397,6 +3424,12 @@ def _handle_runtime_command(
             agent_id=agent_id,
             payload_extra=payload_extra,
         )
+    if lowered in {"/voice ask", "/voice answer"}:
+        return {
+            "command": "/voice ask",
+            "reply_text": "Voice ask needs a question. Use `/voice ask what should I focus on today?`.",
+            "respect_voice_reply_state": False,
+        }
     if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
         speak_text = (
             normalized[len("/voice speak") :].strip()
@@ -3411,7 +3444,7 @@ def _handle_runtime_command(
             }
         return {
             "command": "/voice speak",
-            "reply_text": f"Sending that as a voice reply now.",
+            "reply_text": "Reading that exact text as a voice reply now.",
             "force_voice": True,
             "voice_text": speak_text,
             "voice_tts": _voice_tts_override_from_text(speak_text),
@@ -4267,6 +4300,30 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
     feedback_payload = _style_feedback_payload_from_natural_message(normalized)
     if feedback_payload:
         return {"command": "/style feedback", "payload": feedback_payload}
+    return None
+
+
+def _extract_voice_answer_request(inbound_text: str) -> str | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    for prefix in ("/voice ask", "/voice answer"):
+        if lowered.startswith(f"{prefix} "):
+            prompt = normalized[len(prefix) :].strip()
+            return prompt or None
+
+    for pattern in (
+        r"^(?P<prompt>.+?)\s+(?:as|in|with)\s+(?:a\s+)?(?:voice|audio|spoken)\s+(?:message|reply|note)$",
+        r"^(?:send|reply)\s+(?:me\s+)?(?:a\s+)?(?:voice|audio|spoken)\s+(?:message|reply|note)\s+(?:about|on|for)\s+(?P<prompt>.+)$",
+        r"^(?:answer|respond\s+to)\s+(?P<prompt>.+?)\s+(?:by|with|in)\s+(?:voice|audio|speech)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        prompt = " ".join(str(match.group("prompt") or "").strip().split())
+        if prompt:
+            return prompt
     return None
 
 

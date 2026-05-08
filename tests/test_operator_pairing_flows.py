@@ -5857,7 +5857,107 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertIn("Sending that as a voice reply now", result.detail["response_text"])
+        self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
+
+    def test_natural_voice_answer_request_generates_reply_before_speaking(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        consume_pairing_welcome(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+        )
+        captured_bridge: dict[str, object] = {}
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-answer").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-answer.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "openai-realtime",
+                        "voice_id": "sage",
+                    }
+                },
+            )
+
+        def fake_bridge(**kwargs):
+            captured_bridge["user_message"] = kwargs["user_message"]
+            long_details = "\n\n".join(
+                f"Detail {index}\n- This keeps the generated answer long enough to exercise Telegram delivery chunking without changing the voice request semantics."
+                for index in range(40)
+            )
+            return ResearcherBridgeResult(
+                request_id="req-voice-answer",
+                reply_text=(
+                    "Here is the honest layout.\n\n"
+                    "Where I run\n"
+                    "- Telegram is my primary surface.\n\n"
+                    "Memory\n"
+                    "- I carry durable context when it is saved.\n\n"
+                    "Domain chips\n"
+                    "- Specialized modules handle focused capabilities.\n\n"
+                    "Spawner\n"
+                    "- Build and mission work routes through Spawner when requested.\n\n"
+                    f"{long_details}"
+                ),
+                evidence_summary="voice_answer_test",
+                escalation_hint=None,
+                trace_ref="trace:voice-answer",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_bridge,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118176,
+                    user_id="111",
+                    username="alice",
+                    text="Give me a longer honest layout of where you run, memory, domain chips, and spawner as a voice message",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            captured_bridge["user_message"],
+            "Give me a longer honest layout of where you run, memory, domain chips, and spawner",
+        )
+        self.assertIn("Where I run", result.detail["response_text"])
+        self.assertNotIn("(1/", result.detail["response_text"])
+        self.assertIn("strip_voice_caption_chunk_markers", result.detail["guardrail_actions"])
+        self.assertIn("Here is the honest layout", captured_payload["text"])
+        self.assertNotIn("Give me a longer honest layout", captured_payload["text"])
+        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
 
     def test_natural_short_voice_note_request_returns_bridge_voice_media(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -5901,7 +6001,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Sending that as a voice reply now", result.detail["response_text"])
+        self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
         self.assertEqual(
             captured_payload["text"],
             "Voice is working here. I can send spoken replies through this Telegram chat now.",
@@ -6208,7 +6308,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_voices), 1)
         self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Sending that as a voice reply now", str(client.sent_voices[0]["caption"]))
+        self.assertIn("Reading that exact text as a voice reply now", str(client.sent_voices[0]["caption"]))
         self.assertEqual(client.sent_voices[0]["mime_type"], "audio/ogg")
         self.assertEqual(client.sent_voices[0]["filename"], "telegram-reply-abcdef12.ogg")
 
