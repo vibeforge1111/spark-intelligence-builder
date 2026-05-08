@@ -126,6 +126,7 @@ Recommended live workflow:
 - `/voice reply status`
 - `/voice reply on`
 - `/voice reply off`
+- `/voice ask <question>`
 - `/voice speak <text>`
 
 Natural-language examples:
@@ -134,6 +135,7 @@ Natural-language examples:
 - `How does voice work?`
 - `Turn voice replies on`
 - `Turn voice replies off`
+- `Answer this in voice: <question>`
 - `Please speak this out loud: <text>`
 - `Send this as voice: <text>`
 
@@ -142,9 +144,41 @@ Current live behavior:
 - Telegram voice and audio messages are transcribed through `domain-chip-voice-comms`
 - voice-origin Telegram turns auto-reply with audio when TTS succeeds, even if `/voice reply on` is not set
 - `/voice reply on` enables automatic audio replies for later text-origin turns in that DM
+- `/voice ask <question>` generates an answer first, then sends that answer as audio
+- `/voice speak <text>` reads the provided text exactly; use it for scripts, not generated answers
 - Builder keeps the normal Telegram caption text, but sends a voice-shaped spoken variant into `voice.speak` so spoken replies stay shorter and cleaner
 - Telegram voice replies should be synthesized in a Telegram-friendly Opus voice-note format and delivered with `sendVoice`
 - do not silently fall back to generic MP3/document delivery unless you are intentionally accepting different playback behavior
+
+### Profile Voice Overrides
+
+Telegram profiles can override voice delivery without changing Builder's global voice provider. The supported profile env keys are:
+
+- `SPARK_TELEGRAM_VOICE_TTS_PROVIDER`
+- `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID`
+- `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME`
+- `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID`
+- `SPARK_TELEGRAM_VOICE_TTS_STABILITY`
+- `SPARK_TELEGRAM_VOICE_TTS_SIMILARITY_BOOST`
+- `SPARK_TELEGRAM_VOICE_TTS_STYLE`
+- `SPARK_TELEGRAM_VOICE_TTS_SPEED`
+- `SPARK_TELEGRAM_VOICE_TTS_USE_SPEAKER_BOOST`
+- `SPARK_TELEGRAM_VOICE_AUDIO_EFFECT`
+
+`SPARK_TELEGRAM_VOICE_AUDIO_EFFECT=parrot` applies the balanced Parrot Cove Bird filter after TTS and before Telegram delivery. Keep this profile-scoped so other Telegram bots do not inherit the character voice.
+
+Current Parrot Cove Bird recipe:
+
+- ElevenLabs voice: `Parrot Cove Bird`
+- voice id: `ZWw77cKDlDtiE9JYM1Wq`
+- model: `eleven_turbo_v2_5`
+- settings: `stability=0.48`, `similarity_boost=0.70`, `style=0.44`, `speed=1.06`, `use_speaker_boost=false`
+- effect: `parrot`
+
+Rollback path:
+
+- remove `SPARK_TELEGRAM_VOICE_AUDIO_EFFECT` to keep ElevenLabs voice output without the parrot filter
+- remove the profile-level `SPARK_TELEGRAM_VOICE_TTS_*` values to fall back to Builder's global voice provider
 
 ## Think Visibility
 

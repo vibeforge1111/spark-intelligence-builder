@@ -3594,12 +3594,15 @@ def _handle_runtime_command(
         if not speak_text:
             return {
                 "command": "/voice speak",
-                "reply_text": "Voice speak needs text. Use `/voice speak <what you want me to say>`.",
+                "reply_text": (
+                    "Voice speak reads exact text. Use `/voice speak <words to read>`.\n\n"
+                    "For a generated spoken answer, use `/voice ask <question>`."
+                ),
                 "respect_voice_reply_state": False,
             }
         return {
             "command": "/voice speak",
-            "reply_text": "Reading that exact text as a voice reply now.",
+            "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
             "force_voice": True,
             "voice_text": speak_text,
             "voice_tts": _voice_tts_override_from_text(speak_text),
