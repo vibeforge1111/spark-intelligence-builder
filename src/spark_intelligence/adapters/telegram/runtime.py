@@ -2583,7 +2583,34 @@ def _first_nonempty_env(*names: str) -> str:
     return ""
 
 
+def _telegram_voice_profile_registry_path() -> Path:
+    configured = str(os.environ.get("SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    home = Path(str(os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~")).expanduser()
+    return home / ".spark" / "config" / "telegram-voice-profiles.json"
+
+
+def _telegram_voice_registry_profile() -> dict[str, Any]:
+    registry_path = _telegram_voice_profile_registry_path()
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    profiles = payload.get("profiles") if isinstance(payload, dict) else None
+    if not isinstance(profiles, dict):
+        return {}
+    profile_key = str(os.environ.get("SPARK_TELEGRAM_PROFILE") or "default").strip() or "default"
+    profile = profiles.get(profile_key)
+    if not isinstance(profile, dict) and profile_key != "default":
+        profile = profiles.get("default")
+    if not isinstance(profile, dict):
+        return {}
+    return {str(key): value for key, value in profile.items()}
+
+
 def _telegram_voice_tts_override_from_env() -> dict[str, Any] | None:
+    registry_profile = _telegram_voice_registry_profile()
     provider_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_PROVIDER", "SPARK_TELEGRAM_TTS_PROVIDER")
     voice_id = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_ID", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID")
     voice_name = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME", "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME")
@@ -2592,21 +2619,23 @@ def _telegram_voice_tts_override_from_env() -> dict[str, Any] | None:
     output_format = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_OUTPUT_FORMAT")
     secret_env_ref = _first_nonempty_env("SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF")
     tts: dict[str, Any] = {}
-    if provider_id:
-        tts["provider_id"] = provider_id
-    if voice_id:
-        tts["voice_id"] = voice_id
-    if voice_name:
-        tts["voice_name"] = voice_name
-    if model_id:
-        tts["model_id"] = model_id
-    if base_url:
-        tts["base_url"] = base_url
-    if output_format:
-        tts["output_format"] = output_format
-    if secret_env_ref:
-        tts["secret_env_ref"] = secret_env_ref
+    for output_key, registry_key, env_value in (
+        ("provider_id", "provider_id", provider_id),
+        ("voice_id", "voice_id", voice_id),
+        ("voice_name", "voice_name", voice_name),
+        ("model_id", "model_id", model_id),
+        ("base_url", "base_url", base_url),
+        ("output_format", "output_format", output_format),
+        ("secret_env_ref", "secret_env_ref", secret_env_ref),
+    ):
+        value = env_value or str(registry_profile.get(registry_key) or "").strip()
+        if value:
+            tts[output_key] = value
     voice_settings = _telegram_voice_settings_override_from_env()
+    if not voice_settings:
+        registry_settings = registry_profile.get("voice_settings")
+        if isinstance(registry_settings, dict):
+            voice_settings = dict(registry_settings)
     if voice_settings:
         tts["voice_settings"] = voice_settings
     return tts or None
@@ -2631,6 +2660,8 @@ def _telegram_voice_settings_override_from_env() -> dict[str, Any] | None:
 
 def _telegram_voice_effect_from_env() -> str:
     effect = str(os.environ.get("SPARK_TELEGRAM_VOICE_AUDIO_EFFECT") or "").strip().lower()
+    if not effect:
+        effect = str(_telegram_voice_registry_profile().get("audio_effect") or "").strip().lower()
     return effect if effect in {"parrot"} else ""
 
 
@@ -5862,6 +5893,11 @@ def _run_voice_runtime_command(
         return {"command": command, "reply_text": fallback_reply}
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     reply_text = str((result or {}).get("reply_text") or "").strip()
+    if command in {"/voice", "/voice status"}:
+        if reply_text:
+            reply_text = _append_telegram_voice_profile_status(reply_text)
+        else:
+            fallback_reply = _append_telegram_voice_profile_status(fallback_reply)
     if reply_text:
         return {"command": command, "reply_text": reply_text}
     if execution.ok:
@@ -5883,6 +5919,84 @@ def _render_telegram_voice_status_reply() -> str:
         "Attach `spark-voice-comms` first; then I can transcribe voice notes and help you choose a local or hosted voice setup.\n"
         "After that, rerun `/voice`."
     )
+
+
+def _append_telegram_voice_profile_status(reply_text: str) -> str:
+    profile = _telegram_voice_status_profile()
+    if not profile:
+        return reply_text
+    lines = [
+        "",
+        "Profile voice:",
+        f"- Telegram profile: {profile['telegram_profile']}",
+        f"- Provider: {profile['provider_id']}",
+        f"- Voice: {profile['voice_name']}",
+    ]
+    voice_id = str(profile.get("voice_id") or "").strip()
+    if voice_id:
+        lines.append(f"- Voice ID: {_mask_voice_id(voice_id)}")
+    model_id = str(profile.get("model_id") or "").strip()
+    if model_id:
+        lines.append(f"- Model: {model_id}")
+    settings = profile.get("voice_settings") if isinstance(profile.get("voice_settings"), dict) else {}
+    if settings:
+        rendered = ", ".join(f"{key}={settings[key]}" for key in sorted(settings))
+        lines.append(f"- Settings: {rendered}")
+    effect = str(profile.get("audio_effect") or "").strip()
+    if effect:
+        lines.append(f"- Effect: {effect}")
+    source = str(profile.get("source") or "").strip()
+    if source:
+        lines.append(f"- Source: {source}")
+    return f"{reply_text.rstrip()}\n" + "\n".join(lines)
+
+
+def _telegram_voice_status_profile() -> dict[str, Any]:
+    registry_profile = _telegram_voice_registry_profile()
+    tts = _telegram_voice_tts_override_from_env() or {}
+    provider_id = str(tts.get("provider_id") or "").strip()
+    voice_id = str(tts.get("voice_id") or "").strip()
+    voice_name = str(tts.get("voice_name") or "").strip()
+    model_id = str(tts.get("model_id") or "").strip()
+    effect = _telegram_voice_effect_from_env()
+    settings = tts.get("voice_settings") if isinstance(tts.get("voice_settings"), dict) else {}
+    if not any([provider_id, voice_id, voice_name, model_id, effect, settings]):
+        return {}
+    source_parts = []
+    if registry_profile:
+        source_parts.append("registry")
+    if any(
+        str(os.environ.get(name) or "").strip()
+        for name in (
+            "SPARK_TELEGRAM_VOICE_TTS_PROVIDER",
+            "SPARK_TELEGRAM_TTS_PROVIDER",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME",
+            "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID",
+            "SPARK_TELEGRAM_VOICE_AUDIO_EFFECT",
+        )
+    ):
+        source_parts.append("env")
+    return {
+        "telegram_profile": str(os.environ.get("SPARK_TELEGRAM_PROFILE") or "default").strip() or "default",
+        "provider_id": provider_id or "default",
+        "voice_id": voice_id,
+        "voice_name": voice_name or "default",
+        "model_id": model_id,
+        "voice_settings": settings,
+        "audio_effect": effect,
+        "source": "+".join(source_parts) if source_parts else "default",
+    }
+
+
+def _mask_voice_id(voice_id: str) -> str:
+    value = str(voice_id or "").strip()
+    if len(value) <= 8:
+        return value
+    return f"{value[:6]}...{value[-4:]}"
 
 
 def _render_telegram_voice_plan_reply() -> str:

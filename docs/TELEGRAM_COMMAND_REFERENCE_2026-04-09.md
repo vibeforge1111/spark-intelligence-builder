@@ -154,6 +154,7 @@ Current live behavior:
 
 Telegram profiles can override voice delivery without changing Builder's global voice provider. The supported profile env keys are:
 
+- `SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY`
 - `SPARK_TELEGRAM_VOICE_TTS_PROVIDER`
 - `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID`
 - `SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME`
@@ -166,6 +167,33 @@ Telegram profiles can override voice delivery without changing Builder's global 
 - `SPARK_TELEGRAM_VOICE_AUDIO_EFFECT`
 
 `SPARK_TELEGRAM_VOICE_AUDIO_EFFECT=parrot` applies the balanced Parrot Cove Bird filter after TTS and before Telegram delivery. Keep this profile-scoped so other Telegram bots do not inherit the character voice.
+
+By default, Builder looks for a profile voice registry at `~/.spark/config/telegram-voice-profiles.json`. `SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY` can point at a different file. Env vars override registry values for emergency rollback or local experiments.
+
+Registry shape:
+
+```json
+{
+  "profiles": {
+    "parrotcovebird": {
+      "provider_id": "elevenlabs",
+      "voice_id": "ZWw77cKDlDtiE9JYM1Wq",
+      "voice_name": "Parrot Cove Bird",
+      "model_id": "eleven_turbo_v2_5",
+      "voice_settings": {
+        "stability": 0.48,
+        "similarity_boost": 0.70,
+        "style": 0.44,
+        "speed": 1.06,
+        "use_speaker_boost": false
+      },
+      "audio_effect": "parrot"
+    }
+  }
+}
+```
+
+`/voice` and `/voice status` append the active profile voice summary when a registry or profile env override is present. Voice IDs are masked in the status reply.
 
 Current Parrot Cove Bird recipe:
 

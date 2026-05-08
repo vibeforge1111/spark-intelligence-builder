@@ -5484,6 +5484,72 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Voice chip is ready.", result.detail["response_text"])
         self.assertIn("configured via openai", result.detail["response_text"])
 
+    def test_voice_status_shows_profile_voice_registry(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        registry_path = self.home / "telegram-voice-profiles.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "profiles": {
+                        "parrotcovebird": {
+                            "provider_id": "elevenlabs",
+                            "voice_id": "ZWw77cKDlDtiE9JYM1Wq",
+                            "voice_name": "Parrot Cove Bird",
+                            "model_id": "eleven_turbo_v2_5",
+                            "voice_settings": {
+                                "stability": 0.48,
+                                "similarity_boost": 0.7,
+                                "style": 0.44,
+                                "speed": 1.06,
+                                "use_speaker_boost": False,
+                            },
+                            "audio_effect": "parrot",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
+                "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Voice chip is ready."}},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11801,
+                    user_id="111",
+                    username="alice",
+                    text="/voice",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        reply = result.detail["response_text"]
+        self.assertIn("Profile voice:", reply)
+        self.assertIn("Telegram profile: parrotcovebird", reply)
+        self.assertIn("Provider: elevenlabs", reply)
+        self.assertIn("Voice: Parrot Cove Bird", reply)
+        self.assertIn("Voice ID: ZWw77c", reply)
+        self.assertIn("M1Wq", reply)
+        self.assertIn("Effect: parrot", reply)
+        self.assertIn("Source: registry", reply)
+
     def test_voice_plan_command_returns_concrete_pipeline_steps(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
