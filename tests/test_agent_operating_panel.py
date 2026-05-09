@@ -55,6 +55,10 @@ class AgentOperatingPanelTests(SparkTestCase):
 
         payload = panel.to_payload()
 
+        self.assertEqual(payload["strip"]["schema_version"], "spark.agent_operating_strip.v1")
+        self.assertEqual(payload["strip"]["best_route"], "writable Spawner/Codex mission")
+        self.assertEqual(payload["strip"]["access"], "Level 4 - local workspace allowed")
+        self.assertEqual(payload["strip"]["runner"], "read-only chat runner")
         self.assertEqual(payload["aoc"]["conversation_frame"]["current_mode"], "patch_work")
         self.assertEqual(payload["black_box"]["counts"]["entries"], 2)
         self.assertEqual(payload["memory_approval_inbox"]["counts"]["pending"], 1)
@@ -66,6 +70,7 @@ class AgentOperatingPanelTests(SparkTestCase):
         self.assertIn("claim_patch_files_here", payload["agent_scratchpad"]["do_not_do"])
         rendered = panel.to_text()
         self.assertIn("Agent Operating Panel", rendered)
+        self.assertIn("AOC: Ready with warnings | Best route: writable Spawner/Codex mission", rendered)
         self.assertIn("Next safe action: start_or_route_to_writable_spawner_codex_mission", rendered)
         self.assertIn("Memory approvals pending: 1", rendered)
         self.assertIn("Stale context: 1 stale", rendered)

@@ -8,6 +8,7 @@ from spark_intelligence.memory.approval_inbox import MemoryApprovalInboxReport, 
 from spark_intelligence.self_awareness.agent_scratchpad import AgentScratchpad, build_agent_scratchpad
 from spark_intelligence.self_awareness.agent_events import AgentBlackBoxReport, build_agent_black_box_report
 from spark_intelligence.self_awareness.operating_context import AgentOperatingContextResult, build_agent_operating_context
+from spark_intelligence.self_awareness.operating_strip import AgentOperatingStrip, build_agent_operating_strip
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
 from spark_intelligence.self_awareness.stale_context_sweeper import (
     StaleContextSweepReport,
@@ -22,6 +23,7 @@ AGENT_OPERATING_PANEL_SCHEMA_VERSION = "spark.agent_operating_panel.v1"
 @dataclass(frozen=True)
 class AgentOperatingPanel:
     aoc: AgentOperatingContextResult
+    strip: AgentOperatingStrip
     agent_scratchpad: AgentScratchpad
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
@@ -30,6 +32,7 @@ class AgentOperatingPanel:
     def to_payload(self) -> dict[str, Any]:
         return {
             "schema_version": AGENT_OPERATING_PANEL_SCHEMA_VERSION,
+            "strip": self.strip.to_payload(),
             "aoc": self.aoc.to_payload(),
             "agent_scratchpad": self.agent_scratchpad.to_payload(),
             "black_box": self.black_box.to_payload(),
@@ -50,6 +53,7 @@ class AgentOperatingPanel:
         scratchpad = payload["agent_scratchpad"]
         lines = [
             "Agent Operating Panel",
+            self.strip.to_text(),
             f"AOC: {str(aoc.get('status') or 'unknown').replace('_', ' ')}",
             f"Mode: {(aoc.get('conversation_frame') or {}).get('current_mode') or 'unknown'}",
             f"Best route: {(aoc.get('task_fit') or {}).get('recommended_route_label') or 'unknown'}",
@@ -105,9 +109,12 @@ def build_agent_operating_panel(
                 source_ref=request_id,
             )
         )
-    scratchpad = build_agent_scratchpad(aoc.to_payload())
+    aoc_payload = aoc.to_payload()
+    strip = build_agent_operating_strip(aoc_payload)
+    scratchpad = build_agent_scratchpad(aoc_payload)
     return AgentOperatingPanel(
         aoc=aoc,
+        strip=strip,
         agent_scratchpad=scratchpad,
         black_box=build_agent_black_box_report(state_db, request_id=request_id),
         memory_approval_inbox=build_memory_approval_inbox(state_db, status=memory_inbox_status),
