@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.state.db import StateDB
 
 
 DEFAULT_MAX_LINES_PER_FILE = 2000
@@ -22,6 +23,22 @@ LOG_GLOBS = ("*.log", "*.jsonl", "*.out", "*.err")
 TIMESTAMP_RE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+DIAGNOSTIC_CAPABILITY_CHECKS: dict[str, tuple[str, ...]] = {
+    "spark_intelligence_builder": (
+        "spark_intelligence_home",
+        "spark_intelligence_state_db",
+        "spark_intelligence_logs",
+        "spark_intelligence_builder_source",
+    ),
+    "spark_spawner": ("spawner_ui_api",),
+    "spark_memory": ("domain_chip_memory_source",),
+    "spark_researcher": ("spark_researcher_source", "spark_researcher_traces"),
+    "spark_telegram_bot": (
+        "spark_telegram_bot_source",
+        "spark_telegram_bot_spark_agi",
+        "spark_telegram_bot_testerthebester",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -271,6 +288,69 @@ def build_diagnostic_report(
         recurring_threshold=report.recurring_threshold,
         markdown_path=str(markdown_path),
     )
+
+
+def record_diagnostic_capability_events(
+    state_db: StateDB,
+    report: DiagnosticReport,
+    *,
+    request_id: str = "",
+    session_id: str = "",
+    human_id: str = "",
+    actor_id: str = "diagnostics_scan",
+) -> list[str]:
+    from spark_intelligence.self_awareness.agent_events import AgentEvent, AgentSourceRef, record_agent_event
+
+    event_ids: list[str] = []
+    checks_by_service = {check.service: check for check in report.service_checks}
+    source_ref = report.markdown_path or f"diagnostics:{report.generated_at}"
+    for capability_key, service_names in DIAGNOSTIC_CAPABILITY_CHECKS.items():
+        checks = [checks_by_service[name] for name in service_names if name in checks_by_service]
+        if not checks:
+            continue
+        failed_checks = [check for check in checks if check.status != "ok"]
+        status = "failure" if failed_checks else "success"
+        summary = _diagnostic_capability_summary(
+            capability_key=capability_key,
+            status=status,
+            checks=checks,
+            failed_checks=failed_checks,
+        )
+        event_ids.append(
+            record_agent_event(
+                state_db,
+                AgentEvent(
+                    event_type="capability_probed",
+                    summary=summary,
+                    selected_route=capability_key,
+                    route_confidence="high" if status == "success" else "blocked",
+                    facts={
+                        "capability_key": capability_key,
+                        "probe_status": status,
+                        "diagnostic_report_generated_at": report.generated_at,
+                        "diagnostic_service_checks": [check.to_dict() for check in checks],
+                        "diagnostic_failed_checks": [check.to_dict() for check in failed_checks],
+                    },
+                    sources=[
+                        AgentSourceRef(
+                            source="current_diagnostics",
+                            role="capability_evidence",
+                            freshness="live_probed",
+                            source_ref=source_ref,
+                            summary=summary,
+                        )
+                    ],
+                    blockers=[_service_check_blocker(check) for check in failed_checks],
+                    changed=[f"{capability_key}:diagnostics={status}"],
+                ),
+                request_id=str(request_id or "").strip() or None,
+                session_id=str(session_id or "").strip() or None,
+                human_id=str(human_id or "").strip() or None,
+                actor_id=str(actor_id or "").strip() or None,
+                correlation_id=source_ref,
+            )
+        )
+    return event_ids
 
 
 def discover_service_checks(config_manager: ConfigManager) -> list[ServiceCheck]:
@@ -573,6 +653,23 @@ def _render_finding_block(
             lines.append(f"- `{Path(entry.source_path).name}:{entry.line_number}` {snippet[:300]}")
     lines.append("")
     return lines
+
+
+def _diagnostic_capability_summary(
+    *,
+    capability_key: str,
+    status: str,
+    checks: list[ServiceCheck],
+    failed_checks: list[ServiceCheck],
+) -> str:
+    if not failed_checks:
+        return f"Diagnostics capability probe success: {capability_key} ({len(checks)} check(s) ok)."
+    failed = ", ".join(f"{check.service}={check.status}" for check in failed_checks[:3])
+    return f"Diagnostics capability probe failure: {capability_key} ({failed})."
+
+
+def _service_check_blocker(check: ServiceCheck) -> str:
+    return f"{check.service}:{check.status}:{check.detail}"
 
 
 def _looks_like_failure(entry: LogEntry, lowered: str) -> bool:

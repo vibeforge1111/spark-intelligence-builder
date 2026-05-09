@@ -52,7 +52,7 @@ from spark_intelligence.channel.service import (
     test_configured_telegram_channel,
 )
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.diagnostics import build_diagnostic_report
+from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
     gateway_ask_telegram,
@@ -1313,6 +1313,11 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
     diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
     diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
+    diagnostics_scan_parser.add_argument("--record-aoc-events", action="store_true", help="Record diagnostic capability evidence in the AOC black box")
+    diagnostics_scan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--session-id", default="", help="Session id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--human-id", default="", help="Human id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--actor-id", default="diagnostics_scan", help="Actor id for recorded AOC events")
     diagnostics_scan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
@@ -3589,10 +3594,26 @@ def handle_diagnostics_scan(args: argparse.Namespace) -> int:
         write_markdown=not bool(args.no_write),
         output_dir=Path(args.output_dir).expanduser() if args.output_dir else None,
     )
+    agent_event_ids: list[str] = []
+    if args.record_aoc_events:
+        agent_event_ids = record_diagnostic_capability_events(
+            state_db,
+            report,
+            request_id=args.request_id,
+            session_id=args.session_id,
+            human_id=args.human_id,
+            actor_id=args.actor_id,
+        )
     if args.json:
-        print(report.to_json())
+        payload = report.to_dict()
+        if args.record_aoc_events:
+            payload["agent_event_ids"] = agent_event_ids
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(report.to_text())
+        lines = [report.to_text()]
+        if args.record_aoc_events:
+            lines.append(f"- aoc_events: {len(agent_event_ids)}")
+        print("\n".join(lines))
     return 0
 
 
