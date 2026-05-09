@@ -35,6 +35,7 @@ License: AGPL-3.0-or-later.
 - `find me a natural geeky QA tester voice`: search ElevenLabs voices from Telegram.
 - `use voice Elise`: select an ElevenLabs voice by natural language.
 - `make it warmer`, `a little faster`, `make it more geeky`: tune the selected ElevenLabs voice profile without triggering Spawner.
+- `/voice undo`, `/voice rollback`, `undo that voice change`, or `go back to the previous voice`: restore the previous voice profile/provider for the current scope.
 - `/voice ask <question>`: Builder generates an answer first, then speaks that answer.
 - `/voice speak <text>`: read exact supplied text aloud.
 - `/voice reply on` and `/voice reply off`: toggle automatic spoken replies for the current Telegram DM.
@@ -57,6 +58,7 @@ Current write targets:
 
 - Provider preference: `telegram:voice_tts_provider:<scope>:<telegram_user_id>`.
 - Voice profile preference: `telegram:voice_tts_profile:<scope>:<telegram_user_id>`.
+- Previous profile/provider snapshot for rollback: `telegram:voice_tts_profile_undo:<scope>:<telegram_user_id>`.
 - Legacy default-only fallback: `telegram:voice_tts_provider:<telegram_user_id>` and `telegram:voice_tts_profile:<telegram_user_id>`.
 
 Scope examples:
@@ -114,6 +116,7 @@ Before claiming voice is production-ready for a new user or deployment, verify:
 - `/voice provider` shows the expected provider and preference scope.
 - `/voice map` describes the Telegram, Builder, `spark-voice-comms`, memory, and delivery boundaries.
 - `/voice dashboard` opens the Spawner UI voice-system page using redacted runtime evidence only.
+- `/voice-system` reads live Builder runtime state for the current provider/profile and last Telegram delivery proof, so `/voice dashboard` is no longer required after every voice reply just to refresh status.
 - A real Telegram voice note transcribes through the selected STT path.
 - `/voice ask <question>` generates a Builder answer first and speaks that answer, rather than reading the prompt back.
 - `/voice speak <text>` reads exact supplied text and is labeled as exact-read behavior.
@@ -128,6 +131,9 @@ Regression tests currently cover:
 - Natural-language voice mutation preserving scoped profile state.
 - DM provider state overriding env provider defaults when the same agent scope is active.
 - Voice runtime delivery evidence after Telegram `sendVoice`.
+- `/voice` rendering the same scoped profile and delivery proof as the other voice surfaces.
+- Scoped voice rollback after natural-language tuning.
+- Friendly ElevenLabs credential failure copy without raw provider JSON in Telegram-facing replies.
 
 ## Security Boundary
 
