@@ -236,6 +236,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         blank_response_text = blank_output["result"]["detail"]["response_text"]
         blank_metadata = blank_output["result"]["detail"]["runtime_command_metadata"]
         self.assertEqual(blank_response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Trigger: memory/context loss complaint; previous turn looked like memory failure.", blank_response_text)
         self.assertIn("Request: req-doctor-last-target.", blank_response_text)
         self.assertGreaterEqual(blank_metadata["contextual_trigger_score"], 3)
         self.assertEqual(blank_metadata["contextual_trigger_threshold"], 3)
@@ -325,6 +326,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         detail = output["result"]["detail"]
         metadata = detail["runtime_command_metadata"]
         self.assertEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Trigger: close-turn repeat complaint; previous turn looked like memory failure.", detail["response_text"])
         self.assertIn("Request: req-name-repeat.", detail["response_text"])
         self.assertEqual(metadata["diagnosed_request_id"], "req-name-repeat")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
@@ -365,6 +367,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         detail = output["result"]["detail"]
         metadata = detail["runtime_command_metadata"]
         self.assertIn("Memory Doctor:", detail["response_text"].splitlines()[0])
+        self.assertIn("Trigger: memory/context loss complaint.", detail["response_text"])
         self.assertEqual(metadata["diagnosed_request_id"], "req-context-loss-prior")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertGreaterEqual(metadata["contextual_trigger_score"], 4)

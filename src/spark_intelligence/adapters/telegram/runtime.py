@@ -3755,7 +3755,7 @@ def _handle_runtime_command(
         )
         return {
             "command": "/memory doctor",
-            "reply_text": report.to_telegram_text(),
+            "reply_text": _memory_doctor_reply_with_trigger_summary(report.to_telegram_text(), doctor_target),
             "trace_metadata": {
                 "diagnosed_request_id": doctor_request_id or None,
                 "diagnosed_topic": doctor_topic or None,
@@ -4877,6 +4877,36 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
                 "repair_requested": simplified.startswith("repair memory"),
             }
     return None
+
+
+def _memory_doctor_reply_with_trigger_summary(reply_text: str, doctor_target: dict[str, object]) -> str:
+    trigger_summary = _memory_doctor_trigger_summary(doctor_target)
+    if not trigger_summary:
+        return reply_text
+    lines = str(reply_text or "").splitlines()
+    if not lines:
+        return trigger_summary
+    return "\n".join([lines[0], trigger_summary, *lines[1:]])
+
+
+def _memory_doctor_trigger_summary(doctor_target: dict[str, object]) -> str | None:
+    if doctor_target.get("request_selector") != "previous_gateway_turn":
+        return None
+    if doctor_target.get("contextual_trigger_score") is None:
+        return None
+    signals = [str(signal) for signal in doctor_target.get("contextual_trigger_signals") or []]
+    labels: list[str] = []
+    if "close_turn_repeat_frustration" in signals:
+        labels.append("close-turn repeat complaint")
+    if "memory_context_reference" in signals or "memory_distress_verb" in signals:
+        labels.append("memory/context loss complaint")
+    if "operator_frustration" in signals and not labels:
+        labels.append("operator frustration")
+    if "previous_turn_memory_failure_signal" in signals:
+        labels.append("previous turn looked like memory failure")
+    if not labels:
+        return None
+    return f"Trigger: {'; '.join(labels[:3])}."
 
 
 def _runtime_command_trace_metadata(command_result: dict[str, Any]) -> dict[str, object]:
