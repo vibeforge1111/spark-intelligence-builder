@@ -5,6 +5,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.approval_inbox import MemoryApprovalInboxReport, build_memory_approval_inbox
+from spark_intelligence.self_awareness.agent_scratchpad import AgentScratchpad, build_agent_scratchpad
 from spark_intelligence.self_awareness.agent_events import AgentBlackBoxReport, build_agent_black_box_report
 from spark_intelligence.self_awareness.operating_context import AgentOperatingContextResult, build_agent_operating_context
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
@@ -21,6 +22,7 @@ AGENT_OPERATING_PANEL_SCHEMA_VERSION = "spark.agent_operating_panel.v1"
 @dataclass(frozen=True)
 class AgentOperatingPanel:
     aoc: AgentOperatingContextResult
+    agent_scratchpad: AgentScratchpad
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
     stale_context_sweep: StaleContextSweepReport
@@ -29,6 +31,7 @@ class AgentOperatingPanel:
         return {
             "schema_version": AGENT_OPERATING_PANEL_SCHEMA_VERSION,
             "aoc": self.aoc.to_payload(),
+            "agent_scratchpad": self.agent_scratchpad.to_payload(),
             "black_box": self.black_box.to_payload(),
             "memory_approval_inbox": self.memory_approval_inbox.to_payload(),
             "stale_context_sweep": self.stale_context_sweep.to_payload(),
@@ -44,12 +47,15 @@ class AgentOperatingPanel:
         memory_counts = payload["memory_approval_inbox"]["counts"]
         black_box_counts = payload["black_box"]["counts"]
         stale_counts = payload["stale_context_sweep"]["counts"]
+        scratchpad = payload["agent_scratchpad"]
         lines = [
             "Agent Operating Panel",
             f"AOC: {str(aoc.get('status') or 'unknown').replace('_', ' ')}",
             f"Mode: {(aoc.get('conversation_frame') or {}).get('current_mode') or 'unknown'}",
             f"Best route: {(aoc.get('task_fit') or {}).get('recommended_route_label') or 'unknown'}",
             f"Route confidence: {(aoc.get('route_confidence') or {}).get('confidence') or 'unknown'}",
+            f"Current goal: {scratchpad.get('current_goal') or 'unknown'}",
+            f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Black box events: {black_box_counts.get('entries', 0)}",
             f"Memory approvals pending: {memory_counts.get('pending', 0)}",
             f"Stale context: {stale_counts.get('stale', 0)} stale, {stale_counts.get('contradicted', 0)} contradicted",
@@ -99,8 +105,10 @@ def build_agent_operating_panel(
                 source_ref=request_id,
             )
         )
+    scratchpad = build_agent_scratchpad(aoc.to_payload())
     return AgentOperatingPanel(
         aoc=aoc,
+        agent_scratchpad=scratchpad,
         black_box=build_agent_black_box_report(state_db, request_id=request_id),
         memory_approval_inbox=build_memory_approval_inbox(state_db, status=memory_inbox_status),
         stale_context_sweep=build_stale_context_sweep(

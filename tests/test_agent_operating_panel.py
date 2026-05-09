@@ -59,7 +59,13 @@ class AgentOperatingPanelTests(SparkTestCase):
         self.assertEqual(payload["black_box"]["counts"]["entries"], 2)
         self.assertEqual(payload["memory_approval_inbox"]["counts"]["pending"], 1)
         self.assertEqual(payload["stale_context_sweep"]["counts"]["stale"], 1)
+        self.assertEqual(
+            payload["agent_scratchpad"]["next_safe_action"],
+            "start_or_route_to_writable_spawner_codex_mission",
+        )
+        self.assertIn("claim_patch_files_here", payload["agent_scratchpad"]["do_not_do"])
         rendered = panel.to_text()
         self.assertIn("Agent Operating Panel", rendered)
+        self.assertIn("Next safe action: start_or_route_to_writable_spawner_codex_mission", rendered)
         self.assertIn("Memory approvals pending: 1", rendered)
         self.assertIn("Stale context: 1 stale", rendered)
