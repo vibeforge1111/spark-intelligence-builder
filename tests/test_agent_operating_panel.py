@@ -65,6 +65,7 @@ class AgentOperatingPanelTests(SparkTestCase):
         self.assertIn("route_health", section_ids)
         self.assertIn("current_task_fit", section_ids)
         self.assertIn("source_ledger", section_ids)
+        self.assertIn("black_box_recorder", section_ids)
         self.assertIn("contradictions", section_ids)
         self.assertIn("what_rec_needs", section_ids)
         self.assertIn("agent_instruction", section_ids)

@@ -38,6 +38,7 @@ def build_agent_panel_sections(
     *,
     aoc_payload: dict[str, Any],
     scratchpad_payload: dict[str, Any],
+    black_box_payload: dict[str, Any],
     source_ledger_payload: dict[str, Any],
     stale_sweep_payload: dict[str, Any],
 ) -> AgentPanelSections:
@@ -47,6 +48,8 @@ def build_agent_panel_sections(
     task_fit = _dict(aoc_payload.get("task_fit"))
     routes = [_dict(route) for route in _list(aoc_payload.get("routes"))]
     agent_needs = [_dict(need) for need in _list(aoc_payload.get("agent_needs"))]
+    black_box_counts = _dict(black_box_payload.get("counts"))
+    black_box_entries = [_dict(entry) for entry in _list(black_box_payload.get("entries"))]
     stale_counts = _dict(stale_sweep_payload.get("counts"))
     return AgentPanelSections(
         sections=[
@@ -102,6 +105,29 @@ def build_agent_panel_sections(
                     )
                     for item in _list(source_ledger_payload.get("items"))
                     if isinstance(item, dict)
+                ],
+            ),
+            AgentPanelSection(
+                section_id="black_box_recorder",
+                title="Black Box Recorder",
+                status="present" if int(black_box_counts.get("entries") or 0) else "clear",
+                items=[
+                    _item("Entries", int(black_box_counts.get("entries") or 0)),
+                    _item("Blocker events", int(black_box_counts.get("blocker_events") or 0)),
+                    _item("Memory candidates", int(black_box_counts.get("memory_candidates") or 0)),
+                    *[
+                        _item(
+                            str(entry.get("event_type") or "event"),
+                            {
+                                "perceived_intent": entry.get("perceived_intent"),
+                                "route_chosen": entry.get("route_chosen"),
+                                "blockers": entry.get("blockers") or [],
+                                "changed": entry.get("changed") or [],
+                                "summary": entry.get("summary") or "",
+                            },
+                        )
+                        for entry in black_box_entries[:3]
+                    ],
                 ],
             ),
             AgentPanelSection(

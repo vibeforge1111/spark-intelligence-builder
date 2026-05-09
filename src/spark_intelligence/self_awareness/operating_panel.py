@@ -135,6 +135,7 @@ def build_agent_operating_panel(
     sections = build_agent_panel_sections(
         aoc_payload=aoc_payload,
         scratchpad_payload=scratchpad.to_payload(),
+        black_box_payload=black_box.to_payload(),
         source_ledger_payload=source_ledger.to_payload(),
         stale_sweep_payload=stale_sweep.to_payload(),
     )
