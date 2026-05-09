@@ -195,6 +195,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(blank_response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-doctor-last-target.", blank_response_text)
         self.assertGreaterEqual(blank_metadata["contextual_trigger_score"], 3)
+        self.assertIn("previous_turn_memory_failure_signal", blank_metadata["contextual_trigger_signals"])
 
         frustration_output = json.loads(
             gateway_ask_telegram(
@@ -211,6 +212,8 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
         self.assertGreaterEqual(frustration_metadata["contextual_trigger_score"], 3)
+        self.assertIn("operator_frustration", frustration_metadata["contextual_trigger_signals"])
+        self.assertTrue(frustration_metadata["previous_failure_signal"])
 
     def test_gateway_ask_telegram_does_not_run_memory_doctor_for_weak_blankness_after_normal_turn(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -281,6 +284,8 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["diagnosed_request_id"], "req-name-repeat")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertGreaterEqual(metadata["contextual_trigger_score"], 3)
+        self.assertIn("close_turn_repeat_frustration", metadata["contextual_trigger_signals"])
+        self.assertIn("previous_turn_memory_failure_signal", metadata["contextual_trigger_signals"])
 
     def test_gateway_ask_telegram_runs_memory_doctor_for_strong_context_loss_complaint(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -317,6 +322,8 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["diagnosed_request_id"], "req-context-loss-prior")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertGreaterEqual(metadata["contextual_trigger_score"], 4)
+        self.assertEqual(metadata["contextual_trigger_signals"], ["memory_context_reference", "memory_distress_verb"])
+        self.assertFalse(metadata["previous_failure_signal"])
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

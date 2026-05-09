@@ -1109,6 +1109,8 @@ def _build_diagnostic_invocations(
                 "user_message_preview": _shorten(str(record.get("user_message_preview") or ""), 120),
                 "request_selector": metadata.get("request_selector"),
                 "contextual_trigger_score": metadata.get("contextual_trigger_score"),
+                "contextual_trigger_signals": list(metadata.get("contextual_trigger_signals") or []),
+                "previous_failure_signal": metadata.get("previous_failure_signal"),
                 "memory_doctor_ok": metadata.get("memory_doctor_ok"),
             }
         )

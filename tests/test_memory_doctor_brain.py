@@ -252,6 +252,11 @@ class MemoryDoctorBrainTests(SparkTestCase):
                     "diagnosed_request_id": "req-blank-target",
                     "request_selector": "previous_gateway_turn",
                     "contextual_trigger_score": 4,
+                    "contextual_trigger_signals": [
+                        "close_turn_repeat_frustration",
+                        "previous_turn_memory_failure_signal",
+                    ],
+                    "previous_failure_signal": True,
                     "memory_doctor_ok": False,
                 },
             },
@@ -282,6 +287,11 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(gateway_trace["diagnostic_invocation_count"], 1)
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["request_id"], "req-blank-doctor")
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_score"], 4)
+        self.assertIn(
+            "close_turn_repeat_frustration",
+            gateway_trace["diagnostic_invocations"][0]["contextual_trigger_signals"],
+        )
+        self.assertTrue(gateway_trace["diagnostic_invocations"][0]["previous_failure_signal"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
         cases = {case["category"]: case for case in report.benchmark["cases"]}

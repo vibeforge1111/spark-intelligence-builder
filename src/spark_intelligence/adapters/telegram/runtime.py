@@ -3761,6 +3761,8 @@ def _handle_runtime_command(
                 "diagnosed_topic": doctor_topic or None,
                 "request_selector": doctor_target.get("request_selector") or None,
                 "contextual_trigger_score": doctor_target.get("contextual_trigger_score"),
+                "contextual_trigger_signals": doctor_target.get("contextual_trigger_signals"),
+                "previous_failure_signal": doctor_target.get("previous_failure_signal"),
                 "memory_doctor_ok": report.ok,
             },
         }
@@ -4898,10 +4900,12 @@ def _match_contextual_memory_doctor_command(
     )
     if previous_record is None:
         return None
-    score = _memory_doctor_distress_score(simplified)
+    trigger_signals = _memory_doctor_distress_signals(simplified)
+    score = sum(int(signal["weight"]) for signal in trigger_signals)
     previous_failure_signal = _previous_gateway_turn_looks_like_memory_failure(previous_record)
     if previous_failure_signal:
         score += 2
+        trigger_signals.append({"name": "previous_turn_memory_failure_signal", "weight": 2})
     threshold = 3 if previous_failure_signal else 4
     if score < threshold:
         return None
@@ -4912,28 +4916,34 @@ def _match_contextual_memory_doctor_command(
         "request_selector": "previous_gateway_turn",
         "repair_requested": False,
         "contextual_trigger_score": score,
+        "contextual_trigger_signals": [str(signal["name"]) for signal in trigger_signals],
+        "previous_failure_signal": previous_failure_signal,
     }
 
 
 def _memory_doctor_distress_score(simplified_text: str) -> int:
+    return sum(int(signal["weight"]) for signal in _memory_doctor_distress_signals(simplified_text))
+
+
+def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
     text = str(simplified_text or "").strip()
     if not text:
-        return 0
-    score = 0
+        return []
+    signals: list[dict[str, object]] = []
     if re.search(
         r"\b(?:memory|context|thread|previous|last|what i just said|what i just told you|what we were talking about)\b",
         text,
     ):
-        score += 2
+        signals.append({"name": "memory_context_reference", "weight": 2})
     if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused)\b", text):
-        score += 2
+        signals.append({"name": "memory_distress_verb", "weight": 2})
     if re.search(r"\b(?:i just told you|just told you|already told you|i already said|already said that)\b", text):
-        score += 2
+        signals.append({"name": "close_turn_repeat_frustration", "weight": 2})
     if re.search(r"\b(?:not responding|stopped responding|are you there|hello|wrong|again|seriously|come on)\b", text):
-        score += 1
+        signals.append({"name": "operator_frustration", "weight": 1})
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
-        score += 1
-    return score
+        signals.append({"name": "diagnostic_question", "weight": 1})
+    return signals
 
 
 def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
