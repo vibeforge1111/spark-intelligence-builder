@@ -9,6 +9,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import recent_contradictions
 from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
 from spark_intelligence.self_awareness.conversation_frame import build_conversation_operating_frame
+from spark_intelligence.self_awareness.route_confidence import build_route_confidence
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
 
@@ -36,6 +37,7 @@ class AgentOperatingContextResult:
     runner: dict[str, Any]
     conversation_frame: dict[str, Any]
     task_fit: dict[str, Any]
+    route_confidence: dict[str, Any]
     routes: list[dict[str, Any]] = field(default_factory=list)
     route_repairs: list[dict[str, Any]] = field(default_factory=list)
     memory_in_play: dict[str, Any] = field(default_factory=dict)
@@ -54,6 +56,7 @@ class AgentOperatingContextResult:
             "runner": self.runner,
             "conversation_frame": self.conversation_frame,
             "task_fit": self.task_fit,
+            "route_confidence": self.route_confidence,
             "routes": self.routes,
             "route_repairs": self.route_repairs,
             "memory_in_play": self.memory_in_play,
@@ -81,6 +84,7 @@ class AgentOperatingContextResult:
             "",
             f"Status: {_display_status(self.status)}",
             f"Best route: {self.task_fit.get('recommended_route_label') or self.task_fit.get('recommended_route') or 'unknown'}",
+            f"Route confidence: {self.route_confidence.get('confidence') or 'unknown'} ({self.route_confidence.get('score') or 0})",
             f"Access: {self.access.get('label') or 'unknown'}",
             f"Runner: {self.runner.get('label') or 'unknown'}",
             f"Current mode: {self.conversation_frame.get('current_mode') or 'unknown'}",
@@ -166,6 +170,7 @@ def build_agent_operating_context(
         source_turn_id=request_id,
     ).to_payload()
     task_fit = _build_task_fit(user_message=user_message, access=access, runner=runner, routes=routes)
+    route_confidence = build_route_confidence(task_fit=task_fit, routes=routes, runner=runner, access=access).to_payload()
     stale_flags = _build_stale_flags(state_db=state_db, access=access, user_message=user_message)
     status = _build_status(routes=routes, runner=runner, stale_flags=stale_flags)
     memory_in_play = _build_memory_in_play(capsule_payload)
@@ -175,6 +180,7 @@ def build_agent_operating_context(
         access=access,
         runner=runner,
         conversation_frame=conversation_frame,
+        route_confidence=route_confidence,
         routes=routes,
         stale_flags=stale_flags,
     )
@@ -186,6 +192,7 @@ def build_agent_operating_context(
         runner=runner,
         conversation_frame=conversation_frame,
         task_fit=task_fit,
+        route_confidence=route_confidence,
         routes=routes,
         route_repairs=route_repairs,
         memory_in_play=memory_in_play,
@@ -503,6 +510,7 @@ def _build_source_ledger(
     access: dict[str, Any],
     runner: dict[str, Any],
     conversation_frame: dict[str, Any],
+    route_confidence: dict[str, Any],
     routes: list[dict[str, Any]],
     stale_flags: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -512,6 +520,12 @@ def _build_source_ledger(
             "role": "latest_turn_action_boundary",
             "present": bool(conversation_frame.get("latest_user_message_summary")),
             "claim_boundary": "The latest user turn sets the current mode, allowed actions, and disallowed action routes for this turn.",
+        },
+        {
+            "source": "route_confidence",
+            "role": "route_selection_evidence",
+            "present": bool(route_confidence.get("recommended_route")),
+            "claim_boundary": "Route confidence explains why a path is recommended; it does not prove route success.",
         },
         {
             "source": "operator_supplied_access",
