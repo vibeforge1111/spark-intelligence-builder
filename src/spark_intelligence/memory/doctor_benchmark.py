@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-BENCHMARK_VERSION = "2026-05-09.v3"
+BENCHMARK_VERSION = "2026-05-09.v4"
 
 
 def score_memory_doctor_benchmark(
@@ -27,6 +27,7 @@ def score_memory_doctor_benchmark(
             findings=findings,
         ),
         _score_abstention(movement_trace=movement_trace, dashboard=dashboard),
+        _score_doctor_intake(context_capsule=context_capsule),
     ]
     total_weight = sum(int(case["weight"]) for case in cases)
     earned = sum(float(case["score"]) * int(case["weight"]) for case in cases)
@@ -313,6 +314,46 @@ def _score_abstention(
         "fail",
         "Memory read/abstention stage was not visible.",
         "record memory_read_abstained events and expose them in Watchtower memory shadow",
+    )
+
+
+def _score_doctor_intake(*, context_capsule: dict[str, object]) -> dict[str, object]:
+    gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    invocation_count = int(gateway_trace.get("diagnostic_invocation_count") or 0)
+    invocations = gateway_trace.get("diagnostic_invocations") if isinstance(gateway_trace.get("diagnostic_invocations"), list) else []
+    contextual_invocations = [
+        invocation
+        for invocation in invocations
+        if isinstance(invocation, dict) and invocation.get("contextual_trigger_score") is not None
+    ]
+    if contextual_invocations:
+        return _case(
+            "doctor_intake",
+            "doctor_intake",
+            10,
+            1.0,
+            "pass",
+            f"Telegram contextual trigger lineage is visible for {invocation_count} Memory Doctor invocation(s).",
+            "keep close-turn frustration phrases in the Telegram Memory Doctor regression pack",
+        )
+    if invocation_count > 0:
+        return _case(
+            "doctor_intake",
+            "doctor_intake",
+            10,
+            0.5,
+            "observable_no_sample",
+            f"Telegram Memory Doctor invocation lineage is visible ({invocation_count}), but no contextual trigger sample was present.",
+            "rerun from Telegram with a close-turn blankness/frustration complaint",
+        )
+    return _case(
+        "doctor_intake",
+        "doctor_intake",
+        10,
+        0.0,
+        "fail",
+        "No Telegram Memory Doctor invocation lineage was visible for the diagnosed request.",
+        "run Memory Doctor directly from Telegram against the confusing turn and verify runtime_command_metadata is recorded",
     )
 
 

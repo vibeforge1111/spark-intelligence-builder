@@ -1047,6 +1047,11 @@ def _build_gateway_trace_audit(
         close_turn_recall_question=close_turn_recall_question,
         normalized_topic=normalized_topic,
     )
+    diagnostic_invocations = _build_diagnostic_invocations(
+        traces=traces,
+        target_index=target_index,
+        diagnosed_request_id=capsule_request_id,
+    )
 
     return {
         "status": "checked",
@@ -1068,6 +1073,8 @@ def _build_gateway_trace_audit(
         "capsule_recent_conversation_count": capsule_recent_conversation_count,
         "lineage_gap": bool(recent_messages and capsule_recent_conversation_count == 0),
         "delivery_trace": delivery_trace,
+        "diagnostic_invocation_count": len(diagnostic_invocations),
+        "diagnostic_invocations": diagnostic_invocations,
         "recent_gateway_messages": recent_messages,
         "cross_scope_lineage": _build_cross_scope_lineage_summary(
             traces=traces,
@@ -1075,6 +1082,39 @@ def _build_gateway_trace_audit(
             target=target,
         ),
     }
+
+
+def _build_diagnostic_invocations(
+    *,
+    traces: list[dict[str, object]],
+    target_index: int,
+    diagnosed_request_id: str,
+) -> list[dict[str, object]]:
+    invocations: list[dict[str, object]] = []
+    normalized_request_id = str(diagnosed_request_id or "").strip()
+    if not normalized_request_id:
+        return invocations
+    for record in traces[target_index + 1 :]:
+        if str(record.get("event") or "") != "telegram_update_processed":
+            continue
+        metadata = record.get("runtime_command_metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("diagnosed_request_id") or "").strip() != normalized_request_id:
+            continue
+        invocations.append(
+            {
+                "request_id": record.get("request_id"),
+                "recorded_at": record.get("recorded_at"),
+                "user_message_preview": _shorten(str(record.get("user_message_preview") or ""), 120),
+                "request_selector": metadata.get("request_selector"),
+                "contextual_trigger_score": metadata.get("contextual_trigger_score"),
+                "memory_doctor_ok": metadata.get("memory_doctor_ok"),
+            }
+        )
+        if len(invocations) >= 5:
+            break
+    return invocations
 
 
 def _build_delivery_trace_audit(

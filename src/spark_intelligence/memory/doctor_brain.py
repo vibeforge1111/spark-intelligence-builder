@@ -6,7 +6,7 @@ import spark_intelligence.memory.orchestrator as memory_orchestrator
 from spark_intelligence.state.db import StateDB
 
 
-MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v1"
+MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v2"
 
 AUTHORITY_BOUNDARIES: tuple[str, ...] = (
     "current_state_memory_outranks_wiki_for_mutable_user_facts",
@@ -206,6 +206,11 @@ def _build_senses(
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
     source_counts = context_capsule.get("source_counts") if isinstance(context_capsule.get("source_counts"), dict) else {}
+    diagnostic_invocations = (
+        gateway_trace.get("diagnostic_invocations")
+        if isinstance(gateway_trace.get("diagnostic_invocations"), list)
+        else []
+    )
     return [
         _sense(
             "builder_observability_events",
@@ -251,6 +256,13 @@ def _build_senses(
                 else False,
             },
             10,
+        ),
+        _sense(
+            "telegram_doctor_intake_lineage",
+            bool(diagnostic_invocations),
+            f"doctor intake invocations={len(diagnostic_invocations)}",
+            {"diagnostic_invocations": diagnostic_invocations[:3]},
+            5,
         ),
         _sense(
             "watchtower_dashboard",
@@ -428,6 +440,18 @@ def _build_gaps(
                 "cross_scope_status",
                 str(cross_scope.get("status") or "unknown"),
                 "ensure gateway traces carry a stable human/user id across sessions and adapters",
+            )
+        )
+    if "telegram_doctor_intake_lineage" in missing:
+        gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+        gaps.append(
+            _gap(
+                "telegram_doctor_intake_lineage_gap",
+                "medium",
+                "Memory Doctor cannot see the Telegram command or contextual complaint that invoked this diagnosis.",
+                "diagnostic_invocation_count",
+                str(gateway_trace.get("diagnostic_invocation_count") or 0),
+                "rerun Memory Doctor directly from Telegram against the confusing turn so intake metadata is traceable",
             )
         )
     for movement_gap in movement_trace.get("gaps") or []:

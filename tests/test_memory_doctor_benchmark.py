@@ -24,6 +24,14 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
                     "status": "checked",
                     "recent_gateway_message_count": 1,
                     "lineage_gap": False,
+                    "diagnostic_invocation_count": 1,
+                    "diagnostic_invocations": [
+                        {
+                            "request_id": "req-doctor-intake",
+                            "request_selector": "previous_gateway_turn",
+                            "contextual_trigger_score": 4,
+                        }
+                    ],
                 },
             },
             movement_trace={
@@ -73,6 +81,7 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         self.assertEqual(cases["supersession"]["status"], "fail")
         self.assertEqual(cases["forgetting"]["status"], "fail")
         self.assertEqual(cases["abstention"]["status"], "fail")
+        self.assertEqual(cases["doctor_intake"]["status"], "fail")
         self.assertEqual(benchmark["weakest_case"]["status"], "fail")
 
     def test_scores_forget_postcondition_failure(self) -> None:

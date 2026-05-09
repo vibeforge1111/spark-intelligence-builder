@@ -218,6 +218,75 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertTrue(senses["cross_session_channel_lineage"]["present"])
         self.assertIn("Lineage scope: 2 session(s), 1 channel(s) visible.", report.to_telegram_text())
 
+    def test_memory_doctor_brain_maps_telegram_intake_lineage(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-blank-target",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-blank",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "researcher_advisory",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-blank-doctor",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-blank",
+                "user_message_preview": "i just told you",
+                "response_preview": "Memory Doctor: needs attention.",
+                "bridge_mode": "runtime_command",
+                "routing_decision": "runtime_command",
+                "runtime_command": "/memory doctor",
+                "runtime_command_metadata": {
+                    "diagnosed_request_id": "req-blank-target",
+                    "request_selector": "previous_gateway_turn",
+                    "contextual_trigger_score": 4,
+                    "memory_doctor_ok": False,
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for a blankness target.",
+            request_id="req-blank-target",
+            human_id="human-1",
+            facts={
+                "source_counts": {"recent_conversation": 0},
+                "source_ledger": [
+                    {"source": "recent_conversation", "present": False, "count": 0, "priority": 8, "role": "supporting"}
+                ],
+            },
+        )
+
+        report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            request_id="req-blank-target",
+        )
+
+        gateway_trace = report.context_capsule["gateway_trace"]
+        self.assertEqual(gateway_trace["diagnostic_invocation_count"], 1)
+        self.assertEqual(gateway_trace["diagnostic_invocations"][0]["request_id"], "req-blank-doctor")
+        self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_score"], 4)
+        senses = {sense["name"]: sense for sense in report.brain["senses"]}
+        self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
+        cases = {case["category"]: case for case in report.benchmark["cases"]}
+        self.assertEqual(cases["doctor_intake"]["status"], "pass")
+
     def test_watchtower_tracks_memory_doctor_brain_trends(self) -> None:
         record_event(
             self.state_db,
