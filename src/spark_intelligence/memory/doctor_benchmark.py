@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-BENCHMARK_VERSION = "2026-05-09.v5"
+BENCHMARK_VERSION = "2026-05-09.v6"
 
 
 def score_memory_doctor_benchmark(
@@ -16,7 +16,9 @@ def score_memory_doctor_benchmark(
     context_capsule: dict[str, object],
     movement_trace: dict[str, object],
     dashboard: dict[str, object],
+    root_cause: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    root_cause = root_cause if isinstance(root_cause, dict) else {}
     cases = [
         _score_close_turn_recall(context_capsule=context_capsule),
         _score_identity_correction(active_profile=active_profile, topic_scan=topic_scan),
@@ -28,6 +30,11 @@ def score_memory_doctor_benchmark(
         ),
         _score_abstention(movement_trace=movement_trace, dashboard=dashboard),
         _score_doctor_intake(context_capsule=context_capsule, movement_trace=movement_trace),
+        _score_root_cause_classification(
+            findings=findings,
+            movement_trace=movement_trace,
+            root_cause=root_cause,
+        ),
     ]
     total_weight = sum(int(case["weight"]) for case in cases)
     earned = sum(float(case["score"]) * int(case["weight"]) for case in cases)
@@ -314,6 +321,84 @@ def _score_abstention(
         "fail",
         "Memory read/abstention stage was not visible.",
         "record memory_read_abstained events and expose them in Watchtower memory shadow",
+    )
+
+
+def _score_root_cause_classification(
+    *,
+    findings: list[Any],
+    movement_trace: dict[str, object],
+    root_cause: dict[str, object],
+) -> dict[str, object]:
+    failing_findings = [finding for finding in findings if not bool(getattr(finding, "ok", True))]
+    status = str(root_cause.get("status") or "").strip()
+    if not failing_findings:
+        if status == "clear":
+            return _case(
+                "root_cause_classification",
+                "root_cause_classification",
+                10,
+                1.0,
+                "pass",
+                "Root-cause classifier correctly reported no failing root cause.",
+                "keep clear-state classification in the healthy benchmark pack",
+            )
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.5,
+            "observable_incomplete",
+            "No failing findings were present, but root-cause clear-state evidence was missing.",
+            "persist root_cause.status=clear for healthy Memory Doctor runs",
+        )
+    primary_gap = str(root_cause.get("primary_gap") or "").strip()
+    failure_layer = str(root_cause.get("failure_layer") or "").strip()
+    chain = root_cause.get("chain") if isinstance(root_cause.get("chain"), list) else []
+    if status != "identified" or not primary_gap or not failure_layer:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.0,
+            "fail",
+            "Failing findings were present, but no identified root-cause layer was available.",
+            "map each high-severity Memory Doctor finding to a primary gap, failure layer, and replay chain",
+        )
+    movement_gap = str(root_cause.get("movement_gap") or "").strip()
+    movement_gap_names = {
+        str(gap.get("name") or "")
+        for gap in (movement_trace.get("gaps") or [])
+        if isinstance(gap, dict)
+    }
+    if movement_gap and movement_gap not in movement_gap_names:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.75,
+            "movement_trace_partial",
+            "Root-cause classification exists, but its movement gap was not present in the movement trace.",
+            "derive root-cause movement_gap from the same movement trace gap ledger used by the brain",
+        )
+    if not chain:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.75,
+            "observable_incomplete",
+            "Root-cause layer was identified, but the replay chain was empty.",
+            "include the failing gateway/provider/memory/delivery chain in root-cause output",
+        )
+    return _case(
+        "root_cause_classification",
+        "root_cause_classification",
+        10,
+        1.0,
+        "pass",
+        f"Root cause identified: {primary_gap} at {failure_layer}.",
+        "trend this failure layer in Watchtower and replay the same request after repair",
     )
 
 

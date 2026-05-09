@@ -51,6 +51,13 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
                 ]
             },
             dashboard={"abstention_reasons": ["not_found"]},
+            root_cause={
+                "status": "clear",
+                "primary_gap": None,
+                "failure_layer": None,
+                "chain": [],
+                "confidence": "high",
+            },
         )
 
         self.assertEqual(benchmark["score"], 100)
@@ -82,6 +89,13 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
             },
             movement_trace={"stages": []},
             dashboard={},
+            root_cause={
+                "status": "identified",
+                "primary_gap": "memory_delete_intent_integrity",
+                "failure_layer": "delete_write_fanout",
+                "chain": ["forget_request", "memory_write_requests", "memory_write_results"],
+                "confidence": "high",
+            },
         )
 
         cases = {case["category"]: case for case in benchmark["cases"]}
@@ -92,7 +106,32 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         self.assertEqual(cases["forgetting"]["status"], "fail")
         self.assertEqual(cases["abstention"]["status"], "fail")
         self.assertEqual(cases["doctor_intake"]["status"], "fail")
+        self.assertEqual(cases["root_cause_classification"]["status"], "pass")
         self.assertEqual(benchmark["weakest_case"]["status"], "fail")
+
+    def test_scores_root_cause_classification_requires_failure_layer(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=0,
+            scanned_multi_delete_turns=0,
+            findings=[
+                MemoryDoctorFinding(
+                    name="context_capsule_gateway_trace_gap",
+                    ok=False,
+                    severity="high",
+                    detail="gateway had prior turns but provider capsule had none",
+                )
+            ],
+            active_profile={"status": "checked", "facts": {"preferred_name": "Cem"}},
+            topic_scan={"status": "checked", "topic": "Cedar Compass 509"},
+            context_capsule={"status": "checked", "recent_conversation_count": 0, "gateway_trace": {"status": "checked"}},
+            movement_trace={"stages": [{"stage": "memory_reads", "abstained_count": 1}], "gaps": []},
+            dashboard={"abstention_reasons": ["not_found"]},
+            root_cause={},
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["root_cause_classification"]["status"], "fail")
+        self.assertIn("no identified root-cause layer", cases["root_cause_classification"]["detail"])
 
     def test_scores_doctor_intake_requires_calibrated_trigger_metadata(self) -> None:
         benchmark = score_memory_doctor_benchmark(

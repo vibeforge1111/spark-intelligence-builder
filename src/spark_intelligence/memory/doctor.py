@@ -439,6 +439,7 @@ def run_memory_doctor(
         context_capsule=context_capsule,
         movement_trace=movement_trace,
         dashboard=dashboard,
+        root_cause=root_cause,
     )
     recommendations = _build_recommendations(
         findings=findings,
