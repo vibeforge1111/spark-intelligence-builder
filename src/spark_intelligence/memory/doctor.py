@@ -191,6 +191,15 @@ class MemoryDoctorReport:
                         f"{int(cross_scope.get('session_count') or 0)} session(s), "
                         f"{int(cross_scope.get('channel_count') or 0)} channel(s) visible."
                     )
+        elif self.context_capsule.get("status") == "request_not_found":
+            gateway_trace = self.context_capsule.get("gateway_trace")
+            if isinstance(gateway_trace, dict) and gateway_trace.get("status") == "checked":
+                lines.append(
+                    "Context capsule: no provider capsule event was recorded for this request, "
+                    "but gateway trace exists."
+                )
+            else:
+                lines.append("Context capsule: no provider capsule event was recorded for this request.")
         if self.brain:
             lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
         if self.benchmark:
@@ -1291,6 +1300,21 @@ def _stable_hash(value: str) -> str:
 
 
 def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[MemoryDoctorFinding]:
+    if context_capsule.get("status") == "request_not_found":
+        gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+        gateway_status = gateway_trace.get("status") if isinstance(gateway_trace, dict) else None
+        return [
+            MemoryDoctorFinding(
+                name="context_capsule_request_not_found",
+                ok=False,
+                severity="high",
+                detail=(
+                    "no provider context capsule event was recorded for the requested id; "
+                    f"gateway_trace={gateway_status or 'unknown'}"
+                ),
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        ]
     if context_capsule.get("status") != "checked":
         return []
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
@@ -1655,6 +1679,15 @@ def _build_recommendations(
     if context_lineage_gap:
         recommendations.append(
             "Fix the recent-conversation capsule path: Telegram gateway saw close-turn messages, but provider context did not receive them."
+        )
+    missing_context_capsule = any(
+        finding.name == "context_capsule_request_not_found" and not finding.ok
+        for finding in findings
+    )
+    if missing_context_capsule:
+        recommendations.append(
+            "Inspect provider invocation and context-capsule recording for that request id; gateway trace without a "
+            "capsule means the context path was bypassed, failed before compile, or did not emit instrumentation."
         )
     answer_grounding_gap = any(
         finding.name

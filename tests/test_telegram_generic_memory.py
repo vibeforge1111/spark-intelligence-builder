@@ -5302,6 +5302,58 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("request=req-request-replay-target", doctor_report.to_text())
         self.assertIn("Request: req-request-replay-target.", doctor_report.to_telegram_text())
 
+    def test_memory_doctor_flags_requested_gateway_turn_without_context_capsule(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-missing-capsule-seed",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-missing-capsule",
+                "user_message_preview": "The probe phrase is Violet Harbor 912.",
+                "response_preview": "Noted.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-missing-capsule-target",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-missing-capsule",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="A newer context capsule should not hide the missing requested capsule.",
+            request_id="req-missing-capsule-newer",
+            human_id="human-1",
+            facts={"source_counts": {"recent_conversation": 2}, "source_ledger": []},
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Violet Harbor 912",
+            request_id="req-missing-capsule-target",
+        )
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertEqual(doctor_report.context_capsule["status"], "request_not_found")
+        self.assertEqual(doctor_report.context_capsule["gateway_trace"]["status"], "checked")
+        self.assertIn("context_capsule_request_not_found", doctor_report.to_text())
+        self.assertIn("gateway_trace=checked", doctor_report.to_text())
+        self.assertIn("no provider capsule event was recorded", doctor_report.to_telegram_text())
+
     def test_memory_doctor_flags_close_turn_answer_grounding_gap(self) -> None:
         append_gateway_trace(
             self.config_manager,
