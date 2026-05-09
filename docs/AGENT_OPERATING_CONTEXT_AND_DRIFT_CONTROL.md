@@ -35,6 +35,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 
 - `conversation_frame.py`: task intent, current mode, allowed actions, disallowed actions, option-reference resolution, action gate, final-answer drift check.
 - `agent_events.py`: shared event model and black-box report over `builder_events`.
+- `event_producers.py`: producer helpers for route selection, capability probes, mission state changes, and user overrides.
 - `turn_recorder.py`: records a meaningful turn as frame, action gate, drift check, and optional memory candidate events.
 - `source_hierarchy.py`: resolves conflicting claims by authority and freshness.
 - `stale_context_sweeper.py`: turns source conflicts into stale/contradicted review items with typed review actions.
@@ -88,6 +89,7 @@ Next integrations should consume the existing read-models:
 - Mission Control should drill into the same panel payload, not rebuild route state.
 - Memory Dashboard should read typed stale actions and approval inbox items.
 - Diagnostics should emit `capability_probed` and `contradiction_found` events.
+- Route probes now emit `capability_probed` events into the black box in addition to route-health evidence.
 - Spawner/Codex should record `route_selected`, `mission_changed_state`, and turn-trace events.
 
 Rollback is simple: callers can stop rendering the panel while the underlying event and source contracts remain append-only evidence.
