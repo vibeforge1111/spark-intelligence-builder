@@ -258,6 +258,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
                         "previous_turn_memory_failure_signal",
                     ],
                     "previous_failure_signal": True,
+                    "previous_failure_signals": ["previous_response_context_gap"],
                     "memory_doctor_ok": False,
                 },
             },
@@ -294,10 +295,15 @@ class MemoryDoctorBrainTests(SparkTestCase):
             gateway_trace["diagnostic_invocations"][0]["contextual_trigger_signals"],
         )
         self.assertTrue(gateway_trace["diagnostic_invocations"][0]["previous_failure_signal"])
+        self.assertEqual(
+            gateway_trace["diagnostic_invocations"][0]["previous_failure_signals"],
+            ["previous_response_context_gap"],
+        )
         brain_events = latest_events_by_type(self.state_db, event_type="memory_doctor_brain_evaluated", limit=1)
         telegram_intake = brain_events[0]["facts_json"]["telegram_intake"]
         self.assertEqual(telegram_intake["request_id"], "req-blank-doctor")
         self.assertEqual(telegram_intake["contextual_trigger_threshold"], 3)
+        self.assertEqual(telegram_intake["previous_failure_signals"], ["previous_response_context_gap"])
         self.assertIn("close_turn_repeat_frustration", telegram_intake["contextual_trigger_signals"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
@@ -361,6 +367,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
                         "previous_turn_memory_failure_signal",
                     ],
                     "previous_failure_signal": True,
+                    "previous_failure_signals": ["previous_response_context_gap"],
                 },
             },
         )
@@ -378,4 +385,5 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
         self.assertEqual(panel["recent_intake_triggers"][0]["doctor_request_id"], "req-blank-doctor")
         self.assertEqual(panel["recent_intake_triggers"][0]["diagnosed_request_id"], "req-blank-target")
+        self.assertEqual(panel["recent_intake_triggers"][0]["previous_failure_signals"], ["previous_response_context_gap"])
         self.assertEqual(panel["latest"]["topic"], "Maya")

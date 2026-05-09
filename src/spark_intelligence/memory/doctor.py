@@ -1112,6 +1112,7 @@ def _build_diagnostic_invocations(
                 "contextual_trigger_threshold": metadata.get("contextual_trigger_threshold"),
                 "contextual_trigger_signals": list(metadata.get("contextual_trigger_signals") or []),
                 "previous_failure_signal": metadata.get("previous_failure_signal"),
+                "previous_failure_signals": list(metadata.get("previous_failure_signals") or []),
                 "memory_doctor_ok": metadata.get("memory_doctor_ok"),
             }
         )
@@ -1868,6 +1869,7 @@ def _brain_telegram_intake_snapshot(brain: dict[str, object]) -> dict[str, objec
         "contextual_trigger_threshold": invocation.get("contextual_trigger_threshold"),
         "contextual_trigger_signals": list(invocation.get("contextual_trigger_signals") or []),
         "previous_failure_signal": invocation.get("previous_failure_signal"),
+        "previous_failure_signals": list(invocation.get("previous_failure_signals") or []),
     }
 
 

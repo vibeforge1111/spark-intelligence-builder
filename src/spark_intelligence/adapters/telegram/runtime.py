@@ -3769,6 +3769,7 @@ def _handle_runtime_command(
                 "contextual_trigger_threshold": doctor_target.get("contextual_trigger_threshold"),
                 "contextual_trigger_signals": doctor_target.get("contextual_trigger_signals"),
                 "previous_failure_signal": doctor_target.get("previous_failure_signal"),
+                "previous_failure_signals": doctor_target.get("previous_failure_signals"),
                 "memory_doctor_ok": report.ok,
             },
         }
@@ -4968,7 +4969,8 @@ def _match_contextual_memory_doctor_command(
         return None
     trigger_signals = _memory_doctor_distress_signals(simplified)
     score = sum(int(signal["weight"]) for signal in trigger_signals)
-    previous_failure_signal = _previous_gateway_turn_looks_like_memory_failure(previous_record)
+    previous_failure_signals = _previous_gateway_turn_memory_failure_signals(previous_record)
+    previous_failure_signal = bool(previous_failure_signals)
     if previous_failure_signal:
         score += 2
         trigger_signals.append({"name": "previous_turn_memory_failure_signal", "weight": 2})
@@ -4985,6 +4987,7 @@ def _match_contextual_memory_doctor_command(
         "contextual_trigger_threshold": threshold,
         "contextual_trigger_signals": [str(signal["name"]) for signal in trigger_signals],
         "previous_failure_signal": previous_failure_signal,
+        "previous_failure_signals": previous_failure_signals,
     }
 
 
@@ -5028,6 +5031,10 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
 
 
 def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
+    return bool(_previous_gateway_turn_memory_failure_signals(record))
+
+
+def _previous_gateway_turn_memory_failure_signals(record: dict[str, object]) -> list[str]:
     user_preview = str(record.get("user_message_preview") or "").lower()
     response_preview = str(record.get("response_preview") or "").lower()
     route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
@@ -5053,11 +5060,14 @@ def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) 
         "what should i call you instead",
         "tell me again",
     )
+    signals: list[str] = []
     if any(marker in user_preview for marker in close_turn_markers):
-        return True
+        signals.append("previous_user_close_turn_probe")
     if any(marker in response_preview for marker in blank_response_markers):
-        return True
-    return "researcher_advisory" in route_text and "previous" in user_preview
+        signals.append("previous_response_context_gap")
+    if "researcher_advisory" in route_text and "previous" in user_preview:
+        signals.append("previous_researcher_route_for_previous_turn")
+    return signals
 
 
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, object]:

@@ -3309,6 +3309,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "contextual_trigger_threshold": telegram_intake.get("contextual_trigger_threshold"),
                     "contextual_trigger_signals": intake_signals,
                     "previous_failure_signal": telegram_intake.get("previous_failure_signal"),
+                    "previous_failure_signals": _string_list(telegram_intake.get("previous_failure_signals")),
                 }
             )
         if score is not None:

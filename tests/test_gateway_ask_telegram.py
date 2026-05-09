@@ -262,6 +262,8 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertGreaterEqual(blank_metadata["contextual_trigger_score"], 3)
         self.assertEqual(blank_metadata["contextual_trigger_threshold"], 3)
         self.assertIn("previous_turn_memory_failure_signal", blank_metadata["contextual_trigger_signals"])
+        self.assertIn("previous_user_close_turn_probe", blank_metadata["previous_failure_signals"])
+        self.assertIn("previous_response_context_gap", blank_metadata["previous_failure_signals"])
 
         frustration_output = json.loads(
             gateway_ask_telegram(
@@ -281,6 +283,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(frustration_metadata["contextual_trigger_threshold"], 3)
         self.assertIn("operator_frustration", frustration_metadata["contextual_trigger_signals"])
         self.assertTrue(frustration_metadata["previous_failure_signal"])
+        self.assertIn("previous_response_context_gap", frustration_metadata["previous_failure_signals"])
 
     def test_gateway_ask_telegram_does_not_run_memory_doctor_for_weak_blankness_after_normal_turn(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -355,6 +358,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["contextual_trigger_threshold"], 3)
         self.assertIn("close_turn_repeat_frustration", metadata["contextual_trigger_signals"])
         self.assertIn("previous_turn_memory_failure_signal", metadata["contextual_trigger_signals"])
+        self.assertEqual(metadata["previous_failure_signals"], ["previous_response_context_gap"])
 
     def test_gateway_ask_telegram_runs_memory_doctor_for_strong_context_loss_complaint(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
