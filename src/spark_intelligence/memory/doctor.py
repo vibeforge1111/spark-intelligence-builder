@@ -1852,6 +1852,12 @@ def _record_brain_snapshot(
         if isinstance(improvement, dict)
     ]
     telegram_intake = _brain_telegram_intake_snapshot(brain)
+    creator_alignment = brain.get("creator_system_alignment") if isinstance(brain.get("creator_system_alignment"), dict) else {}
+    creator_alignment_issues = (
+        creator_alignment.get("validation_issues")
+        if isinstance(creator_alignment.get("validation_issues"), list)
+        else []
+    )
     try:
         record_event(
             state_db,
@@ -1882,6 +1888,9 @@ def _record_brain_snapshot(
                 "topic": topic,
                 "request_id": request_id,
                 "telegram_intake": telegram_intake,
+                "creator_alignment_status": creator_alignment.get("status"),
+                "creator_alignment_artifact_targets": list(creator_alignment.get("artifact_targets") or []),
+                "creator_alignment_validation_issue_count": len(creator_alignment_issues),
                 "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
             },
         )

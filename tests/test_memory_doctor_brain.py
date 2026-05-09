@@ -78,6 +78,9 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(len(brain_events), 1)
         self.assertEqual(brain_events[0]["facts_json"]["authority"], "observability_non_authoritative")
         self.assertIn("gateway_trace_lineage", brain_events[0]["facts_json"]["missing_senses"])
+        self.assertEqual(brain_events[0]["facts_json"]["creator_alignment_status"], "aligned_candidate")
+        self.assertIn("specialization_path", brain_events[0]["facts_json"]["creator_alignment_artifact_targets"])
+        self.assertEqual(brain_events[0]["facts_json"]["creator_alignment_validation_issue_count"], 0)
 
     def test_memory_doctor_brain_uses_sdk_wiki_movement_and_llm_wiki_senses(self) -> None:
         (self.home / "wiki").mkdir()
@@ -379,6 +382,9 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "next_probe": "run memory doctor after the next Telegram turn",
                 "topic": "Maya",
                 "request_id": "req-blank-target",
+                "creator_alignment_status": "aligned_candidate",
+                "creator_alignment_artifact_targets": ["domain_chip", "benchmark_pack", "specialization_path"],
+                "creator_alignment_validation_issue_count": 0,
                 "telegram_intake": {
                     "request_id": "req-blank-doctor",
                     "user_message_preview": "i just told you",
@@ -408,6 +414,9 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
         self.assertEqual(panel["intake_calibration_counts"]["previous_turn_boosted"], 1)
         self.assertEqual(panel["previous_failure_signal_counts"]["previous_response_context_gap"], 1)
+        self.assertEqual(panel["creator_alignment"]["status"], "aligned_candidate")
+        self.assertIn("specialization_path", panel["creator_alignment"]["artifact_targets"])
+        self.assertEqual(panel["creator_alignment"]["validation_issue_count"], 0)
         self.assertEqual(panel["recent_intake_triggers"][0]["doctor_request_id"], "req-blank-doctor")
         self.assertEqual(panel["recent_intake_triggers"][0]["diagnosed_request_id"], "req-blank-target")
         self.assertEqual(panel["recent_intake_triggers"][0]["contextual_trigger_margin"], 1)

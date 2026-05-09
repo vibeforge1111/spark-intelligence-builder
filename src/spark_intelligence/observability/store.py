@@ -3267,6 +3267,11 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "intake_trigger_counts": {},
             "intake_calibration_counts": {},
             "previous_failure_signal_counts": {},
+            "creator_alignment": {
+                "status": "no_data",
+                "artifact_targets": [],
+                "validation_issue_count": 0,
+            },
             "recent_intake_triggers": [],
             "recent_probes": [],
         }
@@ -3289,6 +3294,9 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         missing_senses = _string_list(facts.get("missing_senses"))
         gap_names = _string_list(facts.get("gap_names"))
         telegram_intake = facts.get("telegram_intake") if isinstance(facts.get("telegram_intake"), dict) else {}
+        creator_alignment_status = str(facts.get("creator_alignment_status") or "").strip()
+        creator_alignment_artifact_targets = _string_list(facts.get("creator_alignment_artifact_targets"))
+        creator_alignment_issue_count = _optional_int(facts.get("creator_alignment_validation_issue_count"))
         topic = str(facts.get("topic") or "").strip()
         human_id = str(event.get("human_id") or "").strip()
         if human_id:
@@ -3348,6 +3356,11 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                 "highest_severity": facts.get("highest_severity"),
                 "next_probe": facts.get("next_probe"),
                 "telegram_intake": recent_intakes[-1] if telegram_intake else None,
+                "creator_alignment": {
+                    "status": creator_alignment_status or None,
+                    "artifact_targets": creator_alignment_artifact_targets,
+                    "validation_issue_count": creator_alignment_issue_count,
+                },
             }
         )
 
@@ -3384,6 +3397,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "intake_trigger_counts": _top_counts(intake_trigger_counts),
         "intake_calibration_counts": _top_counts(intake_calibration_counts),
         "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
+        "creator_alignment": latest.get("creator_alignment") or {},
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_probes": [
             probe
