@@ -3033,7 +3033,7 @@ def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) ->
 
 
 def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+    media = {
         "audio_base64": base64.b64encode(payload["audio_bytes"]).decode("ascii"),
         "mime_type": str(payload.get("mime_type") or "audio/mpeg"),
         "filename": str(payload.get("filename") or "telegram-reply.audio"),
@@ -3045,6 +3045,10 @@ def _bridge_voice_media_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "voice_profile_fingerprint": payload.get("voice_profile_fingerprint"),
         "voice_profile_fingerprint_status": payload.get("voice_profile_fingerprint_status"),
     }
+    runtime_state = payload.get("runtime_state")
+    if isinstance(runtime_state, dict):
+        media["runtime_state"] = runtime_state
+    return media
 
 
 def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
