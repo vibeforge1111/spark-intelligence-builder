@@ -91,6 +91,7 @@ Next integrations should consume the existing read-models:
 - Diagnostics should emit `capability_probed` and `contradiction_found` events.
 - Route probes now emit `capability_probed` events into the black box in addition to route-health evidence.
 - Stale sweeps now emit `contradiction_found` events when they record contradiction evidence.
+- Memory approval decisions now emit `user_override_received` events so the black box shows human memory choices.
 - Spawner/Codex should record `route_selected`, `mission_changed_state`, and turn-trace events.
 
 Rollback is simple: callers can stop rendering the panel while the underlying event and source contracts remain append-only evidence.

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from spark_intelligence.observability.store import record_event, utc_now_iso
+from spark_intelligence.self_awareness.event_producers import record_user_override_agent_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -150,7 +151,7 @@ def record_memory_approval_decision(
     actor_id: str = "memory_approval_inbox",
 ) -> str:
     normalized_decision = _normalize_decision(decision)
-    return record_event(
+    decision_event_id = record_event(
         state_db,
         event_type=MEMORY_APPROVAL_DECISION_EVENT,
         component="memory_approval_inbox",
@@ -175,6 +176,16 @@ def record_memory_approval_decision(
             "boundary": "decision_event_only_no_memory_write",
         },
     )
+    record_user_override_agent_event(
+        state_db,
+        override_summary=f"Memory approval decision for {str(candidate_event_id or '').strip()}: {normalized_decision}.",
+        corrected_route="memory_approval_inbox",
+        request_id=request_id or decision_event_id,
+        session_id=session_id or "",
+        human_id=human_id or "",
+        actor_id=actor_id,
+    )
+    return decision_event_id
 
 
 def _candidate_event_rows(state_db: StateDB, *, scan_limit: int) -> list[dict[str, Any]]:

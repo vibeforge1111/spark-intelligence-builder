@@ -5,7 +5,12 @@ from spark_intelligence.memory.approval_inbox import (
     record_memory_approval_decision,
 )
 from spark_intelligence.observability.store import record_event
-from spark_intelligence.self_awareness.agent_events import AgentEvent, AgentSourceRef, record_agent_event
+from spark_intelligence.self_awareness.agent_events import (
+    AgentEvent,
+    AgentSourceRef,
+    build_agent_black_box_report,
+    record_agent_event,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -65,6 +70,12 @@ class MemoryApprovalInboxTests(SparkTestCase):
         all_items = build_memory_approval_inbox(self.state_db, status="all")
         self.assertEqual(all_items.items[0].status, "decided")
         self.assertEqual(all_items.items[0].decision["decision"], "approve")
+
+        black_box = build_agent_black_box_report(self.state_db, request_id="req-memory-candidate").to_payload()
+        self.assertTrue(any(entry["event_type"] == "user_override_received" for entry in black_box["entries"]))
+        self.assertTrue(
+            any(entry["route_chosen"] == "memory_approval_inbox" for entry in black_box["entries"])
+        )
 
     def test_inbox_accepts_existing_assessed_candidates_but_not_drops(self) -> None:
         record_event(

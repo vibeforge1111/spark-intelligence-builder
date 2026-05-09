@@ -10,6 +10,7 @@ from spark_intelligence.self_awareness.operating_panel import build_agent_operat
 from spark_intelligence.self_awareness.route_probe import record_route_probe_evidence
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
 from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
+from spark_intelligence.memory.approval_inbox import record_memory_approval_decision
 
 from tests.test_support import SparkTestCase
 
@@ -109,3 +110,18 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(report.to_payload()["counts"]["recorded_agent_events"], 1)
         self.assertEqual(black_box["entries"][0]["event_type"], "contradiction_found")
         self.assertEqual(black_box["entries"][0]["route_chosen"], "source_hierarchy_review")
+
+    def test_memory_approval_decision_emits_user_override_agent_event(self) -> None:
+        record_memory_approval_decision(
+            self.state_db,
+            candidate_event_id="candidate-1",
+            decision="reject",
+            reason="Not durable enough.",
+            request_id="req-memory-decision",
+            actor_id="operator:test",
+        )
+
+        report = build_agent_black_box_report(self.state_db, request_id="req-memory-decision").to_payload()
+
+        self.assertEqual(report["entries"][0]["event_type"], "user_override_received")
+        self.assertEqual(report["entries"][0]["route_chosen"], "memory_approval_inbox")
