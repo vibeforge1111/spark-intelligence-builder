@@ -38,6 +38,8 @@ class AgentOperatingContextResult:
     conversation_frame: dict[str, Any]
     task_fit: dict[str, Any]
     route_confidence: dict[str, Any]
+    agent_needs: list[dict[str, Any]] = field(default_factory=list)
+    agent_facing_summary: str = ""
     routes: list[dict[str, Any]] = field(default_factory=list)
     route_repairs: list[dict[str, Any]] = field(default_factory=list)
     memory_in_play: dict[str, Any] = field(default_factory=dict)
@@ -57,6 +59,8 @@ class AgentOperatingContextResult:
             "conversation_frame": self.conversation_frame,
             "task_fit": self.task_fit,
             "route_confidence": self.route_confidence,
+            "agent_needs": self.agent_needs,
+            "agent_facing_summary": self.agent_facing_summary,
             "routes": self.routes,
             "route_repairs": self.route_repairs,
             "memory_in_play": self.memory_in_play,
@@ -121,6 +125,10 @@ class AgentOperatingContextResult:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
                 lines.append(f"- {_stale_flag_line(item)}")
+        if self.agent_needs:
+            lines.extend(["", "What Rec Needs"])
+            for item in self.agent_needs[:5]:
+                lines.append(f"- {item.get('need')}: {item.get('next_action')}")
         ledger = [item for item in self.source_ledger if item.get("present")]
         if ledger:
             lines.extend(["", "Source Ledger"])
@@ -129,6 +137,8 @@ class AgentOperatingContextResult:
         if self.guardrails:
             lines.extend(["", "Guardrails"])
             lines.extend(f"- {item}" for item in self.guardrails[:4])
+        if self.agent_facing_summary:
+            lines.extend(["", "Agent-facing Summary", self.agent_facing_summary])
         return "\n".join(lines).strip()
 
 
@@ -175,6 +185,13 @@ def build_agent_operating_context(
     status = _build_status(routes=routes, runner=runner, stale_flags=stale_flags)
     memory_in_play = _build_memory_in_play(capsule_payload)
     wiki_in_play = _build_wiki_in_play(capsule_payload)
+    agent_needs = _build_agent_needs(task_fit=task_fit, runner=runner, conversation_frame=conversation_frame, routes=routes)
+    agent_facing_summary = _build_agent_facing_summary(
+        task_fit=task_fit,
+        runner=runner,
+        conversation_frame=conversation_frame,
+        routes=routes,
+    )
     source_ledger = _build_source_ledger(
         capsule_payload=capsule_payload,
         access=access,
@@ -193,6 +210,8 @@ def build_agent_operating_context(
         conversation_frame=conversation_frame,
         task_fit=task_fit,
         route_confidence=route_confidence,
+        agent_needs=agent_needs,
+        agent_facing_summary=agent_facing_summary,
         routes=routes,
         route_repairs=route_repairs,
         memory_in_play=memory_in_play,
@@ -433,6 +452,85 @@ def _build_task_fit(
         "blocked_here_by": [],
         "why": why,
     }
+
+
+def _build_agent_needs(
+    *,
+    task_fit: dict[str, Any],
+    runner: dict[str, Any],
+    conversation_frame: dict[str, Any],
+    routes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    needs: list[dict[str, Any]] = []
+    route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
+    if bool(task_fit.get("needs_write")) and runner.get("writable") is False:
+        needs.append(
+            {
+                "need": "writable_runner",
+                "status": "needed",
+                "reason": "Task needs file edits or tests, but the current runner is read-only.",
+                "next_action": "start_or_route_to_writable_spawner_codex_mission",
+            }
+        )
+    if bool(task_fit.get("needs_local_workspace")) and runner.get("writable") is None:
+        needs.append(
+            {
+                "need": "runner_preflight",
+                "status": "needed",
+                "reason": "Task appears to need local workspace work, but runner writability is unknown.",
+                "next_action": "run_scoped_runner_preflight_before_claiming_write_capability",
+            }
+        )
+    builder = route_by_key.get("spark_intelligence_builder") or {}
+    if _route_status(builder) in {"degraded", "unavailable", "missing", "unknown"}:
+        needs.append(
+            {
+                "need": "builder_health_probe",
+                "status": "recommended",
+                "reason": "Builder route health is degraded, unavailable, missing, or unverified.",
+                "next_action": builder.get("next_probe") or "run_builder_health_probe",
+            }
+        )
+    if "saving_memory" in list(conversation_frame.get("must_confirm_before") or []):
+        needs.append(
+            {
+                "need": "memory_save_confirmation",
+                "status": "always_required",
+                "reason": "Memory writes need explicit human approval.",
+                "next_action": "ask_before_saving_memory_candidate",
+            }
+        )
+    return needs
+
+
+def _build_agent_facing_summary(
+    *,
+    task_fit: dict[str, Any],
+    runner: dict[str, Any],
+    conversation_frame: dict[str, Any],
+    routes: list[dict[str, Any]],
+) -> str:
+    route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
+    parts = ["You can answer in chat"]
+    if runner.get("writable") is True:
+        parts.append("and can patch files in the current runner when the user asks for code changes.")
+    elif runner.get("writable") is False:
+        parts.append("but cannot patch files in this runner.")
+    else:
+        parts.append("but must preflight the runner before claiming file patch capability.")
+    if bool(task_fit.get("needs_write")) and runner.get("writable") is not True:
+        parts.append("For code changes, route to writable Spawner/Codex.")
+    memory_status = _route_status(route_by_key.get("spark_memory") or {})
+    parts.append("Memory is available." if memory_status == "healthy" else f"Memory is {memory_status}.")
+    browser_status = _route_status(route_by_key.get("spark_browser") or {})
+    if browser_status == "healthy":
+        parts.append("Browser may be usable after a live probe; do not claim inspection before probing.")
+    else:
+        parts.append("Browser is unavailable or unverified. Do not claim live web inspection.")
+    disallowed = set(str(item) for item in list(conversation_frame.get("disallowed_next_actions") or []))
+    if disallowed:
+        parts.append("Disallowed now: " + ", ".join(sorted(disallowed)) + ".")
+    return " ".join(parts)
 
 
 def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_message: str) -> list[dict[str, Any]]:
