@@ -174,6 +174,10 @@ from spark_intelligence.self_awareness import (
     run_route_probe_and_record,
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.event_producers import (
+    record_mission_state_agent_event,
+    record_route_selection_agent_event,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1410,6 +1414,34 @@ def build_parser() -> argparse.ArgumentParser:
     self_memory_decision_parser.add_argument("--human-id", default="", help="Human id associated with this decision")
     self_memory_decision_parser.add_argument("--actor-id", default="memory_approval_inbox", help="Actor recording the decision")
     self_memory_decision_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_selection_parser = self_subparsers.add_parser(
+        "route-selection",
+        help="Record a route selection in the agent black box",
+    )
+    self_route_selection_parser.add_argument("selected_route", help="Selected route, for example writable_spawner_codex_mission")
+    self_route_selection_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_selection_parser.add_argument("--user-intent", default="", help="Perceived user intent, for example edit")
+    self_route_selection_parser.add_argument("--confidence", default="", help="Route confidence label")
+    self_route_selection_parser.add_argument("--reason", default="", help="Short reason for this route choice")
+    self_route_selection_parser.add_argument("--request-id", default="", help="Request id associated with this route choice")
+    self_route_selection_parser.add_argument("--session-id", default="", help="Session id associated with this route choice")
+    self_route_selection_parser.add_argument("--human-id", default="", help="Human id associated with this route choice")
+    self_route_selection_parser.add_argument("--actor-id", default="route_selection", help="Actor recording the route choice")
+    self_route_selection_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_mission_state_parser = self_subparsers.add_parser(
+        "mission-state",
+        help="Record a mission state change in the agent black box",
+    )
+    self_mission_state_parser.add_argument("mission_id", help="Mission id, for example mission-123")
+    self_mission_state_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_mission_state_parser.add_argument("--from-state", default="", help="Previous mission state")
+    self_mission_state_parser.add_argument("--to-state", required=True, help="New mission state")
+    self_mission_state_parser.add_argument("--summary", default="", help="Short state-change summary")
+    self_mission_state_parser.add_argument("--request-id", default="", help="Request id associated with this state change")
+    self_mission_state_parser.add_argument("--session-id", default="", help="Session id associated with this state change")
+    self_mission_state_parser.add_argument("--human-id", default="", help="Human id associated with this state change")
+    self_mission_state_parser.add_argument("--actor-id", default="mission_control", help="Actor recording the state change")
+    self_mission_state_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -4451,6 +4483,57 @@ def handle_self_memory_decision(args: argparse.Namespace) -> int:
             f"- event: {payload['event_id']}\n"
             "- memory write: not performed"
         )
+    return 0
+
+
+def handle_self_route_selection(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_route_selection_agent_event(
+        state_db,
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        reason=str(getattr(args, "reason", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "route_selection"),
+    )
+    payload = {
+        "event_id": event_id,
+        "event_type": "route_selected",
+        "selected_route": str(getattr(args, "selected_route", "") or ""),
+    }
+    print(json.dumps(payload, indent=2) if args.json else f"Route selection recorded: {payload['selected_route']}\n- event: {event_id}")
+    return 0
+
+
+def handle_self_mission_state(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_mission_state_agent_event(
+        state_db,
+        mission_id=str(getattr(args, "mission_id", "") or ""),
+        from_state=str(getattr(args, "from_state", "") or ""),
+        to_state=str(getattr(args, "to_state", "") or ""),
+        summary=str(getattr(args, "summary", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "mission_control"),
+    )
+    payload = {
+        "event_id": event_id,
+        "event_type": "mission_changed_state",
+        "mission_id": str(getattr(args, "mission_id", "") or ""),
+        "to_state": str(getattr(args, "to_state", "") or ""),
+    }
+    print(json.dumps(payload, indent=2) if args.json else f"Mission state recorded: {payload['mission_id']} -> {payload['to_state']}\n- event: {event_id}")
     return 0
 
 
@@ -8472,6 +8555,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_memory_inbox(args)
     if args.command == "self" and args.self_command == "memory-decision":
         return handle_self_memory_decision(args)
+    if args.command == "self" and args.self_command == "route-selection":
+        return handle_self_route_selection(args)
+    if args.command == "self" and args.self_command == "mission-state":
+        return handle_self_mission_state(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":

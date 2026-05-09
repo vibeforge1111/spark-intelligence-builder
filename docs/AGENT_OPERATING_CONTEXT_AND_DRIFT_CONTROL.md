@@ -72,7 +72,7 @@ The default eval suite covers:
 Run the focused checks:
 
 ```powershell
-python -m pytest tests\test_agent_drift_evals.py tests\test_agent_scratchpad.py tests\test_agent_operating_panel.py tests\test_stale_context_sweeper.py tests\test_agent_event_producer_cli.py tests\test_memory_approval_cli.py -q
+python -m pytest tests\test_agent_drift_evals.py tests\test_agent_scratchpad.py tests\test_agent_operating_panel.py tests\test_stale_context_sweeper.py tests\test_agent_event_producer_cli.py tests\test_memory_approval_cli.py tests\test_route_and_mission_event_cli.py -q
 ```
 
 Run the broader AOC foundation checks:
@@ -93,6 +93,7 @@ Next integrations should consume the existing read-models:
 - Stale sweeps now emit `contradiction_found` events when they record contradiction evidence.
 - Memory approval decisions now emit `user_override_received` events so the black box shows human memory choices.
 - `self memory-inbox` and `self memory-decision` provide the CLI review path for approval-gated memory candidates.
+- `self route-selection` and `self mission-state` provide the CLI trace path for route choices and mission state changes.
 - Spawner/Codex should record `route_selected`, `mission_changed_state`, and turn-trace events.
 
 Rollback is simple: callers can stop rendering the panel while the underlying event and source contracts remain append-only evidence.
