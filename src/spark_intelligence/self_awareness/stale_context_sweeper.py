@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spark_intelligence.observability.store import utc_now_iso
+from spark_intelligence.self_awareness.event_producers import record_contradiction_agent_event
 from spark_intelligence.self_awareness.source_hierarchy import (
     SourceClaim,
     SourceConflictResolution,
@@ -52,6 +53,7 @@ class StaleContextSweepReport:
     contradicted_items: list[StaleContextItem] = field(default_factory=list)
     resolutions: list[SourceConflictResolution] = field(default_factory=list)
     recorded_contradiction_ids: list[str] = field(default_factory=list)
+    recorded_agent_event_ids: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -63,11 +65,13 @@ class StaleContextSweepReport:
                 "contradicted": len(self.contradicted_items),
                 "resolutions": len(self.resolutions),
                 "recorded_contradictions": len(self.recorded_contradiction_ids),
+                "recorded_agent_events": len(self.recorded_agent_event_ids),
             },
             "stale_items": [item.to_payload() for item in self.stale_items],
             "contradicted_items": [item.to_payload() for item in self.contradicted_items],
             "resolutions": [resolution.to_payload() for resolution in self.resolutions],
             "recorded_contradiction_ids": list(self.recorded_contradiction_ids),
+            "recorded_agent_event_ids": list(self.recorded_agent_event_ids),
             "source_policy": (
                 "Current user message, diagnostics, runner preflight, and live probes beat stale memory, wiki, "
                 "mission trace, raw chat history, and inference."
@@ -94,6 +98,10 @@ def build_stale_context_sweep(
     context_claims: list[SourceClaim | dict[str, Any]],
     state_db: StateDB | None = None,
     record_contradictions: bool = False,
+    request_id: str = "",
+    session_id: str = "",
+    human_id: str = "",
+    actor_id: str = "",
 ) -> StaleContextSweepReport:
     claims = [_coerce_claim(claim) for claim in [*context_claims, *live_claims]]
     resolutions = resolve_source_claims([claim for claim in claims if claim is not None])
@@ -109,8 +117,25 @@ def build_stale_context_sweep(
             )
         )
     recorded_ids: list[str] = []
+    recorded_agent_ids: list[str] = []
     if record_contradictions and state_db is not None and resolutions:
         recorded_ids = record_source_conflict_resolutions(state_db, resolutions, component="stale_context_sweeper")
+        recorded_agent_ids = [
+            record_contradiction_agent_event(
+                state_db,
+                claim_key=resolution.claim_key,
+                winner=resolution.winner.to_payload(),
+                stale_claims=[claim.to_payload() for claim in resolution.stale_claims],
+                contradicted_claims=[claim.to_payload() for claim in resolution.contradicted_claims],
+                resolution=resolution.resolution,
+                contradiction_event_id=recorded_ids[index] if index < len(recorded_ids) else "",
+                request_id=request_id,
+                session_id=session_id,
+                human_id=human_id,
+                actor_id=actor_id or "stale_context_sweeper",
+            )
+            for index, resolution in enumerate(resolutions)
+        ]
     status = "clear" if not stale_items and not contradicted_items else "needs_review"
     return StaleContextSweepReport(
         checked_at=utc_now_iso(),
@@ -119,6 +144,7 @@ def build_stale_context_sweep(
         contradicted_items=contradicted_items,
         resolutions=resolutions,
         recorded_contradiction_ids=recorded_ids,
+        recorded_agent_event_ids=recorded_agent_ids,
     )
 
 

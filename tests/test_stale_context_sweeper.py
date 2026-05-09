@@ -66,6 +66,7 @@ class StaleContextSweeperTests(SparkTestCase):
         rows = recent_contradictions(self.state_db, status="open", limit=5)
 
         self.assertEqual(len(report.recorded_contradiction_ids), 1)
+        self.assertEqual(len(report.recorded_agent_event_ids), 1)
         self.assertEqual(rows[0]["component"], "stale_context_sweeper")
         self.assertEqual(rows[0]["facts_json"]["winner"]["source"], "current_user_message")
         self.assertEqual(report.stale_items[0].action_type, "mark_wiki_claim_stale")

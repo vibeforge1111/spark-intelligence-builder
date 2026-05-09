@@ -8,6 +8,8 @@ from spark_intelligence.self_awareness.event_producers import (
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
 from spark_intelligence.self_awareness.route_probe import record_route_probe_evidence
+from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
+from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
 
 from tests.test_support import SparkTestCase
 
@@ -74,3 +76,36 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertIn("route_selected", event_types)
         self.assertIn("mission_changed_state", event_types)
         self.assertIn("user_override_received", event_types)
+
+    def test_stale_context_sweep_emits_contradiction_found_agent_event(self) -> None:
+        report = build_stale_context_sweep(
+            live_claims=[
+                SourceClaim(
+                    claim_key="spark_access_level",
+                    value="Level 4",
+                    source="current_diagnostics",
+                    freshness="live_probed",
+                    source_ref="diag:now",
+                )
+            ],
+            context_claims=[
+                SourceClaim(
+                    claim_key="spark_access_level",
+                    value="Level 1",
+                    source="approved_memory",
+                    freshness="stale",
+                    source_ref="memory:old",
+                )
+            ],
+            state_db=self.state_db,
+            record_contradictions=True,
+            request_id="req-stale",
+            actor_id="operator:test",
+        )
+
+        black_box = build_agent_black_box_report(self.state_db, request_id="req-stale").to_payload()
+
+        self.assertEqual(report.to_payload()["counts"]["recorded_contradictions"], 1)
+        self.assertEqual(report.to_payload()["counts"]["recorded_agent_events"], 1)
+        self.assertEqual(black_box["entries"][0]["event_type"], "contradiction_found")
+        self.assertEqual(black_box["entries"][0]["route_chosen"], "source_hierarchy_review")
