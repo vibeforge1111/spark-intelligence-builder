@@ -6261,6 +6261,67 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("I tuned Elise", mutated.detail["response_text"])
         self.assertIn("a little faster", mutated.detail["response_text"])
 
+    def test_natural_language_voice_undo_restores_previous_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118172,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            before_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        before_profile = json.loads(before_row["value"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118173,
+                user_id="111",
+                username="alice",
+                text="a little faster",
+            ),
+        )
+        undone = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118174,
+                user_id="111",
+                username="alice",
+                text="go back to the previous voice",
+            ),
+        )
+
+        self.assertIn("rolled back to Elise", undone.detail["response_text"])
+        with self.state_db.connect() as conn:
+            after_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        after_profile = json.loads(after_row["value"])
+        self.assertEqual(after_profile["voice_settings"], before_profile["voice_settings"])
+
     def test_dm_voice_provider_state_overrides_profile_tts_env(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         simulate_telegram_update(

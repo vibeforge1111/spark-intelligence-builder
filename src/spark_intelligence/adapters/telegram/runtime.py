@@ -3960,6 +3960,16 @@ def _handle_runtime_command(
             ),
             "respect_voice_reply_state": False,
         }
+    if lowered in {"/voice undo", "/voice rollback"} or natural_voice_command == ("/voice undo", None):
+        return {
+            "command": "/voice undo",
+            "reply_text": _restore_telegram_voice_profile_undo(
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+            ),
+            "respect_voice_reply_state": False,
+        }
     if lowered.startswith("/voice guide ") or (natural_voice_command and natural_voice_command[0] == "/voice guide"):
         provider_target = (
             normalized[len("/voice guide") :].strip()
@@ -3993,6 +4003,11 @@ def _handle_runtime_command(
                 "reply_text": _render_telegram_voice_provider_help(),
                 "respect_voice_reply_state": False,
             }
+        _push_telegram_voice_profile_undo(
+            state_db=state_db,
+            external_user_id=external_user_id,
+            agent_id=agent_id,
+        )
         _set_voice_tts_provider_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -5095,6 +5110,22 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "which voice provider are you using",
     }:
         return ("/voice provider", None)
+    if simplified in {
+        "voice undo",
+        "undo voice",
+        "undo voice change",
+        "undo that voice change",
+        "undo the voice change",
+        "undo last voice change",
+        "undo my last voice change",
+        "rollback voice",
+        "roll back voice",
+        "restore previous voice",
+        "use previous voice",
+        "go back to previous voice",
+        "go back to the previous voice",
+    }:
+        return ("/voice undo", None)
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:find|search|look\s+for|choose|pick)\s+(?:me\s+)?(?:a\s+)?(?P<payload>.+?\s+)?(?:voice|tts\s+voice)(?:\s+for\s+.+)?$",
         r"^(?:i\s+want|i\s+d\s+like|i\s+would\s+like)\s+(?:a\s+)?(?P<payload>.+?\s+)?(?:voice|tts\s+voice)(?:\s+.+)?$",
@@ -7356,6 +7387,11 @@ def _select_elevenlabs_voice_for_telegram_dm(
             return f"I couldn’t find a close ElevenLabs match for `{target}`. Try `/voice voices {target}` and pick one of the names."
         voice = ranked[0]
     settings = _elevenlabs_voice_settings_for_style(target or str(voice.get("name") or ""))
+    _push_telegram_voice_profile_undo(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
     _set_voice_tts_profile_for_user(
         state_db=state_db,
         external_user_id=external_user_id,
@@ -7398,6 +7434,11 @@ def _mutate_elevenlabs_voice_for_telegram_dm(
         )
     current = profile.get("voice_settings") if isinstance(profile.get("voice_settings"), dict) else {}
     settings = _elevenlabs_voice_settings_for_style(style, base=current)
+    _push_telegram_voice_profile_undo(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
     profile["voice_settings"] = settings
     _set_voice_tts_profile_for_user(
         state_db=state_db,
@@ -9851,6 +9892,77 @@ def _voice_tts_profile_write_state_key(*, external_user_id: str, agent_id: str |
     if scope_key:
         return _voice_tts_profile_scoped_state_key(external_user_id=external_user_id, scope_key=scope_key)
     return _voice_tts_profile_state_key(external_user_id=external_user_id)
+
+
+def _voice_tts_profile_undo_state_key(*, external_user_id: str, agent_id: str | None = None) -> str:
+    scope_key = _voice_tts_write_scope_key(agent_id=agent_id)
+    if scope_key:
+        return f"telegram:voice_tts_profile_undo:{scope_key}:{external_user_id}"
+    return f"telegram:voice_tts_profile_undo:{external_user_id}"
+
+
+def _push_telegram_voice_profile_undo(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    agent_id: str | None = None,
+) -> None:
+    profile = _voice_tts_profile_for_user(state_db=state_db, external_user_id=external_user_id, agent_id=agent_id)
+    provider_id = _voice_tts_provider_for_user(state_db=state_db, external_user_id=external_user_id, agent_id=agent_id)
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_tts_profile_undo_state_key(external_user_id=external_user_id, agent_id=agent_id),
+        value=json.dumps(
+            {
+                "profile": profile if isinstance(profile, dict) else {},
+                "provider_id": provider_id or "",
+                "scope": _voice_tts_state_scope_label(agent_id=agent_id),
+            },
+            sort_keys=True,
+        ),
+    )
+
+
+def _restore_telegram_voice_profile_undo(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    agent_id: str | None = None,
+) -> str:
+    payload = _load_runtime_json_object(
+        state_db,
+        _voice_tts_profile_undo_state_key(external_user_id=external_user_id, agent_id=agent_id),
+    )
+    if not payload:
+        return "No previous voice change is available for this scope yet."
+    profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+    provider_id = _normalize_telegram_voice_provider_id(str(payload.get("provider_id") or ""))
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_tts_profile_write_state_key(external_user_id=external_user_id, agent_id=agent_id),
+        value=json.dumps(profile, sort_keys=True),
+    )
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_tts_provider_write_state_key(external_user_id=external_user_id, agent_id=agent_id),
+        value=json.dumps(
+            {
+                "provider_id": provider_id,
+                "scope": _voice_tts_state_scope_label(agent_id=agent_id),
+            }
+            if provider_id
+            else {},
+            sort_keys=True,
+        ),
+    )
+    if not profile:
+        return "Done, I rolled back the last voice change. This scope now has no custom saved voice."
+    voice_name = str(profile.get("voice_name") or "the previous voice").strip()
+    provider_label = _telegram_voice_provider_label(str(profile.get("provider_id") or provider_id or ""))
+    return (
+        f"Done, I rolled back to {voice_name} on {provider_label}.\n\n"
+        "Try `audition the voice` to hear it again."
+    )
 
 
 def _voice_tts_provider_for_user(
