@@ -6529,8 +6529,11 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertNotIn("voice_media", result.detail)
         self.assertIn("voice audio step is not ready", result.detail["response_text"])
-        self.assertIn("invalid_api_key", result.detail["response_text"])
-        self.assertIn("invalid_api_key", result.detail["voice_error"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["response_text"])
+        self.assertIn("Do not paste the key into Telegram", result.detail["response_text"])
+        self.assertNotIn("invalid_api_key", result.detail["response_text"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["voice_error"])
+        self.assertNotIn("invalid_api_key", result.detail["voice_error"])
 
     def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

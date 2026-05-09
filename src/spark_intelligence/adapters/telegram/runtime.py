@@ -1162,7 +1162,7 @@ def simulate_telegram_update(
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
-                    bridge_voice_error = str(exc)
+                    bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
                         f"Reason: {_safe_voice_error_message(exc)}"
@@ -1628,7 +1628,7 @@ def simulate_telegram_update(
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
-                    bridge_voice_error = str(exc)
+                    bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
                         f"Reason: {_safe_voice_error_message(exc)}"
@@ -2840,6 +2840,13 @@ def _safe_voice_error_message(error: Exception) -> str:
     message = " ".join(str(error or "").strip().split())
     if not message:
         return "the voice provider did not return audio."
+    lowered = message.lower()
+    if "elevenlabs" in lowered and "invalid_api_key" in lowered:
+        return "ElevenLabs rejected the local API key. Update ELEVENLABS_API_KEY in local config, then retry. Do not paste the key into Telegram."
+    if "elevenlabs" in lowered and ("quota" in lowered or "billing" in lowered or "payment" in lowered):
+        return "ElevenLabs could not synthesize because the account quota or billing status needs attention."
+    if "elevenlabs" in lowered and ("voice_id" in lowered or "voice id" in lowered or "not_found" in lowered):
+        return "ElevenLabs could not find the configured voice. Pick another voice or update the saved voice ID in local config."
     message = re.sub(
         r"(?i)\b(api[_-]?key|token|secret|authorization)\b\s*[:=]\s*[^,\n ]+",
         r"\1=***",
@@ -3223,7 +3230,7 @@ def _send_telegram_reply(
                 )
                 delivery_medium = "audio"
             except Exception as exc:
-                voice_error = str(exc)
+                voice_error = _safe_voice_error_message(exc)
                 guarded["actions"] = ["voice_reply_fallback_to_text", *list(guarded["actions"])]
                 if force_voice:
                     fallback_text = (
