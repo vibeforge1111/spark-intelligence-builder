@@ -131,6 +131,51 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("Request: req-doctor-target.", response_text)
         self.assertIn("gateway had 1 earlier same-session message", response_text)
 
+    def test_gateway_ask_telegram_runs_memory_doctor_for_last_request(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-doctor-last-seed",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "The phrase is Violet Harbor 912.",
+                "response_preview": "Noted.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-doctor-last-target",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="run memory doctor for last request",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        response_text = output["result"]["detail"]["response_text"]
+        self.assertEqual(response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-doctor-last-target.", response_text)
+        self.assertIn("no provider capsule event was recorded", response_text)
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)

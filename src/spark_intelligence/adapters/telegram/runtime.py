@@ -3709,6 +3709,18 @@ def _handle_runtime_command(
         )
         doctor_topic = str(doctor_target.get("topic") or "").strip()
         doctor_request_id = str(doctor_target.get("request_id") or "").strip()
+        if not doctor_request_id and doctor_target.get("request_selector") == "previous_gateway_turn":
+            doctor_request_id = _memory_doctor_previous_gateway_request_id(
+                config_manager=config_manager,
+                external_user_id=external_user_id,
+                session_id=session_id,
+                current_request_id=request_id,
+            )
+            if not doctor_request_id:
+                return {
+                    "command": "/memory doctor",
+                    "reply_text": "Memory Doctor could not find a previous Telegram request id to replay.",
+                }
         report = run_memory_doctor(
             state_db,
             config_manager=config_manager,
@@ -4774,7 +4786,13 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
         "recommend memory fixes",
         "recommend memory improvements",
     }:
-        return {"command": "/memory doctor", "topic": None, "request_id": None, "repair_requested": False}
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": None,
+            "repair_requested": False,
+        }
     topic_patterns = (
         r"^(?:run|check|show)\s+memory\s+doctor\s+for\s+(.+)$",
         r"^(?:trace|check|diagnose|audit)\s+memory\s+for\s+(.+)$",
@@ -4790,6 +4808,7 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
                 "command": "/memory doctor",
                 "topic": target["topic"],
                 "request_id": target["request_id"],
+                "request_selector": target.get("request_selector"),
                 "repair_requested": simplified.startswith("repair memory"),
             }
     for pattern in topic_patterns:
@@ -4800,6 +4819,7 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
                 "command": "/memory doctor",
                 "topic": target["topic"],
                 "request_id": target["request_id"],
+                "request_selector": target.get("request_selector"),
                 "repair_requested": simplified.startswith("repair memory"),
             }
     return None
@@ -4808,7 +4828,7 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
     if not suffix:
-        return {"topic": None, "request_id": None}
+        return {"topic": None, "request_id": None, "request_selector": None}
     if suffix.lower().startswith("for "):
         suffix = suffix[4:].strip()
     return _memory_doctor_target_from_value(suffix)
@@ -4816,6 +4836,19 @@ def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str
 
 def _memory_doctor_target_from_value(value: str) -> dict[str, str | None]:
     cleaned = " ".join(str(value or "").strip().strip(".?!`'\"").split())
+    if cleaned.lower() in {
+        "last request",
+        "latest request",
+        "previous request",
+        "last turn",
+        "latest turn",
+        "previous turn",
+        "last message",
+        "previous message",
+        "last telegram turn",
+        "previous telegram turn",
+    }:
+        return {"topic": None, "request_id": None, "request_selector": "previous_gateway_turn"}
     request_match = re.match(
         r"^(?:request(?:\s+id)?|request-id|request_id|req(?:uest)?[_-]?id|req)\s*[:=#-]?\s*(.+)$",
         cleaned,
@@ -4823,8 +4856,42 @@ def _memory_doctor_target_from_value(value: str) -> dict[str, str | None]:
     )
     if request_match:
         request_id = _clean_memory_doctor_request_id(request_match.group(1))
-        return {"topic": None, "request_id": request_id or None}
-    return {"topic": _clean_memory_doctor_topic(cleaned), "request_id": None}
+        return {"topic": None, "request_id": request_id or None, "request_selector": None}
+    return {"topic": _clean_memory_doctor_topic(cleaned), "request_id": None, "request_selector": None}
+
+
+def _memory_doctor_previous_gateway_request_id(
+    *,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> str | None:
+    try:
+        from spark_intelligence.gateway.tracing import read_gateway_traces
+
+        traces = read_gateway_traces(config_manager, limit=80)
+    except Exception:
+        return None
+    normalized_user_id = str(external_user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    normalized_current_request_id = str(current_request_id or "").strip()
+    for record in reversed(traces):
+        if str(record.get("event") or "") != "telegram_update_processed":
+            continue
+        request_id = str(record.get("request_id") or "").strip()
+        if not request_id or request_id == normalized_current_request_id:
+            continue
+        if normalized_user_id and str(record.get("telegram_user_id") or "").strip() != normalized_user_id:
+            continue
+        if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
+            continue
+        preview = str(record.get("user_message_preview") or "").strip()
+        preview_lower = preview.lower()
+        if preview_lower.startswith("/memory doctor") or _match_natural_memory_doctor_command(preview):
+            continue
+        return request_id
+    return None
 
 
 def _clean_memory_doctor_request_id(value: str) -> str:
