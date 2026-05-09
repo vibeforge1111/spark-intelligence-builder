@@ -252,6 +252,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
                     "diagnosed_request_id": "req-blank-target",
                     "request_selector": "previous_gateway_turn",
                     "contextual_trigger_score": 4,
+                    "contextual_trigger_threshold": 3,
                     "contextual_trigger_signals": [
                         "close_turn_repeat_frustration",
                         "previous_turn_memory_failure_signal",
@@ -287,6 +288,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(gateway_trace["diagnostic_invocation_count"], 1)
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["request_id"], "req-blank-doctor")
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_score"], 4)
+        self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_threshold"], 3)
         self.assertIn(
             "close_turn_repeat_frustration",
             gateway_trace["diagnostic_invocations"][0]["contextual_trigger_signals"],

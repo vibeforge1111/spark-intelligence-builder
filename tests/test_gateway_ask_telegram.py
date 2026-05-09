@@ -4,7 +4,11 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary
+from spark_intelligence.adapters.telegram.runtime import (
+    _memory_doctor_distress_score,
+    _memory_doctor_distress_signals,
+    build_telegram_runtime_summary,
+)
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.observability.store import record_event
@@ -28,6 +32,45 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("allowed_users=1", summary.to_line())
         self.assertIn("allowlist_source=config.allowed_users", summary.to_line())
         self.assertIn("raw_runtime_allowlist_entries=4", summary.to_line())
+
+    def test_memory_doctor_contextual_trigger_signal_matrix(self) -> None:
+        direct_context_loss_cases = {
+            "you forgot what we were discussing": {"memory_context_reference", "memory_distress_verb"},
+            "you lost the conversation": {"memory_context_reference", "memory_distress_verb"},
+            "the context disappeared": {"memory_context_reference", "memory_distress_verb"},
+            "did you forget the last thing I said": {
+                "memory_context_reference",
+                "memory_distress_verb",
+                "diagnostic_question",
+            },
+        }
+        for phrase, expected_signals in direct_context_loss_cases.items():
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
+                self.assertTrue(expected_signals.issubset(signal_names))
+
+        previous_failure_only_cases = {
+            "are you still with me": {"operator_frustration"},
+            "you asked me again": {"close_turn_repeat_frustration", "operator_frustration"},
+            "I already answered that": {"close_turn_repeat_frustration"},
+            "you lost the plot": {"memory_distress_verb"},
+        }
+        for phrase, expected_signals in previous_failure_only_cases.items():
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertLess(_memory_doctor_distress_score(phrase), 4)
+                self.assertGreaterEqual(_memory_doctor_distress_score(phrase) + 2, 3)
+                self.assertTrue(expected_signals.issubset(signal_names))
+
+        plain_chat_cases = (
+            "can you summarize the plan",
+            "hello",
+            "what do you think about the update",
+        )
+        for phrase in plain_chat_cases:
+            with self.subTest(phrase=phrase):
+                self.assertLess(_memory_doctor_distress_score(phrase), 3)
 
     def test_gateway_ask_telegram_runs_memory_doctor_from_natural_language(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -195,6 +238,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(blank_response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-doctor-last-target.", blank_response_text)
         self.assertGreaterEqual(blank_metadata["contextual_trigger_score"], 3)
+        self.assertEqual(blank_metadata["contextual_trigger_threshold"], 3)
         self.assertIn("previous_turn_memory_failure_signal", blank_metadata["contextual_trigger_signals"])
 
         frustration_output = json.loads(
@@ -212,6 +256,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
         self.assertGreaterEqual(frustration_metadata["contextual_trigger_score"], 3)
+        self.assertEqual(frustration_metadata["contextual_trigger_threshold"], 3)
         self.assertIn("operator_frustration", frustration_metadata["contextual_trigger_signals"])
         self.assertTrue(frustration_metadata["previous_failure_signal"])
 
@@ -284,6 +329,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["diagnosed_request_id"], "req-name-repeat")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertGreaterEqual(metadata["contextual_trigger_score"], 3)
+        self.assertEqual(metadata["contextual_trigger_threshold"], 3)
         self.assertIn("close_turn_repeat_frustration", metadata["contextual_trigger_signals"])
         self.assertIn("previous_turn_memory_failure_signal", metadata["contextual_trigger_signals"])
 
@@ -322,6 +368,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["diagnosed_request_id"], "req-context-loss-prior")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertGreaterEqual(metadata["contextual_trigger_score"], 4)
+        self.assertEqual(metadata["contextual_trigger_threshold"], 4)
         self.assertEqual(metadata["contextual_trigger_signals"], ["memory_context_reference", "memory_distress_verb"])
         self.assertFalse(metadata["previous_failure_signal"])
 

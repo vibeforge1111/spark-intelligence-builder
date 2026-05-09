@@ -3761,6 +3761,7 @@ def _handle_runtime_command(
                 "diagnosed_topic": doctor_topic or None,
                 "request_selector": doctor_target.get("request_selector") or None,
                 "contextual_trigger_score": doctor_target.get("contextual_trigger_score"),
+                "contextual_trigger_threshold": doctor_target.get("contextual_trigger_threshold"),
                 "contextual_trigger_signals": doctor_target.get("contextual_trigger_signals"),
                 "previous_failure_signal": doctor_target.get("previous_failure_signal"),
                 "memory_doctor_ok": report.ok,
@@ -4916,6 +4917,7 @@ def _match_contextual_memory_doctor_command(
         "request_selector": "previous_gateway_turn",
         "repair_requested": False,
         "contextual_trigger_score": score,
+        "contextual_trigger_threshold": threshold,
         "contextual_trigger_signals": [str(signal["name"]) for signal in trigger_signals],
         "previous_failure_signal": previous_failure_signal,
     }
@@ -4931,15 +4933,29 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
         return []
     signals: list[dict[str, object]] = []
     if re.search(
-        r"\b(?:memory|context|thread|previous|last|what i just said|what i just told you|what we were talking about)\b",
+        (
+            r"\b(?:memory|context|thread|conversation|convo|discussion|previous|last|what i just said|"
+            r"what i just told you|what we were talking about|we were talking about|what we were discussing|"
+            r"we were discussing|what we were working on|we were working on)\b"
+        ),
         text,
     ):
         signals.append({"name": "memory_context_reference", "weight": 2})
-    if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused)\b", text):
+    if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused|reset|disappeared)\b", text):
         signals.append({"name": "memory_distress_verb", "weight": 2})
-    if re.search(r"\b(?:i just told you|just told you|already told you|i already said|already said that)\b", text):
+    if re.search(
+        (
+            r"\b(?:i just told you|just told you|already told you|i already said|already said that|"
+            r"i said that already|already answered|asked me again|you asked me again|"
+            r"you asked me (?:that|this) already|literally just said|just said that)\b"
+        ),
+        text,
+    ):
         signals.append({"name": "close_turn_repeat_frustration", "weight": 2})
-    if re.search(r"\b(?:not responding|stopped responding|are you there|hello|wrong|again|seriously|come on)\b", text):
+    if re.search(
+        r"\b(?:not responding|stopped responding|are you there|you there|still with me|hello|wrong|again|seriously|come on)\b",
+        text,
+    ):
         signals.append({"name": "operator_frustration", "weight": 1})
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
         signals.append({"name": "diagnostic_question", "weight": 1})
