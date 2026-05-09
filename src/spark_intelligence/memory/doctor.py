@@ -145,6 +145,14 @@ class MemoryDoctorReport:
                 )
             elif recent_count == 0:
                 lines.append("Context capsule: no recent-conversation turns in the latest provider capsule.")
+            if isinstance(gateway_trace, dict):
+                cross_scope = gateway_trace.get("cross_scope_lineage")
+                if isinstance(cross_scope, dict) and cross_scope.get("status") == "checked":
+                    lines.append(
+                        "Lineage scope: "
+                        f"{int(cross_scope.get('session_count') or 0)} session(s), "
+                        f"{int(cross_scope.get('channel_count') or 0)} channel(s) visible."
+                    )
         if self.brain:
             lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
         failing = [finding for finding in self.findings if not finding.ok]
@@ -736,7 +744,101 @@ def _build_gateway_trace_audit(
         "capsule_recent_conversation_count": capsule_recent_conversation_count,
         "lineage_gap": bool(recent_messages and capsule_recent_conversation_count == 0),
         "recent_gateway_messages": recent_messages,
+        "cross_scope_lineage": _build_cross_scope_lineage_summary(
+            traces=traces,
+            target_index=target_index,
+            target=target,
+        ),
     }
+
+
+def _build_cross_scope_lineage_summary(
+    *,
+    traces: list[dict[str, object]],
+    target_index: int,
+    target: dict[str, object],
+) -> dict[str, object]:
+    identity_key, identity_value = _gateway_identity_scope(target)
+    if not identity_key or not identity_value:
+        return {
+            "status": "identity_unavailable",
+            "identity_key": None,
+            "session_count": 0,
+            "channel_count": 0,
+            "cross_session_visible": False,
+            "cross_channel_visible": False,
+        }
+
+    target_session = str(target.get("session_id") or "").strip()
+    target_channel = str(target.get("channel_id") or "").strip()
+    matching_records: list[dict[str, object]] = []
+    for record in traces[: target_index + 1]:
+        if str(record.get("event") or "") != "telegram_update_processed":
+            continue
+        if str(record.get(identity_key) or "").strip() != identity_value:
+            continue
+        matching_records.append(record)
+
+    session_counts: dict[str, int] = {}
+    channel_counts: dict[str, int] = {}
+    recent_cross_session_messages: list[dict[str, object]] = []
+    for record in matching_records:
+        session_id = str(record.get("session_id") or "unknown").strip() or "unknown"
+        channel_id = str(record.get("channel_id") or "unknown").strip() or "unknown"
+        session_counts[session_id] = session_counts.get(session_id, 0) + 1
+        channel_counts[channel_id] = channel_counts.get(channel_id, 0) + 1
+
+    for record in reversed(matching_records[:-1]):
+        session_id = str(record.get("session_id") or "").strip()
+        if target_session and session_id == target_session:
+            continue
+        preview = str(record.get("user_message_preview") or "").strip()
+        if not preview:
+            continue
+        recent_cross_session_messages.append(
+            {
+                "request_id": record.get("request_id"),
+                "recorded_at": record.get("recorded_at"),
+                "session_id": session_id or None,
+                "channel_id": record.get("channel_id"),
+                "user_message_preview": _shorten(preview, 120),
+                "routing_decision": record.get("routing_decision"),
+            }
+        )
+        if len(recent_cross_session_messages) >= 5:
+            break
+
+    sessions = {session for session in session_counts if session != "unknown"}
+    channels = {channel for channel in channel_counts if channel != "unknown"}
+    return {
+        "status": "checked",
+        "identity_key": identity_key,
+        "identity_value_hash": _stable_hash(identity_value),
+        "target_session_id": target_session or None,
+        "target_channel_id": target_channel or None,
+        "session_count": len(sessions),
+        "channel_count": len(channels),
+        "message_count": len(matching_records),
+        "session_counts": session_counts,
+        "channel_counts": channel_counts,
+        "cross_session_visible": any(session != target_session for session in sessions) if target_session else len(sessions) > 1,
+        "cross_channel_visible": any(channel != target_channel for channel in channels) if target_channel else len(channels) > 1,
+        "recent_cross_session_messages": recent_cross_session_messages,
+    }
+
+
+def _gateway_identity_scope(record: dict[str, object]) -> tuple[str | None, str | None]:
+    for key in ("telegram_user_id", "human_id", "chat_id"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            return key, value
+    return None, None
+
+
+def _stable_hash(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[MemoryDoctorFinding]:
@@ -795,6 +897,7 @@ def _build_movement_trace(
     dashboard: dict[str, object],
 ) -> dict[str, object]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
     read_abstentions = [
         event for event in read_result_events if str(event.get("event_type") or "") == "memory_read_abstained"
     ]
@@ -808,6 +911,14 @@ def _build_movement_trace(
             if isinstance(gateway_trace, dict)
             else 0,
             "lineage_gap": bool(gateway_trace.get("lineage_gap")) if isinstance(gateway_trace, dict) else False,
+        },
+        {
+            "stage": "cross_session_channel_lineage",
+            "status": cross_scope.get("status") or "not_checked",
+            "session_count": int(cross_scope.get("session_count") or 0),
+            "channel_count": int(cross_scope.get("channel_count") or 0),
+            "cross_session_visible": bool(cross_scope.get("cross_session_visible")),
+            "cross_channel_visible": bool(cross_scope.get("cross_channel_visible")),
         },
         {
             "stage": "builder_influence",
@@ -887,7 +998,10 @@ def _build_movement_trace(
 
     return {
         "status": "checked",
-        "scope": "gateway -> builder events -> memory reads/writes -> lifecycle/policy gates -> context capsule -> watchtower dashboard",
+        "scope": (
+            "gateway -> cross-session/channel lineage -> builder events -> memory reads/writes -> "
+            "lifecycle/policy gates -> context capsule -> watchtower dashboard"
+        ),
         "stages": stages,
         "gaps": gaps,
         "unknowns": _movement_trace_unknowns(context_capsule=context_capsule),
@@ -899,6 +1013,9 @@ def _movement_trace_unknowns(*, context_capsule: dict[str, object]) -> list[str]
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     if not isinstance(gateway_trace, dict) or gateway_trace.get("status") in {None, "not_requested", "not_found", "request_not_found"}:
         unknowns.append("Gateway transcript lineage was not fully available for the selected provider capsule.")
+    cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace, dict) else {}
+    if not isinstance(cross_scope, dict) or cross_scope.get("status") in {None, "identity_unavailable"}:
+        unknowns.append("Cross-session/channel lineage could not be scoped to a stable gateway identity.")
     if context_capsule.get("status") != "checked":
         unknowns.append("No recent context capsule event was available to audit.")
     return unknowns

@@ -204,6 +204,7 @@ def _build_senses(
     path_traces: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
     source_counts = context_capsule.get("source_counts") if isinstance(context_capsule.get("source_counts"), dict) else {}
     return [
         _sense(
@@ -232,6 +233,23 @@ def _build_senses(
             isinstance(gateway_trace, dict) and gateway_trace.get("status") == "checked",
             f"gateway trace status={gateway_trace.get('status') if isinstance(gateway_trace, dict) else 'unknown'}",
             {"gateway_trace": gateway_trace},
+            10,
+        ),
+        _sense(
+            "cross_session_channel_lineage",
+            isinstance(cross_scope, dict) and cross_scope.get("status") == "checked",
+            f"cross-scope lineage status={cross_scope.get('status') if isinstance(cross_scope, dict) else 'unknown'}",
+            {
+                "identity_key": cross_scope.get("identity_key") if isinstance(cross_scope, dict) else None,
+                "session_count": int(cross_scope.get("session_count") or 0) if isinstance(cross_scope, dict) else 0,
+                "channel_count": int(cross_scope.get("channel_count") or 0) if isinstance(cross_scope, dict) else 0,
+                "cross_session_visible": bool(cross_scope.get("cross_session_visible"))
+                if isinstance(cross_scope, dict)
+                else False,
+                "cross_channel_visible": bool(cross_scope.get("cross_channel_visible"))
+                if isinstance(cross_scope, dict)
+                else False,
+            },
             10,
         ),
         _sense(
@@ -399,6 +417,19 @@ def _build_gaps(
                 "include stable request/session ids across gateway, Builder events, context capsule, and provider dispatch",
             )
         )
+    if "cross_session_channel_lineage" in missing:
+        gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+        cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
+        gaps.append(
+            _gap(
+                "cross_session_channel_lineage_gap",
+                "medium",
+                "Memory Doctor cannot map memory/context movement across sessions or channels for a stable identity.",
+                "cross_scope_status",
+                str(cross_scope.get("status") or "unknown"),
+                "ensure gateway traces carry a stable human/user id across sessions and adapters",
+            )
+        )
     for movement_gap in movement_trace.get("gaps") or []:
         if not isinstance(movement_gap, dict):
             continue
@@ -508,7 +539,12 @@ def _build_proactive_improvements(gaps: list[dict[str, object]]) -> list[dict[st
 
 
 def _improvement_action(gap_name: str) -> str:
-    if gap_name in {"context_capsule_visibility_gap", "gateway_trace_visibility_gap", "gateway_to_context_capsule_gap"}:
+    if gap_name in {
+        "context_capsule_visibility_gap",
+        "gateway_trace_visibility_gap",
+        "gateway_to_context_capsule_gap",
+        "cross_session_channel_lineage_gap",
+    }:
         return "Strengthen close-turn context tracing so Telegram turns, Builder events, provider capsules, and memory reads share correlated lineage."
     if gap_name == "memory_observability_coverage_low":
         return "Raise doctor visibility by wiring missing senses before changing memory behavior."

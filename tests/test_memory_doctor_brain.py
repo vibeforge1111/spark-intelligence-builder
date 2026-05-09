@@ -148,6 +148,74 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertNotIn("llm_wiki_packet_visibility_gap", gap_names)
         self.assertNotIn("dashboard_movement_export_gap", gap_names)
 
+    def test_memory_doctor_maps_cross_session_channel_lineage(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-old-session",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-old",
+                "user_message_preview": "my name is pronounced like Gem",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-current-session",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-current",
+                "user_message_preview": "what name should you use for me now?",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            request_id="req-current-session",
+            human_id="human-1",
+            facts={
+                "source_counts": {"current_state": 1, "recent_conversation": 1},
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 1, "priority": 1, "role": "authority"},
+                    {"source": "recent_conversation", "present": True, "count": 1, "priority": 8, "role": "supporting"},
+                ],
+            },
+        )
+
+        report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+        )
+
+        cross_scope = report.context_capsule["gateway_trace"]["cross_scope_lineage"]
+        self.assertEqual(cross_scope["status"], "checked")
+        self.assertEqual(cross_scope["identity_key"], "telegram_user_id")
+        self.assertEqual(cross_scope["session_count"], 2)
+        self.assertEqual(cross_scope["channel_count"], 1)
+        self.assertTrue(cross_scope["cross_session_visible"])
+        self.assertFalse(cross_scope["cross_channel_visible"])
+        self.assertEqual(
+            cross_scope["recent_cross_session_messages"][0]["user_message_preview"],
+            "my name is pronounced like Gem",
+        )
+        stages = {stage["stage"]: stage for stage in report.movement_trace["stages"]}
+        self.assertEqual(stages["cross_session_channel_lineage"]["session_count"], 2)
+        senses = {sense["name"]: sense for sense in report.brain["senses"]}
+        self.assertTrue(senses["cross_session_channel_lineage"]["present"])
+        self.assertIn("Lineage scope: 2 session(s), 1 channel(s) visible.", report.to_telegram_text())
+
     def test_watchtower_tracks_memory_doctor_brain_trends(self) -> None:
         record_event(
             self.state_db,
