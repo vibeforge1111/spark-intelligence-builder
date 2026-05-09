@@ -125,6 +125,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
 )
+from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.personality import (
     build_personality_import_payload,
     load_personality_profile,
@@ -1369,6 +1370,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Memory approval inbox filter",
     )
     self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_memory_inbox_parser = self_subparsers.add_parser(
+        "memory-inbox",
+        help="Show approval-gated memory candidates waiting for human review",
+    )
+    self_memory_inbox_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_memory_inbox_parser.add_argument(
+        "--status",
+        choices=("pending", "decided", "all"),
+        default="pending",
+        help="Memory approval inbox filter",
+    )
+    self_memory_inbox_parser.add_argument("--limit", type=int, default=20, help="Maximum inbox items to show")
+    self_memory_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_memory_decision_parser = self_subparsers.add_parser(
+        "memory-decision",
+        help="Record a human decision for one memory approval inbox candidate",
+    )
+    self_memory_decision_parser.add_argument("candidate_event_id", help="Candidate event id from self memory-inbox")
+    self_memory_decision_parser.add_argument(
+        "--decision",
+        choices=(
+            "approve",
+            "edit",
+            "reject",
+            "save_as_project_fact",
+            "save_as_personal_preference",
+            "save_as_spark_doctrine",
+        ),
+        required=True,
+        help="Human review decision",
+    )
+    self_memory_decision_parser.add_argument("--reason", required=True, help="Short reason for the decision")
+    self_memory_decision_parser.add_argument("--edited-text", default="", help="Edited memory text when decision=edit")
+    self_memory_decision_parser.add_argument("--target-scope", default="", help="Optional target scope override")
+    self_memory_decision_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_memory_decision_parser.add_argument("--request-id", default="", help="Request id associated with this decision")
+    self_memory_decision_parser.add_argument("--session-id", default="", help="Session id associated with this decision")
+    self_memory_decision_parser.add_argument("--human-id", default="", help="Human id associated with this decision")
+    self_memory_decision_parser.add_argument("--actor-id", default="memory_approval_inbox", help="Actor recording the decision")
+    self_memory_decision_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -4360,6 +4401,56 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
     )
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
+    return 0
+
+
+def handle_self_memory_inbox(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_memory_approval_inbox(
+        state_db,
+        status=str(getattr(args, "status", "pending") or "pending"),
+        limit=int(getattr(args, "limit", 20) or 20),
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
+
+
+def handle_self_memory_decision(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_memory_approval_decision(
+        state_db,
+        candidate_event_id=str(getattr(args, "candidate_event_id", "") or ""),
+        decision=str(getattr(args, "decision", "") or ""),  # type: ignore[arg-type]
+        reason=str(getattr(args, "reason", "") or ""),
+        edited_text=str(getattr(args, "edited_text", "") or "") or None,
+        target_scope=str(getattr(args, "target_scope", "") or "") or None,
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        session_id=str(getattr(args, "session_id", "") or "") or None,
+        human_id=str(getattr(args, "human_id", "") or "") or None,
+        actor_id=str(getattr(args, "actor_id", "") or "memory_approval_inbox"),
+    )
+    payload = {
+        "event_id": event_id,
+        "candidate_event_id": str(getattr(args, "candidate_event_id", "") or ""),
+        "decision": str(getattr(args, "decision", "") or ""),
+        "does_not_write_memory": True,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "Memory approval decision recorded\n"
+            f"- decision: {payload['decision']}\n"
+            f"- candidate: {payload['candidate_event_id']}\n"
+            f"- event: {payload['event_id']}\n"
+            "- memory write: not performed"
+        )
     return 0
 
 
@@ -8377,6 +8468,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_context(args)
     if args.command == "self" and args.self_command == "panel":
         return handle_self_panel(args)
+    if args.command == "self" and args.self_command == "memory-inbox":
+        return handle_self_memory_inbox(args)
+    if args.command == "self" and args.self_command == "memory-decision":
+        return handle_self_memory_decision(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
