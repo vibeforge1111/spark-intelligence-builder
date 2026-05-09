@@ -3271,6 +3271,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "root_cause_failure_layer_counts": {},
             "root_cause_owner_surface_counts": {},
             "root_cause_audit_focus_counts": {},
+            "repair_priority": {"status": "no_data"},
             "creator_alignment": {
                 "status": "no_data",
                 "artifact_targets": [],
@@ -3427,6 +3428,11 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     status = "healthy" if latest_score is not None and int(latest_score) >= 80 and latest_gap_count == 0 else "watching"
     if latest_score is not None and int(latest_score) < 50:
         status = "degraded"
+    repair_priority = _memory_doctor_repair_priority(
+        owner_surface_counts=root_cause_owner_surface_counts,
+        audit_focus_counts=root_cause_audit_focus_counts,
+        recent_root_causes=recent_root_causes,
+    )
 
     return {
         "panel": "memory_doctor_brain",
@@ -3456,6 +3462,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "root_cause_failure_layer_counts": _top_counts(root_cause_failure_layer_counts),
         "root_cause_owner_surface_counts": _top_counts(root_cause_owner_surface_counts),
         "root_cause_audit_focus_counts": _top_counts(root_cause_audit_focus_counts),
+        "repair_priority": repair_priority,
         "creator_alignment": latest.get("creator_alignment") or {},
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_root_causes": list(reversed(recent_root_causes))[:5],
@@ -3495,6 +3502,46 @@ def _memory_doctor_intake_calibration_label(
     if score == threshold:
         return "borderline_direct"
     return "strong_direct"
+
+
+def _memory_doctor_repair_priority(
+    *,
+    owner_surface_counts: dict[str, int],
+    audit_focus_counts: dict[str, int],
+    recent_root_causes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not owner_surface_counts:
+        return {"status": "no_data"}
+    top_owner_surface, top_owner_count = sorted(
+        owner_surface_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[0]
+    top_audit_focus = None
+    top_audit_focus_count = 0
+    if audit_focus_counts:
+        top_audit_focus, top_audit_focus_count = sorted(
+            audit_focus_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0]
+    latest_matching = next(
+        (
+            item
+            for item in reversed(recent_root_causes)
+            if item.get("owner_surface") == top_owner_surface
+        ),
+        {},
+    )
+    return {
+        "status": "ready",
+        "basis": "repeated_root_cause_owner_surface",
+        "owner_surface": top_owner_surface,
+        "owner_surface_count": top_owner_count,
+        "audit_focus": top_audit_focus,
+        "audit_focus_count": top_audit_focus_count,
+        "repair_action": latest_matching.get("repair_action"),
+        "replay_probe": latest_matching.get("replay_probe"),
+        "latest_request_id": latest_matching.get("request_id"),
+    }
 
 
 def _string_list(value: Any) -> list[str]:

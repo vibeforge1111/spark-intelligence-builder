@@ -22,6 +22,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["root_cause_failure_layer_counts"], {})
         self.assertEqual(panel["root_cause_owner_surface_counts"], {})
         self.assertEqual(panel["root_cause_audit_focus_counts"], {})
+        self.assertEqual(panel["repair_priority"], {"status": "no_data"})
         self.assertEqual(panel["recent_intake_triggers"], [])
         self.assertEqual(panel["recent_root_causes"], [])
 
@@ -458,6 +459,10 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["root_cause_failure_layer_counts"]["context_ingress"], 1)
         self.assertEqual(panel["root_cause_owner_surface_counts"]["telegram_gateway_to_context_capsule"], 1)
         self.assertEqual(panel["root_cause_audit_focus_counts"]["context_capsule_source_ledger"], 1)
+        self.assertEqual(panel["repair_priority"]["status"], "ready")
+        self.assertEqual(panel["repair_priority"]["owner_surface"], "telegram_gateway_to_context_capsule")
+        self.assertEqual(panel["repair_priority"]["audit_focus"], "context_capsule_source_ledger")
+        self.assertEqual(panel["repair_priority"]["repair_action"], "Repair the recent-conversation capsule path.")
         self.assertEqual(panel["creator_alignment"]["status"], "aligned_candidate")
         self.assertIn("specialization_path", panel["creator_alignment"]["artifact_targets"])
         self.assertEqual(panel["creator_alignment"]["validation_issue_count"], 0)
