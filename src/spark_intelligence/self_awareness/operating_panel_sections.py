@@ -46,6 +46,7 @@ def build_agent_panel_sections(
     frame = _dict(aoc_payload.get("conversation_frame"))
     task_fit = _dict(aoc_payload.get("task_fit"))
     routes = [_dict(route) for route in _list(aoc_payload.get("routes"))]
+    agent_needs = [_dict(need) for need in _list(aoc_payload.get("agent_needs"))]
     stale_counts = _dict(stale_sweep_payload.get("counts"))
     return AgentPanelSections(
         sections=[
@@ -113,6 +114,22 @@ def build_agent_panel_sections(
                     _item("Stale", int(stale_counts.get("stale") or 0)),
                     _item("Contradicted", int(stale_counts.get("contradicted") or 0)),
                     _item("Recorded contradictions", int(stale_counts.get("recorded_contradictions") or 0)),
+                ],
+            ),
+            AgentPanelSection(
+                section_id="what_rec_needs",
+                title="What Rec Needs",
+                status="needed" if agent_needs else "clear",
+                items=[
+                    _item(
+                        str(need.get("need") or "unknown"),
+                        {
+                            "status": str(need.get("status") or "unknown"),
+                            "next_action": str(need.get("next_action") or ""),
+                            "reason": str(need.get("reason") or ""),
+                        },
+                    )
+                    for need in agent_needs
                 ],
             ),
             AgentPanelSection(

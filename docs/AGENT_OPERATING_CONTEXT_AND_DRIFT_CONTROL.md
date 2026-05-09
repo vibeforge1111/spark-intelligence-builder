@@ -43,7 +43,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - `agent_scratchpad.py`: structured operational scratchpad derived from AOC; not hidden chain-of-thought.
 - `operating_strip.py`: compact top-strip renderer for always-visible AOC status.
 - `operating_source_ledger.py`: unified source freshness ledger for panel consumers.
-- `operating_panel_sections.py`: drilldown section contract for permissions, runner capability, route health, task fit, sources, contradictions, and agent instruction.
+- `operating_panel_sections.py`: drilldown section contract for permissions, runner capability, route health, task fit, sources, contradictions, What Rec Needs, and agent instruction.
 - `operating_panel.py`: shared read-model joining AOC, scratchpad, black box, memory inbox, and stale sweeper.
 - `drift_evals.py`: regression suite for the drift cases from the AOC design thread.
 

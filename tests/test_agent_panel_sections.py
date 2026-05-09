@@ -24,6 +24,8 @@ class AgentPanelSectionsTests(SparkTestCase):
         self.assertEqual(by_id["runner_capability"]["status"], "read_only")
         self.assertEqual(by_id["current_task_fit"]["status"], "writable_spawner_codex_mission")
         self.assertEqual(by_id["contradictions"]["status"], "clear")
+        self.assertEqual(by_id["what_rec_needs"]["status"], "needed")
+        self.assertTrue(any(item["label"] == "writable_runner" for item in by_id["what_rec_needs"]["items"]))
         self.assertTrue(
             any(item["label"] == "Safe next action" for item in by_id["current_task_fit"]["items"])
         )
