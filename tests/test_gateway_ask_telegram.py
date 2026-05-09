@@ -492,6 +492,20 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["contextual_trigger_signals"], ["memory_context_reference", "memory_distress_verb"])
         self.assertFalse(metadata["previous_failure_signal"])
 
+        frustration_output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="are you there",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        frustration_response_text = frustration_output["result"]["detail"]["response_text"]
+        self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
