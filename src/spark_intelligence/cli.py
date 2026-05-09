@@ -178,6 +178,7 @@ from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
 )
+from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1442,6 +1443,26 @@ def build_parser() -> argparse.ArgumentParser:
     self_mission_state_parser.add_argument("--human-id", default="", help="Human id associated with this state change")
     self_mission_state_parser.add_argument("--actor-id", default="mission_control", help="Actor recording the state change")
     self_mission_state_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_turn_trace_parser = self_subparsers.add_parser(
+        "turn-trace",
+        help="Record one agent turn frame, gate, drift check, and memory candidate",
+    )
+    self_turn_trace_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_turn_trace_parser.add_argument("--user-message", required=True, help="Latest user message for intent framing")
+    self_turn_trace_parser.add_argument("--proposed-action", default="", help="Optional route-changing action to gate")
+    self_turn_trace_parser.add_argument("--draft-answer", default=None, help="Optional draft answer to drift-check")
+    self_turn_trace_parser.add_argument(
+        "--active-reference-item",
+        action="append",
+        default=[],
+        help="Visible option/reference item, repeatable for resolving 'option 2' style turns",
+    )
+    self_turn_trace_parser.add_argument("--memory-candidate-json", default="", help="Optional memory candidate JSON object")
+    self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
+    self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
+    self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
+    self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
+    self_turn_trace_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -4534,6 +4555,50 @@ def handle_self_mission_state(args: argparse.Namespace) -> int:
         "to_state": str(getattr(args, "to_state", "") or ""),
     }
     print(json.dumps(payload, indent=2) if args.json else f"Mission state recorded: {payload['mission_id']} -> {payload['to_state']}\n- event: {event_id}")
+    return 0
+
+
+def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise SystemExit("--memory-candidate-json must be a JSON object")
+    return value
+
+
+def handle_self_turn_trace(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    trace = record_agent_turn_trace(
+        state_db,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        session_id=str(getattr(args, "session_id", "") or "") or None,
+        human_id=str(getattr(args, "human_id", "") or "") or None,
+        agent_id=str(getattr(args, "agent_id", "") or "") or None,
+        active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
+        proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
+        draft_answer=getattr(args, "draft_answer", None),
+        memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
+    )
+    payload = trace.to_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        gate = payload["action_gate"]["decision"] if payload.get("action_gate") else "not_checked"
+        drift = payload["final_answer_check"]["drift_type"] if payload.get("final_answer_check") else "not_checked"
+        print(
+            "Agent turn trace recorded\n"
+            f"- mode: {payload['frame']['current_mode']}\n"
+            f"- intent: {payload['frame']['user_intent']}\n"
+            f"- action gate: {gate}\n"
+            f"- drift check: {drift}\n"
+            f"- events: {len(payload['event_ids'])}"
+        )
     return 0
 
 
@@ -8559,6 +8624,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_route_selection(args)
     if args.command == "self" and args.self_command == "mission-state":
         return handle_self_mission_state(args)
+    if args.command == "self" and args.self_command == "turn-trace":
+        return handle_self_turn_trace(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
