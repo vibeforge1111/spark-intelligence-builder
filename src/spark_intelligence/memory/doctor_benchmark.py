@@ -391,13 +391,26 @@ def _score_root_cause_classification(
             "Root-cause layer was identified, but the replay chain was empty.",
             "include the failing gateway/provider/memory/delivery chain in root-cause output",
         )
+    repair_plan = root_cause.get("repair_plan") if isinstance(root_cause.get("repair_plan"), dict) else {}
+    repair_action = str(repair_plan.get("next_action") or "").strip()
+    audit_focus = repair_plan.get("audit_focus") if isinstance(repair_plan.get("audit_focus"), list) else []
+    if not repair_action or not audit_focus:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.75,
+            "observable_incomplete",
+            "Root-cause layer was identified, but the repair plan lacked an action or audit focus.",
+            "attach a concrete repair action and trace audit focus to every identified root cause",
+        )
     return _case(
         "root_cause_classification",
         "root_cause_classification",
         10,
         1.0,
         "pass",
-        f"Root cause identified: {primary_gap} at {failure_layer}.",
+        f"Root cause identified: {primary_gap} at {failure_layer}, with repair plan.",
         "trend this failure layer in Watchtower and replay the same request after repair",
     )
 
