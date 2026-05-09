@@ -1779,6 +1779,8 @@ def _build_root_cause_summary(
             "telegram_summary": "no failing root cause identified",
             "request_id": context_capsule.get("request_id"),
             "confidence": "high",
+            "confidence_reason": "no failing findings were present",
+            "disconfirming_checks": [],
         }
 
     profiles: dict[str, dict[str, object]] = {
@@ -1929,7 +1931,8 @@ def _build_root_cause_summary(
     movement_gap = str(profile.get("movement_gap") or "") if isinstance(profile, dict) else ""
     if not movement_gap and selected.name in gap_names:
         movement_gap = selected.name
-    confidence = "high" if profile and (not movement_gap or movement_gap in gap_names) else "medium"
+    movement_gap_seen = bool(movement_gap and movement_gap in gap_names)
+    confidence = "high" if profile and (not movement_gap or movement_gap_seen) else "medium"
     request_id = selected.request_id or str(context_capsule.get("request_id") or "").strip() or None
     if profile is None:
         return {
@@ -1940,6 +1943,8 @@ def _build_root_cause_summary(
             "telegram_summary": selected.name.replace("_", " "),
             "request_id": request_id,
             "confidence": "medium",
+            "confidence_reason": "failing finding has no known root-cause profile",
+            "disconfirming_checks": ["inspect the raw finding before applying an automated repair plan"],
             "detail": selected.detail,
             "evidence": {
                 "finding": selected.name,
@@ -1957,11 +1962,16 @@ def _build_root_cause_summary(
         "repair_plan": dict(profile.get("repair_plan") or {}),
         "request_id": request_id,
         "confidence": confidence,
+        "confidence_reason": _root_cause_confidence_reason(
+            movement_gap=movement_gap,
+            movement_gap_seen=movement_gap_seen,
+        ),
+        "disconfirming_checks": _root_cause_disconfirming_checks(selected.name),
         "detail": selected.detail,
         "evidence": {
             "finding": selected.name,
             "context_capsule_status": context_capsule.get("status"),
-            "movement_gap_seen": bool(movement_gap and movement_gap in gap_names),
+            "movement_gap_seen": movement_gap_seen,
         },
     }
 
@@ -2043,6 +2053,52 @@ def _build_recommendations(
     if not recommendations:
         recommendations.append("No immediate repair recommended; use `run memory doctor for <topic>` when a specific recall feels wrong.")
     return _dedupe_recommendations(recommendations)
+
+
+def _root_cause_confidence_reason(*, movement_gap: str, movement_gap_seen: bool) -> str:
+    if movement_gap and movement_gap_seen:
+        return "failing finding and movement trace gap agree"
+    if movement_gap:
+        return "failing finding mapped to a known layer, but the movement trace did not include the expected gap"
+    return "failing finding maps directly to a known failure layer"
+
+
+def _root_cause_disconfirming_checks(primary_gap: str) -> list[str]:
+    checks_by_gap = {
+        "context_capsule_gateway_trace_gap": [
+            "provider capsule for this request actually contains recent_conversation",
+            "gateway trace belongs to a different human, chat, or session",
+        ],
+        "context_capsule_request_not_found": [
+            "context capsule exists under a correlated replacement request id",
+            "provider path intentionally bypassed context capsule for this request",
+        ],
+        "context_to_answer_grounding_gap": [
+            "delivered reply already contains the expected close-turn topic",
+            "expected topic was absent from the provider capsule",
+        ],
+        "close_turn_route_contamination": [
+            "route evidence shows grounded recent-conversation recall, not provisional advisory",
+        ],
+        "delivery_answer_grounding_gap": [
+            "outbound audit reply matches the generated answer",
+            "delivered reply contains the expected close-turn topic",
+        ],
+        "telegram_delivery_failure": [
+            "delivery registry shows a successful Telegram acknowledgement for the diagnosed request",
+        ],
+        "memory_forget_postcondition_failed": [
+            "fresh current-state lookup no longer contains the forgotten target",
+            "delete write applied to a different human or memory scope",
+        ],
+        "memory_delete_intent_integrity": [
+            "every requested delete target has a matching accepted delete write",
+        ],
+        "topic_active_state_presence": [
+            "the active field is intentionally correct and should not be forgotten",
+        ],
+    }
+    return list(checks_by_gap.get(primary_gap) or ["raw trace contradicts the selected failure layer"])
 
 
 def _root_cause_recommendation(root_cause: dict[str, object]) -> str | None:
@@ -2173,6 +2229,8 @@ def _record_brain_snapshot(
                 "root_cause_failure_layer": root_cause.get("failure_layer"),
                 "root_cause_chain": list(root_cause.get("chain") or []),
                 "root_cause_confidence": root_cause.get("confidence"),
+                "root_cause_confidence_reason": root_cause.get("confidence_reason"),
+                "root_cause_disconfirming_checks": list(root_cause.get("disconfirming_checks") or []),
                 "root_cause_summary": root_cause.get("telegram_summary"),
                 "root_cause_owner_surface": repair_plan.get("owner_surface"),
                 "root_cause_audit_focus": list(repair_plan.get("audit_focus") or []),

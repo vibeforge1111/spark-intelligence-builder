@@ -5214,6 +5214,11 @@ class TelegramGenericMemoryTests(SparkTestCase):
             doctor_report.root_cause["repair_plan"]["owner_surface"],
             "telegram_gateway_to_context_capsule",
         )
+        self.assertEqual(doctor_report.root_cause["confidence_reason"], "failing finding and movement trace gap agree")
+        self.assertIn(
+            "provider capsule for this request actually contains recent_conversation",
+            doctor_report.root_cause["disconfirming_checks"],
+        )
         self.assertIn("provider capsule source ledger", doctor_report.recommendations[0])
         self.assertIn("Root cause: gateway -> provider context gap.", doctor_report.to_telegram_text())
         self.assertIn("Repair focus: recent-conversation capsule path.", doctor_report.to_telegram_text())

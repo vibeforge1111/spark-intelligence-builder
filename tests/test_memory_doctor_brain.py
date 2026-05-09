@@ -359,6 +359,11 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(brain_events[0]["facts_json"]["root_cause_primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(brain_events[0]["facts_json"]["root_cause_failure_layer"], "context_ingress")
         self.assertEqual(brain_events[0]["facts_json"]["root_cause_owner_surface"], "telegram_gateway_to_context_capsule")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_confidence_reason"], "failing finding and movement trace gap agree")
+        self.assertIn(
+            "provider capsule for this request actually contains recent_conversation",
+            brain_events[0]["facts_json"]["root_cause_disconfirming_checks"],
+        )
         self.assertIn("context_capsule_source_ledger", brain_events[0]["facts_json"]["root_cause_audit_focus"])
         self.assertIn("provider capsule source ledger", brain_events[0]["facts_json"]["root_cause_repair_action"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
