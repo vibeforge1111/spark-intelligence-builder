@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.memory.doctor import run_memory_doctor
-from spark_intelligence.observability.store import latest_events_by_type, record_event
+from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, record_event
 
 from tests.test_support import SparkTestCase
 
@@ -147,3 +147,63 @@ class MemoryDoctorBrainTests(SparkTestCase):
         gap_names = {gap["name"] for gap in report.brain["gaps"]}
         self.assertNotIn("llm_wiki_packet_visibility_gap", gap_names)
         self.assertNotIn("dashboard_movement_export_gap", gap_names)
+
+    def test_watchtower_tracks_memory_doctor_brain_trends(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_doctor_brain_evaluated",
+            component="memory_doctor",
+            summary="Memory Doctor Brain evaluated diagnostic coverage score=45 gaps=3",
+            human_id="human-1",
+            facts={
+                "authority": "observability_non_authoritative",
+                "coverage_score": 45,
+                "missing_senses": ["gateway_trace_lineage", "llm_wiki_health"],
+                "gap_names": ["gateway_trace_visibility_gap", "llm_wiki_packet_visibility_gap"],
+                "highest_severity": "high",
+                "next_probe": "check memory for Maya",
+                "topic": "Maya",
+            },
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE builder_events
+                SET created_at = ?
+                WHERE event_type = ? AND summary = ?
+                """,
+                (
+                    "2026-01-01T00:00:00.000000+00:00",
+                    "memory_doctor_brain_evaluated",
+                    "Memory Doctor Brain evaluated diagnostic coverage score=45 gaps=3",
+                ),
+            )
+            conn.commit()
+        record_event(
+            self.state_db,
+            event_type="memory_doctor_brain_evaluated",
+            component="memory_doctor",
+            summary="Memory Doctor Brain evaluated diagnostic coverage score=70 gaps=1",
+            human_id="human-1",
+            facts={
+                "authority": "observability_non_authoritative",
+                "coverage_score": 70,
+                "missing_senses": ["gateway_trace_lineage"],
+                "gap_names": ["gateway_trace_visibility_gap"],
+                "highest_severity": "medium",
+                "next_probe": "run memory doctor after the next Telegram turn",
+                "topic": "Maya",
+            },
+        )
+
+        panel = build_watchtower_snapshot(self.state_db)["panels"]["memory_doctor_brain"]
+
+        self.assertEqual(panel["panel"], "memory_doctor_brain")
+        self.assertEqual(panel["status"], "watching")
+        self.assertEqual(panel["authority"], "observability_non_authoritative")
+        self.assertEqual(panel["counts"]["evaluations"], 2)
+        self.assertEqual(panel["score"]["latest"], 70)
+        self.assertEqual(panel["score"]["delta"], 25)
+        self.assertEqual(panel["repeated_missing_senses"]["gateway_trace_lineage"], 2)
+        self.assertEqual(panel["repeated_gaps"]["gateway_trace_visibility_gap"], 2)
+        self.assertEqual(panel["latest"]["topic"], "Maya")

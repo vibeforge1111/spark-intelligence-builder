@@ -1450,6 +1450,10 @@ def build_watchtower_snapshot(
                 "memory_shadow",
                 lambda: _build_memory_shadow_panel(state_db),
             ),
+            "memory_doctor_brain": _safe_watchtower_panel(
+                "memory_doctor_brain",
+                lambda: _build_memory_doctor_brain_panel(state_db),
+            ),
         },
     }
 
@@ -3247,6 +3251,118 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
         "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
     }
+
+
+def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
+    events = latest_events_by_type(state_db, event_type="memory_doctor_brain_evaluated", limit=50)
+    if not events:
+        return {
+            "panel": "memory_doctor_brain",
+            "status": "no_data",
+            "authority": "observability_non_authoritative",
+            "counts": {"evaluations": 0},
+            "trend": [],
+            "repeated_missing_senses": {},
+            "repeated_gaps": {},
+            "recent_probes": [],
+        }
+
+    trend: list[dict[str, Any]] = []
+    scores: list[int] = []
+    gap_counts: list[int] = []
+    missing_sense_counts: dict[str, int] = {}
+    gap_name_counts: dict[str, int] = {}
+    humans: set[str] = set()
+    topics: set[str] = set()
+
+    for event in reversed(events):
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        score = _optional_int(facts.get("coverage_score"))
+        missing_senses = _string_list(facts.get("missing_senses"))
+        gap_names = _string_list(facts.get("gap_names"))
+        topic = str(facts.get("topic") or "").strip()
+        human_id = str(event.get("human_id") or "").strip()
+        if human_id:
+            humans.add(human_id)
+        if topic:
+            topics.add(topic)
+        for sense in missing_senses:
+            missing_sense_counts[sense] = missing_sense_counts.get(sense, 0) + 1
+        for gap_name in gap_names:
+            gap_name_counts[gap_name] = gap_name_counts.get(gap_name, 0) + 1
+        if score is not None:
+            scores.append(score)
+        gap_counts.append(len(gap_names))
+        trend.append(
+            {
+                "event_id": event.get("event_id"),
+                "created_at": event.get("created_at"),
+                "human_id": human_id or None,
+                "topic": topic or None,
+                "coverage_score": score,
+                "gap_count": len(gap_names),
+                "highest_severity": facts.get("highest_severity"),
+                "next_probe": facts.get("next_probe"),
+            }
+        )
+
+    latest = trend[-1]
+    latest_score = latest.get("coverage_score")
+    latest_gap_count = int(latest.get("gap_count") or 0)
+    oldest_score = scores[0] if scores else None
+    score_delta = int(latest_score) - int(oldest_score) if latest_score is not None and oldest_score is not None else None
+    status = "healthy" if latest_score is not None and int(latest_score) >= 80 and latest_gap_count == 0 else "watching"
+    if latest_score is not None and int(latest_score) < 50:
+        status = "degraded"
+
+    return {
+        "panel": "memory_doctor_brain",
+        "status": status,
+        "authority": "observability_non_authoritative",
+        "counts": {
+            "evaluations": len(events),
+            "humans": len(humans),
+            "topics": len(topics),
+            "latest_gap_count": latest_gap_count,
+            "max_gap_count": max(gap_counts) if gap_counts else 0,
+        },
+        "latest": latest,
+        "score": {
+            "latest": latest_score,
+            "oldest": oldest_score,
+            "delta": score_delta,
+            "min": min(scores) if scores else None,
+            "max": max(scores) if scores else None,
+        },
+        "repeated_missing_senses": _top_counts(missing_sense_counts),
+        "repeated_gaps": _top_counts(gap_name_counts),
+        "recent_probes": [
+            probe
+            for probe in (str(item.get("next_probe") or "").strip() for item in reversed(trend))
+            if probe
+        ][:5],
+        "trend": trend[-10:],
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _top_counts(counts: dict[str, int], *, limit: int = 8) -> dict[str, int]:
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return {key: value for key, value in ordered[:limit]}
 
 
 def _build_procedural_memory_panel(state_db: StateDB) -> dict[str, Any]:
