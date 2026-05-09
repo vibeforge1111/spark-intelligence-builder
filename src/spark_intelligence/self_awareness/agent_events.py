@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import record_event, utc_now_iso
 from spark_intelligence.self_awareness.conversation_frame import (
     ActionGateResult,
     ConversationOperatingFrame,
@@ -130,6 +130,37 @@ class BlackBoxEntry:
             "memory_candidate": self.memory_candidate,
             "summary": self.summary,
         }
+
+
+@dataclass(frozen=True)
+class AgentBlackBoxReport:
+    checked_at: str
+    request_id: str | None
+    entries: list[BlackBoxEntry]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": AGENT_EVENT_SCHEMA_VERSION,
+            "checked_at": self.checked_at,
+            "request_id": self.request_id,
+            "counts": {
+                "entries": len(self.entries),
+                "blocker_events": sum(1 for entry in self.entries if entry.blockers),
+                "memory_candidates": sum(1 for entry in self.entries if entry.memory_candidate),
+            },
+            "entries": [entry.to_payload() for entry in self.entries],
+        }
+
+    def to_text(self) -> str:
+        if not self.entries:
+            return "Agent black box: no matching events."
+        lines = [f"Agent black box: {len(self.entries)} event(s)."]
+        for entry in self.entries[:8]:
+            route = entry.route_chosen or "unknown_route"
+            intent = entry.perceived_intent or "unknown_intent"
+            blockers = f" blockers={len(entry.blockers)}" if entry.blockers else ""
+            lines.append(f"- {entry.event_type}: intent={intent} route={route}{blockers}")
+        return "\n".join(lines)
 
 
 def record_agent_event(
@@ -284,6 +315,19 @@ def build_agent_black_box_entries(
 ) -> list[BlackBoxEntry]:
     rows = _recent_agent_event_rows(state_db, request_id=request_id, limit=limit)
     return [_black_box_entry_from_row(row) for row in rows]
+
+
+def build_agent_black_box_report(
+    state_db: StateDB,
+    *,
+    request_id: str | None = None,
+    limit: int = 20,
+) -> AgentBlackBoxReport:
+    return AgentBlackBoxReport(
+        checked_at=utc_now_iso(),
+        request_id=request_id,
+        entries=build_agent_black_box_entries(state_db, request_id=request_id, limit=limit),
+    )
 
 
 def _recent_agent_event_rows(

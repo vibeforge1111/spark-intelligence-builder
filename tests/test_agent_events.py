@@ -5,6 +5,7 @@ from spark_intelligence.self_awareness.agent_events import (
     AgentEvent,
     AgentSourceRef,
     build_agent_black_box_entries,
+    build_agent_black_box_report,
     record_action_gate_event,
     record_agent_event,
     record_conversation_frame_event,
@@ -93,3 +94,17 @@ class AgentEventModelTests(SparkTestCase):
         entries = build_agent_black_box_entries(self.state_db, request_id="req-drift", limit=5)
         self.assertEqual(entries[0].route_chosen, "rewrite_answer")
         self.assertEqual(entries[0].changed, ["rewrite_required"])
+
+    def test_black_box_report_summarizes_entries_and_counts(self) -> None:
+        frame = build_conversation_operating_frame(user_message="What else would you build on AOC?")
+        gate = evaluate_action_gate(frame, proposed_action="start_mission")
+        record_conversation_frame_event(self.state_db, frame, request_id="req-report")
+        record_action_gate_event(self.state_db, frame, gate, request_id="req-report")
+
+        report = build_agent_black_box_report(self.state_db, request_id="req-report")
+        payload = report.to_payload()
+
+        self.assertEqual(payload["counts"]["entries"], 2)
+        self.assertEqual(payload["counts"]["blocker_events"], 1)
+        self.assertIn("Agent black box: 2 event(s).", report.to_text())
+        self.assertIn("blockers=1", report.to_text())
