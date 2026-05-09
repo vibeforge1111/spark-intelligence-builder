@@ -164,6 +164,14 @@ def check_final_answer_drift(
             drift_type="unrequested_mission_status",
             rewrite_required=True,
         )
+    if frame.current_mode == "concept_chat" and _looks_like_unrequested_diagnostics_plan(lowered):
+        return FinalAnswerDriftCheck(
+            user_asked=frame.latest_user_message_summary,
+            answer_does="Switches to diagnostics or self-improvement probe planning.",
+            match=False,
+            drift_type="unrequested_diagnostics_plan",
+            rewrite_required=True,
+        )
     if "live probe" in lowered and "claim_live_probe" in frame.disallowed_next_actions:
         return FinalAnswerDriftCheck(
             user_asked=frame.latest_user_message_summary,
@@ -285,6 +293,14 @@ def _safe_next_action(frame: ConversationOperatingFrame) -> str:
 
 def _looks_like_unrequested_mission_status(lowered_answer: str) -> bool:
     return "spark picked up the build" in lowered_answer or "mission-" in lowered_answer or "mission board:" in lowered_answer
+
+
+def _looks_like_unrequested_diagnostics_plan(lowered_answer: str) -> bool:
+    return (
+        "spark self-improvement plan" in lowered_answer
+        or "mode: plan_only_probe_first" in lowered_answer
+        or "run the safest probe" in lowered_answer
+    )
 
 
 def _summarize_user_message(text: str) -> str:
