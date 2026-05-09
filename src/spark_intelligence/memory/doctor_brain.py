@@ -37,6 +37,7 @@ def build_memory_doctor_brain(
     topic_scan: dict[str, object],
     context_capsule: dict[str, object],
     movement_trace: dict[str, object],
+    root_cause: dict[str, object],
     dashboard: dict[str, object],
     path_traces: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -53,6 +54,7 @@ def build_memory_doctor_brain(
         active_profile=active_profile,
         context_capsule=context_capsule,
         movement_trace=movement_trace,
+        root_cause=root_cause,
         dashboard=dashboard,
         event_counts=event_counts,
         path_traces=path_traces,
@@ -66,6 +68,7 @@ def build_memory_doctor_brain(
         topic_scan=topic_scan,
         context_capsule=context_capsule,
         movement_trace=movement_trace,
+        root_cause=root_cause,
         wiki_packets=wiki_packets,
         dashboard_movement=dashboard_movement,
         llm_wiki=llm_wiki,
@@ -92,6 +95,7 @@ def build_memory_doctor_brain(
         "senses": senses,
         "gaps": gaps,
         "proactive_improvements": improvements[:8],
+        "root_cause": root_cause,
         "runtime": runtime,
         "wiki_packets": wiki_packets,
         "llm_wiki": llm_wiki,
@@ -283,6 +287,7 @@ def _build_senses(
     active_profile: dict[str, object],
     context_capsule: dict[str, object],
     movement_trace: dict[str, object],
+    root_cause: dict[str, object],
     dashboard: dict[str, object],
     event_counts: dict[str, int],
     path_traces: list[dict[str, object]],
@@ -365,6 +370,19 @@ def _build_senses(
                 "unknowns": list(movement_trace.get("unknowns") or []),
             },
             10,
+        ),
+        _sense(
+            "root_cause_classification",
+            root_cause.get("status") in {"clear", "identified"},
+            f"root cause status={root_cause.get('status') or 'unknown'}",
+            {
+                "status": root_cause.get("status"),
+                "primary_gap": root_cause.get("primary_gap"),
+                "failure_layer": root_cause.get("failure_layer"),
+                "chain": list(root_cause.get("chain") or []),
+                "confidence": root_cause.get("confidence"),
+            },
+            5,
         ),
         _sense(
             "memory_sdk_runtime",
@@ -450,6 +468,7 @@ def _build_gaps(
     topic_scan: dict[str, object],
     context_capsule: dict[str, object],
     movement_trace: dict[str, object],
+    root_cause: dict[str, object],
     wiki_packets: dict[str, object],
     dashboard_movement: dict[str, object],
     llm_wiki: dict[str, object],
@@ -549,6 +568,17 @@ def _build_gaps(
                 "movement_trace_gap",
                 str(movement_gap.get("request_id") or ""),
                 "repair the missing stage and replay the same request id",
+            )
+        )
+    if root_cause.get("status") == "identified":
+        gaps.append(
+            _gap(
+                "root_cause_" + str(root_cause.get("primary_gap") or "unknown"),
+                "medium",
+                "Memory Doctor classified the likely failing memory/context layer.",
+                "root_cause_failure_layer",
+                str(root_cause.get("failure_layer") or "unknown"),
+                "aggregate this root-cause layer across incidents and prioritize the most repeated path repair",
             )
         )
     if wiki_packets.get("status") != "supported":
@@ -666,6 +696,8 @@ def _improvement_action(gap_name: str) -> str:
         return "Require active current-state inspection for topic-specific identity, owner, preference, and correction audits."
     if gap_name == "active_memory_incident_detected":
         return "Treat the failing doctor finding as the repair target, then replay the triggering turn as a regression."
+    if gap_name.startswith("root_cause_"):
+        return "Use repeated root-cause layers to prioritize the memory/context path that most often breaks recall."
     if gap_name == "incident_path_replay_sparse":
         return "Attach topic and request ids to doctor path traces so failures become replayable, not just visible."
     return "Add a focused probe for this gap and require it to pass before promoting the memory-path change."

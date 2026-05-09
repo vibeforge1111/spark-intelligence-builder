@@ -3267,12 +3267,15 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "intake_trigger_counts": {},
             "intake_calibration_counts": {},
             "previous_failure_signal_counts": {},
+            "root_cause_primary_gap_counts": {},
+            "root_cause_failure_layer_counts": {},
             "creator_alignment": {
                 "status": "no_data",
                 "artifact_targets": [],
                 "validation_issue_count": 0,
             },
             "recent_intake_triggers": [],
+            "recent_root_causes": [],
             "recent_probes": [],
         }
 
@@ -3284,7 +3287,10 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     intake_trigger_counts: dict[str, int] = {}
     intake_calibration_counts: dict[str, int] = {}
     previous_failure_signal_counts: dict[str, int] = {}
+    root_cause_primary_gap_counts: dict[str, int] = {}
+    root_cause_failure_layer_counts: dict[str, int] = {}
     recent_intakes: list[dict[str, Any]] = []
+    recent_root_causes: list[dict[str, Any]] = []
     humans: set[str] = set()
     topics: set[str] = set()
 
@@ -3294,6 +3300,12 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         missing_senses = _string_list(facts.get("missing_senses"))
         gap_names = _string_list(facts.get("gap_names"))
         telegram_intake = facts.get("telegram_intake") if isinstance(facts.get("telegram_intake"), dict) else {}
+        root_cause_status = str(facts.get("root_cause_status") or "").strip()
+        root_cause_primary_gap = str(facts.get("root_cause_primary_gap") or "").strip()
+        root_cause_failure_layer = str(facts.get("root_cause_failure_layer") or "").strip()
+        root_cause_summary = str(facts.get("root_cause_summary") or "").strip()
+        root_cause_chain = _string_list(facts.get("root_cause_chain"))
+        root_cause_confidence = str(facts.get("root_cause_confidence") or "").strip()
         creator_alignment_status = str(facts.get("creator_alignment_status") or "").strip()
         creator_alignment_artifact_targets = _string_list(facts.get("creator_alignment_artifact_targets"))
         creator_alignment_issue_count = _optional_int(facts.get("creator_alignment_validation_issue_count"))
@@ -3313,6 +3325,28 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             intake_trigger_counts[signal] = intake_trigger_counts.get(signal, 0) + 1
         for signal in previous_failure_signals:
             previous_failure_signal_counts[signal] = previous_failure_signal_counts.get(signal, 0) + 1
+        if root_cause_status == "identified":
+            if root_cause_primary_gap:
+                root_cause_primary_gap_counts[root_cause_primary_gap] = (
+                    root_cause_primary_gap_counts.get(root_cause_primary_gap, 0) + 1
+                )
+            if root_cause_failure_layer:
+                root_cause_failure_layer_counts[root_cause_failure_layer] = (
+                    root_cause_failure_layer_counts.get(root_cause_failure_layer, 0) + 1
+                )
+            recent_root_causes.append(
+                {
+                    "created_at": event.get("created_at"),
+                    "human_id": human_id or None,
+                    "topic": topic or None,
+                    "request_id": facts.get("request_id"),
+                    "primary_gap": root_cause_primary_gap or None,
+                    "failure_layer": root_cause_failure_layer or None,
+                    "summary": root_cause_summary or None,
+                    "chain": root_cause_chain,
+                    "confidence": root_cause_confidence or None,
+                }
+            )
         if telegram_intake:
             intake_score = _optional_int(telegram_intake.get("contextual_trigger_score"))
             intake_threshold = _optional_int(telegram_intake.get("contextual_trigger_threshold"))
@@ -3356,6 +3390,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                 "highest_severity": facts.get("highest_severity"),
                 "next_probe": facts.get("next_probe"),
                 "telegram_intake": recent_intakes[-1] if telegram_intake else None,
+                "root_cause": recent_root_causes[-1] if root_cause_status == "identified" else None,
                 "creator_alignment": {
                     "status": creator_alignment_status or None,
                     "artifact_targets": creator_alignment_artifact_targets,
@@ -3397,8 +3432,11 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "intake_trigger_counts": _top_counts(intake_trigger_counts),
         "intake_calibration_counts": _top_counts(intake_calibration_counts),
         "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
+        "root_cause_primary_gap_counts": _top_counts(root_cause_primary_gap_counts),
+        "root_cause_failure_layer_counts": _top_counts(root_cause_failure_layer_counts),
         "creator_alignment": latest.get("creator_alignment") or {},
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
+        "recent_root_causes": list(reversed(recent_root_causes))[:5],
         "recent_probes": [
             probe
             for probe in (str(item.get("next_probe") or "").strip() for item in reversed(trend))

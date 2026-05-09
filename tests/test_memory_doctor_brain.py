@@ -18,7 +18,10 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["intake_trigger_counts"], {})
         self.assertEqual(panel["intake_calibration_counts"], {})
         self.assertEqual(panel["previous_failure_signal_counts"], {})
+        self.assertEqual(panel["root_cause_primary_gap_counts"], {})
+        self.assertEqual(panel["root_cause_failure_layer_counts"], {})
         self.assertEqual(panel["recent_intake_triggers"], [])
+        self.assertEqual(panel["recent_root_causes"], [])
 
     def test_memory_doctor_brain_reports_trace_coverage_and_proactive_gaps(self) -> None:
         record_event(
@@ -67,6 +70,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertIn("Brain: visibility", report.to_telegram_text())
         self.assertIn("Benchmark:", report.to_telegram_text())
         self.assertTrue(report.brain["proactive_improvements"])
+        self.assertEqual(report.brain["root_cause"]["status"], "clear")
         alignment = report.brain["creator_system_alignment"]
         self.assertEqual(alignment["schema_version"], "spark-creator-intent.v1")
         self.assertEqual(alignment["status"], "aligned_candidate")
@@ -78,6 +82,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(len(brain_events), 1)
         self.assertEqual(brain_events[0]["facts_json"]["authority"], "observability_non_authoritative")
         self.assertIn("gateway_trace_lineage", brain_events[0]["facts_json"]["missing_senses"])
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_status"], "clear")
         self.assertEqual(brain_events[0]["facts_json"]["creator_alignment_status"], "aligned_candidate")
         self.assertIn("specialization_path", brain_events[0]["facts_json"]["creator_alignment_artifact_targets"])
         self.assertEqual(brain_events[0]["facts_json"]["creator_alignment_validation_issue_count"], 0)
@@ -243,6 +248,21 @@ class MemoryDoctorBrainTests(SparkTestCase):
             {
                 "event": "telegram_update_processed",
                 "channel_id": "telegram",
+                "request_id": "req-blank-seed",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-blank",
+                "user_message_preview": "The phrase is Cedar Compass 509.",
+                "response_preview": "Noted.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
                 "request_id": "req-blank-target",
                 "telegram_user_id": "human-1",
                 "chat_id": "chat-1",
@@ -331,8 +351,13 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(telegram_intake["contextual_trigger_threshold"], 3)
         self.assertEqual(telegram_intake["previous_failure_signals"], ["previous_response_context_gap"])
         self.assertIn("close_turn_repeat_frustration", telegram_intake["contextual_trigger_signals"])
+        self.assertEqual(report.brain["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
+        self.assertEqual(report.brain["root_cause"]["failure_layer"], "context_ingress")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_primary_gap"], "context_capsule_gateway_trace_gap")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_failure_layer"], "context_ingress")
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
+        self.assertTrue(senses["root_cause_classification"]["present"])
         cases = {case["category"]: case for case in report.benchmark["cases"]}
         self.assertEqual(cases["doctor_intake"]["status"], "pass")
 
@@ -382,6 +407,12 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "next_probe": "run memory doctor after the next Telegram turn",
                 "topic": "Maya",
                 "request_id": "req-blank-target",
+                "root_cause_status": "identified",
+                "root_cause_primary_gap": "context_capsule_gateway_trace_gap",
+                "root_cause_failure_layer": "context_ingress",
+                "root_cause_chain": ["telegram_gateway", "context_capsule", "provider_context"],
+                "root_cause_confidence": "high",
+                "root_cause_summary": "gateway -> provider context gap",
                 "creator_alignment_status": "aligned_candidate",
                 "creator_alignment_artifact_targets": ["domain_chip", "benchmark_pack", "specialization_path"],
                 "creator_alignment_validation_issue_count": 0,
@@ -414,6 +445,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
         self.assertEqual(panel["intake_calibration_counts"]["previous_turn_boosted"], 1)
         self.assertEqual(panel["previous_failure_signal_counts"]["previous_response_context_gap"], 1)
+        self.assertEqual(panel["root_cause_primary_gap_counts"]["context_capsule_gateway_trace_gap"], 1)
+        self.assertEqual(panel["root_cause_failure_layer_counts"]["context_ingress"], 1)
         self.assertEqual(panel["creator_alignment"]["status"], "aligned_candidate")
         self.assertIn("specialization_path", panel["creator_alignment"]["artifact_targets"])
         self.assertEqual(panel["creator_alignment"]["validation_issue_count"], 0)
@@ -422,4 +455,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["recent_intake_triggers"][0]["contextual_trigger_margin"], 1)
         self.assertEqual(panel["recent_intake_triggers"][0]["calibration_label"], "previous_turn_boosted")
         self.assertEqual(panel["recent_intake_triggers"][0]["previous_failure_signals"], ["previous_response_context_gap"])
+        self.assertEqual(panel["recent_root_causes"][0]["failure_layer"], "context_ingress")
+        self.assertEqual(panel["recent_root_causes"][0]["summary"], "gateway -> provider context gap")
+        self.assertEqual(panel["latest"]["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(panel["latest"]["topic"], "Maya")

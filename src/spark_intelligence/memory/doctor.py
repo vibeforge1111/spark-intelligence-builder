@@ -387,6 +387,11 @@ def run_memory_doctor(
     )
     findings.extend(topic_findings)
     findings.extend(_build_context_capsule_findings(context_capsule))
+    root_cause = _build_root_cause_summary(
+        findings=findings,
+        context_capsule=context_capsule,
+        movement_trace=movement_trace,
+    )
     path_traces = _build_path_traces(
         influence_events=influence_events,
         write_requested_events=write_requested_events,
@@ -414,6 +419,7 @@ def run_memory_doctor(
         topic_scan=topic_scan,
         context_capsule=context_capsule,
         movement_trace=movement_trace,
+        root_cause=root_cause,
         dashboard=dashboard,
         path_traces=path_traces,
     )
@@ -442,11 +448,6 @@ def run_memory_doctor(
         repair_requested=repair_requested,
     )
     recommendations.extend(_brain_recommendations(brain))
-    root_cause = _build_root_cause_summary(
-        findings=findings,
-        context_capsule=context_capsule,
-        movement_trace=movement_trace,
-    )
     return MemoryDoctorReport(
         findings=findings,
         scanned_delete_turns=scanned_delete_turns,
@@ -1999,6 +2000,7 @@ def _record_brain_snapshot(
         if isinstance(improvement, dict)
     ]
     telegram_intake = _brain_telegram_intake_snapshot(brain)
+    root_cause = brain.get("root_cause") if isinstance(brain.get("root_cause"), dict) else {}
     creator_alignment = brain.get("creator_system_alignment") if isinstance(brain.get("creator_system_alignment"), dict) else {}
     creator_alignment_issues = (
         creator_alignment.get("validation_issues")
@@ -2035,6 +2037,12 @@ def _record_brain_snapshot(
                 "topic": topic,
                 "request_id": request_id,
                 "telegram_intake": telegram_intake,
+                "root_cause_status": root_cause.get("status"),
+                "root_cause_primary_gap": root_cause.get("primary_gap"),
+                "root_cause_failure_layer": root_cause.get("failure_layer"),
+                "root_cause_chain": list(root_cause.get("chain") or []),
+                "root_cause_confidence": root_cause.get("confidence"),
+                "root_cause_summary": root_cause.get("telegram_summary"),
                 "creator_alignment_status": creator_alignment.get("status"),
                 "creator_alignment_artifact_targets": list(creator_alignment.get("artifact_targets") or []),
                 "creator_alignment_validation_issue_count": len(creator_alignment_issues),
