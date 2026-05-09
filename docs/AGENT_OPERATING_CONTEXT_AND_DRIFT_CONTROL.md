@@ -72,7 +72,7 @@ The default eval suite covers:
 Run the focused checks:
 
 ```powershell
-python -m pytest tests\test_agent_drift_evals.py tests\test_agent_scratchpad.py tests\test_agent_operating_panel.py tests\test_stale_context_sweeper.py tests\test_agent_event_producer_cli.py tests\test_memory_approval_cli.py tests\test_route_and_mission_event_cli.py tests\test_turn_trace_cli.py tests\test_stale_sweep_cli.py -q
+python -m pytest tests\test_agent_drift_evals.py tests\test_agent_scratchpad.py tests\test_agent_operating_panel.py tests\test_stale_context_sweeper.py tests\test_agent_event_producer_cli.py tests\test_memory_approval_cli.py tests\test_route_and_mission_event_cli.py tests\test_turn_trace_cli.py tests\test_stale_sweep_cli.py tests\test_black_box_cli.py -q
 ```
 
 Run the broader AOC foundation checks:
@@ -92,6 +92,7 @@ Next integrations should consume the existing read-models:
 - Route probes now emit `capability_probed` events into the black box in addition to route-health evidence.
 - Stale sweeps now emit `contradiction_found` events when they record contradiction evidence.
 - Memory approval decisions now emit `user_override_received` events so the black box shows human memory choices.
+- `self black-box` provides a direct read-only trace view over the agent event model.
 - `self memory-inbox` and `self memory-decision` provide the CLI review path for approval-gated memory candidates.
 - `self panel` accepts live/context claim JSON so the shared panel can show stale source conflicts directly.
 - `self route-selection` and `self mission-state` provide the CLI trace path for route choices and mission state changes.

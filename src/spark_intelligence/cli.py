@@ -174,6 +174,7 @@ from spark_intelligence.self_awareness import (
     run_route_probe_and_record,
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
@@ -1388,6 +1389,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retrieved/context source claim JSON object, repeatable",
     )
     self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_black_box_parser = self_subparsers.add_parser(
+        "black-box",
+        help="Show agent black-box event trace for a request",
+    )
+    self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
+    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_inbox_parser = self_subparsers.add_parser(
         "memory-inbox",
         help="Show approval-gated memory candidates waiting for human review",
@@ -4494,6 +4503,19 @@ def handle_self_panel(args: argparse.Namespace) -> int:
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
     return 0
 
+
+def handle_self_black_box(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_agent_black_box_report(
+        state_db,
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        limit=int(getattr(args, "limit", 20) or 20),
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
 
 def handle_self_memory_inbox(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
@@ -8680,6 +8702,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_context(args)
     if args.command == "self" and args.self_command == "panel":
         return handle_self_panel(args)
+    if args.command == "self" and args.self_command == "black-box":
+        return handle_self_black_box(args)
     if args.command == "self" and args.self_command == "memory-inbox":
         return handle_self_memory_inbox(args)
     if args.command == "self" and args.self_command == "memory-decision":
