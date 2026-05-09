@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -102,10 +103,11 @@ def build_conversation_operating_frame(
         latest_user_message_summary=_summarize_user_message(normalized),
         allowed_next_actions=_allowed_actions(current_mode),
         disallowed_next_actions=_disallowed_actions(current_mode),
-        active_reference_list={
-            "source_turn_id": source_turn_id,
-            "items": list(active_reference_items or []),
-        },
+        active_reference_list=_active_reference_payload(
+            normalized,
+            active_reference_items=list(active_reference_items or []),
+            source_turn_id=source_turn_id,
+        ),
         must_confirm_before=["saving_memory", "destructive_action", "external_posting"],
     )
 
@@ -178,6 +180,8 @@ def check_final_answer_drift(
 
 
 def _classify_mode_and_intent(lowered: str) -> tuple[CurrentMode, UserIntent]:
+    if _negates_mission_control(lowered):
+        return "concept_chat", "answer"
     if _has_any(lowered, ("approve memory", "memory inbox", "save this memory", "remember this")):
         return "memory_review", "approve_memory"
     if _has_any(lowered, ("research web", "browse web", "look up", "latest ", "search the web")):
@@ -193,6 +197,42 @@ def _classify_mode_and_intent(lowered: str) -> tuple[CurrentMode, UserIntent]:
     if _has_any(lowered, ("what do you remember", "recall", "what did i tell you")):
         return "memory_review", "recall"
     return "concept_chat", "answer"
+
+
+def _active_reference_payload(
+    user_message: str,
+    *,
+    active_reference_items: list[str],
+    source_turn_id: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source_turn_id": source_turn_id,
+        "items": list(active_reference_items),
+        "resolution_status": "not_requested",
+        "selected_index": None,
+        "selected_item": None,
+    }
+    selected_index = _selected_option_index(user_message)
+    if selected_index is None:
+        return payload
+    payload["selected_index"] = selected_index
+    zero_based_index = selected_index - 1
+    if 0 <= zero_based_index < len(active_reference_items):
+        payload["resolution_status"] = "resolved"
+        payload["selected_item"] = active_reference_items[zero_based_index]
+    else:
+        payload["resolution_status"] = "out_of_range"
+    return payload
+
+
+def _selected_option_index(user_message: str) -> int | None:
+    match = re.search(r"\b(?:option|choice|#)\s*(\d{1,2})\b", user_message.casefold())
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 def _allowed_actions(current_mode: CurrentMode) -> list[str]:
@@ -265,6 +305,21 @@ def _normalize_action(value: str) -> str:
 
 def _has_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in text for marker in markers)
+
+
+def _negates_mission_control(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "do not open mission control",
+            "don't open mission control",
+            "dont open mission control",
+            "never open mission control",
+            "do not launch mission control",
+            "don't launch mission control",
+            "dont launch mission control",
+        )
+    )
 
 
 def _compact(text: str, limit: int) -> str:

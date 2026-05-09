@@ -61,6 +61,34 @@ class ConversationOperatingFrameUnitTests(unittest.TestCase):
         self.assertTrue(check.rewrite_required)
         self.assertEqual(check.drift_type, "unrequested_mission_status")
 
+    def test_do_not_open_mission_control_stays_in_concept_chat(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="Do not open Mission Control unless Cem asks.",
+        )
+
+        self.assertEqual(frame.current_mode, "concept_chat")
+        self.assertIn("open_mission_control", frame.disallowed_next_actions)
+
+    def test_option_reference_resolves_against_active_list(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="option 2",
+            active_reference_items=["AOC UI polish", "black box recorder", "theme rewrite"],
+            source_turn_id="turn-list",
+        )
+
+        self.assertEqual(frame.active_reference_list["resolution_status"], "resolved")
+        self.assertEqual(frame.active_reference_list["selected_index"], 2)
+        self.assertEqual(frame.active_reference_list["selected_item"], "black box recorder")
+
+    def test_option_reference_reports_out_of_range(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="option 4",
+            active_reference_items=["AOC UI polish", "black box recorder"],
+        )
+
+        self.assertEqual(frame.active_reference_list["resolution_status"], "out_of_range")
+        self.assertIsNone(frame.active_reference_list["selected_item"])
+
 
 class ConversationOperatingFrameAocTests(SparkTestCase):
     def test_agent_operating_context_includes_conversation_frame(self) -> None:
