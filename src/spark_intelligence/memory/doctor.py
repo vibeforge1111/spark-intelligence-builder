@@ -211,6 +211,9 @@ class MemoryDoctorReport:
         root_cause_summary = str(self.root_cause.get("telegram_summary") or "").strip()
         if root_cause_summary and self.root_cause.get("status") == "identified":
             lines.append(f"Root cause: {root_cause_summary}.")
+            repair_focus = _root_cause_telegram_repair_focus(self.root_cause)
+            if repair_focus:
+                lines.append(f"Repair focus: {repair_focus}.")
         if self.brain:
             lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
         if self.benchmark:
@@ -2053,6 +2056,26 @@ def _root_cause_recommendation(root_cause: dict[str, object]) -> str | None:
     if not summary:
         return None
     return f"Use the root-cause chain to repair {summary}, then replay the same request."
+
+
+def _root_cause_telegram_repair_focus(root_cause: dict[str, object]) -> str | None:
+    repair_plan = root_cause.get("repair_plan") if isinstance(root_cause.get("repair_plan"), dict) else {}
+    owner_surface = str(repair_plan.get("owner_surface") or "").strip()
+    labels = {
+        "telegram_gateway_to_context_capsule": "recent-conversation capsule path",
+        "provider_invocation_context_recording": "provider context recording",
+        "answer_arbitration": "answer grounding",
+        "route_arbitration": "close-turn route arbitration",
+        "telegram_delivery": "Telegram delivery preservation",
+        "current_state_memory": "current-state delete",
+        "memory_write_fanout": "delete write fanout",
+        "active_current_state": "active current-state cleanup",
+    }
+    if owner_surface in labels:
+        return labels[owner_surface]
+    if owner_surface:
+        return owner_surface.replace("_", " ")
+    return None
 
 
 def _dedupe_recommendations(recommendations: list[str]) -> list[str]:
