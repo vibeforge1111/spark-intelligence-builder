@@ -5490,7 +5490,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_voice_status_shows_profile_voice_registry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.paths.env_file.write_text(
-            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=test-key\n",
+            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=<fixture>\n",
             encoding="utf-8",
         )
         registry_path = self.home / "telegram-voice-profiles.json"
@@ -5621,6 +5621,72 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("ElevenLabs secret: missing (ELEVENLABS_API_KEY)", reply)
         self.assertIn("ElevenLabs voice id: missing", reply)
         self.assertIn("Parrot effect: ffmpeg missing; raw TTS audio will be sent", reply)
+
+    def test_voice_status_uses_builder_runtime_profile_and_delivery_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key=scoped_key,
+            value=json.dumps(
+                {
+                    "provider_id": "elevenlabs",
+                    "voice_id": "elevenlabsfixture1234",
+                    "voice_name": "Elise - Warm QA",
+                    "model_id": "eleven_turbo_v2_5",
+                    "secret_env_ref": "ELEVENLABS_API_KEY",
+                },
+                sort_keys=True,
+            ),
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "telegram_delivery": {
+                        "last_send_voice_at": "2026-05-09T12:34:56Z",
+                        "last_send_voice_status": "success",
+                        "send_method": "sendVoice",
+                    }
+                },
+                sort_keys=True,
+            ),
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Voice chip is ready."}},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118021,
+                    user_id="111",
+                    username="alice",
+                    text="/voice",
+                ),
+            )
+
+        reply = result.detail["response_text"]
+        self.assertIn("Profile voice:", reply)
+        self.assertIn("Provider: elevenlabs", reply)
+        self.assertIn("Voice: Elise - Warm QA", reply)
+        self.assertIn("Voice ID: eleven-1234", reply)
+        self.assertIn("Source: state", reply)
+        self.assertIn("Last voice delivery:", reply)
+        self.assertIn("Status: success", reply)
+        self.assertIn("Method: sendVoice", reply)
 
     def test_named_voice_profile_ignores_default_dm_voice_tuning(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6195,6 +6261,67 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("I tuned Elise", mutated.detail["response_text"])
         self.assertIn("a little faster", mutated.detail["response_text"])
 
+    def test_natural_language_voice_undo_restores_previous_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118172,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            before_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        before_profile = json.loads(before_row["value"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118173,
+                user_id="111",
+                username="alice",
+                text="a little faster",
+            ),
+        )
+        undone = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118174,
+                user_id="111",
+                username="alice",
+                text="go back to the previous voice",
+            ),
+        )
+
+        self.assertIn("rolled back to Elise", undone.detail["response_text"])
+        with self.state_db.connect() as conn:
+            after_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        after_profile = json.loads(after_row["value"])
+        self.assertEqual(after_profile["voice_settings"], before_profile["voice_settings"])
+
     def test_dm_voice_provider_state_overrides_profile_tts_env(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         simulate_telegram_update(
@@ -6402,8 +6529,11 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertNotIn("voice_media", result.detail)
         self.assertIn("voice audio step is not ready", result.detail["response_text"])
-        self.assertIn("invalid_api_key", result.detail["response_text"])
-        self.assertIn("invalid_api_key", result.detail["voice_error"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["response_text"])
+        self.assertIn("Do not paste the key into Telegram", result.detail["response_text"])
+        self.assertNotIn("invalid_api_key", result.detail["response_text"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["voice_error"])
+        self.assertNotIn("invalid_api_key", result.detail["voice_error"])
 
     def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
