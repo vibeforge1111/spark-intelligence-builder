@@ -5835,6 +5835,63 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Stable path: Telegram audio -> Builder -> `voice.transcribe`", reply)
         self.assertIn("provider keys stay in local config", reply)
 
+    def test_voice_dashboard_command_writes_redacted_snapshot_and_returns_url(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        snapshot_path = self.home / "voice-system-dashboard.json"
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "stt": {"provider_id": "openai", "ready": True},
+                    "tts": {"provider_id": "elevenlabs", "ready": True},
+                    "claim_levels": {
+                        "synthesis_ready": True,
+                        "delivery_ready": True,
+                        "conversation_ready": True,
+                    },
+                    "telegram_delivery": {
+                        "ready": True,
+                        "send_method": "sendVoice",
+                        "last_send_voice_status": "success",
+                        "last_send_voice_at": "2026-05-09T12:00:00Z",
+                        "telegram_message_id_present": True,
+                    },
+                },
+                sort_keys=True,
+            ),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_VOICE_SYSTEM_DASHBOARD_SNAPSHOT": str(snapshot_path),
+                "SPARK_VOICE_SYSTEM_DASHBOARD_URL": "http://127.0.0.1:3333/voice-system",
+            },
+            clear=False,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11811,
+                    user_id="111",
+                    username="alice",
+                    text="/voice dashboard",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("voice system dashboard", result.detail["response_text"])
+        self.assertIn("http://127.0.0.1:3333/voice-system", result.detail["response_text"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        self.assertFalse(snapshot["isSampleData"])
+        self.assertEqual(snapshot["lastDelivery"]["status"], "success")
+        self.assertEqual(snapshot["profile"]["preferenceScope"], "this agent, Telegram profile, and DM")
+        encoded = json.dumps(snapshot)
+        self.assertNotIn("API_KEY", encoded)
+        self.assertNotIn("secretValue", encoded)
+
     def test_voice_reply_command_tracks_telegram_dm_voice_state(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

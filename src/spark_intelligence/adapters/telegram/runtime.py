@@ -3929,6 +3929,18 @@ def _handle_runtime_command(
             ),
             "respect_voice_reply_state": False,
         }
+    if lowered in {"/voice dashboard", "/voice system"} or natural_voice_command == ("/voice dashboard", None):
+        return {
+            "command": "/voice dashboard",
+            "reply_text": _render_telegram_voice_dashboard_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                external_user_id=external_user_id,
+                human_id=human_id,
+                agent_id=agent_id,
+            ),
+            "respect_voice_reply_state": False,
+        }
     if (
         lowered in {"/voice provider", "/voice providers", "/voice tts"}
         or natural_voice_command == ("/voice provider", None)
@@ -5217,6 +5229,20 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "explain the voice system",
     }:
         return ("/voice map", None)
+    if simplified in {
+        "voice dashboard",
+        "voice system dashboard",
+        "open voice dashboard",
+        "open the voice dashboard",
+        "show voice dashboard",
+        "show me voice dashboard",
+        "show voice system",
+        "show me voice system",
+        "open voice system",
+        "open the voice system",
+        "show me my voice system",
+    }:
+        return ("/voice dashboard", None)
     if simplified in {
         "voice onboard",
         "voice onboarding",
@@ -6806,6 +6832,250 @@ def _render_telegram_voice_architecture_reply(
         "Stable path: Telegram audio -> Builder -> `voice.transcribe` -> Builder answer -> `voice.speak` -> Telegram voice message.\n\n"
         "Boundary: provider keys stay in local config or Spark's secret layer, never in Telegram chat."
     )
+
+
+def _render_telegram_voice_dashboard_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    external_user_id: str,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> str:
+    snapshot = _build_telegram_voice_dashboard_snapshot(
+        config_manager=config_manager,
+        state_db=state_db,
+        external_user_id=external_user_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    snapshot_path = _telegram_voice_dashboard_snapshot_path()
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(json.dumps(snapshot, sort_keys=True, indent=2, ensure_ascii=True), encoding="utf-8")
+    dashboard_url = _telegram_voice_dashboard_url(config_manager)
+    return (
+        "I updated the voice system dashboard snapshot.\n\n"
+        f"Open it here: {dashboard_url}\n\n"
+        "It shows the current provider, voice scope, runtime path, delivery proof, and ownership boundaries without exposing secrets."
+    )
+
+
+def _telegram_voice_dashboard_snapshot_path() -> Path:
+    configured = str(os.environ.get("SPARK_VOICE_SYSTEM_DASHBOARD_SNAPSHOT") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".spark" / "state" / "voice-system" / "dashboard.json"
+
+
+def _telegram_voice_dashboard_url(config_manager: ConfigManager) -> str:
+    configured = str(os.environ.get("SPARK_VOICE_SYSTEM_DASHBOARD_URL") or "").strip()
+    if configured:
+        return configured
+    base = str(os.environ.get("SPAWNER_UI_URL") or config_manager.get_path("spark.spawner.api_url", default="") or "").strip()
+    if not base:
+        base = "http://127.0.0.1:3333"
+    base = re.sub(r"/api(?:/.*)?$", "", base.rstrip("/"))
+    return f"{base}/voice-system"
+
+
+def _build_telegram_voice_dashboard_snapshot(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    external_user_id: str,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    provider_id = _active_telegram_voice_provider_id(state_db=state_db, external_user_id=external_user_id, agent_id=agent_id)
+    provider_label = _telegram_voice_provider_label(provider_id)
+    saved_profile = _voice_tts_profile_for_user(state_db=state_db, external_user_id=external_user_id, agent_id=agent_id)
+    env_profile = _telegram_voice_tts_override_from_env() or {}
+    active_profile = _merge_telegram_tts_overrides(env_profile, saved_profile) or {}
+    last_runtime_state = _load_runtime_json_object(state_db, f"telegram:voice:last_runtime_state:{external_user_id}") or _load_runtime_json_object(
+        state_db,
+        "telegram:voice:last_runtime_state",
+    )
+    telegram_delivery = last_runtime_state.get("telegram_delivery") if isinstance(last_runtime_state.get("telegram_delivery"), dict) else {}
+    claim_levels = last_runtime_state.get("claim_levels") if isinstance(last_runtime_state.get("claim_levels"), dict) else {}
+    stt = last_runtime_state.get("stt") if isinstance(last_runtime_state.get("stt"), dict) else {}
+    tts = last_runtime_state.get("tts") if isinstance(last_runtime_state.get("tts"), dict) else {}
+    profile_status = _telegram_voice_status_profile()
+    voice_id = str(active_profile.get("voice_id") or profile_status.get("voice_id") or "").strip()
+    voice_name = str(active_profile.get("voice_name") or profile_status.get("voice_name") or "").strip()
+    audio_effect = str(profile_status.get("audio_effect") or os.environ.get("SPARK_TELEGRAM_VOICE_AUDIO_EFFECT") or "none").strip() or "none"
+    agent_label = _telegram_voice_dashboard_agent_label(state_db=state_db, human_id=human_id, agent_id=agent_id)
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    delivery_status = str(telegram_delivery.get("last_send_voice_status") or "not recorded")
+    delivery_ready = bool(claim_levels.get("delivery_ready") or telegram_delivery.get("ready"))
+    synthesis_ready = bool(claim_levels.get("synthesis_ready") or tts.get("ready"))
+    stt_ready = bool(stt.get("ready"))
+    conversation_ready = bool(claim_levels.get("conversation_ready") and delivery_ready)
+    return {
+        "generatedAt": generated_at,
+        "isSampleData": False,
+        "sourceLabel": "Builder Telegram voice runtime snapshot",
+        "warnings": _telegram_voice_dashboard_warnings(
+            stt_ready=stt_ready,
+            synthesis_ready=synthesis_ready,
+            delivery_ready=delivery_ready,
+        ),
+        "profile": {
+            "agentLabel": agent_label,
+            "telegramProfile": _telegram_voice_profile_key(),
+            "preferenceScope": _voice_tts_state_scope_label(agent_id=agent_id),
+            "voiceName": voice_name or "Not selected",
+            "providerLabel": provider_label,
+            "voiceIdMasked": _mask_voice_id(voice_id) if voice_id else "not shown",
+            "audioEffect": audio_effect,
+        },
+        "metrics": [
+            {
+                "id": "conversation-ready",
+                "label": "Conversation ready",
+                "value": "Ready" if conversation_ready else "Needs proof",
+                "help": "Requires STT, Builder answer, TTS, and Telegram sendVoice proof in one flow.",
+                "status": "ready" if conversation_ready else "partial",
+            },
+            {
+                "id": "stt-ready",
+                "label": "Listening",
+                "value": "Ready" if stt_ready else "Unverified",
+                "help": f"Selected STT path: {str(stt.get('provider_id') or 'unknown')}.",
+                "status": "ready" if stt_ready else "partial",
+            },
+            {
+                "id": "tts-ready",
+                "label": "Speaking",
+                "value": "Ready" if synthesis_ready else "Unverified",
+                "help": f"Selected TTS path: {provider_label}.",
+                "status": "ready" if synthesis_ready else "configured",
+            },
+            {
+                "id": "delivery-ready",
+                "label": "Telegram delivery",
+                "value": "Ready" if delivery_ready else "Needs proof",
+                "help": "Synthesis is separate from Telegram sendVoice delivery.",
+                "status": "ready" if delivery_ready else "partial",
+            },
+        ],
+        "runtimePath": [
+            {
+                "id": "telegram-in",
+                "label": "Telegram input",
+                "owner": "Telegram bot",
+                "status": "configured",
+                "detail": "Receives text, voice, and audio messages from the operator surface.",
+            },
+            {
+                "id": "builder",
+                "label": "Builder answer",
+                "owner": "Spark Intelligence Builder",
+                "status": "ready",
+                "detail": "Owns routing, memory context, personality, character, and final answer composition.",
+            },
+            {
+                "id": "voice-chip",
+                "label": "Speech I/O",
+                "owner": "spark-voice-comms",
+                "status": "ready" if synthesis_ready or stt_ready else "configured",
+                "detail": "Transcribes audio and synthesizes the Builder-authored spoken answer.",
+            },
+            {
+                "id": "telegram-out",
+                "label": "Voice delivery",
+                "owner": "Telegram delivery",
+                "status": "ready" if delivery_ready else "partial",
+                "detail": "Only proven after Telegram sendVoice succeeds for this chat.",
+            },
+        ],
+        "providers": _telegram_voice_dashboard_providers(provider_id=provider_id, synthesis_ready=synthesis_ready),
+        "boundaries": [
+            {
+                "owner": "Builder",
+                "owns": "answer, memory context, character, voice preference scope",
+                "notOwner": "provider credentials or Telegram token disclosure",
+            },
+            {
+                "owner": "spark-voice-comms",
+                "owns": "STT, TTS, audio bytes, provider readiness",
+                "notOwner": "personality, memory, or Telegram delivery proof",
+            },
+            {
+                "owner": "Telegram bot",
+                "owns": "message ingress and sendVoice delivery",
+                "notOwner": "voice provider selection or voice character tuning",
+            },
+        ],
+        "checks": [
+            "/voice reports the intended provider readiness",
+            "/voice provider shows the expected preference scope",
+            "/voice ask generates an answer before speaking",
+            "/voice reply on sends matching text and audio",
+            "switching one agent voice does not change another profile",
+        ],
+        "telegramCommands": ["/voice", "/voice provider", "/voice map", "/voice dashboard", "/voice ask <question>", "/voice reply on"],
+        "lastDelivery": {
+            "status": delivery_status,
+            "method": str(telegram_delivery.get("send_method") or "not recorded"),
+            "when": str(telegram_delivery.get("last_send_voice_at") or "not recorded"),
+            "detail": (
+                "Telegram message id was present."
+                if telegram_delivery.get("telegram_message_id_present")
+                else str(telegram_delivery.get("last_failure_reason") or "No Telegram message id has been recorded yet.")
+            ),
+        },
+    }
+
+
+def _telegram_voice_dashboard_agent_label(*, state_db: StateDB, human_id: str | None, agent_id: str | None) -> str:
+    if human_id:
+        try:
+            name = str(read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_name or "").strip()
+            if name:
+                return name
+        except Exception:
+            pass
+    if agent_id:
+        return f"Agent {hashlib.sha256(str(agent_id).encode('utf-8')).hexdigest()[:8]}"
+    return "Current Spark agent"
+
+
+def _telegram_voice_dashboard_warnings(*, stt_ready: bool, synthesis_ready: bool, delivery_ready: bool) -> list[str]:
+    warnings: list[str] = []
+    if not stt_ready:
+        warnings.append("Voice note transcription has not been proven in the latest runtime trace.")
+    if not synthesis_ready:
+        warnings.append("Speech synthesis has not been proven in the latest runtime trace.")
+    if not delivery_ready:
+        warnings.append("Telegram sendVoice delivery still needs a successful live proof.")
+    return warnings
+
+
+def _telegram_voice_dashboard_providers(*, provider_id: str, synthesis_ready: bool) -> list[dict[str, str]]:
+    provider_status = "ready" if synthesis_ready else "configured"
+    return [
+        {
+            "id": "elevenlabs",
+            "label": "ElevenLabs",
+            "role": "Hosted polished TTS",
+            "status": provider_status if provider_id == "elevenlabs" else "configured",
+            "detail": "Best path for natural voice calibration and user-selected voices.",
+        },
+        {
+            "id": "kokoro",
+            "label": "Kokoro",
+            "role": "Local/free neural TTS",
+            "status": provider_status if provider_id == "kokoro" else "configured",
+            "detail": "Private local voice path when model assets are connected.",
+        },
+        {
+            "id": "openai-realtime",
+            "label": "GPT Realtime 2",
+            "role": "OpenAI hosted voice",
+            "status": provider_status if provider_id == "openai-realtime" else "configured",
+            "detail": "Useful for expressive OpenAI-native voice setups.",
+        },
+    ]
 
 
 def _active_telegram_voice_provider_id(*, state_db: StateDB, external_user_id: str, agent_id: str | None = None) -> str:
