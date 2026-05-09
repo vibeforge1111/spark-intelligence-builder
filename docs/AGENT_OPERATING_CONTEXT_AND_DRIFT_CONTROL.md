@@ -87,7 +87,7 @@ Next integrations should consume the existing read-models:
 
 - Telegram should render a compact AOC strip from `operating_panel.py`.
 - Mission Control snapshots can include the shared AOC panel payload for drilldown instead of rebuilding route state.
-- Memory Dashboard should read typed stale actions and approval inbox items.
+- Memory doctor/dashboard summary reads approval inbox counts and typed stale-source review actions.
 - Diagnostics should emit `capability_probed` and `contradiction_found` events.
 - Telegram `/aoc` now renders the compact AOC strip and records a turn trace into the black box.
 - Route probes now emit `capability_probed` events into the black box in addition to route-health evidence.

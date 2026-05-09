@@ -626,6 +626,8 @@ def _record_label(record: dict[str, object]) -> str:
 
 
 def _build_dashboard_summary(state_db: StateDB) -> dict[str, object]:
+    from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox
+
     try:
         snapshot = build_watchtower_snapshot(state_db)
     except Exception as exc:  # pragma: no cover - dashboard should not block diagnosis
@@ -633,6 +635,7 @@ def _build_dashboard_summary(state_db: StateDB) -> dict[str, object]:
     panels = snapshot.get("panels") if isinstance(snapshot, dict) else {}
     memory_shadow = (panels or {}).get("memory_shadow") or {}
     memory_lane_hygiene = (panels or {}).get("memory_lane_hygiene") or {}
+    memory_approval_inbox = build_memory_approval_inbox(state_db, status="all", limit=10).to_payload()
     return {
         "top_level_state": snapshot.get("top_level_state"),
         "memory_shadow_counts": dict(memory_shadow.get("counts") or {}),
@@ -640,7 +643,47 @@ def _build_dashboard_summary(state_db: StateDB) -> dict[str, object]:
         "abstention_reasons": list(memory_shadow.get("abstention_reasons") or [])[:5],
         "memory_lane_hygiene_status": memory_lane_hygiene.get("status"),
         "memory_lane_hygiene_counts": dict(memory_lane_hygiene.get("counts") or {}),
+        "memory_approval_inbox": {
+            "schema_version": memory_approval_inbox.get("schema_version"),
+            "counts": dict(memory_approval_inbox.get("counts") or {}),
+            "items": list(memory_approval_inbox.get("items") or [])[:5],
+        },
+        "stale_context_actions": _build_stale_context_action_summary(state_db),
     }
+
+
+def _build_stale_context_action_summary(state_db: StateDB) -> dict[str, object]:
+    events = latest_events_by_type(state_db, event_type="contradiction_found", limit=20)
+    actions: list[dict[str, object]] = []
+    counts: dict[str, int] = {}
+    for event in events:
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        stale_sources = [str(item) for item in facts.get("stale_sources") or [] if str(item)]
+        contradicted_sources = [str(item) for item in facts.get("contradicted_sources") or [] if str(item)]
+        action_type = _stale_context_action_type([*stale_sources, *contradicted_sources])
+        counts[action_type] = counts.get(action_type, 0) + 1
+        actions.append(
+            {
+                "event_id": event.get("event_id"),
+                "claim_key": facts.get("claim_key"),
+                "action_type": action_type,
+                "stale_sources": stale_sources,
+                "contradicted_sources": contradicted_sources,
+                "resolution": facts.get("resolution"),
+            }
+        )
+        if len(actions) >= 5:
+            break
+    return {"counts": counts, "actions": actions}
+
+
+def _stale_context_action_type(sources: list[str]) -> str:
+    lowered = " ".join(sources).casefold()
+    if "memory" in lowered:
+        return "mark_memory_stale"
+    if "wiki" in lowered:
+        return "mark_wiki_claim_stale"
+    return "review_source_conflict"
 
 
 def _scan_topic(events: list[dict[str, object]], *, topic: str | None) -> dict[str, object]:
