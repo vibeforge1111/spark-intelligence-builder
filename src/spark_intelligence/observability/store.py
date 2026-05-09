@@ -3264,6 +3264,9 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "trend": [],
             "repeated_missing_senses": {},
             "repeated_gaps": {},
+            "intake_trigger_counts": {},
+            "previous_failure_signal_counts": {},
+            "recent_intake_triggers": [],
             "recent_probes": [],
         }
 

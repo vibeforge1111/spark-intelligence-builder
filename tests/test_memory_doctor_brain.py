@@ -11,6 +11,14 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryDoctorBrainTests(SparkTestCase):
+    def test_memory_doctor_brain_panel_no_data_has_stable_intake_fields(self) -> None:
+        panel = build_watchtower_snapshot(self.state_db)["panels"]["memory_doctor_brain"]
+
+        self.assertEqual(panel["status"], "no_data")
+        self.assertEqual(panel["intake_trigger_counts"], {})
+        self.assertEqual(panel["previous_failure_signal_counts"], {})
+        self.assertEqual(panel["recent_intake_triggers"], [])
+
     def test_memory_doctor_brain_reports_trace_coverage_and_proactive_gaps(self) -> None:
         record_event(
             self.state_db,
