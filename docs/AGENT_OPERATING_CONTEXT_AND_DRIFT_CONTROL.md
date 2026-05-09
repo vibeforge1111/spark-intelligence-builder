@@ -89,6 +89,7 @@ Next integrations should consume the existing read-models:
 - Mission Control should drill into the same panel payload, not rebuild route state.
 - Memory Dashboard should read typed stale actions and approval inbox items.
 - Diagnostics should emit `capability_probed` and `contradiction_found` events.
+- Telegram `/aoc` now renders the compact AOC strip and records a turn trace into the black box.
 - Route probes now emit `capability_probed` events into the black box in addition to route-health evidence.
 - Stale sweeps now emit `contradiction_found` events when they record contradiction evidence.
 - Memory approval decisions now emit `user_override_received` events so the black box shows human memory choices.

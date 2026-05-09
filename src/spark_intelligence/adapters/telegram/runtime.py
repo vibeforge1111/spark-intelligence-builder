@@ -77,6 +77,8 @@ from spark_intelligence.self_awareness import (
     load_capability_ledger,
     run_route_probe_and_record,
 )
+from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
+from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -3493,9 +3495,20 @@ def _handle_runtime_command(
             runner_writable=None,
             runner_label="telegram runtime unknown",
         )
+        reply_text = f"{build_agent_operating_strip(context.to_payload()).to_text()}\n\n{context.to_text()}"
+        record_agent_turn_trace(
+            state_db,
+            user_message=normalized,
+            request_id=request_id,
+            session_id=session_id or f"session:telegram:{external_user_id}",
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            agent_id=agent_id,
+            proposed_action="answer_in_chat",
+            draft_answer=reply_text,
+        )
         return {
             "command": "/aoc" if lowered.startswith("/aoc") else "/context",
-            "reply_text": context.to_text(),
+            "reply_text": reply_text,
             "respect_voice_reply_state": True,
         }
     if lowered == "/probe" or lowered.startswith("/probe "):
