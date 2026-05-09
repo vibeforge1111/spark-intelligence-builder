@@ -3729,6 +3729,11 @@ def _handle_runtime_command(
             if lowered.startswith("/memory doctor")
             else dict(natural_memory_doctor_command or {})
         )
+        if doctor_target.get("help_requested"):
+            return {
+                "command": "/memory doctor",
+                "reply_text": _memory_doctor_help_text(),
+            }
         doctor_topic = str(doctor_target.get("topic") or "").strip()
         doctor_request_id = str(doctor_target.get("request_id") or "").strip()
         if not doctor_request_id and doctor_target.get("request_selector") == "previous_gateway_turn":
@@ -4798,6 +4803,23 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
     lowered = normalized.lower()
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
     if simplified in {
+        "memory doctor help",
+        "memory doctor commands",
+        "show memory doctor commands",
+        "how do i use memory doctor",
+        "what can memory doctor do",
+        "what can memory doctor check",
+        "how can memory doctor help",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": None,
+            "repair_requested": False,
+            "help_requested": True,
+        }
+    if simplified in {
         "memory doctor",
         "show memory doctor",
         "show me memory doctor",
@@ -4887,6 +4909,19 @@ def _memory_doctor_reply_with_trigger_summary(reply_text: str, doctor_target: di
     if not lines:
         return trigger_summary
     return "\n".join([lines[0], trigger_summary, *lines[1:]])
+
+
+def _memory_doctor_help_text() -> str:
+    return "\n".join(
+        [
+            "Memory Doctor helps when memory or close context feels wrong.",
+            "Try: run memory doctor for last request",
+            "Try: why did memory recall Maya",
+            "Try: check memory deletes",
+            "Try: you lost the thread",
+            "Best timing: ask right after the confusing turn.",
+        ]
+    )
 
 
 def _memory_doctor_trigger_summary(doctor_target: dict[str, object]) -> str | None:
@@ -5025,10 +5060,12 @@ def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) 
     return "researcher_advisory" in route_text and "previous" in user_preview
 
 
-def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
+def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, object]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
     if not suffix:
         return {"topic": None, "request_id": None, "request_selector": None}
+    if suffix.lower() in {"help", "commands", "examples"}:
+        return {"topic": None, "request_id": None, "request_selector": None, "help_requested": True}
     if suffix.lower().startswith("for "):
         suffix = suffix[4:].strip()
     return _memory_doctor_target_from_value(suffix)

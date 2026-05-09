@@ -88,6 +88,27 @@ class GatewayAskTelegramTests(SparkTestCase):
 
         self.assertEqual(output["result"]["detail"]["response_text"].splitlines()[0], "Memory Doctor: healthy.")
 
+    def test_gateway_ask_telegram_shows_memory_doctor_help(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="how do I use memory doctor?",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        response_text = detail["response_text"]
+        self.assertEqual(response_text.splitlines()[0], "Memory Doctor helps when memory or close context feels wrong.")
+        self.assertIn("Try: run memory doctor for last request", response_text)
+        self.assertIn("Try: you lost the thread", response_text)
+        self.assertNotIn("runtime_command_metadata", detail)
+
     def test_gateway_ask_telegram_runs_topic_memory_doctor_from_natural_language(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
