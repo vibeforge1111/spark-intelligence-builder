@@ -5,7 +5,7 @@ kind = "runtime"
 plane = "runtime"
 description = "Spark runtime core for identity, routing, memory, and provider orchestration"
 homepage = "https://github.com/vibeforge1111/spark-intelligence-builder"
-license = "UNLICENSED"
+license = "MIT"
 
 [runtime]
 kind = "python"
@@ -28,12 +28,18 @@ binary = "spark-intelligence"
 [needs]
 modules = []
 capabilities = []
-secrets = []
+secrets = ["voice.elevenlabs.api_key"]
 
 [claims]
 secrets = []
 ports = []
 routes = []
+
+[secrets.voice_elevenlabs_api_key]
+prompt = "Optional ElevenLabs API key for hosted Spark voice TTS"
+required = false
+storage = "keychain"
+env_var = "ELEVENLABS_API_KEY"
 
 [healthcheck]
 command = "python -c \"import spark_intelligence.cli; print('Spark runtime core is importable.')\""

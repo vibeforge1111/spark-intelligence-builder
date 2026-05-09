@@ -4,7 +4,7 @@ This note defines how the current live system is split across:
 
 - `spark-personality-chip-labs`
 - `spark-intelligence-builder`
-- `domain-chip-voice-comms`
+- `spark-voice-comms`
 
 It exists to stop the same question from recurring: where does the agent's personality actually live, and how does voice relate to it?
 
@@ -50,7 +50,7 @@ Those are Builder-native systems. They are not written back into the personality
 
 Builder persistence is local and immediate. The next Telegram reply reads the updated Builder persona state.
 
-### `domain-chip-voice-comms`
+### `spark-voice-comms`
 
 This repo is the speech I/O layer.
 
@@ -81,14 +81,14 @@ The voice chip should preserve the Builder-owned personality by operating around
 
 1. Telegram voice/audio message arrives in Builder.
 2. Builder fetches Telegram media bytes.
-3. Builder calls `domain-chip-voice-comms` via `voice.transcribe`.
+3. Builder calls `spark-voice-comms` via `voice.transcribe`.
 4. The transcript re-enters the same Builder conversation runtime as text.
 5. Builder loads the same saved Builder persona and produces the reply.
 
 ### Voice-output path
 
 1. Builder decides to send a voice reply.
-2. Builder passes final reply text into `domain-chip-voice-comms` via `voice.speak`.
+2. Builder passes final reply text into `spark-voice-comms` via `voice.speak`.
 3. For Telegram, the voice chip should synthesize Telegram-friendly Opus voice-note audio rather than generic MP3 output.
 4. Builder should deliver Telegram-compatible voice-note media with `sendVoice`, not a generic document/audio fallback path.
 5. Telegram receives the returned audio artifact back as a voice note.

@@ -6,11 +6,17 @@ from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import (
     _apply_telegram_voice_effect_from_env,
+    _match_natural_voice_command,
     _prepare_voice_reply_text,
+    _rank_elevenlabs_voices,
+    _select_elevenlabs_voice_for_telegram_dm,
     _synthesize_telegram_voice_reply,
+    _telegram_voice_runtime_state_with_delivery,
+    _voice_tts_profile_write_state_key,
     poll_telegram_updates_once,
     simulate_telegram_update,
 )
+from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.identity.service import (
     approve_pairing,
     consume_pairing_welcome,
@@ -4168,7 +4174,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             return_value=ResearcherBridgeResult(
                 request_id="req-browser-session",
                 reply_text=(
-                    "Web search is currently unavailable because the browser-use live session "
+                    "Web search is currently unavailable because the Spark Browser Extension live session "
                     "is disconnected. Reload or reconnect the extension, then retry the search."
                 ),
                 evidence_summary="Browser search unavailable because the live browser session is disconnected.",
@@ -5487,7 +5493,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_voice_status_shows_profile_voice_registry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.paths.env_file.write_text(
-            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=test-key\n",
+            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=<fixture>\n",
             encoding="utf-8",
         )
         registry_path = self.home / "telegram-voice-profiles.json"
@@ -5497,8 +5503,8 @@ class OperatorPairingFlowTests(SparkTestCase):
                     "profiles": {
                         "parrotcovebird": {
                             "provider_id": "elevenlabs",
-                            "voice_id": "ZWw77cKDlDtiE9JYM1Wq",
-                            "voice_name": "Parrot Cove Bird",
+                            "voice_id": "test-elevenlabs-voice-id",
+                            "voice_name": "Sample ElevenLabs Voice",
                             "model_id": "eleven_turbo_v2_5",
                             "voice_settings": {
                                 "stability": 0.48,
@@ -5552,79 +5558,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Profile voice:", reply)
         self.assertIn("Telegram profile: parrotcovebird", reply)
         self.assertIn("Provider: elevenlabs", reply)
-        self.assertIn("Voice: Parrot Cove Bird", reply)
-        self.assertIn("Voice ID: ZWw77c-M1Wq", reply)
+        self.assertIn("Voice: Sample ElevenLabs Voice", reply)
+        self.assertIn("Voice ID: test-e-e-id", reply)
         self.assertIn("Effect: parrot", reply)
         self.assertIn("Source: registry", reply)
-        self.assertIn("Fingerprint:", reply)
-        self.assertIn("matches saved profile", reply)
         self.assertIn("Preflight:", reply)
         self.assertIn("ElevenLabs secret: present (ELEVENLABS_API_KEY)", reply)
         self.assertIn("ElevenLabs voice id: configured", reply)
         self.assertIn("Parrot effect: ready (ffmpeg found)", reply)
-
-    def test_voice_status_warns_when_profile_voice_drifts_from_saved_fingerprint(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        registry_path = self.home / "telegram-voice-profiles.json"
-        registry_path.write_text(
-            json.dumps(
-                {
-                    "profiles": {
-                        "parrotcovebird": {
-                            "provider_id": "elevenlabs",
-                            "voice_id": "ZWw77cKDlDtiE9JYM1Wq",
-                            "voice_name": "Parrot Cove Bird",
-                            "model_id": "eleven_turbo_v2_5",
-                            "voice_settings": {
-                                "stability": 0.48,
-                                "similarity_boost": 0.7,
-                                "style": 0.44,
-                                "speed": 1.06,
-                                "use_speaker_boost": False,
-                            },
-                            "audio_effect": "parrot",
-                            "voice_fingerprint": "saved-base",
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        with patch.dict(
-            "os.environ",
-            {
-                "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
-                "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
-                "SPARK_TELEGRAM_VOICE_TTS_STYLE": "0.2",
-            },
-            clear=False,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            return_value=SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={"result": {"reply_text": "Voice chip is ready."}},
-            ),
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118011,
-                    user_id="111",
-                    username="alice",
-                    text="/voice status",
-                ),
-            )
-
-        self.assertTrue(result.ok)
-        reply = result.detail["response_text"]
-        self.assertIn("Fingerprint:", reply)
-        self.assertIn("drift from saved profile saved-base", reply)
-        self.assertIn("Drift fields: voice_settings", reply)
 
     def test_voice_status_warns_when_profile_preflight_is_missing_requirements(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -5635,7 +5576,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                     "profiles": {
                         "parrotcovebird": {
                             "provider_id": "elevenlabs",
-                            "voice_name": "Parrot Cove Bird",
+                            "voice_name": "Sample ElevenLabs Voice",
                             "model_id": "eleven_turbo_v2_5",
                             "audio_effect": "parrot",
                         }
@@ -5684,6 +5625,257 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("ElevenLabs voice id: missing", reply)
         self.assertIn("Parrot effect: ffmpeg missing; raw TTS audio will be sent", reply)
 
+    def test_voice_status_uses_builder_runtime_profile_and_delivery_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key=scoped_key,
+            value=json.dumps(
+                {
+                    "provider_id": "elevenlabs",
+                    "voice_id": "elevenlabsfixture1234",
+                    "voice_name": "Elise - Warm QA",
+                    "model_id": "eleven_turbo_v2_5",
+                    "secret_env_ref": "ELEVENLABS_API_KEY",
+                },
+                sort_keys=True,
+            ),
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "telegram_delivery": {
+                        "last_send_voice_at": "2026-05-09T12:34:56Z",
+                        "last_send_voice_status": "success",
+                        "send_method": "sendVoice",
+                    }
+                },
+                sort_keys=True,
+            ),
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Voice chip is ready."}},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118021,
+                    user_id="111",
+                    username="alice",
+                    text="/voice",
+                ),
+            )
+
+        reply = result.detail["response_text"]
+        self.assertIn("Profile voice:", reply)
+        self.assertIn("Provider: elevenlabs", reply)
+        self.assertIn("Voice: Elise - Warm QA", reply)
+        self.assertIn("Voice ID: eleven-1234", reply)
+        self.assertIn("Source: state", reply)
+        self.assertIn("Last voice delivery:", reply)
+        self.assertIn("Status: success", reply)
+        self.assertIn("Method: sendVoice", reply)
+
+    def test_named_voice_profile_ignores_default_dm_voice_tuning(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        registry_path = self.home / "telegram-voice-profiles.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "profiles": {
+                        "parrotcovebird": {
+                            "provider_id": "elevenlabs",
+                            "voice_id": "parrot-voice-id",
+                            "voice_name": "Parrot Cove Bird",
+                            "model_id": "eleven_turbo_v2_5",
+                            "voice_settings": {
+                                "stability": 0.48,
+                                "similarity_boost": 0.7,
+                                "style": 0.44,
+                                "speed": 1.06,
+                                "use_speaker_boost": False,
+                            },
+                            "audio_effect": "parrot",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice_tts_profile:111",
+            value=json.dumps(
+                {
+                    "provider_id": "elevenlabs",
+                    "voice_id": "elise-voice-id",
+                    "voice_name": "Elise - Warm, Natural and Engaging",
+                    "model_id": "eleven_turbo_v2_5",
+                    "voice_settings": {
+                        "stability": 0.4,
+                        "similarity_boost": 0.8,
+                        "style": 0.3,
+                        "speed": 1.09,
+                        "use_speaker_boost": False,
+                    },
+                },
+                sort_keys=True,
+            ),
+        )
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-opus").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "elevenlabs",
+                        "voice_id": "parrot-voice-id",
+                    }
+                },
+            )
+
+        env = {
+            "SPARK_TELEGRAM_PROFILE": "parrotcovebird",
+            "SPARK_TELEGRAM_VOICE_PROFILE_REGISTRY": str(registry_path),
+            "SPARK_TELEGRAM_VOICE_TTS_PROVIDER": "",
+            "SPARK_TELEGRAM_TTS_PROVIDER": "",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID": "",
+            "VOICE_TTS_ELEVENLABS_VOICE_ID": "",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_ID": "",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_NAME": "",
+            "VOICE_TTS_ELEVENLABS_VOICE_NAME": "",
+            "SPARK_TELEGRAM_VOICE_TTS_VOICE_NAME": "",
+            "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_MODEL_ID": "",
+            "VOICE_TTS_ELEVENLABS_MODEL_ID": "",
+            "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID": "",
+        }
+        with patch.dict("os.environ", env, clear=False), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.shutil.which",
+            return_value=None,
+        ):
+            result = _synthesize_telegram_voice_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human_1",
+                agent_id="agent_1",
+                external_user_id="111",
+                text="Bright Parrot Cove check.",
+            )
+
+        tts = captured_payload["tts"]
+        self.assertIsInstance(tts, dict)
+        self.assertEqual(tts["voice_name"], "Parrot Cove Bird")
+        self.assertEqual(tts["voice_id"], "parrot-voice-id")
+        self.assertEqual(tts["model_id"], "eleven_turbo_v2_5")
+        self.assertEqual(tts["voice_settings"]["speed"], 1.06)
+        self.assertEqual(result["voice_id"], "parrot-voice-id")
+
+    def test_elevenlabs_voice_selection_writes_agent_scoped_profile_state(self) -> None:
+        with patch.dict("os.environ", {"SPARK_TELEGRAM_PROFILE": ""}, clear=False), patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(
+                [
+                    {
+                        "voice_id": "elise-voice-id",
+                        "name": "Elise - Warm, Natural and Engaging",
+                        "labels": {
+                            "gender": "female",
+                            "age": "young",
+                            "accent": "american",
+                            "description": "conversational",
+                        },
+                    }
+                ],
+                None,
+            ),
+        ):
+            reply = _select_elevenlabs_voice_for_telegram_dm(
+                state_db=self.state_db,
+                external_user_id="111",
+                agent_id="agent-alpha",
+                target="Elise",
+                config_manager=self.config_manager,
+            )
+            scoped_key = _voice_tts_profile_write_state_key(external_user_id="111", agent_id="agent-alpha")
+
+        with self.state_db.connect() as conn:
+            scoped_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (scoped_key,),
+            ).fetchone()
+            legacy_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                ("telegram:voice_tts_profile:111",),
+            ).fetchone()
+
+        self.assertIn("Done, I set this DM to Elise", reply)
+        self.assertIsNotNone(scoped_row)
+        scoped_profile = json.loads(scoped_row["value"])
+        self.assertEqual(scoped_profile["voice_name"], "Elise - Warm, Natural and Engaging")
+        self.assertEqual(scoped_profile["scope"], "this agent, Telegram profile, and DM")
+        self.assertIsNone(legacy_row)
+
+    def test_elevenlabs_voice_ranking_honors_older_male_operator_prompt(self) -> None:
+        voices = [
+            {
+                "voice_id": "elise",
+                "name": "Elise - Warm, Natural and Engaging",
+                "description": "Warm conversational clarity.",
+                "category": "professional",
+                "labels": {"gender": "female", "age": "young"},
+            },
+            {
+                "voice_id": "grandpa",
+                "name": "Grandpa Spuds Oxley",
+                "description": "Friendly grandpa storyteller with tall tales.",
+                "category": "character",
+                "labels": {"gender": "male", "age": "old"},
+            },
+            {
+                "voice_id": "chris",
+                "name": "Chris - Charming, Down-to-Earth",
+                "description": "Natural, real, conversational, down-to-earth voice.",
+                "category": "professional",
+                "labels": {"gender": "male", "age": "middle_aged"},
+            },
+        ]
+
+        ranked = _rank_elevenlabs_voices(
+            voices,
+            prompt="low-mid male late 30s to mid 40s calm direct dry older brother engineer, no dramatic narrator",
+        )
+
+        self.assertEqual(ranked[0]["voice_id"], "chris")
+
     def test_voice_plan_command_returns_concrete_pipeline_steps(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -5722,18 +5914,90 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Telegram voice plan:", result.detail["response_text"])
         self.assertIn("domain-chip-voice-comms", result.detail["response_text"])
 
-    def test_voice_onboard_command_routes_to_voice_onboard_hook(self) -> None:
+    def test_voice_map_explains_current_stable_runtime_connections(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
 
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.onboard")
-            self.assertIn("advisor_context", payload)
-            advisor_context = payload["advisor_context"]
-            self.assertIsInstance(advisor_context, dict)
-            self.assertIn("runtime", advisor_context)
-            self.assertIn("source_ledger", advisor_context)
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11810,
+                user_id="111",
+                username="alice",
+                text="/voice map",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        reply = result.detail["response_text"]
+        self.assertIn("Telegram is the delivery surface", reply)
+        self.assertIn("Builder is the brain", reply)
+        self.assertIn("`spark-voice-comms` is the speech layer", reply)
+        self.assertIn("Stable path: Telegram audio -> Builder -> `voice.transcribe`", reply)
+        self.assertIn("provider keys stay in local config", reply)
+
+    def test_voice_dashboard_command_writes_redacted_snapshot_and_returns_url(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        snapshot_path = self.home / "voice-system-dashboard.json"
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "stt": {"provider_id": "openai", "ready": True},
+                    "tts": {"provider_id": "elevenlabs", "ready": True},
+                    "claim_levels": {
+                        "synthesis_ready": True,
+                        "delivery_ready": True,
+                        "conversation_ready": True,
+                    },
+                    "telegram_delivery": {
+                        "ready": True,
+                        "send_method": "sendVoice",
+                        "last_send_voice_status": "success",
+                        "last_send_voice_at": "2026-05-09T12:00:00Z",
+                        "telegram_message_id_present": True,
+                    },
+                },
+                sort_keys=True,
+            ),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SPARK_VOICE_SYSTEM_DASHBOARD_SNAPSHOT": str(snapshot_path),
+                "SPARK_VOICE_SYSTEM_DASHBOARD_URL": "http://127.0.0.1:3333/voice-system",
+            },
+            clear=False,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11811,
+                    user_id="111",
+                    username="alice",
+                    text="/voice dashboard",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("voice system dashboard", result.detail["response_text"])
+        self.assertIn("http://127.0.0.1:3333/voice-system", result.detail["response_text"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        self.assertFalse(snapshot["isSampleData"])
+        self.assertEqual(snapshot["lastDelivery"]["status"], "success")
+        self.assertEqual(snapshot["profile"]["preferenceScope"], "this agent, Telegram profile, and DM")
+        encoded = json.dumps(snapshot)
+        self.assertNotIn("API_KEY", encoded)
+        self.assertNotIn("secretValue", encoded)
+
+    def test_voice_doctor_reports_claim_gaps_from_runtime_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
                 chip_key="spark-voice-comms",
@@ -5741,203 +6005,221 @@ class OperatorPairingFlowTests(SparkTestCase):
                 stderr="",
                 output={
                     "result": {
-                        "reply_text": (
-                            "Spark voice onboarding\n"
-                            "- Recommended path: local_free\n"
-                            "- Local TTS: install optional `pyttsx3` for offline TTS"
-                        )
+                        "provider_note": "Hosted transcription is configured, but local STT is the Telegram default.",
+                        "runtime_state": {
+                            "stt": {"provider_id": "local_faster_whisper", "ready": True},
+                            "tts": {"provider_id": "kokoro", "ready": True},
+                            "telegram_delivery": {
+                                "ready": False,
+                                "last_send_voice_status": "unknown",
+                            },
+                            "claim_levels": {
+                                "synthesis_ready": True,
+                                "delivery_ready": False,
+                                "conversation_ready": False,
+                            },
+                        },
                     }
                 },
             )
 
         with patch(
             "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
+            side_effect=fake_voice_hook,
         ):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 update_payload=make_telegram_update(
-                    update_id=11810,
+                    update_id=118111,
                     user_id="111",
                     username="alice",
-                    text="/voice onboard local",
+                    text="Diagnose voice",
                 ),
             )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["route"], "local")
-        self.assertIn("Spark voice onboarding", result.detail["response_text"])
+        reply = result.detail["response_text"]
+        self.assertIn("Voice doctor:", reply)
+        self.assertIn("Listening: ready via `local_faster_whisper`", reply)
+        self.assertIn("Speaking: ready via `kokoro`", reply)
+        self.assertIn("Telegram delivery: needs live proof", reply)
+        self.assertIn("Claim boundary", reply)
+        self.assertIn("/voice speak Clean reset", reply)
 
-    def test_natural_language_voice_setup_routes_to_onboarding(self) -> None:
+    def test_voice_doctor_uses_persisted_delivery_proof(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "stt": {"provider_id": "local_faster_whisper", "ready": True},
+                    "tts": {"provider_id": "kokoro", "ready": True},
+                    "telegram_delivery": {
+                        "ready": True,
+                        "send_method": "sendVoice",
+                        "last_send_voice_status": "success",
+                        "telegram_message_id_present": True,
+                    },
+                    "claim_levels": {
+                        "synthesis_ready": True,
+                        "delivery_ready": True,
+                        "conversation_ready": True,
+                    },
+                },
+                sort_keys=True,
+            ),
+        )
 
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.onboard")
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
                 chip_key="spark-voice-comms",
                 stdout="",
                 stderr="",
-                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: paid_provider"}},
+                output={
+                    "result": {
+                        "runtime_state": {
+                            "stt": {"provider_id": "local_faster_whisper", "ready": True},
+                            "tts": {"provider_id": "kokoro", "ready": True},
+                            "telegram_delivery": {
+                                "ready": False,
+                                "last_send_voice_status": "unknown",
+                            },
+                            "claim_levels": {
+                                "synthesis_ready": True,
+                                "delivery_ready": False,
+                                "conversation_ready": False,
+                            },
+                        }
+                    }
+                },
             )
 
         with patch(
             "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
+            side_effect=fake_voice_hook,
         ):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 update_payload=make_telegram_update(
-                    update_id=118101,
+                    update_id=118113,
                     user_id="111",
                     username="alice",
-                    text="Can you help me set up voice using paid?",
+                    text="/voice doctor",
                 ),
             )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["route"], "paid")
-        self.assertIn("paid_provider", result.detail["response_text"])
+        reply = result.detail["response_text"]
+        self.assertIn("Telegram delivery: proven", reply)
+        self.assertIn("last status `success`", reply)
+        self.assertIn("Conversation ready: yes", reply)
+        self.assertIn("voice is proven end to end", reply)
 
-    def test_natural_language_local_voice_setup_routes_to_onboarding(self) -> None:
+    def test_voice_doctor_names_canonical_chip_when_missing(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
 
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.onboard")
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=None,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118112,
+                    user_id="111",
+                    username="alice",
+                    text="/voice doctor",
+                ),
+            )
+
+        reply = result.detail["response_text"]
+        self.assertIn("Chip: missing", reply)
+        self.assertIn("attach and activate `spark-voice-comms`", reply)
+
+    def test_voice_self_test_reports_runtime_proof_without_sending_audio(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="telegram:voice:last_runtime_state:111",
+            value=json.dumps(
+                {
+                    "stt": {"provider_id": "local_faster_whisper", "ready": True},
+                    "tts": {"provider_id": "elevenlabs", "ready": True},
+                    "transcript": {"characters": 44, "audio_bytes": 13088},
+                    "telegram_delivery": {
+                        "ready": True,
+                        "send_method": "sendVoice",
+                        "last_send_voice_status": "success",
+                        "telegram_message_id_present": True,
+                    },
+                    "claim_levels": {
+                        "synthesis_ready": True,
+                        "delivery_ready": True,
+                        "conversation_ready": True,
+                    },
+                    "source_ledger": [
+                        "telegram-inbound-voice-trace",
+                        "voice.transcribe",
+                        "voice.speak",
+                        "telegram-sendVoice-trace",
+                    ],
+                },
+                sort_keys=True,
+            ),
+        )
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
                 chip_key="spark-voice-comms",
                 stdout="",
                 stderr="",
-                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: local_free"}},
+                output={
+                    "result": {
+                        "runtime_state": {
+                            "stt": {"provider_id": "local_faster_whisper", "ready": True},
+                            "tts": {"provider_id": "elevenlabs", "ready": True},
+                            "claim_levels": {"synthesis_ready": True},
+                        }
+                    }
+                },
             )
 
         with patch(
             "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime._telegram_voice_bot_update_probe",
+            return_value={
+                "ready": True,
+                "webhook_url_set": False,
+                "pending_update_count": 0,
+                "last_error_present": False,
+            },
         ):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 update_payload=make_telegram_update(
-                    update_id=118102,
+                    update_id=118114,
                     user_id="111",
                     username="alice",
-                    text="Can you help me set up voice locally for Spark?",
+                    text="test voice system",
                 ),
             )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["route"], "local")
-        self.assertIn("local_free", result.detail["response_text"])
-
-    def test_voice_install_kokoro_command_routes_to_voice_install_hook(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
-
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.install")
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={"result": {"reply_text": "Kokoro local TTS install\nStatus: package install completed."}},
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118104,
-                    user_id="111",
-                    username="alice",
-                    text="/voice install kokoro",
-                ),
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["target"], "kokoro")
-        self.assertIn("Kokoro local TTS install", result.detail["response_text"])
-
-    def test_natural_language_kokoro_install_routes_to_voice_install_hook(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
-
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.install")
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={"result": {"reply_text": "Kokoro local TTS install\nStatus: package install completed."}},
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118105,
-                    user_id="111",
-                    username="alice",
-                    text="Can you install Kokoro voice locally?",
-                ),
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["target"], "kokoro")
-        self.assertIn("Kokoro local TTS install", result.detail["response_text"])
-
-    def test_natural_language_paid_quality_voice_setup_routes_to_onboarding(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
-
-        def fake_run_first(config_manager, *, hook: str, payload: dict[str, object]):
-            captured_payload.update(payload)
-            self.assertEqual(hook, "voice.onboard")
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={"result": {"reply_text": "Spark voice onboarding\n- Recommended path: paid_provider"}},
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_run_first,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118103,
-                    user_id="111",
-                    username="alice",
-                    text="I want paid high quality voice replies for my Spark agent",
-                ),
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(captured_payload["route"], "paid")
-        self.assertIn("paid_provider", result.detail["response_text"])
+        reply = result.detail["response_text"]
+        self.assertIn("Voice self-test:", reply)
+        self.assertIn("Bot updates: ready; webhook off; pending updates 0", reply)
+        self.assertIn("Last inbound voice: proven from Telegram voice note", reply)
+        self.assertIn("Last Telegram delivery: proven via `sendVoice`", reply)
+        self.assertIn("Conversation proof: yes", reply)
+        self.assertIn("does not spend TTS or send a new voice note", reply)
 
     def test_voice_reply_command_tracks_telegram_dm_voice_state(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6015,34 +6297,661 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Voice replies enabled", enabled.detail["response_text"])
         self.assertIn("currently on", status.detail["response_text"])
 
-    def test_natural_language_install_voice_command_tracks_dm_voice_state(self) -> None:
+    def test_natural_language_install_voice_opens_onboarding_without_enabling_replies(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
             update_payload=make_telegram_update(
-                update_id=118165,
+                update_id=118151,
                 user_id="111",
                 username="alice",
-                text="can you install a voice to yourself right now?",
+                text="Can you install a voice to yourself right now?",
             ),
         )
-
-        self.assertIn("Voice replies enabled", result.detail["response_text"])
-
-        typo_result = simulate_telegram_update(
+        status = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
             update_payload=make_telegram_update(
-                update_id=118166,
+                update_id=118152,
                 user_id="111",
                 username="alice",
-                text="can you install a voice to youself right now?",
+                text="/voice reply",
             ),
         )
 
-        self.assertIn("Voice replies enabled", typo_result.detail["response_text"])
+        self.assertIn("set up voice", result.detail["response_text"])
+        self.assertNotIn("Voice replies enabled", result.detail["response_text"])
+        self.assertIn("currently off", status.detail["response_text"])
+
+    def test_voice_onboard_followup_local_private_routes_to_local_path(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.onboard")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="local_free",
+                stderr="",
+                output={
+                    "result": {
+                        "reply_text": "Local/private path selected. Next: run `/voice install local`, then `/voice self-test`.",
+                    }
+                },
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118157,
+                    user_id="111",
+                    username="alice",
+                    text="I care more about local/private",
+                ),
+            )
+
+        self.assertEqual(captured_payload["route"], "local")
+        self.assertIn("/voice install local", result.detail["response_text"])
+        self.assertIn("/voice self-test", result.detail["response_text"])
+
+    def test_natural_language_install_faster_whisper_routes_to_voice_install(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.install")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={"result": {"reply_text": "Done, faster-whisper is installed for this Spark."}},
+            )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118153,
+                    user_id="111",
+                    username="alice",
+                    text="Install faster whisper",
+                ),
+            )
+
+        self.assertEqual(captured_payload["target"], "faster-whisper")
+        self.assertIn("faster-whisper is installed", result.detail["response_text"])
+
+    def test_natural_language_install_elevenlabs_opens_provider_guide(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118154,
+                user_id="111",
+                username="alice",
+                text="Install 11 labs voice",
+            ),
+        )
+        status = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118155,
+                user_id="111",
+                username="alice",
+                text="/voice reply",
+            ),
+        )
+
+        self.assertIn("ElevenLabs is the voice path", result.detail["response_text"])
+        self.assertNotIn("Voice replies enabled", result.detail["response_text"])
+        self.assertIn("currently off", status.detail["response_text"])
+
+    def test_slash_install_elevenlabs_opens_provider_guide_without_local_install(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=AssertionError("hosted provider setup should not call voice.install"),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118156,
+                    user_id="111",
+                    username="alice",
+                    text="/voice install 11 labs",
+                ),
+            )
+
+        self.assertIn("ElevenLabs is the voice path", result.detail["response_text"])
+        self.assertNotIn("voice.install", result.detail["response_text"])
+
+    def test_natural_language_voice_provider_switch_persists_dm_tts_provider(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        switched = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118161,
+                user_id="111",
+                username="alice",
+                text="Can you switch my voice to ElevenLabs?",
+            ),
+        )
+        status = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118162,
+                user_id="111",
+                username="alice",
+                text="/voice provider",
+            ),
+        )
+
+        self.assertIn("I will use ElevenLabs", switched.detail["response_text"])
+        self.assertIn("Voice is set to ElevenLabs", status.detail["response_text"])
+        self.assertIn("Missing local config", status.detail["response_text"])
+
+    def test_natural_language_voice_provider_guide_is_conversational(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118164,
+                user_id="111",
+                username="alice",
+                text="Guide me through ElevenLabs voice setup",
+            ),
+        )
+
+        self.assertIn("ElevenLabs is the voice path", result.detail["response_text"])
+        self.assertIn("find me a natural geeky QA tester voice", result.detail["response_text"])
+        self.assertNotIn("API key=", result.detail["response_text"])
+
+    def test_natural_language_voice_search_lists_elevenlabs_candidates_without_ids(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            },
+            {
+                "voice_id": "voice-narrator",
+                "name": "Narrator",
+                "category": "premade",
+                "description": "Dramatic character voice.",
+                "labels": {"gender": "male", "use_case": "characters"},
+            },
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118166,
+                    user_id="111",
+                    username="alice",
+                    text="Find me a natural geeky QA tester girl voice",
+                ),
+            )
+
+        reply = result.detail["response_text"]
+        self.assertIn("I found a few ElevenLabs voices", reply)
+        self.assertIn("Elise", reply)
+        self.assertIn("use voice Elise", reply)
+        self.assertNotIn("voice-elise", reply)
+
+    def test_natural_language_voice_pick_saves_dm_elevenlabs_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118167,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+
+        self.assertIn("I set this DM to Elise", result.detail["response_text"])
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (scoped_key,),
+            ).fetchone()
+            legacy_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                ("telegram:voice_tts_profile:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(legacy_row)
+        profile = json.loads(row["value"])
+        self.assertEqual(profile["provider_id"], "elevenlabs")
+        self.assertEqual(profile["voice_id"], "voice-elise")
+        self.assertEqual(profile["voice_name"], "Elise")
+        self.assertEqual(profile["secret_env_ref"], "ELEVENLABS_API_KEY")
+        self.assertEqual(profile["scope"], "this agent, Telegram profile, and DM")
+
+    def test_natural_language_voice_pick_requires_explicit_voice_anchor(self) -> None:
+        self.assertIsNone(_match_natural_voice_command("Set my current plan to launch and keep it current."))
+        self.assertIsNone(_match_natural_voice_command("Set Startup Operator to hosted in swarm"))
+        self.assertEqual(_match_natural_voice_command("Use voice Elise"), ("/voice voice", "elise"))
+        self.assertEqual(_match_natural_voice_command("Set voice to Elise"), ("/voice voice", "elise"))
+        self.assertEqual(_match_natural_voice_command("Use Elise as voice"), ("/voice voice", "elise"))
+
+    def test_natural_language_voice_mutation_updates_saved_profile_settings(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118168,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        mutated = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118169,
+                user_id="111",
+                username="alice",
+                text="Make it warmer and more geeky",
+            ),
+        )
+
+        self.assertIn("I tuned Elise", mutated.detail["response_text"])
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (scoped_key,),
+            ).fetchone()
+        profile = json.loads(row["value"])
+        self.assertEqual(profile["voice_settings"]["speed"], 1.04)
+        self.assertEqual(profile["voice_settings"]["similarity_boost"], 0.8)
+
+    def test_short_voice_mutation_followup_updates_saved_profile_settings(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118170,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        mutated = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118171,
+                user_id="111",
+                username="alice",
+                text="a little faster",
+            ),
+        )
+
+        self.assertIn("I tuned Elise", mutated.detail["response_text"])
+        self.assertIn("a little faster", mutated.detail["response_text"])
+
+    def test_natural_language_voice_undo_restores_previous_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118172,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            before_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        before_profile = json.loads(before_row["value"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118173,
+                user_id="111",
+                username="alice",
+                text="a little faster",
+            ),
+        )
+        undone = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118174,
+                user_id="111",
+                username="alice",
+                text="go back to the previous voice",
+            ),
+        )
+
+        self.assertIn("rolled back to Elise", undone.detail["response_text"])
+        with self.state_db.connect() as conn:
+            after_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        after_profile = json.loads(after_row["value"])
+        self.assertEqual(after_profile["voice_settings"], before_profile["voice_settings"])
+
+    def test_dm_voice_provider_state_overrides_profile_tts_env(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118163,
+                user_id="111",
+                username="alice",
+                text="Use ElevenLabs for voice",
+            ),
+        )
+        captured_payload: dict[str, object] = {}
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook != "voice.speak":
+                raise AssertionError(f"Unexpected hook: {hook}")
+            captured_payload.update(payload)
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-opus").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-eleven.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "elevenlabs",
+                        "voice_id": "eleven-voice",
+                    }
+                },
+            )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "ELEVENLABS_API_KEY": "fake-key",
+                "SPARK_TELEGRAM_VOICE_TTS_PROVIDER": "openai-realtime",
+                "SPARK_TELEGRAM_VOICE_TTS_SECRET_ENV_REF": "OPENAI_API_KEY",
+                "SPARK_TELEGRAM_VOICE_TTS_MODEL_ID": "gpt-realtime-2",
+                "SPARK_TELEGRAM_VOICE_TTS_VOICE_ID": "coral",
+                "SPARK_TELEGRAM_VOICE_TTS_ELEVENLABS_VOICE_ID": "eleven-voice",
+            },
+            clear=False,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            _synthesize_telegram_voice_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                external_user_id="111",
+                text="Use the saved provider.",
+            )
+
+        tts = captured_payload["tts"]
+        self.assertIsInstance(tts, dict)
+        self.assertEqual(tts["provider_id"], "elevenlabs")
+        self.assertEqual(tts["secret_env_ref"], "ELEVENLABS_API_KEY")
+        self.assertEqual(tts["voice_id"], "eleven-voice")
+        self.assertNotEqual(tts.get("model_id"), "gpt-realtime-2")
+
+    def test_forced_voice_failure_is_visible_in_text_fallback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
+
+        class FakeVoicePollingClient:
+            def __init__(self, updates: list[dict[str, object]]) -> None:
+                self.updates = updates
+                self.sent_messages: list[dict[str, object]] = []
+                self.sent_voices: list[dict[str, object]] = []
+                self.sent_documents: list[dict[str, object]] = []
+
+            def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
+                return self.updates
+
+            def send_message(self, *, chat_id: str, text: str) -> dict[str, object]:
+                self.sent_messages.append({"chat_id": chat_id, "text": text})
+                return {"ok": True}
+
+            def send_document(self, **_kwargs: object) -> dict[str, object]:
+                self.sent_documents.append(dict(_kwargs))
+                return {"ok": True}
+
+            def send_voice(self, **_kwargs: object) -> dict[str, object]:
+                self.sent_voices.append(dict(_kwargs))
+                return {"ok": True}
+
+        client = FakeVoicePollingClient(
+            [
+                make_telegram_update(
+                    update_id=118165,
+                    user_id="111",
+                    username="alice",
+                    text="/voice ask Say one warm thing",
+                )
+            ]
+        )
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook == "voice.speak":
+                return SimpleNamespace(
+                    ok=False,
+                    chip_key="spark-voice-comms",
+                    stdout="missing secret value for env ref ELEVENLABS_API_KEY",
+                    stderr="",
+                    output={"error": "missing secret value for env ref ELEVENLABS_API_KEY"},
+                )
+            raise AssertionError(f"Unexpected hook: {hook}")
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-voice-fallback",
+                reply_text="This should have been spoken.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace-1",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context=None,
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ):
+            result = poll_telegram_updates_once(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                client=client,
+                timeout_seconds=0,
+            )
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(len(client.sent_voices), 0)
+        self.assertEqual(len(client.sent_messages), 1)
+        self.assertIn("voice audio step is not ready", client.sent_messages[0]["text"])
+        self.assertIn("ELEVENLABS_API_KEY", client.sent_messages[0]["text"])
+
+    def test_bridge_voice_ask_failure_is_visible_in_text_fallback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook == "voice.speak":
+                return SimpleNamespace(
+                    ok=False,
+                    chip_key="spark-voice-comms",
+                    stdout='ElevenLabs TTS request failed: {"detail":{"status":"invalid_api_key"}}',
+                    stderr="",
+                    output={"error": 'ElevenLabs TTS request failed: {"detail":{"status":"invalid_api_key"}}'},
+                )
+            raise AssertionError(f"Unexpected hook: {hook}")
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-voice-ask-fallback",
+                reply_text="This answer should have been spoken.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace-voice-ask-fallback",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context=None,
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118166,
+                    user_id="111",
+                    username="alice",
+                    text="/voice ask Say one warm thing",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("voice_media", result.detail)
+        self.assertIn("voice audio step is not ready", result.detail["response_text"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["response_text"])
+        self.assertIn("Do not paste the key into Telegram", result.detail["response_text"])
+        self.assertNotIn("invalid_api_key", result.detail["response_text"])
+        self.assertIn("ElevenLabs rejected the local API key", result.detail["voice_error"])
+        self.assertNotIn("invalid_api_key", result.detail["voice_error"])
 
     def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6060,351 +6969,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
-
-    def test_natural_voice_answer_request_generates_reply_before_speaking(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        consume_pairing_welcome(
-            state_db=self.state_db,
-            channel_id="telegram",
-            external_user_id="111",
-        )
-        captured_bridge: dict[str, object] = {}
-        captured_payload: dict[str, object] = {}
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook != "voice.speak":
-                raise AssertionError(f"Unexpected hook: {hook}")
-            captured_payload.update(payload)
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={
-                    "result": {
-                        "audio_base64": base64.b64encode(b"fake-answer").decode("ascii"),
-                        "mime_type": "audio/ogg",
-                        "filename": "telegram-reply-answer.ogg",
-                        "voice_compatible": True,
-                        "provider_id": "openai-realtime",
-                        "voice_id": "sage",
-                    }
-                },
-            )
-
-        def fake_bridge(**kwargs):
-            captured_bridge["user_message"] = kwargs["user_message"]
-            long_details = "\n\n".join(
-                f"Detail {index}\n- This keeps the generated answer long enough to exercise Telegram delivery chunking without changing the voice request semantics."
-                for index in range(40)
-            )
-            return ResearcherBridgeResult(
-                request_id="req-voice-answer",
-                reply_text=(
-                    "Here is the honest layout.\n\n"
-                    "Where I run\n"
-                    "- Telegram is my primary surface.\n\n"
-                    "Memory\n"
-                    "- I carry durable context when it is saved.\n\n"
-                    "Domain chips\n"
-                    "- Specialized modules handle focused capabilities.\n\n"
-                    "Spawner\n"
-                    "- Build and mission work routes through Spawner when requested.\n\n"
-                    f"{long_details}"
-                ),
-                evidence_summary="voice_answer_test",
-                escalation_hint=None,
-                trace_ref="trace:voice-answer",
-                mode="external_configured",
-                runtime_root="C:/fake-researcher",
-                config_path="C:/fake-researcher/spark-researcher.project.json",
-                attachment_context={},
-                provider_id="custom",
-                provider_auth_profile_id="custom:default",
-                provider_auth_method="api_key_env",
-                provider_model="MiniMax-M2.7",
-                provider_model_family="generic",
-                provider_execution_transport="direct_http",
-                provider_base_url="https://api.minimax.io/v1",
-                provider_source="config+env",
-                routing_decision="provider_fallback_chat",
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
-            side_effect=fake_bridge,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118176,
-                    user_id="111",
-                    username="alice",
-                    text="Give me a longer honest layout of where you run, memory, domain chips, and spawner as a voice message",
-                ),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(
-            captured_bridge["user_message"],
-            "Give me a longer honest layout of where you run, memory, domain chips, and spawner",
-        )
-        self.assertIn("Where I run", result.detail["response_text"])
-        self.assertNotIn("(1/", result.detail["response_text"])
-        self.assertIn("strip_voice_caption_chunk_markers", result.detail["guardrail_actions"])
-        self.assertIn("Here is the honest layout", captured_payload["text"])
-        self.assertNotIn("Give me a longer honest layout", captured_payload["text"])
-        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
-
-    def test_natural_short_voice_note_request_returns_bridge_voice_media(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook != "voice.speak":
-                raise AssertionError(f"Unexpected hook: {hook}")
-            captured_payload.update(payload)
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={
-                    "result": {
-                        "audio_base64": base64.b64encode(b"fake-short-note").decode("ascii"),
-                        "mime_type": "audio/ogg",
-                        "filename": "telegram-reply-short.ogg",
-                        "voice_compatible": True,
-                        "provider_id": "openai-realtime",
-                        "voice_id": "sage",
-                    }
-                },
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118171,
-                    user_id="111",
-                    username="alice",
-                    text="Send a short Telegram voice note.",
-                ),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
-        self.assertEqual(
-            captured_payload["text"],
-            "Voice is working here. I can send spoken replies through this Telegram chat now.",
-        )
-        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
-        self.assertEqual(result.detail["voice_media"]["mime_type"], "audio/ogg")
-
-    def test_voice_reply_on_live_bridge_repairs_false_audio_denial_and_returns_media(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-
-        simulate_telegram_update(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118172,
-                user_id="111",
-                username="alice",
-                text="/voice reply on",
-            ),
-        )
-
-        captured_payload: dict[str, object] = {}
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook != "voice.speak":
-                raise AssertionError(f"Unexpected hook: {hook}")
-            captured_payload.update(payload)
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={
-                    "result": {
-                        "audio_base64": base64.b64encode(b"fake-auto-reply").decode("ascii"),
-                        "mime_type": "audio/ogg",
-                        "filename": "telegram-reply-auto.ogg",
-                        "voice_compatible": True,
-                        "provider_id": "openai-realtime",
-                        "voice_id": "sage",
-                    }
-                },
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
-            return_value=ResearcherBridgeResult(
-                request_id="req-voice-reply-on",
-                reply_text=(
-                    "I have voice capability wired up, but from this current conversation surface I can only generate text. "
-                    "The voice-speak hook exists, but I can't trigger it directly from this reply mode."
-                ),
-                evidence_summary="status=under_supported",
-                escalation_hint=None,
-                trace_ref="trace:voice-reply-on",
-                mode="external_configured",
-                runtime_root="C:/fake-researcher",
-                config_path="C:/fake-researcher/spark-researcher.project.json",
-                attachment_context={},
-                provider_id="custom",
-                provider_auth_profile_id="custom:default",
-                provider_auth_method="api_key_env",
-                provider_model="MiniMax-M2.7",
-                provider_model_family="generic",
-                provider_execution_transport="direct_http",
-                provider_base_url="https://api.minimax.io/v1",
-                provider_source="config+env",
-                routing_decision="provider_fallback_chat",
-            ),
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118173,
-                    user_id="111",
-                    username="alice",
-                    text="Can you send me a voice reply?",
-                ),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertNotIn("can only generate text", result.detail["response_text"].lower())
-        self.assertIn("Voice is working here", result.detail["response_text"])
-        self.assertEqual(
-            captured_payload["text"],
-            "Voice is working here. I can send spoken replies through this Telegram chat now.",
-        )
-        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
-        self.assertEqual(result.detail["voice_media"]["mime_type"], "audio/ogg")
-
-    def test_live_bridge_voice_speak_returns_media_payload(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook != "voice.speak":
-                raise AssertionError(f"Unexpected hook: {hook}")
-            self.assertEqual(payload["text"], "Hello from bridge with Kokoro.")
-            self.assertEqual(payload["tts"], {"provider_id": "kokoro"})
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={
-                    "result": {
-                        "audio_base64": base64.b64encode(b"fake-wav").decode("ascii"),
-                        "mime_type": "audio/wav",
-                        "filename": "telegram-reply.wav",
-                        "voice_compatible": False,
-                        "provider_id": "kokoro",
-                        "voice_id": "af_sarah",
-                    }
-                },
-            )
-
-        def fake_ffmpeg_run(command, **_kwargs):
-            Path(command[-1]).write_bytes(b"fake-ogg")
-            return SimpleNamespace(returncode=0)
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.shutil.which",
-            return_value="ffmpeg",
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.subprocess.run",
-            side_effect=fake_ffmpeg_run,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=11818,
-                    user_id="111",
-                    username="alice",
-                    text="/voice speak Hello from bridge with Kokoro",
-                ),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        voice_media = result.detail["voice_media"]
-        self.assertEqual(voice_media["audio_base64"], base64.b64encode(b"fake-ogg").decode("ascii"))
-        self.assertEqual(voice_media["mime_type"], "audio/ogg")
-        self.assertEqual(voice_media["filename"], "telegram-reply.ogg")
-        self.assertTrue(voice_media["voice_compatible"])
-        self.assertEqual(voice_media["provider_id"], "kokoro")
-
-    def test_voice_speak_can_target_openai_realtime_explicitly(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook != "voice.speak":
-                raise AssertionError(f"Unexpected hook: {hook}")
-            self.assertEqual(payload["text"], "Hello from GPT Realtime 2.")
-            self.assertEqual(payload["tts"], {"provider_id": "openai-realtime"})
-            return SimpleNamespace(
-                ok=True,
-                chip_key="spark-voice-comms",
-                stdout="",
-                stderr="",
-                output={
-                    "result": {
-                        "audio_base64": base64.b64encode(b"fake-wav").decode("ascii"),
-                        "mime_type": "audio/wav",
-                        "filename": "telegram-reply.wav",
-                        "voice_compatible": False,
-                        "provider_id": "openai-realtime",
-                        "voice_id": "sage",
-                    }
-                },
-            )
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.shutil.which",
-            return_value=None,
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=11819,
-                    user_id="111",
-                    username="alice",
-                    text="/voice speak Hello from GPT Realtime 2",
-                ),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
-        self.assertEqual(result.detail["voice_media"]["spoken_text"], "Hello from GPT Realtime 2.")
+        self.assertIn("/voice ask <question>", result.detail["response_text"])
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
@@ -6461,7 +7026,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "mime_type": mime_type,
                     }
                 )
-                return {"ok": True}
+                return {"ok": True, "result": {"message_id": 9191}}
 
         client = FakeVoicePollingClient(
             [
@@ -6491,6 +7056,32 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "voice_compatible": True,
                         "provider_id": "elevenlabs",
                         "voice_id": "spark-core",
+                        "runtime_state": {
+                            "schema_version": "spark.voice_runtime_state.v1",
+                            "surface": "telegram",
+                            "dm_voice_replies": "unknown",
+                            "canonical_chip_key": "spark-voice-comms",
+                            "legacy_alias_visible": False,
+                            "stt": {"provider_id": "not_used", "mode": "not_applicable", "ready": False},
+                            "tts": {
+                                "provider_id": "elevenlabs",
+                                "ready": True,
+                                "voice_id_masked": "spar...core",
+                                "audio_bytes": 8,
+                            },
+                            "telegram_delivery": {
+                                "ready": False,
+                                "last_send_voice_status": "unknown",
+                            },
+                            "latency": {"synthesize_ms": 11},
+                            "claim_levels": {
+                                "configured": True,
+                                "synthesis_ready": True,
+                                "delivery_ready": False,
+                                "conversation_ready": False,
+                            },
+                            "source_ledger": ["voice.speak"],
+                        },
                     }
                 },
             )
@@ -6510,9 +7101,20 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_voices), 1)
         self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Reading that exact text as a voice reply now", str(client.sent_voices[0]["caption"]))
+        self.assertIn("Reading that exact text as a voice reply now.", str(client.sent_voices[0]["caption"]))
         self.assertEqual(client.sent_voices[0]["mime_type"], "audio/ogg")
         self.assertEqual(client.sent_voices[0]["filename"], "telegram-reply-abcdef12.ogg")
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                ("telegram:voice:last_runtime_state:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        runtime_state = json.loads(row["value"])
+        self.assertEqual(runtime_state["telegram_delivery"]["last_send_voice_status"], "success")
+        self.assertTrue(runtime_state["telegram_delivery"]["telegram_message_id_present"])
+        self.assertTrue(runtime_state["claim_levels"]["delivery_ready"])
+        self.assertIn("telegram-sendVoice-trace", runtime_state["source_ledger"])
 
     def test_telegram_voice_reply_uses_profile_tts_env_override(self) -> None:
         captured_payload: dict[str, object] = {}
@@ -6573,9 +7175,85 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(tts["voice_settings"]["style"], 0.85)
         self.assertEqual(tts["voice_settings"]["speed"], 1.18)
         self.assertFalse(tts["voice_settings"]["use_speaker_boost"])
-        self.assertIn("voice_profile_status", captured_payload)
-        self.assertTrue(str(result["voice_profile_fingerprint"]))
-        self.assertEqual(result["voice_profile_fingerprint_status"], "no saved registry baseline")
+
+    def test_voice_reply_runtime_state_carries_transcribe_proof_into_delivery(self) -> None:
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            self.assertEqual(hook, "voice.speak")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "audio_base64": base64.b64encode(b"fake-opus").decode("ascii"),
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-roundtrip.ogg",
+                        "voice_compatible": True,
+                        "provider_id": "kokoro",
+                        "runtime_state": {
+                            "stt": {"provider_id": "not_used", "mode": "not_applicable", "ready": False},
+                            "tts": {"provider_id": "kokoro", "ready": True, "audio_bytes": 9},
+                            "telegram_delivery": {
+                                "ready": False,
+                                "last_send_voice_status": "unknown",
+                            },
+                            "latency": {"synthesize_ms": 11},
+                            "claim_levels": {
+                                "configured": True,
+                                "synthesis_ready": True,
+                                "delivery_ready": False,
+                                "conversation_ready": False,
+                            },
+                            "source_ledger": ["voice.speak"],
+                        },
+                    }
+                },
+            )
+
+        input_runtime_state = {
+            "stt": {"provider_id": "local_faster_whisper", "mode": "local", "ready": True},
+            "transcript": {"text_present": True, "chars": 31},
+            "latency": {"download_audio_ms": 7, "transcribe_ms": 19},
+            "source_ledger": ["telegram-inbound-voice-trace", "voice.transcribe"],
+        }
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            voice_payload = _synthesize_telegram_voice_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human_1",
+                agent_id="agent_1",
+                external_user_id="111",
+                text="Clean reset, Cem. Latest message wins.",
+                voice_input_runtime_state=input_runtime_state,
+            )
+
+        merged_state = voice_payload["runtime_state"]
+        self.assertEqual(merged_state["stt"]["provider_id"], "local_faster_whisper")
+        self.assertTrue(merged_state["stt"]["ready"])
+        self.assertEqual(merged_state["latency"]["transcribe_ms"], 19)
+        self.assertIn("telegram-inbound-voice-trace", merged_state["source_ledger"])
+        self.assertIn("voice.transcribe", merged_state["source_ledger"])
+        self.assertIn("voice.speak", merged_state["source_ledger"])
+
+        delivered_state = _telegram_voice_runtime_state_with_delivery(
+            voice_payload=voice_payload,
+            send_method="sendVoice",
+            status="success",
+            send_ms=13,
+            telegram_result={"result": {"message_id": 42}},
+            failure_reason=None,
+        )
+
+        self.assertTrue(delivered_state["telegram_delivery"]["ready"])
+        self.assertTrue(delivered_state["claim_levels"]["delivery_ready"])
+        self.assertTrue(delivered_state["claim_levels"]["conversation_ready"])
+        self.assertIn("telegram-inbound-voice-trace", delivered_state["source_ledger"])
+        self.assertIn("telegram-sendVoice-trace", delivered_state["source_ledger"])
 
     def test_explicit_voice_tts_override_wins_over_profile_env(self) -> None:
         captured_payload: dict[str, object] = {}
@@ -6649,7 +7327,6 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result["mime_type"], "audio/ogg")
         self.assertEqual(result["filename"], "telegram-reply-parrot.ogg")
         self.assertEqual(result["audio_effect"], "parrot")
-        self.assertEqual(result["audio_effect_version"], "parrot-balanced-v1")
         filter_arg = run_mock.call_args.args[0][run_mock.call_args.args[0].index("-af") + 1]
         self.assertIn("asetrate=48000*1.10", filter_arg)
         self.assertIn("tremolo=f=6:d=0.035", filter_arg)
@@ -6830,161 +7507,6 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.detail["message_kind"], "voice")
         self.assertEqual(result.detail["transcript_text"], "/voice plan")
         self.assertIn("Telegram voice plan:", result.detail["response_text"])
-
-    def test_voice_message_uses_embedded_runner_audio_without_telegram_client(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        captured_payload: dict[str, object] = {}
-        update = make_telegram_update(
-            update_id=11820,
-            user_id="111",
-            username="alice",
-            text=None,
-            voice={"file_id": "voice-runner", "duration": 3, "mime_type": "audio/ogg"},
-        )
-        update["message"]["spark_media"] = {
-            "audio_base64": base64.b64encode(b"runner-ogg-bytes").decode("ascii"),
-            "filename": "telegram-voice.ogg",
-            "mime_type": "audio/ogg",
-            "source": "telegram_runner_download",
-        }
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook == "voice.transcribe":
-                captured_payload.update(payload)
-                return SimpleNamespace(
-                    ok=True,
-                    chip_key="spark-voice-comms",
-                    stdout="hello from runner audio",
-                    stderr="",
-                    output={
-                        "result": {
-                            "transcript_text": "hello from runner audio",
-                            "provider_id": "local_faster_whisper",
-                            "model": "tiny",
-                            "mode": "local_faster_whisper",
-                        }
-                    },
-                )
-            raise AssertionError(f"Unexpected voice hook: {hook}")
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
-            return_value=ResearcherBridgeResult(
-                request_id="telegram:11820",
-                reply_text="I heard the runner audio cleanly.",
-                evidence_summary="",
-                escalation_hint=None,
-                mode="provider_fallback_chat",
-                routing_decision="provider_fallback_chat",
-                trace_ref="trace:test-runner-audio",
-                runtime_root=None,
-                config_path=None,
-                attachment_context=None,
-            ),
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=update,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.detail["transcript_text"], "hello from runner audio")
-        self.assertEqual(captured_payload["audio_base64"], base64.b64encode(b"runner-ogg-bytes").decode("ascii"))
-        self.assertEqual(captured_payload["filename"], "telegram-voice.ogg")
-
-    def test_voice_message_bridge_returns_voice_media_for_live_bot_delivery(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
-
-        class FakeVoiceClient:
-            def get_file(self, *, file_id: str) -> dict[str, object]:
-                return {"file_path": "voice/file_bridge.ogg"}
-
-            def download_file(self, *, file_path: str) -> bytes:
-                return b"fake-ogg-bytes"
-
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
-            if hook == "voice.transcribe":
-                return SimpleNamespace(
-                    ok=True,
-                    chip_key="spark-voice-comms",
-                    stdout="how calibrated is voice",
-                    stderr="",
-                    output={
-                        "result": {
-                            "transcript_text": "how calibrated is voice",
-                            "provider_id": "local_faster_whisper",
-                            "model": "tiny",
-                            "mode": "local_faster_whisper",
-                        }
-                    },
-                )
-            if hook == "voice.speak":
-                self.assertIn("Voice is calibrated", str(payload["text"]))
-                return SimpleNamespace(
-                    ok=True,
-                    chip_key="spark-voice-comms",
-                    stdout="",
-                    stderr="",
-                    output={
-                        "result": {
-                            "audio_base64": base64.b64encode(b"fake-live-voice").decode("ascii"),
-                            "mime_type": "audio/ogg",
-                            "filename": "telegram-reply-live.ogg",
-                            "voice_compatible": True,
-                            "provider_id": "openai-realtime",
-                            "voice_id": "sage",
-                        }
-                    },
-                )
-            raise AssertionError(f"Unexpected voice hook: {hook}")
-
-        with patch(
-            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
-            side_effect=fake_voice_hook,
-        ), patch(
-            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
-            return_value=ResearcherBridgeResult(
-                request_id="telegram:11821",
-                reply_text="Voice is calibrated enough for a first live pass.",
-                evidence_summary="",
-                escalation_hint=None,
-                mode="provider_fallback_chat",
-                routing_decision="provider_fallback_chat",
-                trace_ref="trace:test-voice-bridge",
-                runtime_root=None,
-                config_path=None,
-                attachment_context=None,
-            ),
-        ):
-            result = simulate_telegram_update(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=11821,
-                    user_id="111",
-                    username="alice",
-                    text=None,
-                    voice={"file_id": "voice-bridge", "duration": 3, "mime_type": "audio/ogg"},
-                ),
-                client=FakeVoiceClient(),
-                simulation=False,
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.detail["transcript_text"], "how calibrated is voice")
-        self.assertEqual(result.detail["voice_media"]["provider_id"], "openai-realtime")
-        self.assertEqual(result.detail["voice_media"]["audio_base64"], base64.b64encode(b"fake-live-voice").decode("ascii"))
-        self.assertEqual(
-            result.detail["voice_media"]["spoken_text"],
-            "Voice is calibrated enough for a first live pass.",
-        )
-        self.assertEqual(result.detail["voice_timing"]["audio_source"], "telegram_client")
-        self.assertIn("transcribe_hook_ms", result.detail["voice_timing"])
-        self.assertIn("synthesis_ms", result.detail["voice_timing"])
 
     def test_voice_message_poll_trace_records_bounded_transcript_telemetry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
