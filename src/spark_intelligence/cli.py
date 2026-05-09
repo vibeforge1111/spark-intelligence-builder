@@ -1375,6 +1375,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="pending",
         help="Memory approval inbox filter",
     )
+    self_panel_parser.add_argument(
+        "--live-claim-json",
+        action="append",
+        default=[],
+        help="Live/current source claim JSON object, repeatable",
+    )
+    self_panel_parser.add_argument(
+        "--context-claim-json",
+        action="append",
+        default=[],
+        help="Retrieved/context source claim JSON object, repeatable",
+    )
     self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_inbox_parser = self_subparsers.add_parser(
         "memory-inbox",
@@ -4476,6 +4488,8 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
+        stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
+        stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
     )
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
     return 0

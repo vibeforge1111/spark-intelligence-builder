@@ -37,3 +37,39 @@ class AgentOperatingPanelCliTests(SparkTestCase):
         self.assertIn("black_box", payload)
         self.assertIn("memory_approval_inbox", payload)
         self.assertIn("stale_context_sweep", payload)
+
+    def test_self_panel_cli_accepts_stale_context_claims(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--live-claim-json",
+            json.dumps(
+                {
+                    "claim_key": "spark_access_level",
+                    "value": "Level 4",
+                    "source": "current_diagnostics",
+                    "freshness": "live_probed",
+                }
+            ),
+            "--context-claim-json",
+            json.dumps(
+                {
+                    "claim_key": "spark_access_level",
+                    "value": "Level 1",
+                    "source": "approved_memory",
+                    "freshness": "stale",
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["stale_context_sweep"]["counts"]["stale"], 1)
+        self.assertEqual(payload["source_ledger"]["counts"]["stale"], 1)
+        contradictions = [
+            section for section in payload["sections"]["sections"] if section["section_id"] == "contradictions"
+        ][0]
+        self.assertEqual(contradictions["status"], "needs_review")

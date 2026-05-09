@@ -93,6 +93,7 @@ Next integrations should consume the existing read-models:
 - Stale sweeps now emit `contradiction_found` events when they record contradiction evidence.
 - Memory approval decisions now emit `user_override_received` events so the black box shows human memory choices.
 - `self memory-inbox` and `self memory-decision` provide the CLI review path for approval-gated memory candidates.
+- `self panel` accepts live/context claim JSON so the shared panel can show stale source conflicts directly.
 - `self route-selection` and `self mission-state` provide the CLI trace path for route choices and mission state changes.
 - `self turn-trace` records a full turn frame, action gate, final-answer drift check, and optional memory candidate into the black box.
 - `self stale-sweep` compares live/context claims and can record `contradiction_found` evidence for the black box.
