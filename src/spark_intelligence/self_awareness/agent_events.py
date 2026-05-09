@@ -312,9 +312,13 @@ def build_agent_black_box_entries(
     *,
     request_id: str | None = None,
     limit: int = 20,
+    external_entries: list[BlackBoxEntry] | None = None,
 ) -> list[BlackBoxEntry]:
     rows = _recent_agent_event_rows(state_db, request_id=request_id, limit=limit)
-    return [_black_box_entry_from_row(row) for row in rows]
+    entries = [_black_box_entry_from_row(row) for row in rows]
+    entries.extend(external_entries or [])
+    entries.sort(key=lambda entry: (entry.created_at or "", entry.event_id), reverse=True)
+    return entries[: max(1, int(limit))]
 
 
 def build_agent_black_box_report(
@@ -322,11 +326,17 @@ def build_agent_black_box_report(
     *,
     request_id: str | None = None,
     limit: int = 20,
+    external_entries: list[BlackBoxEntry] | None = None,
 ) -> AgentBlackBoxReport:
     return AgentBlackBoxReport(
         checked_at=utc_now_iso(),
         request_id=request_id,
-        entries=build_agent_black_box_entries(state_db, request_id=request_id, limit=limit),
+        entries=build_agent_black_box_entries(
+            state_db,
+            request_id=request_id,
+            limit=limit,
+            external_entries=external_entries,
+        ),
     )
 
 

@@ -12,6 +12,7 @@ from spark_intelligence.self_awareness.operating_panel_sections import AgentPane
 from spark_intelligence.self_awareness.operating_source_ledger import AgentSourceLedger, build_agent_source_ledger
 from spark_intelligence.self_awareness.operating_strip import AgentOperatingStrip, build_agent_operating_strip
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
+from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
 from spark_intelligence.self_awareness.stale_context_sweeper import (
     StaleContextSweepReport,
     build_stale_context_sweep,
@@ -120,7 +121,15 @@ def build_agent_operating_panel(
     aoc_payload = aoc.to_payload()
     strip = build_agent_operating_strip(aoc_payload)
     scratchpad = build_agent_scratchpad(aoc_payload)
-    black_box = build_agent_black_box_report(state_db, request_id=request_id)
+    spawner_black_box_entries = read_configured_spawner_black_box_entries(
+        config_manager,
+        request_id=request_id,
+    )
+    black_box = build_agent_black_box_report(
+        state_db,
+        request_id=request_id,
+        external_entries=spawner_black_box_entries,
+    )
     memory_inbox = build_memory_approval_inbox(state_db, status=memory_inbox_status)
     stale_sweep = build_stale_context_sweep(
         live_claims=live_claims,
