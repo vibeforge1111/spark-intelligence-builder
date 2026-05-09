@@ -20,6 +20,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["previous_failure_signal_counts"], {})
         self.assertEqual(panel["root_cause_primary_gap_counts"], {})
         self.assertEqual(panel["root_cause_failure_layer_counts"], {})
+        self.assertEqual(panel["root_cause_owner_surface_counts"], {})
+        self.assertEqual(panel["root_cause_audit_focus_counts"], {})
         self.assertEqual(panel["recent_intake_triggers"], [])
         self.assertEqual(panel["recent_root_causes"], [])
 
@@ -454,6 +456,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["previous_failure_signal_counts"]["previous_response_context_gap"], 1)
         self.assertEqual(panel["root_cause_primary_gap_counts"]["context_capsule_gateway_trace_gap"], 1)
         self.assertEqual(panel["root_cause_failure_layer_counts"]["context_ingress"], 1)
+        self.assertEqual(panel["root_cause_owner_surface_counts"]["telegram_gateway_to_context_capsule"], 1)
+        self.assertEqual(panel["root_cause_audit_focus_counts"]["context_capsule_source_ledger"], 1)
         self.assertEqual(panel["creator_alignment"]["status"], "aligned_candidate")
         self.assertIn("specialization_path", panel["creator_alignment"]["artifact_targets"])
         self.assertEqual(panel["creator_alignment"]["validation_issue_count"], 0)

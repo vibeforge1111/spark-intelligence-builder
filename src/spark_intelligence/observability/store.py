@@ -3269,6 +3269,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "previous_failure_signal_counts": {},
             "root_cause_primary_gap_counts": {},
             "root_cause_failure_layer_counts": {},
+            "root_cause_owner_surface_counts": {},
+            "root_cause_audit_focus_counts": {},
             "creator_alignment": {
                 "status": "no_data",
                 "artifact_targets": [],
@@ -3289,6 +3291,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     previous_failure_signal_counts: dict[str, int] = {}
     root_cause_primary_gap_counts: dict[str, int] = {}
     root_cause_failure_layer_counts: dict[str, int] = {}
+    root_cause_owner_surface_counts: dict[str, int] = {}
+    root_cause_audit_focus_counts: dict[str, int] = {}
     recent_intakes: list[dict[str, Any]] = []
     recent_root_causes: list[dict[str, Any]] = []
     humans: set[str] = set()
@@ -3337,6 +3341,14 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             if root_cause_failure_layer:
                 root_cause_failure_layer_counts[root_cause_failure_layer] = (
                     root_cause_failure_layer_counts.get(root_cause_failure_layer, 0) + 1
+                )
+            if root_cause_owner_surface:
+                root_cause_owner_surface_counts[root_cause_owner_surface] = (
+                    root_cause_owner_surface_counts.get(root_cause_owner_surface, 0) + 1
+                )
+            for audit_focus in root_cause_audit_focus:
+                root_cause_audit_focus_counts[audit_focus] = (
+                    root_cause_audit_focus_counts.get(audit_focus, 0) + 1
                 )
             recent_root_causes.append(
                 {
@@ -3442,6 +3454,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
         "root_cause_primary_gap_counts": _top_counts(root_cause_primary_gap_counts),
         "root_cause_failure_layer_counts": _top_counts(root_cause_failure_layer_counts),
+        "root_cause_owner_surface_counts": _top_counts(root_cause_owner_surface_counts),
+        "root_cause_audit_focus_counts": _top_counts(root_cause_audit_focus_counts),
         "creator_alignment": latest.get("creator_alignment") or {},
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_root_causes": list(reversed(recent_root_causes))[:5],
