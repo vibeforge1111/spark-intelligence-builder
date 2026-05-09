@@ -15,6 +15,15 @@ class AgentTurnRecorderTests(SparkTestCase):
             user_message="Any other thing you'd build on top of this?",
             proposed_action="start_mission",
             draft_answer="Spark picked up the build. Mission: mission-1778325245851.",
+            source_refs=[
+                {
+                    "source": "current_diagnostics",
+                    "role": "health_truth",
+                    "freshness": "live_probed",
+                    "source_ref": "diagnostics:scan-1",
+                    "summary": "Builder healthy, Browser unavailable.",
+                }
+            ],
             memory_candidate={
                 "text": "AOC should be a shared read-model, not a new brain.",
                 "memory_role": "belief",
@@ -28,8 +37,11 @@ class AgentTurnRecorderTests(SparkTestCase):
         self.assertEqual(trace.frame.current_mode, "concept_chat")
         self.assertEqual(trace.action_gate.decision, "blocked")
         self.assertTrue(trace.final_answer_check.rewrite_required)
-        self.assertEqual(black_box.to_payload()["counts"]["entries"], 4)
+        self.assertEqual(black_box.to_payload()["counts"]["entries"], 5)
         self.assertEqual(black_box.to_payload()["counts"]["blocker_events"], 2)
+        self.assertTrue(
+            any(entry["event_type"] == "source_used" for entry in black_box.to_payload()["entries"])
+        )
         self.assertEqual(inbox.counts["pending"], 1)
 
     def test_turn_recorder_resolves_option_reference(self) -> None:

@@ -19,6 +19,7 @@ from spark_intelligence.self_awareness.conversation_frame import (
     check_final_answer_drift,
     evaluate_action_gate,
 )
+from spark_intelligence.self_awareness.event_producers import record_source_used_agent_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -49,6 +50,7 @@ def record_agent_turn_trace(
     active_reference_items: list[str] | None = None,
     proposed_action: str | None = None,
     draft_answer: str | None = None,
+    source_refs: list[dict[str, Any]] | None = None,
     memory_candidate: dict[str, Any] | None = None,
 ) -> AgentTurnTrace:
     frame = build_conversation_operating_frame(
@@ -92,6 +94,25 @@ def record_agent_turn_trace(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+            )
+        )
+    for source_ref in list(source_refs or []):
+        if not isinstance(source_ref, dict):
+            continue
+        event_ids.append(
+            record_source_used_agent_event(
+                state_db,
+                source=str(source_ref.get("source") or ""),
+                role=str(source_ref.get("role") or "supporting_evidence"),
+                freshness=str(source_ref.get("freshness") or "unknown"),
+                source_ref=str(source_ref.get("source_ref") or ""),
+                summary=str(source_ref.get("summary") or ""),
+                user_intent=frame.user_intent,
+                selected_route=frame.allowed_next_actions[0] if frame.allowed_next_actions else "",
+                request_id=str(request_id or ""),
+                session_id=str(session_id or ""),
+                human_id=str(human_id or ""),
+                actor_id=str(agent_id or "turn_recorder"),
             )
         )
     if memory_candidate:

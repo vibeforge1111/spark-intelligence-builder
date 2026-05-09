@@ -98,7 +98,7 @@ Next integrations should consume the existing read-models:
 - `self panel` accepts live/context claim JSON so the shared panel can show stale source conflicts directly.
 - `self source-used` records source-ledger evidence such as diagnostics, memory, wiki, or mission trace as `source_used`.
 - `self route-selection` and `self mission-state` provide the CLI trace path for route choices and mission state changes.
-- `self turn-trace` records a full turn frame, action gate, final-answer drift check, and optional memory candidate into the black box.
+- `self turn-trace` records a full turn frame, action gate, final-answer drift check, optional source-used evidence, and optional memory candidate into the black box.
 - `self stale-sweep` compares live/context claims and can record `contradiction_found` evidence for the black box.
 - `diagnostics scan --record-aoc-events` records current diagnostic service checks as live-probed `capability_probed` events for the AOC black box.
 - `mission plan --record-aoc-events` records the Mission Control route choice as `route_selected` evidence for the AOC black box.

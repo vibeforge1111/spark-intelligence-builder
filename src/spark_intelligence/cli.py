@@ -1509,6 +1509,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Visible option/reference item, repeatable for resolving 'option 2' style turns",
     )
     self_turn_trace_parser.add_argument("--memory-candidate-json", default="", help="Optional memory candidate JSON object")
+    self_turn_trace_parser.add_argument(
+        "--source-json",
+        action="append",
+        default=[],
+        help="Source-used JSON object with source, role, freshness, source_ref, and summary; repeatable",
+    )
     self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
     self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
     self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
@@ -4737,6 +4743,7 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
         proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
         draft_answer=getattr(args, "draft_answer", None),
+        source_refs=_parse_json_object_values(list(getattr(args, "source_json", []) or [])),
         memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
     )
     payload = trace.to_payload()

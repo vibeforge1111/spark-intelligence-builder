@@ -18,6 +18,16 @@ class TurnTraceCliTests(SparkTestCase):
             "start_mission",
             "--draft-answer",
             "Spark picked up the build. Mission: mission-1778325245851.",
+            "--source-json",
+            json.dumps(
+                {
+                    "source": "current_diagnostics",
+                    "role": "health_truth",
+                    "freshness": "live_probed",
+                    "source_ref": "diagnostics:scan-1",
+                    "summary": "Builder healthy, Browser unavailable.",
+                }
+            ),
             "--memory-candidate-json",
             json.dumps(
                 {
@@ -37,7 +47,7 @@ class TurnTraceCliTests(SparkTestCase):
         self.assertEqual(trace_payload["frame"]["user_intent"], "answer")
         self.assertEqual(trace_payload["action_gate"]["decision"], "blocked")
         self.assertEqual(trace_payload["final_answer_check"]["drift_type"], "unrequested_mission_status")
-        self.assertEqual(len(trace_payload["event_ids"]), 4)
+        self.assertEqual(len(trace_payload["event_ids"]), 5)
 
         exit_code, stdout, stderr = self.run_cli(
             "self",
@@ -57,5 +67,6 @@ class TurnTraceCliTests(SparkTestCase):
         self.assertIn("task_intent_detected", event_types)
         self.assertIn("blocker_detected", event_types)
         self.assertIn("agent_drift_detected", event_types)
+        self.assertIn("source_used", event_types)
         self.assertIn("memory_candidate_created", event_types)
         self.assertEqual(panel_payload["memory_approval_inbox"]["counts"]["pending"], 1)
