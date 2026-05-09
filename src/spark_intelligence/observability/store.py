@@ -3531,9 +3531,10 @@ def _memory_doctor_repair_priority(
         ),
         {},
     )
+    repeated = top_owner_count > 1
     return {
-        "status": "ready",
-        "basis": "repeated_root_cause_owner_surface",
+        "status": "ready" if repeated else "candidate",
+        "basis": "repeated_root_cause_owner_surface" if repeated else "single_root_cause_owner_surface",
         "owner_surface": top_owner_surface,
         "owner_surface_count": top_owner_count,
         "audit_focus": top_audit_focus,

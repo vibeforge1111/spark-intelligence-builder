@@ -459,7 +459,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["root_cause_failure_layer_counts"]["context_ingress"], 1)
         self.assertEqual(panel["root_cause_owner_surface_counts"]["telegram_gateway_to_context_capsule"], 1)
         self.assertEqual(panel["root_cause_audit_focus_counts"]["context_capsule_source_ledger"], 1)
-        self.assertEqual(panel["repair_priority"]["status"], "ready")
+        self.assertEqual(panel["repair_priority"]["status"], "candidate")
+        self.assertEqual(panel["repair_priority"]["basis"], "single_root_cause_owner_surface")
         self.assertEqual(panel["repair_priority"]["owner_surface"], "telegram_gateway_to_context_capsule")
         self.assertEqual(panel["repair_priority"]["audit_focus"], "context_capsule_source_ledger")
         self.assertEqual(panel["repair_priority"]["repair_action"], "Repair the recent-conversation capsule path.")
@@ -478,3 +479,39 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["recent_root_causes"][0]["repair_action"], "Repair the recent-conversation capsule path.")
         self.assertEqual(panel["latest"]["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(panel["latest"]["topic"], "Maya")
+
+    def test_watchtower_marks_repeated_memory_doctor_repair_priority_ready(self) -> None:
+        for index in range(2):
+            record_event(
+                self.state_db,
+                event_type="memory_doctor_brain_evaluated",
+                component="memory_doctor",
+                summary=f"Memory Doctor Brain evaluated repeated repair surface {index}",
+                human_id="human-1",
+                facts={
+                    "authority": "observability_non_authoritative",
+                    "coverage_score": 70,
+                    "missing_senses": ["gateway_trace_lineage"],
+                    "gap_names": ["gateway_trace_visibility_gap"],
+                    "highest_severity": "medium",
+                    "topic": "Cedar Compass 509",
+                    "request_id": f"req-repeat-{index}",
+                    "root_cause_status": "identified",
+                    "root_cause_primary_gap": "context_capsule_gateway_trace_gap",
+                    "root_cause_failure_layer": "context_ingress",
+                    "root_cause_chain": ["telegram_gateway", "context_capsule", "provider_context"],
+                    "root_cause_confidence": "high",
+                    "root_cause_summary": "gateway -> provider context gap",
+                    "root_cause_owner_surface": "telegram_gateway_to_context_capsule",
+                    "root_cause_audit_focus": ["gateway_trace", "context_capsule_source_ledger"],
+                    "root_cause_repair_action": "Repair the recent-conversation capsule path.",
+                    "root_cause_replay_probe": "repeat the same two-turn Telegram close-turn recall probe",
+                },
+            )
+
+        panel = build_watchtower_snapshot(self.state_db)["panels"]["memory_doctor_brain"]
+
+        self.assertEqual(panel["repair_priority"]["status"], "ready")
+        self.assertEqual(panel["repair_priority"]["basis"], "repeated_root_cause_owner_surface")
+        self.assertEqual(panel["repair_priority"]["owner_surface_count"], 2)
+        self.assertEqual(panel["repair_priority"]["owner_surface"], "telegram_gateway_to_context_capsule")
