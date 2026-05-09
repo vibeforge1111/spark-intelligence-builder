@@ -4920,9 +4920,14 @@ def _memory_doctor_distress_score(simplified_text: str) -> int:
     if not text:
         return 0
     score = 0
-    if re.search(r"\b(?:memory|context|thread|previous|last|what i just said|what we were talking about)\b", text):
+    if re.search(
+        r"\b(?:memory|context|thread|previous|last|what i just said|what i just told you|what we were talking about)\b",
+        text,
+    ):
         score += 2
     if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused)\b", text):
+        score += 2
+    if re.search(r"\b(?:i just told you|just told you|already told you|i already said|already said that)\b", text):
         score += 2
     if re.search(r"\b(?:not responding|stopped responding|are you there|hello|wrong|again|seriously|come on)\b", text):
         score += 1
@@ -4953,6 +4958,9 @@ def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) 
         "lost context",
         "context capsule",
         "what did you just tell me",
+        "what should i call you",
+        "what should i call you instead",
+        "tell me again",
     )
     if any(marker in user_preview for marker in close_turn_markers):
         return True

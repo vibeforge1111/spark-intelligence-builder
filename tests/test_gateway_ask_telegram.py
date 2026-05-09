@@ -245,6 +245,79 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
         self.assertNotIn("runtime_command_metadata", detail)
 
+    def test_gateway_ask_telegram_runs_memory_doctor_for_close_turn_repeat_frustration(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-name-repeat",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "not Maya",
+                "response_preview": "Got it, you're not Maya. What should I call you instead?",
+                "bridge_mode": "external_autodiscovered",
+                "routing_decision": "researcher_advisory",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="i just told you",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        metadata = detail["runtime_command_metadata"]
+        self.assertEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-name-repeat.", detail["response_text"])
+        self.assertEqual(metadata["diagnosed_request_id"], "req-name-repeat")
+        self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
+        self.assertGreaterEqual(metadata["contextual_trigger_score"], 3)
+
+    def test_gateway_ask_telegram_runs_memory_doctor_for_strong_context_loss_complaint(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-context-loss-prior",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "Can you summarize today's plan?",
+                "response_preview": "Sure. The current plan is to keep working through the memory diagnostics.",
+                "bridge_mode": "external_autodiscovered",
+                "routing_decision": "researcher_advisory",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="you lost the thread",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        metadata = detail["runtime_command_metadata"]
+        self.assertIn("Memory Doctor:", detail["response_text"].splitlines()[0])
+        self.assertEqual(metadata["diagnosed_request_id"], "req-context-loss-prior")
+        self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
+        self.assertGreaterEqual(metadata["contextual_trigger_score"], 4)
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
