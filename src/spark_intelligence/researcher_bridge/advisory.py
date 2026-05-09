@@ -5264,6 +5264,77 @@ def _maybe_apply_swarm_recommendation(
     return reply_text, evidence_summary, escalation_hint, routing_decision
 
 
+def _maybe_answer_close_turn_recall_from_recent_context(
+    *,
+    user_message: str,
+    recent_conversation_context: str,
+) -> str | None:
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered or not str(recent_conversation_context or "").strip():
+        return None
+    close_turn_markers = (
+        "what did i just",
+        "what phrase did i",
+        "what did you just",
+        "i just told you",
+        "last thing i said",
+        "previous message",
+        "message right before",
+    )
+    if not any(marker in lowered for marker in close_turn_markers):
+        return None
+
+    previous_user_message = _recent_context_value(recent_conversation_context, "latest_user_message")
+    if not previous_user_message:
+        previous_user_message = _recent_context_value(recent_conversation_context, "previous_visible_turn.text")
+    if not previous_user_message:
+        return None
+
+    if "phrase" in lowered:
+        phrase = _extract_phrase_from_recent_message(previous_user_message)
+        if phrase:
+            return phrase
+
+    recalled = _truncate_recent_recall(previous_user_message)
+    if "answer only" in lowered or "answer with only" in lowered:
+        return recalled
+    return f"You just told me: {recalled}"
+
+
+def _recent_context_value(recent_conversation_context: str, key: str) -> str:
+    prefix = f"{key}="
+    for raw_line in str(recent_conversation_context or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return ""
+
+
+def _extract_phrase_from_recent_message(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    patterns = (
+        r"\b(?:the\s+)?phrase\s+(?:is|was|=|:)\s+(.+?)(?:[.!?](?:\s|$)|$)",
+        r"\b(?:probe\s+)?phrase\s+(?:is|was|=|:)\s+(.+?)(?:[.!?](?:\s|$)|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        phrase = match.group(1).strip().strip("\"'` ")
+        if 0 < len(phrase) <= 120:
+            return phrase
+    return ""
+
+
+def _truncate_recent_recall(text: str, *, limit: int = 360) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3].rstrip()}..."
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -13306,6 +13377,10 @@ def build_researcher_reply(
         channel_kind=channel_kind,
         user_message=user_message,
     )
+    active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
+    active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
+    active_chip_evaluate_used = active_chip_evaluate is not None
+    raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
     context_capsule_obj = build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
@@ -13343,6 +13418,62 @@ def build_researcher_reply(
                 "source_ref": "spark_context_capsule.v1",
             },
         )
+    close_turn_recall_reply = _maybe_answer_close_turn_recall_from_recent_context(
+        user_message=user_message,
+        recent_conversation_context=recent_conversation_context,
+    )
+    if close_turn_recall_reply is not None:
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        routing_decision = "recent_conversation_recall"
+        evidence_summary = "status=recent_conversation recall=direct"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="recent_conversation_recall",
+            routing_decision=routing_decision,
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered close-turn recall from recent conversation.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=routing_decision,
+            facts=_bridge_event_facts(
+                routing_decision=routing_decision,
+                bridge_mode="recent_conversation_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                raw_chip_metrics=raw_chip_metrics,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=close_turn_recall_reply,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="recent_conversation_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision=routing_decision,
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -13360,10 +13491,6 @@ def build_researcher_reply(
         user_instructions_context=user_instructions_context,
         iteration_draft_context=iteration_draft_context,
     )
-    active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
-    active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
-    active_chip_evaluate_used = active_chip_evaluate is not None
-    raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
     screened_context = screen_model_visible_text(
         state_db=state_db,
         source_kind="contextual_task",

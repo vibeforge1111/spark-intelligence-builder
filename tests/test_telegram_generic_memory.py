@@ -5133,6 +5133,91 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "gateway_to_context_capsule_gap",
         )
 
+    def test_memory_doctor_flags_close_turn_answer_grounding_gap(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-close-turn-seed",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-close-turn",
+                "user_message_preview": "The probe phrase is Cedar Compass 509.",
+                "response_preview": "Noted.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-close-turn-current",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-close-turn",
+                "user_message_preview": "What phrase did I just give you? Answer with only the phrase.",
+                "response_preview": "Beneficial single mutations may compound when applied together.",
+                "bridge_mode": "external_autodiscovered",
+                "routing_decision": "researcher_advisory",
+                "evidence_summary": "status=partial packets=1 stability=provisional_only",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            request_id="req-close-turn-current",
+            human_id="human-1",
+            facts={
+                "source_counts": {
+                    "current_state": 1,
+                    "recent_conversation": 2,
+                },
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 1, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": True,
+                        "count": 2,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Cedar Compass 509",
+        )
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertTrue(doctor_report.context_capsule["gateway_trace"]["answer_topic_miss"])
+        self.assertIn("context_to_answer_grounding_gap", doctor_report.to_text())
+        self.assertIn("Answer grounding: recent context contained the expected topic", doctor_report.to_telegram_text())
+        self.assertEqual(
+            doctor_report.movement_trace["gaps"][0]["name"],
+            "context_to_answer_grounding_gap",
+        )
+        self.assertEqual(doctor_report.benchmark["weakest_case"]["category"], "close_turn_recall")
+        self.assertEqual(doctor_report.benchmark["weakest_case"]["status"], "fail")
+
+        unrelated_topic_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Maya",
+        )
+
+        self.assertTrue(unrelated_topic_report.ok, unrelated_topic_report.to_json())
+        self.assertFalse(unrelated_topic_report.context_capsule["gateway_trace"]["route_contamination"])
+
     def test_build_researcher_reply_preserves_generic_decision_history_and_delete_lifecycle(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -75,6 +75,33 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         self.assertEqual(cases["abstention"]["status"], "fail")
         self.assertEqual(benchmark["weakest_case"]["status"], "fail")
 
+    def test_scores_close_turn_answer_grounding_failure(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=1,
+            scanned_multi_delete_turns=0,
+            findings=[],
+            active_profile={"status": "checked", "facts": {"preferred_name": "Cem"}},
+            topic_scan={"status": "checked", "topic": "Cedar Compass 509"},
+            context_capsule={
+                "status": "checked",
+                "recent_conversation_count": 2,
+                "gateway_trace": {
+                    "status": "checked",
+                    "recent_gateway_message_count": 1,
+                    "lineage_gap": False,
+                    "answer_topic_miss": True,
+                    "route_contamination": True,
+                },
+            },
+            movement_trace={"stages": [{"stage": "memory_reads", "abstained_count": 1}]},
+            dashboard={"abstention_reasons": ["not_found"]},
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["close_turn_recall"]["status"], "fail")
+        self.assertIn("visible answer ignored", cases["close_turn_recall"]["detail"])
+        self.assertEqual(benchmark["weakest_case"]["category"], "close_turn_recall")
+
 
 if __name__ == "__main__":
     unittest.main()

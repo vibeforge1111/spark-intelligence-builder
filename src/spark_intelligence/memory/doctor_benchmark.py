@@ -72,6 +72,26 @@ def _score_close_turn_recall(*, context_capsule: dict[str, object]) -> dict[str,
             "No provider context capsule was available.",
             "send a Telegram turn that reaches provider context and rerun Memory Doctor",
         )
+    if gateway_trace.get("answer_topic_miss"):
+        return _case(
+            "close_turn_recall",
+            "close_turn_recall",
+            25,
+            0.0,
+            "fail",
+            "Recent conversation reached the provider capsule, but the visible answer ignored the expected close-turn topic.",
+            "fix answer arbitration and replay the same two-turn close-turn probe",
+        )
+    if gateway_trace.get("route_contamination"):
+        return _case(
+            "close_turn_recall",
+            "close_turn_recall",
+            25,
+            0.0,
+            "fail",
+            "Close-turn recall routed through provisional researcher advisory despite recent-conversation context.",
+            "route close-turn recall to grounded conversational/provider recall before researcher packets",
+        )
     if gateway_trace.get("lineage_gap"):
         return _case(
             "close_turn_recall",

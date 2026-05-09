@@ -154,6 +154,15 @@ class MemoryDoctorReport:
             elif recent_count == 0:
                 lines.append("Context capsule: no recent-conversation turns in the latest provider capsule.")
             if isinstance(gateway_trace, dict):
+                if gateway_trace.get("answer_topic_miss"):
+                    lines.append(
+                        "Answer grounding: recent context contained the expected topic, "
+                        "but the delivered reply did not use it."
+                    )
+                elif gateway_trace.get("route_contamination"):
+                    lines.append(
+                        "Answer grounding: close-turn recall routed through provisional researcher advisory."
+                    )
                 cross_scope = gateway_trace.get("cross_scope_lineage")
                 if isinstance(cross_scope, dict) and cross_scope.get("status") == "checked":
                     lines.append(
@@ -306,6 +315,7 @@ def run_memory_doctor(
         context_capsule_events,
         config_manager=config_manager,
         human_id=human_id,
+        topic=topic,
     )
     dashboard = _build_dashboard_summary(state_db)
     movement_trace = _build_movement_trace(
@@ -656,6 +666,7 @@ def _build_context_capsule_audit(
     *,
     config_manager: Any | None,
     human_id: str | None,
+    topic: str | None,
 ) -> dict[str, object]:
     if not events:
         return {"status": "not_found"}
@@ -700,6 +711,7 @@ def _build_context_capsule_audit(
         config_manager=config_manager,
         capsule_request_id=str(selected.get("request_id") or ""),
         capsule_recent_conversation_count=int(source_counts.get("recent_conversation") or 0),
+        topic=topic,
     )
     return result
 
@@ -709,6 +721,7 @@ def _build_gateway_trace_audit(
     config_manager: Any | None,
     capsule_request_id: str,
     capsule_recent_conversation_count: int,
+    topic: str | None,
 ) -> dict[str, object]:
     if config_manager is None:
         return {"status": "not_requested"}
@@ -736,7 +749,14 @@ def _build_gateway_trace_audit(
     session_id = str(target.get("session_id") or "").strip()
     chat_id = str(target.get("chat_id") or "").strip()
     telegram_user_id = str(target.get("telegram_user_id") or "").strip()
+    target_user_preview = str(target.get("user_message_preview") or "").strip()
+    target_response_preview = str(target.get("response_preview") or "").strip()
+    target_routing_decision = str(target.get("routing_decision") or "").strip()
+    target_bridge_mode = str(target.get("bridge_mode") or "").strip()
+    target_evidence_summary = str(target.get("evidence_summary") or "").strip()
     recent_messages: list[dict[str, object]] = []
+    topic_recent_message: dict[str, object] | None = None
+    normalized_topic = str(topic or "").strip()
     for record in reversed(traces[:target_index]):
         if str(record.get("event") or "") != "telegram_update_processed":
             continue
@@ -758,14 +778,50 @@ def _build_gateway_trace_audit(
                 "routing_decision": record.get("routing_decision"),
             }
         )
+        if (
+            topic_recent_message is None
+            and normalized_topic
+            and normalized_topic.lower() in preview.lower()
+        ):
+            topic_recent_message = recent_messages[-1]
         if len(recent_messages) >= 5:
             break
+    close_turn_recall_question = _looks_like_close_turn_recall_question(target_user_preview)
+    provisional_researcher_route = _is_provisional_researcher_route(
+        bridge_mode=target_bridge_mode,
+        routing_decision=target_routing_decision,
+        evidence_summary=target_evidence_summary,
+    )
+    answer_topic_miss = bool(
+        close_turn_recall_question
+        and normalized_topic
+        and topic_recent_message is not None
+        and normalized_topic.lower() not in target_response_preview.lower()
+    )
+    route_contamination = bool(
+        close_turn_recall_question
+        and provisional_researcher_route
+        and recent_messages
+        and capsule_recent_conversation_count > 0
+        and (not normalized_topic or topic_recent_message is not None)
+    )
 
     return {
         "status": "checked",
         "request_id": capsule_request_id,
         "target_recorded_at": target.get("recorded_at"),
         "session_id": session_id,
+        "target_user_message_preview": _shorten(target_user_preview, 160),
+        "target_response_preview": _shorten(target_response_preview, 160),
+        "target_bridge_mode": target_bridge_mode or None,
+        "target_routing_decision": target_routing_decision or None,
+        "target_evidence_summary": target_evidence_summary or None,
+        "close_turn_recall_question": close_turn_recall_question,
+        "provisional_researcher_route": provisional_researcher_route,
+        "answer_topic_miss": answer_topic_miss,
+        "route_contamination": route_contamination,
+        "expected_topic": normalized_topic or None,
+        "topic_source_request_id": topic_recent_message.get("request_id") if topic_recent_message else None,
         "recent_gateway_message_count": len(recent_messages),
         "capsule_recent_conversation_count": capsule_recent_conversation_count,
         "lineage_gap": bool(recent_messages and capsule_recent_conversation_count == 0),
@@ -861,6 +917,36 @@ def _gateway_identity_scope(record: dict[str, object]) -> tuple[str | None, str 
     return None, None
 
 
+def _looks_like_close_turn_recall_question(text: str) -> bool:
+    normalized = text.lower()
+    if not normalized.strip():
+        return False
+    recall_markers = (
+        "what did i just",
+        "what phrase did i",
+        "what did you just",
+        "i just told you",
+        "message right before",
+        "last thing i said",
+        "previous message",
+    )
+    return any(marker in normalized for marker in recall_markers)
+
+
+def _is_provisional_researcher_route(
+    *,
+    bridge_mode: str,
+    routing_decision: str,
+    evidence_summary: str,
+) -> bool:
+    route_text = f"{bridge_mode} {routing_decision}".lower()
+    evidence_text = evidence_summary.lower()
+    return (
+        "researcher_advisory" in route_text
+        or ("status=partial" in evidence_text and "provisional" in evidence_text)
+    )
+
+
 def _stable_hash(value: str) -> str:
     import hashlib
 
@@ -874,9 +960,9 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
     if gateway_trace.get("lineage_gap"):
         return [
             MemoryDoctorFinding(
-            name="context_capsule_gateway_trace_gap",
-            ok=False,
-            severity="high",
+                name="context_capsule_gateway_trace_gap",
+                ok=False,
+                severity="high",
                 detail=(
                     "gateway trace had "
                     f"{int(gateway_trace.get('recent_gateway_message_count') or 0)} earlier Telegram message(s) "
@@ -885,8 +971,37 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
                 request_id=str(context_capsule.get("request_id") or "") or None,
             )
         ]
+    findings: list[MemoryDoctorFinding] = []
+    if gateway_trace.get("answer_topic_miss"):
+        findings.append(
+            MemoryDoctorFinding(
+                name="context_to_answer_grounding_gap",
+                ok=False,
+                severity="high",
+                detail=(
+                    "recent context contained "
+                    f"'{gateway_trace.get('expected_topic')}', but the reply did not use it; "
+                    f"route={gateway_trace.get('target_routing_decision') or 'unknown'} "
+                    f"evidence={gateway_trace.get('target_evidence_summary') or 'unknown'}"
+                ),
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        )
+    elif gateway_trace.get("route_contamination"):
+        findings.append(
+            MemoryDoctorFinding(
+                name="close_turn_route_contamination",
+                ok=False,
+                severity="high",
+                detail=(
+                    "close-turn recall reached a context capsule, but the answer route used provisional researcher advisory "
+                    f"instead of grounded conversation/provider recall; route={gateway_trace.get('target_routing_decision') or 'unknown'}"
+                ),
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        )
     if int(context_capsule.get("recent_conversation_count") or 0) != 0:
-        return [
+        findings.append(
             MemoryDoctorFinding(
                 name="context_capsule_recent_conversation",
                 ok=True,
@@ -894,8 +1009,9 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
                 detail="latest provider capsule included recent same-session conversation.",
                 request_id=str(context_capsule.get("request_id") or "") or None,
             )
-        ]
-    return [
+        )
+        return findings
+    findings.append(
         MemoryDoctorFinding(
             name="context_capsule_recent_conversation_gap",
             ok=True,
@@ -906,7 +1022,8 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
             ),
             request_id=str(context_capsule.get("request_id") or "") or None,
         )
-    ]
+    )
+    return findings
 
 
 def _build_movement_trace(
@@ -937,6 +1054,14 @@ def _build_movement_trace(
             if isinstance(gateway_trace, dict)
             else 0,
             "lineage_gap": bool(gateway_trace.get("lineage_gap")) if isinstance(gateway_trace, dict) else False,
+        },
+        {
+            "stage": "answer_grounding",
+            "status": gateway_trace.get("status") or "not_checked",
+            "answer_topic_miss": bool(gateway_trace.get("answer_topic_miss")) if isinstance(gateway_trace, dict) else False,
+            "route_contamination": bool(gateway_trace.get("route_contamination")) if isinstance(gateway_trace, dict) else False,
+            "routing_decision": gateway_trace.get("target_routing_decision") if isinstance(gateway_trace, dict) else None,
+            "bridge_mode": gateway_trace.get("target_bridge_mode") if isinstance(gateway_trace, dict) else None,
         },
         {
             "stage": "cross_session_channel_lineage",
@@ -994,6 +1119,24 @@ def _build_movement_trace(
                 "name": "gateway_to_context_capsule_gap",
                 "severity": "high",
                 "detail": "Telegram gateway has same-session messages that are absent from recent_conversation in the provider capsule.",
+                "request_id": context_capsule.get("request_id"),
+            }
+        )
+    if isinstance(gateway_trace, dict) and gateway_trace.get("answer_topic_miss"):
+        gaps.append(
+            {
+                "name": "context_to_answer_grounding_gap",
+                "severity": "high",
+                "detail": "Recent conversation reached the provider capsule, but the delivered reply ignored the expected close-turn topic.",
+                "request_id": context_capsule.get("request_id"),
+            }
+        )
+    elif isinstance(gateway_trace, dict) and gateway_trace.get("route_contamination"):
+        gaps.append(
+            {
+                "name": "close_turn_route_contamination",
+                "severity": "high",
+                "detail": "Close-turn recall was answered through provisional researcher advisory instead of a grounded conversation route.",
                 "request_id": context_capsule.get("request_id"),
             }
         )
@@ -1099,6 +1242,14 @@ def _build_recommendations(
     if context_lineage_gap:
         recommendations.append(
             "Fix the recent-conversation capsule path: Telegram gateway saw close-turn messages, but provider context did not receive them."
+        )
+    answer_grounding_gap = any(
+        finding.name in {"context_to_answer_grounding_gap", "close_turn_route_contamination"} and not finding.ok
+        for finding in findings
+    )
+    if answer_grounding_gap:
+        recommendations.append(
+            "Fix answer arbitration for close-turn recall: when recent conversation contains the answer, bypass provisional researcher packets and route to grounded conversational/provider recall."
         )
     active_presence = next((finding for finding in findings if finding.name == "topic_active_state_presence"), None)
     if active_presence is not None:

@@ -29,6 +29,18 @@ def load_recent_conversation_turns(
     if not session_id or not channel_kind or turn_limit <= 0:
         return []
 
+    if config_manager is not None:
+        gateway_transcript = _load_gateway_log_turns(
+            config_manager=config_manager,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            request_id=request_id,
+            turn_limit=turn_limit,
+            current_user_message=current_user_message,
+        )
+        if gateway_transcript:
+            return gateway_transcript[-(turn_limit * 2) :]
+
     transcript = _load_builder_event_turns(
         state_db=state_db,
         session_id=session_id,
@@ -39,16 +51,7 @@ def load_recent_conversation_turns(
     if transcript:
         return transcript[-(turn_limit * 2) :]
 
-    if config_manager is None:
-        return []
-    return _load_gateway_log_turns(
-        config_manager=config_manager,
-        session_id=session_id,
-        channel_kind=channel_kind,
-        request_id=request_id,
-        turn_limit=turn_limit,
-        current_user_message=current_user_message,
-    )
+    return []
 
 
 def _load_builder_event_turns(
@@ -198,6 +201,7 @@ def _current_gateway_record_index(
         for index, record in enumerate(records):
             if record.request_id == normalized_request_id:
                 return index
+        return None
 
     current_preview = _compact_preview(current_user_message)
     if not current_preview:
