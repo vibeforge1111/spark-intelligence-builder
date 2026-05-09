@@ -3311,6 +3311,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         root_cause_summary = str(facts.get("root_cause_summary") or "").strip()
         root_cause_chain = _string_list(facts.get("root_cause_chain"))
         root_cause_confidence = str(facts.get("root_cause_confidence") or "").strip()
+        root_cause_confidence_reason = str(facts.get("root_cause_confidence_reason") or "").strip()
+        root_cause_disconfirming_checks = _string_list(facts.get("root_cause_disconfirming_checks"))
         root_cause_owner_surface = str(facts.get("root_cause_owner_surface") or "").strip()
         root_cause_audit_focus = _string_list(facts.get("root_cause_audit_focus"))
         root_cause_repair_action = str(facts.get("root_cause_repair_action") or "").strip()
@@ -3362,6 +3364,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "summary": root_cause_summary or None,
                     "chain": root_cause_chain,
                     "confidence": root_cause_confidence or None,
+                    "confidence_reason": root_cause_confidence_reason or None,
+                    "disconfirming_checks": root_cause_disconfirming_checks,
                     "owner_surface": root_cause_owner_surface or None,
                     "audit_focus": root_cause_audit_focus,
                     "repair_action": root_cause_repair_action or None,

@@ -423,6 +423,10 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "root_cause_failure_layer": "context_ingress",
                 "root_cause_chain": ["telegram_gateway", "context_capsule", "provider_context"],
                 "root_cause_confidence": "high",
+                "root_cause_confidence_reason": "failing finding and movement trace gap agree",
+                "root_cause_disconfirming_checks": [
+                    "provider capsule for this request actually contains recent_conversation",
+                ],
                 "root_cause_summary": "gateway -> provider context gap",
                 "root_cause_owner_surface": "telegram_gateway_to_context_capsule",
                 "root_cause_audit_focus": ["gateway_trace", "context_capsule_source_ledger", "recent_conversation"],
@@ -480,6 +484,14 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["recent_root_causes"][0]["failure_layer"], "context_ingress")
         self.assertEqual(panel["recent_root_causes"][0]["summary"], "gateway -> provider context gap")
         self.assertEqual(panel["recent_root_causes"][0]["owner_surface"], "telegram_gateway_to_context_capsule")
+        self.assertEqual(
+            panel["recent_root_causes"][0]["confidence_reason"],
+            "failing finding and movement trace gap agree",
+        )
+        self.assertIn(
+            "provider capsule for this request actually contains recent_conversation",
+            panel["recent_root_causes"][0]["disconfirming_checks"],
+        )
         self.assertIn("context_capsule_source_ledger", panel["recent_root_causes"][0]["audit_focus"])
         self.assertEqual(panel["recent_root_causes"][0]["repair_action"], "Repair the recent-conversation capsule path.")
         self.assertEqual(panel["latest"]["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
@@ -506,6 +518,10 @@ class MemoryDoctorBrainTests(SparkTestCase):
                     "root_cause_failure_layer": "context_ingress",
                     "root_cause_chain": ["telegram_gateway", "context_capsule", "provider_context"],
                     "root_cause_confidence": "high",
+                    "root_cause_confidence_reason": "failing finding and movement trace gap agree",
+                    "root_cause_disconfirming_checks": [
+                        "provider capsule for this request actually contains recent_conversation",
+                    ],
                     "root_cause_summary": "gateway -> provider context gap",
                     "root_cause_owner_surface": "telegram_gateway_to_context_capsule",
                     "root_cause_audit_focus": ["gateway_trace", "context_capsule_source_ledger"],
