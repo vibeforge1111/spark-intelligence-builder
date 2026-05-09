@@ -355,6 +355,9 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(report.brain["root_cause"]["failure_layer"], "context_ingress")
         self.assertEqual(brain_events[0]["facts_json"]["root_cause_primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(brain_events[0]["facts_json"]["root_cause_failure_layer"], "context_ingress")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_owner_surface"], "telegram_gateway_to_context_capsule")
+        self.assertIn("context_capsule_source_ledger", brain_events[0]["facts_json"]["root_cause_audit_focus"])
+        self.assertIn("provider capsule source ledger", brain_events[0]["facts_json"]["root_cause_repair_action"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
         self.assertTrue(senses["root_cause_classification"]["present"])
@@ -413,6 +416,10 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "root_cause_chain": ["telegram_gateway", "context_capsule", "provider_context"],
                 "root_cause_confidence": "high",
                 "root_cause_summary": "gateway -> provider context gap",
+                "root_cause_owner_surface": "telegram_gateway_to_context_capsule",
+                "root_cause_audit_focus": ["gateway_trace", "context_capsule_source_ledger", "recent_conversation"],
+                "root_cause_repair_action": "Repair the recent-conversation capsule path.",
+                "root_cause_replay_probe": "repeat the same two-turn Telegram close-turn recall probe",
                 "creator_alignment_status": "aligned_candidate",
                 "creator_alignment_artifact_targets": ["domain_chip", "benchmark_pack", "specialization_path"],
                 "creator_alignment_validation_issue_count": 0,
@@ -457,5 +464,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["recent_intake_triggers"][0]["previous_failure_signals"], ["previous_response_context_gap"])
         self.assertEqual(panel["recent_root_causes"][0]["failure_layer"], "context_ingress")
         self.assertEqual(panel["recent_root_causes"][0]["summary"], "gateway -> provider context gap")
+        self.assertEqual(panel["recent_root_causes"][0]["owner_surface"], "telegram_gateway_to_context_capsule")
+        self.assertIn("context_capsule_source_ledger", panel["recent_root_causes"][0]["audit_focus"])
+        self.assertEqual(panel["recent_root_causes"][0]["repair_action"], "Repair the recent-conversation capsule path.")
         self.assertEqual(panel["latest"]["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(panel["latest"]["topic"], "Maya")

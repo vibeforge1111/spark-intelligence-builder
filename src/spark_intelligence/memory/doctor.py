@@ -446,6 +446,7 @@ def run_memory_doctor(
         active_profile=active_profile,
         topic_scan=topic_scan,
         context_capsule=context_capsule,
+        root_cause=root_cause,
         repair_requested=repair_requested,
     )
     recommendations.extend(_brain_recommendations(brain))
@@ -1783,51 +1784,123 @@ def _build_root_cause_summary(
             "chain": ["telegram_gateway", "context_capsule", "provider_context"],
             "telegram_summary": "gateway -> provider context gap",
             "movement_gap": "gateway_to_context_capsule_gap",
+            "repair_plan": {
+                "owner_surface": "telegram_gateway_to_context_capsule",
+                "audit_focus": ["gateway_trace", "context_capsule_source_ledger", "recent_conversation"],
+                "next_action": (
+                    "Repair the recent-conversation capsule path: compare the gateway transcript, Builder request id, "
+                    "and provider capsule source ledger, then replay the same close-turn request."
+                ),
+                "replay_probe": "repeat the same two-turn Telegram close-turn recall probe",
+            },
         },
         "context_capsule_request_not_found": {
             "failure_layer": "provider_context_recording",
             "chain": ["telegram_gateway", "provider_invocation", "context_capsule_event"],
             "telegram_summary": "provider context event missing",
+            "repair_plan": {
+                "owner_surface": "provider_invocation_context_recording",
+                "audit_focus": ["gateway_trace", "provider_invocation", "context_capsule_compiled"],
+                "next_action": (
+                    "Inspect provider invocation and context-capsule recording for that request id; gateway trace "
+                    "without a capsule means the context path was bypassed, failed before compile, or did not emit instrumentation."
+                ),
+                "replay_probe": "rerun Memory Doctor with the exact request id after restoring capsule emission",
+            },
         },
         "context_to_answer_grounding_gap": {
             "failure_layer": "answer_grounding",
             "chain": ["telegram_gateway", "context_capsule", "answer_grounding"],
             "telegram_summary": "provider context -> answer grounding gap",
             "movement_gap": "context_to_answer_grounding_gap",
+            "repair_plan": {
+                "owner_surface": "answer_arbitration",
+                "audit_focus": ["context_capsule", "answer_grounding", "route_arbitration"],
+                "next_action": (
+                    "Fix answer grounding for close-turn recall: replay the captured provider capsule and make answer "
+                    "arbitration prefer recent conversation over unrelated advisory output."
+                ),
+                "replay_probe": "replay the same request and verify the expected topic appears in the generated answer",
+            },
         },
         "close_turn_route_contamination": {
             "failure_layer": "route_arbitration",
             "chain": ["telegram_gateway", "context_capsule", "route_arbitration"],
             "telegram_summary": "close-turn route arbitration gap",
             "movement_gap": "close_turn_route_contamination",
+            "repair_plan": {
+                "owner_surface": "route_arbitration",
+                "audit_focus": ["routing_decision", "bridge_mode", "evidence_summary"],
+                "next_action": (
+                    "Fix route arbitration: close-turn recall should stay on grounded conversation/provider recall "
+                    "instead of provisional researcher advisory."
+                ),
+                "replay_probe": "rerun the close-turn prompt and verify the route is recent-conversation/provider grounded",
+            },
         },
         "delivery_answer_grounding_gap": {
             "failure_layer": "telegram_delivery",
             "chain": ["answer_generation", "telegram_delivery"],
             "telegram_summary": "answer generation -> Telegram delivery gap",
             "movement_gap": "delivery_answer_grounding_gap",
+            "repair_plan": {
+                "owner_surface": "telegram_delivery",
+                "audit_focus": ["generated_response", "outbound_audit", "delivered_response"],
+                "next_action": (
+                    "Fix Telegram delivery preservation: diff the generated answer against outbound audit text and "
+                    "remove any delivery-stage mutation that drops the grounded topic."
+                ),
+                "replay_probe": "replay the same request and verify generated and delivered replies preserve the same topic",
+            },
         },
         "telegram_delivery_failure": {
             "failure_layer": "telegram_delivery",
             "chain": ["answer_generation", "telegram_delivery"],
             "telegram_summary": "Telegram delivery failure",
             "movement_gap": "telegram_delivery_failure",
+            "repair_plan": {
+                "owner_surface": "telegram_delivery",
+                "audit_focus": ["outbound_audit", "delivery_registry", "telegram_bridge"],
+                "next_action": "Inspect Telegram delivery errors for the diagnosed request, then replay the same generated reply.",
+                "replay_probe": "verify the outbound audit records delivery_ok=true for the replayed request",
+            },
         },
         "memory_forget_postcondition_failed": {
             "failure_layer": "current_state_delete",
             "chain": ["forget_request", "current_state", "postcondition"],
             "telegram_summary": "forget postcondition gap",
             "movement_gap": "memory_forget_postcondition_failed",
+            "repair_plan": {
+                "owner_surface": "current_state_memory",
+                "audit_focus": ["delete_write_result", "current_state_lookup", "postcondition"],
+                "next_action": (
+                    "Inspect current-state delete postconditions: the forget write was accepted, but an active fact "
+                    "still matched the deleted target."
+                ),
+                "replay_probe": "rerun the same forget request and verify active current state no longer contains the target",
+            },
         },
         "memory_delete_intent_integrity": {
             "failure_layer": "delete_write_fanout",
             "chain": ["forget_request", "memory_write_requests", "memory_write_results"],
             "telegram_summary": "delete write fanout gap",
+            "repair_plan": {
+                "owner_surface": "memory_write_fanout",
+                "audit_focus": ["delete_intent_parser", "memory_write_requested", "memory_write_succeeded"],
+                "next_action": "Rerun the affected forget request, then ask `check memory deletes`.",
+                "replay_probe": "verify every requested delete target has a matching accepted delete write",
+            },
         },
         "topic_active_state_presence": {
             "failure_layer": "active_current_state",
             "chain": ["topic_scan", "active_current_state"],
             "telegram_summary": "active memory still contains that topic",
+            "repair_plan": {
+                "owner_surface": "active_current_state",
+                "audit_focus": ["topic_scan", "active_profile", "current_state_lookup"],
+                "next_action": "If that active field is wrong, forget that specific field and rerun Memory Doctor for the topic.",
+                "replay_probe": "rerun Memory Doctor for the stale value and verify active current state no longer contains it",
+            },
         },
     }
     priority = [
@@ -1878,6 +1951,7 @@ def _build_root_cause_summary(
         "failure_layer": profile["failure_layer"],
         "chain": list(profile["chain"]) if isinstance(profile.get("chain"), list) else [],
         "telegram_summary": profile["telegram_summary"],
+        "repair_plan": dict(profile.get("repair_plan") or {}),
         "request_id": request_id,
         "confidence": confidence,
         "detail": selected.detail,
@@ -1895,9 +1969,13 @@ def _build_recommendations(
     active_profile: dict[str, object],
     topic_scan: dict[str, object],
     context_capsule: dict[str, object],
+    root_cause: dict[str, object],
     repair_requested: bool,
 ) -> list[str]:
     recommendations: list[str] = []
+    root_cause_repair = _root_cause_recommendation(root_cause)
+    if root_cause_repair:
+        recommendations.append(root_cause_repair)
     if any(finding.name == "memory_delete_intent_integrity" and not finding.ok for finding in findings):
         recommendations.append("Rerun the affected forget request, then ask `check memory deletes`.")
     if any(finding.name == "memory_forget_postcondition_failed" and not finding.ok for finding in findings):
@@ -1961,7 +2039,35 @@ def _build_recommendations(
         recommendations.append("Repair mode is not automatic yet; Memory Doctor is diagnosis-only until repair authority is explicitly gated.")
     if not recommendations:
         recommendations.append("No immediate repair recommended; use `run memory doctor for <topic>` when a specific recall feels wrong.")
-    return recommendations
+    return _dedupe_recommendations(recommendations)
+
+
+def _root_cause_recommendation(root_cause: dict[str, object]) -> str | None:
+    if root_cause.get("status") != "identified":
+        return None
+    repair_plan = root_cause.get("repair_plan") if isinstance(root_cause.get("repair_plan"), dict) else {}
+    next_action = str(repair_plan.get("next_action") or "").strip()
+    if next_action:
+        return next_action
+    summary = str(root_cause.get("telegram_summary") or "").strip()
+    if not summary:
+        return None
+    return f"Use the root-cause chain to repair {summary}, then replay the same request."
+
+
+def _dedupe_recommendations(recommendations: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for recommendation in recommendations:
+        text = str(recommendation or "").strip()
+        if not text:
+            continue
+        key = " ".join(text.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
 
 
 def _brain_recommendations(brain: dict[str, object]) -> list[str]:
@@ -2002,6 +2108,7 @@ def _record_brain_snapshot(
     ]
     telegram_intake = _brain_telegram_intake_snapshot(brain)
     root_cause = brain.get("root_cause") if isinstance(brain.get("root_cause"), dict) else {}
+    repair_plan = root_cause.get("repair_plan") if isinstance(root_cause.get("repair_plan"), dict) else {}
     creator_alignment = brain.get("creator_system_alignment") if isinstance(brain.get("creator_system_alignment"), dict) else {}
     creator_alignment_issues = (
         creator_alignment.get("validation_issues")
@@ -2044,6 +2151,10 @@ def _record_brain_snapshot(
                 "root_cause_chain": list(root_cause.get("chain") or []),
                 "root_cause_confidence": root_cause.get("confidence"),
                 "root_cause_summary": root_cause.get("telegram_summary"),
+                "root_cause_owner_surface": repair_plan.get("owner_surface"),
+                "root_cause_audit_focus": list(repair_plan.get("audit_focus") or []),
+                "root_cause_repair_action": repair_plan.get("next_action"),
+                "root_cause_replay_probe": repair_plan.get("replay_probe"),
                 "creator_alignment_status": creator_alignment.get("status"),
                 "creator_alignment_artifact_targets": list(creator_alignment.get("artifact_targets") or []),
                 "creator_alignment_validation_issue_count": len(creator_alignment_issues),

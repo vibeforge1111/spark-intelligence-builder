@@ -3306,6 +3306,10 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         root_cause_summary = str(facts.get("root_cause_summary") or "").strip()
         root_cause_chain = _string_list(facts.get("root_cause_chain"))
         root_cause_confidence = str(facts.get("root_cause_confidence") or "").strip()
+        root_cause_owner_surface = str(facts.get("root_cause_owner_surface") or "").strip()
+        root_cause_audit_focus = _string_list(facts.get("root_cause_audit_focus"))
+        root_cause_repair_action = str(facts.get("root_cause_repair_action") or "").strip()
+        root_cause_replay_probe = str(facts.get("root_cause_replay_probe") or "").strip()
         creator_alignment_status = str(facts.get("creator_alignment_status") or "").strip()
         creator_alignment_artifact_targets = _string_list(facts.get("creator_alignment_artifact_targets"))
         creator_alignment_issue_count = _optional_int(facts.get("creator_alignment_validation_issue_count"))
@@ -3345,6 +3349,10 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "summary": root_cause_summary or None,
                     "chain": root_cause_chain,
                     "confidence": root_cause_confidence or None,
+                    "owner_surface": root_cause_owner_surface or None,
+                    "audit_focus": root_cause_audit_focus,
+                    "repair_action": root_cause_repair_action or None,
+                    "replay_probe": root_cause_replay_probe or None,
                 }
             )
         if telegram_intake:
