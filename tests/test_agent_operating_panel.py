@@ -63,6 +63,13 @@ class AgentOperatingPanelTests(SparkTestCase):
         self.assertEqual(payload["black_box"]["counts"]["entries"], 2)
         self.assertEqual(payload["memory_approval_inbox"]["counts"]["pending"], 1)
         self.assertEqual(payload["stale_context_sweep"]["counts"]["stale"], 1)
+        self.assertEqual(payload["source_ledger"]["counts"]["stale"], 1)
+        self.assertTrue(
+            any(
+                item["source"] == "runner_preflight" and item["freshness"] == "live_probed"
+                for item in payload["source_ledger"]["items"]
+            )
+        )
         self.assertEqual(
             payload["agent_scratchpad"]["next_safe_action"],
             "start_or_route_to_writable_spawner_codex_mission",
@@ -71,6 +78,7 @@ class AgentOperatingPanelTests(SparkTestCase):
         rendered = panel.to_text()
         self.assertIn("Agent Operating Panel", rendered)
         self.assertIn("AOC: Ready with warnings | Best route: writable Spawner/Codex mission", rendered)
+        self.assertIn("Sources:", rendered)
         self.assertIn("Next safe action: start_or_route_to_writable_spawner_codex_mission", rendered)
         self.assertIn("Memory approvals pending: 1", rendered)
         self.assertIn("Stale context: 1 stale", rendered)

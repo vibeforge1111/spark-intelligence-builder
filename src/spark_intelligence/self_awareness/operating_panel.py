@@ -8,6 +8,7 @@ from spark_intelligence.memory.approval_inbox import MemoryApprovalInboxReport, 
 from spark_intelligence.self_awareness.agent_scratchpad import AgentScratchpad, build_agent_scratchpad
 from spark_intelligence.self_awareness.agent_events import AgentBlackBoxReport, build_agent_black_box_report
 from spark_intelligence.self_awareness.operating_context import AgentOperatingContextResult, build_agent_operating_context
+from spark_intelligence.self_awareness.operating_source_ledger import AgentSourceLedger, build_agent_source_ledger
 from spark_intelligence.self_awareness.operating_strip import AgentOperatingStrip, build_agent_operating_strip
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
 from spark_intelligence.self_awareness.stale_context_sweeper import (
@@ -25,6 +26,7 @@ class AgentOperatingPanel:
     aoc: AgentOperatingContextResult
     strip: AgentOperatingStrip
     agent_scratchpad: AgentScratchpad
+    source_ledger: AgentSourceLedger
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
     stale_context_sweep: StaleContextSweepReport
@@ -35,6 +37,7 @@ class AgentOperatingPanel:
             "strip": self.strip.to_payload(),
             "aoc": self.aoc.to_payload(),
             "agent_scratchpad": self.agent_scratchpad.to_payload(),
+            "source_ledger": self.source_ledger.to_payload(),
             "black_box": self.black_box.to_payload(),
             "memory_approval_inbox": self.memory_approval_inbox.to_payload(),
             "stale_context_sweep": self.stale_context_sweep.to_payload(),
@@ -50,6 +53,7 @@ class AgentOperatingPanel:
         memory_counts = payload["memory_approval_inbox"]["counts"]
         black_box_counts = payload["black_box"]["counts"]
         stale_counts = payload["stale_context_sweep"]["counts"]
+        source_counts = payload["source_ledger"]["counts"]
         scratchpad = payload["agent_scratchpad"]
         lines = [
             "Agent Operating Panel",
@@ -60,6 +64,7 @@ class AgentOperatingPanel:
             f"Route confidence: {(aoc.get('route_confidence') or {}).get('confidence') or 'unknown'}",
             f"Current goal: {scratchpad.get('current_goal') or 'unknown'}",
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
+            f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
             f"Black box events: {black_box_counts.get('entries', 0)}",
             f"Memory approvals pending: {memory_counts.get('pending', 0)}",
             f"Stale context: {stale_counts.get('stale', 0)} stale, {stale_counts.get('contradicted', 0)} contradicted",
@@ -112,14 +117,24 @@ def build_agent_operating_panel(
     aoc_payload = aoc.to_payload()
     strip = build_agent_operating_strip(aoc_payload)
     scratchpad = build_agent_scratchpad(aoc_payload)
+    black_box = build_agent_black_box_report(state_db, request_id=request_id)
+    memory_inbox = build_memory_approval_inbox(state_db, status=memory_inbox_status)
+    stale_sweep = build_stale_context_sweep(
+        live_claims=live_claims,
+        context_claims=list(stale_context_claims or []),
+    )
+    source_ledger = build_agent_source_ledger(
+        aoc_payload=aoc_payload,
+        black_box_payload=black_box.to_payload(),
+        memory_inbox_payload=memory_inbox.to_payload(),
+        stale_sweep_payload=stale_sweep.to_payload(),
+    )
     return AgentOperatingPanel(
         aoc=aoc,
         strip=strip,
         agent_scratchpad=scratchpad,
-        black_box=build_agent_black_box_report(state_db, request_id=request_id),
-        memory_approval_inbox=build_memory_approval_inbox(state_db, status=memory_inbox_status),
-        stale_context_sweep=build_stale_context_sweep(
-            live_claims=live_claims,
-            context_claims=list(stale_context_claims or []),
-        ),
+        source_ledger=source_ledger,
+        black_box=black_box,
+        memory_approval_inbox=memory_inbox,
+        stale_context_sweep=stale_sweep,
     )
