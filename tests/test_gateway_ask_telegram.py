@@ -212,6 +212,39 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
         self.assertGreaterEqual(frustration_metadata["contextual_trigger_score"], 3)
 
+    def test_gateway_ask_telegram_does_not_run_memory_doctor_for_weak_blankness_after_normal_turn(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-normal-prior",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "Can you summarize today's plan?",
+                "response_preview": "Sure. The current plan is to keep working through the memory diagnostics.",
+                "bridge_mode": "external_autodiscovered",
+                "routing_decision": "researcher_advisory",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="why did Spark go blank?",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        self.assertNotEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertNotIn("runtime_command_metadata", detail)
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)

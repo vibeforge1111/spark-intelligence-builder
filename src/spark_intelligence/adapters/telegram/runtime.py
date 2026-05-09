@@ -4899,9 +4899,11 @@ def _match_contextual_memory_doctor_command(
     if previous_record is None:
         return None
     score = _memory_doctor_distress_score(simplified)
-    if _previous_gateway_turn_looks_like_memory_failure(previous_record):
+    previous_failure_signal = _previous_gateway_turn_looks_like_memory_failure(previous_record)
+    if previous_failure_signal:
         score += 2
-    if score < 3:
+    threshold = 3 if previous_failure_signal else 4
+    if score < threshold:
         return None
     return {
         "command": "/memory doctor",
