@@ -7,6 +7,7 @@ from unittest.mock import ANY, patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
@@ -19,6 +20,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _detect_explicit_decision_statement,
     _load_recent_conversation_context,
     _clean_messaging_reply,
+    _maybe_answer_close_turn_recall_from_recent_context,
     _normalize_browser_search_query,
     _record_matches_open_memory_topic,
     _select_search_result_candidate,
@@ -1784,6 +1786,174 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("previous_user_message=Keep the thread continuity hot.", context)
         self.assertNotIn("Now answer like you remember what I said.", context)
 
+    def test_load_recent_conversation_context_falls_back_to_gateway_logs(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-gateway-gap",
+                "request_id": "req-prev",
+                "user_message_preview": "i just told you",
+                "response_preview": "I can see the context capsule, but not the message before this.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-gateway-gap",
+                "request_id": "req-current",
+                "user_message_preview": "are you there",
+                "response_preview": "Checking.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-gateway-gap",
+            channel_kind="telegram",
+            request_id="req-current",
+            user_message="are you there",
+        )
+
+        self.assertIn("[Recent conversation]", context)
+        self.assertIn("user: i just told you", context)
+        self.assertIn("assistant: I can see the context capsule", context)
+        self.assertIn("latest_user_message=i just told you", context)
+        self.assertNotIn("are you there", context)
+
+    def test_load_recent_conversation_context_prefers_fresh_gateway_over_stale_builder_events(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="Stale user message committed.",
+            channel_id="telegram",
+            session_id="sess-fresh-gateway",
+            request_id="req-stale-builder",
+            facts={"message_text": "The phrase is Cedar Compass 509."},
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-fresh-gateway",
+                "request_id": "req-fresh-gateway",
+                "user_message_preview": "The phrase is Amber Signal 826.",
+                "response_preview": "Noted.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-fresh-gateway",
+                "request_id": "req-current-gateway",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "Checking.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-fresh-gateway",
+            channel_kind="telegram",
+            request_id="req-current-gateway",
+            user_message="What phrase did I just give you?",
+        )
+
+        self.assertIn("latest_user_message=The phrase is Amber Signal 826.", context)
+        self.assertNotIn("Cedar Compass 509", context)
+
+    def test_load_recent_conversation_context_does_not_clip_at_repeated_question_when_request_is_new(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-repeated-question",
+                "request_id": "req-amber-seed",
+                "user_message_preview": "The phrase is Amber Signal 826.",
+                "response_preview": "Noted.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-repeated-question",
+                "request_id": "req-old-question",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "Amber Signal 826",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-repeated-question",
+                "request_id": "req-violet-seed",
+                "user_message_preview": "The phrase is Violet Harbor 931.",
+                "response_preview": "Noted.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-repeated-question",
+            channel_kind="telegram",
+            request_id="req-current-not-yet-logged",
+            user_message="What phrase did I just give you?",
+        )
+
+        self.assertIn("latest_user_message=The phrase is Violet Harbor 931.", context)
+        self.assertIn("Violet Harbor 931", context)
+        self.assertNotIn("latest_user_message=The phrase is Amber Signal 826.", context)
+
+    def test_load_recent_conversation_context_falls_back_to_outbound_audit_without_request_id(self) -> None:
+        append_outbound_audit(
+            self.config_manager,
+            {
+                "event": "telegram_bridge_outbound",
+                "channel_id": "telegram",
+                "session_id": "sess-outbound-gap",
+                "user_message_preview": "and will you write it as Cem",
+                "response_preview": "Got it, Cem.",
+            },
+        )
+        append_outbound_audit(
+            self.config_manager,
+            {
+                "event": "telegram_bridge_outbound",
+                "channel_id": "telegram",
+                "session_id": "sess-outbound-gap",
+                "user_message_preview": "are you there",
+                "response_preview": "Checking the trace.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-outbound-gap",
+            channel_kind="telegram",
+            request_id=None,
+            user_message="are you there",
+        )
+
+        self.assertIn("user: and will you write it as Cem", context)
+        self.assertIn("assistant: Got it, Cem.", context)
+        self.assertNotIn("are you there", context)
+
     def test_build_researcher_reply_includes_recent_telegram_turns_in_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(
@@ -1865,6 +2035,68 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("latest_user_message=I'm trying to make this agent feel more natural and less scripted.", prompt)
         self.assertIn("[User message]", prompt)
         self.assertIn("Now answer like you actually remember what I just said.", prompt)
+
+    def test_build_researcher_reply_answers_close_turn_phrase_from_recent_context(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="User message committed.",
+            channel_id="telegram",
+            session_id="sess-close-turn-direct",
+            request_id="req-close-turn-seed",
+            facts={
+                "message_text": (
+                    "Close-turn Memory Doctor probe seed. "
+                    "For the next message only, the phrase is Cedar Compass 509. "
+                    "Do not save this as a profile fact."
+                ),
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="telegram_runtime",
+            summary="Reply delivered.",
+            channel_id="telegram",
+            session_id="sess-close-turn-direct",
+            request_id="req-close-turn-seed",
+            reason_code="telegram_bridge_outbound",
+            facts={"delivered_text": "Noted."},
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct close-turn recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-close-turn-current",
+                agent_id="agent:human:telegram:1",
+                human_id="human:telegram:1",
+                session_id="sess-close-turn-direct",
+                channel_kind="telegram",
+                user_message="What phrase did I just give you? Answer with only the phrase.",
+            )
+
+        self.assertEqual(result.reply_text, "Cedar Compass 509")
+        self.assertEqual(result.mode, "recent_conversation_recall")
+        self.assertEqual(result.routing_decision, "recent_conversation_recall")
+        self.assertIn("recent_conversation", result.evidence_summary)
+        capsule_events = latest_events_by_type(self.state_db, event_type="context_capsule_compiled", limit=1)
+        self.assertEqual(capsule_events[0]["request_id"], "req-close-turn-current")
+
+    def test_close_turn_recall_detector_ignores_probe_seed_statements(self) -> None:
+        reply = _maybe_answer_close_turn_recall_from_recent_context(
+            user_message=(
+                "Close-turn Memory Doctor probe seed. "
+                "For the next message only, the phrase is Silver Lantern 714."
+            ),
+            recent_conversation_context="[Recent conversation]\nlatest_user_message=What phrase did I just give you?",
+        )
+
+        self.assertIsNone(reply)
 
     def test_build_researcher_reply_uses_direct_open_browser_route_for_direct_page_requests(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

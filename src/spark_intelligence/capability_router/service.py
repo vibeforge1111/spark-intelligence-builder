@@ -54,9 +54,11 @@ def looks_like_capability_router_query(message: str) -> bool:
         "should you search the web",
         "should you use browser",
         "should you use voice",
+        "install a voice",
+        "give yourself a voice",
         "route this task",
     )
-    return any(signal in lowered_message for signal in direct_signals)
+    return any(signal in lowered_message for signal in direct_signals) or _looks_like_capability_improvement_task(lowered_message)
 
 
 def build_capability_route_decision(
@@ -106,6 +108,31 @@ def build_capability_route_decision(
         )
         supporting_systems = ["Spark Intelligence Builder"]
         required_capabilities = ["web_search", "page_inspection"]
+    elif _looks_like_capability_improvement_task(lowered):
+        target_system = "Spark Intelligence Builder"
+        route_mode = "capability_improvement"
+        reason = (
+            "The task asks to change Spark's capabilities or workflow, so Builder should produce a probe-first "
+            "capability proposal packet before any code, auth, memory, or automation change. If the packet calls "
+            "for a chip, connector, runtime patch, automation, or app artifact, Spawner/Mission Control can still "
+            "build that implementation route."
+        )
+        supporting_systems = ["Spark Researcher", "Spark Spawner"]
+        required_capabilities = [
+            "self_awareness",
+            "capability_proposal_packet",
+            "capability_probes",
+            "operator_approval",
+            "rollback_plan",
+            "spawner_mission_control",
+            "chip_attachment_contract",
+        ]
+        next_actions.extend(
+            [
+                "Classify the implementation route: domain_chip, runtime_patch, capability_connector, mission_artifact, or workflow_automation.",
+                "Build through Spawner/Mission Control only after the proposal names permissions, safe probe, approval boundary, rollback, and eval.",
+            ]
+        )
     elif _looks_like_self_knowledge_task(lowered):
         target_system = "Spark Intelligence Builder"
         route_mode = "self_knowledge"
@@ -252,8 +279,84 @@ def _looks_like_voice_task(lowered: str) -> bool:
         "speak this",
         "say this out loud",
         "use voice",
+        "install voice",
+        "install a voice",
+        "add voice",
+        "add a voice",
+        "give yourself a voice",
+        "give youself a voice",
+        "give you a voice",
     )
     return any(signal in lowered for signal in signals)
+
+
+def _looks_like_capability_improvement_task(lowered: str) -> bool:
+    action_signals = (
+        "add",
+        "build",
+        "create",
+        "scaffold",
+        "develop",
+        "ship",
+        "install",
+        "enable",
+        "connect",
+        "wire",
+        "integrate",
+        "give yourself",
+        "give youself",
+        "set up",
+        "schedule",
+        "automate",
+        "change",
+        "improve",
+        "upgrade",
+        "make spark",
+        "make my spark",
+        "make your",
+        "make my agent",
+        "for you",
+        "for spark",
+        "so you can",
+        "so spark can",
+        "lets you",
+        "lets spark",
+    )
+    capability_signals = (
+        "capability",
+        "capabilities",
+        "functionality",
+        "ability",
+        "abilities",
+        "skill",
+        "skills",
+        "integration",
+        "integrations",
+        "access",
+        "permission",
+        "permissions",
+        "read my email",
+        "read my emails",
+        "gmail",
+        "inbox",
+        "calendar",
+        "daily report",
+        "daily reports",
+        "memory report",
+        "memory reports",
+        "memories",
+        "workflow",
+        "brain",
+        "browser",
+        "browse",
+        "files",
+        "filesystem",
+        "agent",
+        "agents",
+    )
+    return any(signal in lowered for signal in action_signals) and any(
+        signal in lowered for signal in capability_signals
+    )
 
 
 def _looks_like_self_knowledge_task(lowered: str) -> bool:

@@ -1213,6 +1213,30 @@ def recent_personality_evolution_events(
     return [_row_to_dict(row) for row in rows]
 
 
+def personality_typed_human_sets(state_db: StateDB) -> dict[str, set[str]]:
+    with state_db.connect() as conn:
+        profile_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_trait_profiles"
+        ).fetchall()
+        observation_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_observations"
+        ).fetchall()
+        evolution_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_evolution_events"
+        ).fetchall()
+    return {
+        "trait_profiles": {
+            str(row["human_id"] or "") for row in profile_rows if str(row["human_id"] or "")
+        },
+        "observations": {
+            str(row["human_id"] or "") for row in observation_rows if str(row["human_id"] or "")
+        },
+        "evolution_events": {
+            str(row["human_id"] or "") for row in evolution_rows if str(row["human_id"] or "")
+        },
+    }
+
+
 def recent_observer_packet_records(
     state_db: StateDB,
     *,
@@ -1425,6 +1449,10 @@ def build_watchtower_snapshot(
             "memory_shadow": _safe_watchtower_panel(
                 "memory_shadow",
                 lambda: _build_memory_shadow_panel(state_db),
+            ),
+            "memory_doctor_brain": _safe_watchtower_panel(
+                "memory_doctor_brain",
+                lambda: _build_memory_doctor_brain_panel(state_db),
             ),
         },
     }
@@ -3225,6 +3253,341 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
     }
 
 
+def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
+    events = latest_events_by_type(state_db, event_type="memory_doctor_brain_evaluated", limit=50)
+    if not events:
+        return {
+            "panel": "memory_doctor_brain",
+            "status": "no_data",
+            "authority": "observability_non_authoritative",
+            "counts": {"evaluations": 0},
+            "trend": [],
+            "repeated_missing_senses": {},
+            "repeated_gaps": {},
+            "intake_trigger_counts": {},
+            "intake_calibration_counts": {},
+            "previous_failure_signal_counts": {},
+            "root_cause_primary_gap_counts": {},
+            "root_cause_failure_layer_counts": {},
+            "root_cause_owner_surface_counts": {},
+            "root_cause_audit_focus_counts": {},
+            "root_cause_audit_handoff_status_counts": {},
+            "root_cause_audit_handoff_mode_counts": {},
+            "repair_priority": {"status": "no_data"},
+            "creator_alignment": {
+                "status": "no_data",
+                "artifact_targets": [],
+                "validation_issue_count": 0,
+            },
+            "recent_intake_triggers": [],
+            "recent_root_causes": [],
+            "recent_probes": [],
+        }
+
+    trend: list[dict[str, Any]] = []
+    scores: list[int] = []
+    gap_counts: list[int] = []
+    missing_sense_counts: dict[str, int] = {}
+    gap_name_counts: dict[str, int] = {}
+    intake_trigger_counts: dict[str, int] = {}
+    intake_calibration_counts: dict[str, int] = {}
+    previous_failure_signal_counts: dict[str, int] = {}
+    root_cause_primary_gap_counts: dict[str, int] = {}
+    root_cause_failure_layer_counts: dict[str, int] = {}
+    root_cause_owner_surface_counts: dict[str, int] = {}
+    root_cause_audit_focus_counts: dict[str, int] = {}
+    root_cause_audit_handoff_status_counts: dict[str, int] = {}
+    root_cause_audit_handoff_mode_counts: dict[str, int] = {}
+    recent_intakes: list[dict[str, Any]] = []
+    recent_root_causes: list[dict[str, Any]] = []
+    humans: set[str] = set()
+    topics: set[str] = set()
+
+    for event in reversed(events):
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        score = _optional_int(facts.get("coverage_score"))
+        missing_senses = _string_list(facts.get("missing_senses"))
+        gap_names = _string_list(facts.get("gap_names"))
+        telegram_intake = facts.get("telegram_intake") if isinstance(facts.get("telegram_intake"), dict) else {}
+        root_cause_status = str(facts.get("root_cause_status") or "").strip()
+        root_cause_primary_gap = str(facts.get("root_cause_primary_gap") or "").strip()
+        root_cause_failure_layer = str(facts.get("root_cause_failure_layer") or "").strip()
+        root_cause_summary = str(facts.get("root_cause_summary") or "").strip()
+        root_cause_chain = _string_list(facts.get("root_cause_chain"))
+        root_cause_confidence = str(facts.get("root_cause_confidence") or "").strip()
+        root_cause_confidence_reason = str(facts.get("root_cause_confidence_reason") or "").strip()
+        root_cause_disconfirming_checks = _string_list(facts.get("root_cause_disconfirming_checks"))
+        root_cause_owner_surface = str(facts.get("root_cause_owner_surface") or "").strip()
+        root_cause_audit_focus = _string_list(facts.get("root_cause_audit_focus"))
+        root_cause_repair_action = str(facts.get("root_cause_repair_action") or "").strip()
+        root_cause_replay_probe = str(facts.get("root_cause_replay_probe") or "").strip()
+        root_cause_audit_handoff_status = str(facts.get("root_cause_audit_handoff_status") or "").strip()
+        root_cause_audit_handoff_mode = str(facts.get("root_cause_audit_handoff_mode") or "").strip()
+        root_cause_audit_handoff_questions = _string_list(facts.get("root_cause_audit_handoff_questions"))
+        root_cause_audit_handoff_sample_strategy = str(
+            facts.get("root_cause_audit_handoff_sample_strategy") or ""
+        ).strip()
+        root_cause_audit_handoff_stop_gate = str(facts.get("root_cause_audit_handoff_stop_gate") or "").strip()
+        creator_alignment_status = str(facts.get("creator_alignment_status") or "").strip()
+        creator_alignment_artifact_targets = _string_list(facts.get("creator_alignment_artifact_targets"))
+        creator_alignment_issue_count = _optional_int(facts.get("creator_alignment_validation_issue_count"))
+        topic = str(facts.get("topic") or "").strip()
+        human_id = str(event.get("human_id") or "").strip()
+        if human_id:
+            humans.add(human_id)
+        if topic:
+            topics.add(topic)
+        for sense in missing_senses:
+            missing_sense_counts[sense] = missing_sense_counts.get(sense, 0) + 1
+        for gap_name in gap_names:
+            gap_name_counts[gap_name] = gap_name_counts.get(gap_name, 0) + 1
+        intake_signals = _string_list(telegram_intake.get("contextual_trigger_signals")) if telegram_intake else []
+        previous_failure_signals = _string_list(telegram_intake.get("previous_failure_signals")) if telegram_intake else []
+        for signal in intake_signals:
+            intake_trigger_counts[signal] = intake_trigger_counts.get(signal, 0) + 1
+        for signal in previous_failure_signals:
+            previous_failure_signal_counts[signal] = previous_failure_signal_counts.get(signal, 0) + 1
+        if root_cause_status == "identified":
+            if root_cause_primary_gap:
+                root_cause_primary_gap_counts[root_cause_primary_gap] = (
+                    root_cause_primary_gap_counts.get(root_cause_primary_gap, 0) + 1
+                )
+            if root_cause_failure_layer:
+                root_cause_failure_layer_counts[root_cause_failure_layer] = (
+                    root_cause_failure_layer_counts.get(root_cause_failure_layer, 0) + 1
+                )
+            if root_cause_owner_surface:
+                root_cause_owner_surface_counts[root_cause_owner_surface] = (
+                    root_cause_owner_surface_counts.get(root_cause_owner_surface, 0) + 1
+                )
+            for audit_focus in root_cause_audit_focus:
+                root_cause_audit_focus_counts[audit_focus] = (
+                    root_cause_audit_focus_counts.get(audit_focus, 0) + 1
+                )
+            if root_cause_audit_handoff_status:
+                root_cause_audit_handoff_status_counts[root_cause_audit_handoff_status] = (
+                    root_cause_audit_handoff_status_counts.get(root_cause_audit_handoff_status, 0) + 1
+                )
+            if root_cause_audit_handoff_mode:
+                root_cause_audit_handoff_mode_counts[root_cause_audit_handoff_mode] = (
+                    root_cause_audit_handoff_mode_counts.get(root_cause_audit_handoff_mode, 0) + 1
+                )
+            recent_root_causes.append(
+                {
+                    "created_at": event.get("created_at"),
+                    "human_id": human_id or None,
+                    "topic": topic or None,
+                    "request_id": facts.get("request_id"),
+                    "primary_gap": root_cause_primary_gap or None,
+                    "failure_layer": root_cause_failure_layer or None,
+                    "summary": root_cause_summary or None,
+                    "chain": root_cause_chain,
+                    "confidence": root_cause_confidence or None,
+                    "confidence_reason": root_cause_confidence_reason or None,
+                    "disconfirming_checks": root_cause_disconfirming_checks,
+                    "owner_surface": root_cause_owner_surface or None,
+                    "audit_focus": root_cause_audit_focus,
+                    "repair_action": root_cause_repair_action or None,
+                    "replay_probe": root_cause_replay_probe or None,
+                    "audit_handoff": {
+                        "status": root_cause_audit_handoff_status or None,
+                        "mode": root_cause_audit_handoff_mode or None,
+                        "questions": root_cause_audit_handoff_questions,
+                        "sample_strategy": root_cause_audit_handoff_sample_strategy or None,
+                        "stop_ship_gate": root_cause_audit_handoff_stop_gate or None,
+                    },
+                }
+            )
+        if telegram_intake:
+            intake_score = _optional_int(telegram_intake.get("contextual_trigger_score"))
+            intake_threshold = _optional_int(telegram_intake.get("contextual_trigger_threshold"))
+            calibration_label = _memory_doctor_intake_calibration_label(
+                score=intake_score,
+                threshold=intake_threshold,
+                previous_failure_signal=bool(telegram_intake.get("previous_failure_signal")),
+            )
+            if calibration_label:
+                intake_calibration_counts[calibration_label] = intake_calibration_counts.get(calibration_label, 0) + 1
+            recent_intakes.append(
+                {
+                    "created_at": event.get("created_at"),
+                    "human_id": human_id or None,
+                    "diagnosed_request_id": facts.get("request_id"),
+                    "doctor_request_id": telegram_intake.get("request_id"),
+                    "user_message_preview": telegram_intake.get("user_message_preview"),
+                    "request_selector": telegram_intake.get("request_selector"),
+                    "contextual_trigger_score": intake_score,
+                    "contextual_trigger_threshold": intake_threshold,
+                    "contextual_trigger_margin": intake_score - intake_threshold
+                    if intake_score is not None and intake_threshold is not None
+                    else None,
+                    "calibration_label": calibration_label,
+                    "contextual_trigger_signals": intake_signals,
+                    "previous_failure_signal": telegram_intake.get("previous_failure_signal"),
+                    "previous_failure_signals": previous_failure_signals,
+                }
+            )
+        if score is not None:
+            scores.append(score)
+        gap_counts.append(len(gap_names))
+        trend.append(
+            {
+                "event_id": event.get("event_id"),
+                "created_at": event.get("created_at"),
+                "human_id": human_id or None,
+                "topic": topic or None,
+                "coverage_score": score,
+                "gap_count": len(gap_names),
+                "highest_severity": facts.get("highest_severity"),
+                "next_probe": facts.get("next_probe"),
+                "telegram_intake": recent_intakes[-1] if telegram_intake else None,
+                "root_cause": recent_root_causes[-1] if root_cause_status == "identified" else None,
+                "creator_alignment": {
+                    "status": creator_alignment_status or None,
+                    "artifact_targets": creator_alignment_artifact_targets,
+                    "validation_issue_count": creator_alignment_issue_count,
+                },
+            }
+        )
+
+    latest = trend[-1]
+    latest_score = latest.get("coverage_score")
+    latest_gap_count = int(latest.get("gap_count") or 0)
+    oldest_score = scores[0] if scores else None
+    score_delta = int(latest_score) - int(oldest_score) if latest_score is not None and oldest_score is not None else None
+    status = "healthy" if latest_score is not None and int(latest_score) >= 80 and latest_gap_count == 0 else "watching"
+    if latest_score is not None and int(latest_score) < 50:
+        status = "degraded"
+    repair_priority = _memory_doctor_repair_priority(
+        owner_surface_counts=root_cause_owner_surface_counts,
+        audit_focus_counts=root_cause_audit_focus_counts,
+        recent_root_causes=recent_root_causes,
+    )
+
+    return {
+        "panel": "memory_doctor_brain",
+        "status": status,
+        "authority": "observability_non_authoritative",
+        "counts": {
+            "evaluations": len(events),
+            "humans": len(humans),
+            "topics": len(topics),
+            "latest_gap_count": latest_gap_count,
+            "max_gap_count": max(gap_counts) if gap_counts else 0,
+        },
+        "latest": latest,
+        "score": {
+            "latest": latest_score,
+            "oldest": oldest_score,
+            "delta": score_delta,
+            "min": min(scores) if scores else None,
+            "max": max(scores) if scores else None,
+        },
+        "repeated_missing_senses": _top_counts(missing_sense_counts),
+        "repeated_gaps": _top_counts(gap_name_counts),
+        "intake_trigger_counts": _top_counts(intake_trigger_counts),
+        "intake_calibration_counts": _top_counts(intake_calibration_counts),
+        "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
+        "root_cause_primary_gap_counts": _top_counts(root_cause_primary_gap_counts),
+        "root_cause_failure_layer_counts": _top_counts(root_cause_failure_layer_counts),
+        "root_cause_owner_surface_counts": _top_counts(root_cause_owner_surface_counts),
+        "root_cause_audit_focus_counts": _top_counts(root_cause_audit_focus_counts),
+        "root_cause_audit_handoff_status_counts": _top_counts(root_cause_audit_handoff_status_counts),
+        "root_cause_audit_handoff_mode_counts": _top_counts(root_cause_audit_handoff_mode_counts),
+        "repair_priority": repair_priority,
+        "creator_alignment": latest.get("creator_alignment") or {},
+        "recent_intake_triggers": list(reversed(recent_intakes))[:5],
+        "recent_root_causes": list(reversed(recent_root_causes))[:5],
+        "recent_probes": [
+            probe
+            for probe in (str(item.get("next_probe") or "").strip() for item in reversed(trend))
+            if probe
+        ][:5],
+        "trend": trend[-10:],
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _memory_doctor_intake_calibration_label(
+    *,
+    score: int | None,
+    threshold: int | None,
+    previous_failure_signal: bool,
+) -> str | None:
+    if score is None or threshold is None:
+        return None
+    if score < threshold:
+        return "below_threshold_recorded"
+    if previous_failure_signal:
+        raw_score = max(score - 2, 0)
+        if raw_score < 4:
+            return "previous_turn_boosted"
+        return "direct_with_previous_context"
+    if score == threshold:
+        return "borderline_direct"
+    return "strong_direct"
+
+
+def _memory_doctor_repair_priority(
+    *,
+    owner_surface_counts: dict[str, int],
+    audit_focus_counts: dict[str, int],
+    recent_root_causes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not owner_surface_counts:
+        return {"status": "no_data"}
+    top_owner_surface, top_owner_count = sorted(
+        owner_surface_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[0]
+    top_audit_focus = None
+    top_audit_focus_count = 0
+    if audit_focus_counts:
+        top_audit_focus, top_audit_focus_count = sorted(
+            audit_focus_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0]
+    latest_matching = next(
+        (
+            item
+            for item in reversed(recent_root_causes)
+            if item.get("owner_surface") == top_owner_surface
+        ),
+        {},
+    )
+    repeated = top_owner_count > 1
+    return {
+        "status": "ready" if repeated else "candidate",
+        "basis": "repeated_root_cause_owner_surface" if repeated else "single_root_cause_owner_surface",
+        "owner_surface": top_owner_surface,
+        "owner_surface_count": top_owner_count,
+        "audit_focus": top_audit_focus,
+        "audit_focus_count": top_audit_focus_count,
+        "repair_action": latest_matching.get("repair_action"),
+        "replay_probe": latest_matching.get("replay_probe"),
+        "latest_request_id": latest_matching.get("request_id"),
+    }
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _top_counts(counts: dict[str, int], *, limit: int = 8) -> dict[str, int]:
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return {key: value for key, value in ordered[:limit]}
+
+
 def _build_procedural_memory_panel(state_db: StateDB) -> dict[str, Any]:
     lessons = recent_procedural_lesson_records(state_db, limit=100, active_only=True)
     kind_counts: dict[str, int] = {}
@@ -3252,6 +3615,7 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
     profiles = recent_personality_trait_profiles(state_db, limit=50)
     observations = recent_personality_observations(state_db, limit=100)
     evolutions = recent_personality_evolution_events(state_db, limit=50)
+    typed_human_sets = personality_typed_human_sets(state_db)
 
     with state_db.connect() as conn:
         runtime_rows = conn.execute(
@@ -3287,9 +3651,9 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
         elif suffix == "evolution_log":
             evolution_mirror_humans.add(human_id)
 
-    typed_profile_humans = {str(row.get("human_id") or "") for row in profiles if str(row.get("human_id") or "")}
-    typed_observation_humans = {str(row.get("human_id") or "") for row in observations if str(row.get("human_id") or "")}
-    typed_evolution_humans = {str(row.get("human_id") or "") for row in evolutions if str(row.get("human_id") or "")}
+    typed_profile_humans = typed_human_sets["trait_profiles"]
+    typed_observation_humans = typed_human_sets["observations"]
+    typed_evolution_humans = typed_human_sets["evolution_events"]
 
     profile_drift = {
         "missing_runtime_mirrors": sorted(typed_profile_humans - profile_mirror_humans),

@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import record_event, utc_now_iso
+from spark_intelligence.self_awareness.event_producers import record_capability_probe_agent_event
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.browser.service import collect_browser_use_probe_contract
@@ -20,6 +21,7 @@ class RouteProbeEvidenceResult:
     capability_key: str
     status: ProbeStatus
     event_type: str
+    agent_event_id: str = ""
     route_latency_ms: int | None = None
     eval_ref: str = ""
     failure_reason: str = ""
@@ -32,6 +34,7 @@ class RouteProbeEvidenceResult:
             "capability_key": self.capability_key,
             "status": self.status,
             "event_type": self.event_type,
+            "agent_event_id": self.agent_event_id,
             "source_ref": self.source_ref,
         }
         if self.route_latency_ms is not None:
@@ -175,11 +178,27 @@ def record_route_probe_evidence(
         provenance={"source_kind": "route_probe", "source_ref": normalized_source_ref},
         facts=facts,
     )
+    agent_event_id = record_capability_probe_agent_event(
+        state_db,
+        capability_key=normalized_key,
+        status=normalized_status,
+        route_probe_event_id=event_id,
+        route_latency_ms=normalized_latency,
+        eval_ref=normalized_eval_ref,
+        source_ref=normalized_source_ref,
+        failure_reason=normalized_failure if normalized_status == "failure" else "",
+        probe_summary=normalized_probe_summary,
+        actor_id=actor_id,
+        request_id=request_id,
+        session_id=session_id,
+        human_id=human_id,
+    )
     return RouteProbeEvidenceResult(
         event_id=event_id,
         capability_key=normalized_key,
         status=normalized_status,
         event_type=event_type,
+        agent_event_id=agent_event_id,
         route_latency_ms=normalized_latency,
         eval_ref=normalized_eval_ref,
         failure_reason=normalized_failure if normalized_status == "failure" else "",

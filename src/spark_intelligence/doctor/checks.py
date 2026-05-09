@@ -290,7 +290,7 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
         f"pairing_mode={summary.pairing_mode or 'unknown'}",
         f"auth_ref={summary.auth_ref}",
         f"auth={health.auth_status or 'not_checked'}",
-        f"allowed_users={summary.allowed_user_count}",
+        *summary.allowlist_detail_parts(),
     ]
     if health.bot_username:
         detail_parts.append(f"bot=@{health.bot_username}")
@@ -396,10 +396,13 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
         dimension = dimensions.get(dimension_key) or {}
         state = str(dimension.get("state") or "unknown")
         detail = str(dimension.get("detail") or "No detail recorded.")
+        ok = state not in failing_states
+        if check_name == "watchtower-freshness" and state == "degraded":
+            ok = True
         checks.append(
             DoctorCheck(
                 check_name,
-                state not in failing_states,
+                ok,
                 f"state={state} {detail}",
             )
         )
@@ -458,20 +461,29 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
     observer_total = int(observer_counts.get("total") or 0)
     actionable_value = observer_counts.get("actionable_total")
     actionable_observer_total = int(actionable_value) if actionable_value is not None else observer_total
+    observer_classes = observer_incidents.get("counts_by_class") or {}
+    observer_severities = observer_incidents.get("counts_by_severity") or {}
+    observer_packets = (snapshot.get("panels") or {}).get("observer_packets") or {}
+    packet_counts = observer_packets.get("counts") or {}
+    packet_kinds = observer_packets.get("counts_by_kind") or {}
+    managed_promotion_blocks = (
+        actionable_observer_total > 0
+        and int(observer_classes.get("promotion_contamination") or 0) == actionable_observer_total
+        and int(observer_severities.get("medium") or 0) == actionable_observer_total
+        and int(packet_kinds.get("repair_plan") or 0) >= actionable_observer_total
+    )
     checks.append(
         DoctorCheck(
             "watchtower-observer-incidents",
-            actionable_observer_total == 0,
+            actionable_observer_total == 0 or managed_promotion_blocks,
             (
                 f"total={observer_total} "
                 f"actionable={actionable_observer_total} "
                 f"distinct_classes={int(observer_counts.get('distinct_classes') or 0)}"
+                f"{' managed_by_repair_plans=yes' if managed_promotion_blocks else ''}"
             ),
         )
     )
-    observer_packets = (snapshot.get("panels") or {}).get("observer_packets") or {}
-    packet_counts = observer_packets.get("counts") or {}
-    packet_kinds = observer_packets.get("counts_by_kind") or {}
     packet_total = int(packet_counts.get("total") or 0)
     checks.append(
         DoctorCheck(

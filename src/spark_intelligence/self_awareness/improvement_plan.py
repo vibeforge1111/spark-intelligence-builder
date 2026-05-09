@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.self_awareness.capability_ledger import record_capability_proposal
+from spark_intelligence.self_awareness.capability_proposal import build_capability_proposal_packet
 from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
@@ -18,19 +20,40 @@ class SelfImprovementPlanResult:
         return json.dumps(self.payload, indent=2)
 
     def to_text(self) -> str:
+        proposal = self.payload.get("capability_proposal_packet") if isinstance(self.payload.get("capability_proposal_packet"), dict) else {}
         lines = [
             "Spark self-improvement plan",
             "",
             f"Goal: {self.payload.get('goal') or 'Improve Spark self-awareness and capability confidence.'}",
             f"Mode: {self.payload.get('mode') or 'plan_only'}",
             f"Evidence: {self.payload.get('evidence_level') or 'unknown'}",
-            "",
-            str(self.payload.get("summary") or "").strip(),
         ]
+        if proposal:
+            lines.extend(["", "Capability proposal"])
+            lines.append(f"- requested capability: {proposal.get('capability_goal') or self.payload.get('goal') or 'unknown'}")
+            lines.append(f"- status: {proposal.get('status') or 'proposal_plan_only'} (not installed yet)")
+            lines.append(f"- route: {proposal.get('implementation_route') or 'unknown'}")
+            lines.append(f"- owner: {proposal.get('owner_system') or 'unknown'}")
+            lines.append(f"- ledger: {proposal.get('capability_ledger_key') or 'unknown'}")
+            lines.append(f"- safe probe: {proposal.get('safe_probe') or 'unknown'}")
+            harness = proposal.get("connector_harness") if isinstance(proposal.get("connector_harness"), dict) else {}
+            if harness:
+                lines.append(f"- connector: {harness.get('connector_key') or 'unknown'}")
+                lines.append(f"- harness: {harness.get('authority_stage') or 'unknown'}")
+                lines.append(f"- live access blocked until: {harness.get('live_access_blocked_until') or 'approval_and_probe_evidence'}")
+            claim_boundary = str(proposal.get("claim_boundary") or "").strip()
+            if claim_boundary:
+                lines.append(f"- boundary: {claim_boundary}")
+
+        summary = str(self.payload.get("summary") or "").strip()
+        if summary:
+            lines.extend(["", summary])
         actions = [item for item in self.payload.get("priority_actions") or [] if isinstance(item, dict)]
         if actions:
-            lines.extend(["", "Priority actions"])
-            for index, action in enumerate(actions[:5], start=1):
+            action_limit = 2 if proposal else 5
+            heading = "Related hardening probes" if proposal else "Priority actions"
+            lines.extend(["", heading])
+            for index, action in enumerate(actions[:action_limit], start=1):
                 title = str(action.get("title") or f"Action {index}").strip()
                 score = action.get("surprise_score")
                 score_text = f" score={score}" if score is not None else ""
@@ -67,6 +90,7 @@ def build_self_improvement_plan(
     user_message: str = "",
     refresh_wiki: bool = False,
     limit: int = 5,
+    record_ledger: bool = False,
 ) -> SelfImprovementPlanResult:
     normalized_goal = _normalize_goal(goal or user_message)
     capsule = build_self_awareness_capsule(
@@ -89,9 +113,21 @@ def build_self_improvement_plan(
     )
     wiki_hits = [hit for hit in wiki_result.payload.get("hits") or [] if isinstance(hit, dict)]
     actions = _priority_actions(capsule=capsule, goal=normalized_goal)
+    capability_proposal = build_capability_proposal_packet(goal=normalized_goal, user_message=user_message)
+    capability_proposal_payload = capability_proposal.to_payload()
+    ledger_entry = None
+    if record_ledger:
+        ledger_entry = record_capability_proposal(
+            config_manager=config_manager,
+            proposal_packet=capability_proposal_payload,
+            actor_id=human_id or "self_improve",
+            source_ref=request_id or session_id or "self_improve",
+        ).payload
     payload = {
         "goal": normalized_goal,
         "mode": "plan_only_probe_first",
+        "capability_proposal_packet": capability_proposal_payload,
+        "capability_ledger_entry": ledger_entry,
         "summary": _summary(actions, wiki_hits),
         "evidence_level": _evidence_level(actions=actions, wiki_hits=wiki_hits),
         "priority_actions": actions,

@@ -71,6 +71,38 @@ def test_creator_plan_honors_explicit_private_mode():
     assert "github" in packet.tools_in_scope
 
 
+def test_creator_plan_keeps_domain_clean_when_standards_footer_is_appended():
+    packet = build_creator_intent_packet(
+        "\n".join(
+            [
+                "create a private benchmarked specialization path with an autoloop for AI security questionnaires",
+                "",
+                "Use Spark creator-system standards: creator intent packet, adapter map, artifact manifests, benchmark gates, evidence ladder, local/private boundary, and Swarm review packet only when gates allow it.",
+                "Keep Telegram user-facing output natural and concise; keep detailed evidence in Workspace/Canvas/Kanban.",
+            ]
+        ),
+        privacy_mode="local_only",
+        risk_level="medium",
+    )
+
+    assert packet.target_domain == "ai-security-questionnaires"
+    assert packet.intent_id.startswith("creator-intent-ai-security-questionnaires-")
+    assert packet.desired_outputs["specialization_path"] is True
+    assert packet.desired_outputs["autoloop_policy"] is True
+
+
+def test_creator_plan_prefers_explicit_for_domain_over_surface_mentions():
+    packet = build_creator_intent_packet(
+        "Create a private benchmarked specialization path with an autoloop for Spark QA Operator. "
+        "Internal surfaces include Spawner UI, Spark Swarm Workspace, Telegram bot flows, Canvas, Kanban, and auth pairing.",
+        privacy_mode="local_only",
+        risk_level="medium",
+    )
+
+    assert packet.target_domain == "spark-qa-operator"
+    assert packet.intent_id.startswith("creator-intent-spark-qa-operator-")
+
+
 def test_creator_plan_marks_recursive_publish_as_medium_risk():
     packet = build_creator_intent_packet(
         "Create a recursive benchmark and autoloop for Spark Telegram bot and publish learnings to the network"

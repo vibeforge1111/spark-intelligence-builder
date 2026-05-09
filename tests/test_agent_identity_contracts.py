@@ -1036,6 +1036,56 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(provenance.get("source_ref"), "req-agent-style-rules")
         self.assertEqual(int(trait_row["c"]), 0)
 
+    def test_build_researcher_reply_persists_single_explicit_agent_style_rule(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-agent-single-style-rule",
+            agent_id=agent_state.agent_id,
+            human_id="human:telegram:111",
+            session_id="session:telegram:dm:111",
+            channel_kind="telegram",
+            user_message=(
+                "Your style should follow this saved agent interaction preference.\n"
+                "When you talk to me, use short paragraphs with blank lines between thoughts."
+            ),
+        )
+
+        self.assertTrue(result.reply_text)
+
+        with self.state_db.connect() as conn:
+            agent_row = conn.execute(
+                """
+                SELECT behavioral_rules_json, provenance_json
+                FROM agent_persona_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (agent_state.agent_id,),
+            ).fetchone()
+            trait_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM personality_trait_profiles WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+
+        self.assertIsNotNone(agent_row)
+        behavioral_rules = json.loads(agent_row["behavioral_rules_json"] or "[]")
+        provenance = json.loads(agent_row["provenance_json"] or "{}")
+        self.assertIn("When you talk to me, use short paragraphs with blank lines between thoughts", behavioral_rules)
+        self.assertEqual(provenance.get("source_ref"), "req-agent-single-style-rule")
+        self.assertEqual(int(trait_row["c"]), 0)
+
     def test_stale_swarm_name_does_not_override_newer_builder_rename(self) -> None:
         approve_pairing(
             state_db=self.state_db,
