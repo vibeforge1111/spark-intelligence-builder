@@ -51,6 +51,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_inventory,
     build_llm_wiki_status,
 )
+from spark_intelligence.memory import run_memory_doctor
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
@@ -443,6 +444,8 @@ def _maybe_capture_user_instruction(
         return reply_text
     if bridge_mode == "memory_generic_observation_delete" or routing_decision == "memory_generic_observation_delete":
         return reply_text
+    if _looks_like_memory_forget_request(user_message):
+        return reply_text
     if _looks_like_prompt_injection_instruction(user_message):
         return reply_text
     intent = detect_instruction_intent(user_message)
@@ -487,6 +490,18 @@ def _maybe_capture_user_instruction(
     except Exception:
         return reply_text
     return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
+
+
+def _looks_like_memory_forget_request(user_message: str) -> bool:
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    if not re.search(r"\b(?:forget|delete|remove|erase|purge|stop remembering)\b", text):
+        return False
+    return bool(
+        re.search(r"\b(?:saved\s+)?memor(?:y|ies)|\bprofile\s+(?:fact|memory)|\bactive\s+current\s+profile\b", text)
+        or re.search(r"\b(?:my\s+name|preferred\s+name|written\s+name|pronounced|pronunciation)\b", text)
+    )
 
 
 def _maybe_append_verbatim_chip_block(
@@ -3416,6 +3431,7 @@ def _handle_runtime_command(
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
+    natural_memory_doctor_command = _match_natural_memory_doctor_command(normalized)
     style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
@@ -3684,6 +3700,25 @@ def _handle_runtime_command(
                 f"Thinking visibility {state_text} for this Telegram DM. "
                 "This only affects `<think>` blocks in future replies."
             ),
+        }
+    if lowered == "/memory doctor" or lowered.startswith("/memory doctor ") or natural_memory_doctor_command:
+        doctor_topic = (
+            _memory_doctor_topic_from_slash_command(normalized)
+            if lowered.startswith("/memory doctor")
+            else str(natural_memory_doctor_command.get("topic") or "").strip()
+        )
+        report = run_memory_doctor(
+            state_db,
+            config_manager=config_manager,
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            topic=doctor_topic or None,
+            repair_requested=bool(
+                natural_memory_doctor_command and natural_memory_doctor_command.get("repair_requested")
+            ),
+        )
+        return {
+            "command": "/memory doctor",
+            "reply_text": report.to_telegram_text(),
         }
     chip_command = _parse_chip_command(normalized)
     if chip_command is not None:
@@ -4709,6 +4744,74 @@ def _match_natural_think_command(inbound_text: str) -> str | None:
     ):
         return "/think on" if simplified.endswith("on") else "/think off"
     return None
+
+
+def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+    if simplified in {
+        "memory doctor",
+        "show memory doctor",
+        "show me memory doctor",
+        "run memory doctor",
+        "check memory doctor",
+        "diagnose memory",
+        "diagnose spark memory",
+        "audit memory",
+        "audit spark memory",
+        "check memory deletes",
+        "check memory deletion",
+        "check memory deletions",
+        "did memory forget work",
+        "did the memory forget work",
+        "did forget memory work",
+        "check active profile memory",
+        "show active profile memory",
+        "recommend memory fixes",
+        "recommend memory improvements",
+    }:
+        return {"command": "/memory doctor", "topic": None, "repair_requested": False}
+    topic_patterns = (
+        r"^(?:run|check|show)\s+memory\s+doctor\s+for\s+(.+)$",
+        r"^(?:trace|check|diagnose|audit)\s+memory\s+for\s+(.+)$",
+        r"^why\s+did\s+(?:memory|you|spark)\s+recall\s+(.+)$",
+        r"^why\s+is\s+memory\s+recalling\s+(.+)$",
+        r"^repair\s+memory\s+for\s+(.+)$",
+    )
+    for pattern in topic_patterns:
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return {
+                "command": "/memory doctor",
+                "topic": _clean_memory_doctor_topic(match.group(1)),
+                "repair_requested": simplified.startswith("repair memory"),
+            }
+    for pattern in topic_patterns:
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return {
+                "command": "/memory doctor",
+                "topic": _clean_memory_doctor_topic(match.group(1)),
+                "repair_requested": simplified.startswith("repair memory"),
+            }
+    return None
+
+
+def _memory_doctor_topic_from_slash_command(inbound_text: str) -> str | None:
+    suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
+    if not suffix:
+        return None
+    if suffix.lower().startswith("for "):
+        suffix = suffix[4:].strip()
+    return _clean_memory_doctor_topic(suffix)
+
+
+def _clean_memory_doctor_topic(value: str) -> str:
+    cleaned = " ".join(str(value or "").strip().strip(".?!`'\"").split())
+    if cleaned.lower() in {"it", "this", "that", "memory", "profile", "active profile"}:
+        return ""
+    return cleaned
 
 
 def _handle_style_command(

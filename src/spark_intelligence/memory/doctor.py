@@ -1,0 +1,1142 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from spark_intelligence.memory.doctor_brain import build_memory_doctor_brain, memory_doctor_brain_summary
+from spark_intelligence.memory.generic_observations import detect_telegram_generic_deletions
+from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, record_event
+from spark_intelligence.state.db import StateDB
+
+
+@dataclass(frozen=True)
+class MemoryDoctorFinding:
+    name: str
+    ok: bool
+    severity: str
+    detail: str
+    request_id: str | None = None
+    expected_delete_count: int = 0
+    requested_delete_count: int = 0
+    accepted_delete_count: int = 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "ok": self.ok,
+            "severity": self.severity,
+            "detail": self.detail,
+            "request_id": self.request_id,
+            "expected_delete_count": self.expected_delete_count,
+            "requested_delete_count": self.requested_delete_count,
+            "accepted_delete_count": self.accepted_delete_count,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryDoctorReport:
+    findings: list[MemoryDoctorFinding]
+    scanned_delete_turns: int
+    scanned_multi_delete_turns: int
+    recommendations: list[str]
+    path_traces: list[dict[str, object]]
+    dashboard: dict[str, object]
+    active_profile: dict[str, object]
+    topic_scan: dict[str, object]
+    context_capsule: dict[str, object]
+    movement_trace: dict[str, object]
+    brain: dict[str, object]
+    capability: dict[str, object]
+
+    @property
+    def ok(self) -> bool:
+        return all(finding.ok for finding in self.findings)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "scanned_delete_turns": self.scanned_delete_turns,
+            "scanned_multi_delete_turns": self.scanned_multi_delete_turns,
+            "findings": [finding.to_dict() for finding in self.findings],
+            "recommendations": self.recommendations,
+            "path_traces": self.path_traces,
+            "dashboard": self.dashboard,
+            "active_profile": self.active_profile,
+            "topic_scan": self.topic_scan,
+            "context_capsule": self.context_capsule,
+            "movement_trace": self.movement_trace,
+            "brain": self.brain,
+            "capability": self.capability,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+    def to_text(self) -> str:
+        status = "ok" if self.ok else "degraded"
+        lines = [f"Spark memory doctor: {status}"]
+        lines.append(
+            f"- scanned delete turns: {self.scanned_delete_turns} "
+            f"(multi-delete={self.scanned_multi_delete_turns})"
+        )
+        for finding in self.findings:
+            marker = "ok" if finding.ok else "fail"
+            lines.append(f"- [{marker}] {finding.name}: {finding.detail}")
+        if self.active_profile:
+            facts = self.active_profile.get("facts")
+            lines.append(f"- active profile: {facts if facts else self.active_profile.get('status')}")
+        if self.topic_scan.get("topic"):
+            lines.append(
+                f"- topic scan: {self.topic_scan.get('topic')} appeared in "
+                f"{self.topic_scan.get('occurrence_count', 0)} recent memory event(s)"
+            )
+        if self.context_capsule.get("status") == "checked":
+            lines.append(
+                "- context capsule: "
+                f"recent_conversation={self.context_capsule.get('recent_conversation_count', 0)} "
+                f"request={self.context_capsule.get('request_id') or 'unknown'}"
+            )
+        if self.movement_trace.get("status") == "checked":
+            lines.append(
+                "- movement trace: "
+                f"stages={len(self.movement_trace.get('stages') or [])} "
+                f"gaps={len(self.movement_trace.get('gaps') or [])}"
+            )
+        if self.brain:
+            lines.append(f"- brain: {memory_doctor_brain_summary(self.brain)}")
+        if self.dashboard:
+            lines.append(f"- dashboard: {self.dashboard}")
+        if self.recommendations:
+            lines.append("Recommendations:")
+            for recommendation in self.recommendations:
+                lines.append(f"- {recommendation}")
+        return "\n".join(lines)
+
+    def to_telegram_text(self) -> str:
+        status = "healthy" if self.ok else "needs attention"
+        lines = [f"Memory Doctor: {status}."]
+        if self.topic_scan.get("topic"):
+            lines.append(f"Topic: {self.topic_scan['topic']}.")
+        lines.append(
+            f"Scanned {self.scanned_delete_turns} delete turn(s), "
+            f"{self.scanned_multi_delete_turns} multi-delete."
+        )
+        facts = self.active_profile.get("facts") if isinstance(self.active_profile, dict) else None
+        if isinstance(facts, dict) and facts:
+            compact_facts = ", ".join(f"{key}={value}" for key, value in facts.items())
+            lines.append(f"Active profile: {compact_facts}.")
+        elif self.active_profile.get("status") == "not_requested":
+            lines.append("Active profile: not checked; give me a human id or run it from Telegram.")
+        current_state = self.active_profile.get("current_state") if isinstance(self.active_profile, dict) else None
+        if isinstance(current_state, dict) and current_state.get("status") not in (None, "error"):
+            lines.append(f"Current-state scan: {int(current_state.get('record_count') or 0)} record(s).")
+        topic_count = int(self.topic_scan.get("occurrence_count") or 0)
+        if self.topic_scan.get("topic") and topic_count:
+            lines.append(f"Trace: found {topic_count} recent memory event(s) mentioning that topic.")
+        if self.context_capsule.get("status") == "checked":
+            recent_count = int(self.context_capsule.get("recent_conversation_count") or 0)
+            gateway_trace = self.context_capsule.get("gateway_trace")
+            if isinstance(gateway_trace, dict) and gateway_trace.get("lineage_gap"):
+                lines.append(
+                    "Context capsule: gateway had "
+                    f"{int(gateway_trace.get('recent_gateway_message_count') or 0)} earlier same-session message(s), "
+                    "but the provider capsule had no recent-conversation turns."
+                )
+            elif recent_count == 0:
+                lines.append("Context capsule: no recent-conversation turns in the latest provider capsule.")
+        if self.brain:
+            lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
+        failing = [finding for finding in self.findings if not finding.ok]
+        if not failing:
+            lines.append("Delete integrity looks good: every detected multi-forget turn has matching delete writes.")
+            if self.recommendations:
+                lines.append(f"Recommendation: {self.recommendations[0]}")
+            return "\n".join(lines)
+        first = failing[0]
+        lines.append(
+            "Problem: "
+            f"{first.detail} "
+            f"(request={first.request_id or 'unknown'})."
+        )
+        if self.recommendations:
+            lines.append(f"Next: {self.recommendations[0]}")
+        return "\n".join(lines)
+
+
+def run_memory_doctor(
+    state_db: StateDB,
+    *,
+    config_manager: Any | None = None,
+    human_id: str | None = None,
+    topic: str | None = None,
+    repair_requested: bool = False,
+    limit: int = 200,
+) -> MemoryDoctorReport:
+    influence_events = latest_events_by_type(
+        state_db,
+        event_type="plugin_or_chip_influence_recorded",
+        limit=limit,
+    )
+    write_requested_events = latest_events_by_type(
+        state_db,
+        event_type="memory_write_requested",
+        limit=limit * 3,
+    )
+    write_succeeded_events = latest_events_by_type(
+        state_db,
+        event_type="memory_write_succeeded",
+        limit=limit * 3,
+    )
+    read_result_events = latest_events_by_type(
+        state_db,
+        event_type="memory_read_succeeded",
+        limit=limit,
+    ) + latest_events_by_type(
+        state_db,
+        event_type="memory_read_abstained",
+        limit=limit,
+    )
+    read_requested_events = latest_events_by_type(
+        state_db,
+        event_type="memory_read_requested",
+        limit=limit,
+    )
+    tool_result_events = latest_events_by_type(
+        state_db,
+        event_type="tool_result_received",
+        limit=limit,
+    )
+    context_capsule_events = latest_events_by_type(
+        state_db,
+        event_type="context_capsule_compiled",
+        limit=limit,
+    )
+    lifecycle_events = latest_events_by_type(
+        state_db,
+        event_type="memory_lifecycle_transition",
+        limit=limit,
+    )
+    policy_gate_events = latest_events_by_type(
+        state_db,
+        event_type="policy_gate_blocked",
+        limit=limit,
+    )
+    all_memory_events = influence_events + write_requested_events + write_succeeded_events + read_requested_events + read_result_events
+    findings: list[MemoryDoctorFinding] = []
+    scanned_delete_turns = 0
+    scanned_multi_delete_turns = 0
+    seen_delete_messages: set[str] = set()
+
+    for event in influence_events:
+        if str(event.get("component") or "") != "researcher_bridge":
+            continue
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        message_text = _memory_doctor_message_text(facts)
+        if not message_text:
+            continue
+        expected_deletions = detect_telegram_generic_deletions(message_text)
+        if not expected_deletions:
+            continue
+        message_key = _normalized_message_key(message_text)
+        if message_key in seen_delete_messages:
+            continue
+        seen_delete_messages.add(message_key)
+        scanned_delete_turns += 1
+        if len(expected_deletions) < 2:
+            continue
+        scanned_multi_delete_turns += 1
+        request_id = str(event.get("request_id") or "").strip()
+        requested_count = _delete_write_request_count(write_requested_events, request_id=request_id)
+        accepted_count = _accepted_delete_write_count(write_succeeded_events, request_id=request_id)
+        expected_count = len(expected_deletions)
+        ok = requested_count >= expected_count and accepted_count >= expected_count
+        if not ok:
+            findings.append(
+                MemoryDoctorFinding(
+                    name="memory_delete_intent_integrity",
+                    ok=False,
+                    severity="high",
+                    detail=(
+                        f"multi-delete turn expected {expected_count} delete write(s), "
+                        f"requested {requested_count}, accepted {accepted_count}"
+                    ),
+                    request_id=request_id or None,
+                    expected_delete_count=expected_count,
+                    requested_delete_count=requested_count,
+                    accepted_delete_count=accepted_count,
+                )
+            )
+
+    if not any(finding.name == "memory_delete_intent_integrity" for finding in findings):
+        findings.append(
+            MemoryDoctorFinding(
+                name="memory_delete_intent_integrity",
+                ok=True,
+                severity="high",
+                detail="No partial multi-delete writes detected.",
+            )
+        )
+
+    active_profile = _build_active_profile(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+    )
+    topic_scan = _scan_topic(all_memory_events + tool_result_events, topic=topic)
+    context_capsule = _build_context_capsule_audit(
+        context_capsule_events,
+        config_manager=config_manager,
+        human_id=human_id,
+    )
+    dashboard = _build_dashboard_summary(state_db)
+    movement_trace = _build_movement_trace(
+        influence_events=influence_events,
+        write_requested_events=write_requested_events,
+        write_succeeded_events=write_succeeded_events,
+        read_requested_events=read_requested_events,
+        read_result_events=read_result_events,
+        lifecycle_events=lifecycle_events,
+        policy_gate_events=policy_gate_events,
+        tool_result_events=tool_result_events,
+        context_capsule=context_capsule,
+        dashboard=dashboard,
+    )
+    topic_findings = _build_topic_findings(topic_scan=topic_scan, active_profile=active_profile)
+    findings.extend(topic_findings)
+    findings.extend(_build_context_capsule_findings(context_capsule))
+    path_traces = _build_path_traces(
+        influence_events=influence_events,
+        write_requested_events=write_requested_events,
+        write_succeeded_events=write_succeeded_events,
+        tool_result_events=tool_result_events,
+        topic=topic,
+    )
+    brain = build_memory_doctor_brain(
+        state_db=state_db,
+        config_manager=config_manager,
+        findings=findings,
+        event_counts={
+            "builder_influence": len(influence_events),
+            "memory_write_requested": len(write_requested_events),
+            "memory_write_succeeded": len(write_succeeded_events),
+            "memory_read_requested": len(read_requested_events),
+            "memory_read_result": len(read_result_events),
+            "tool_result": len(tool_result_events),
+            "context_capsule": len(context_capsule_events),
+            "memory_lifecycle": len(lifecycle_events),
+            "policy_gate": len(policy_gate_events),
+        },
+        active_profile=active_profile,
+        topic_scan=topic_scan,
+        context_capsule=context_capsule,
+        movement_trace=movement_trace,
+        dashboard=dashboard,
+        path_traces=path_traces,
+    )
+    _record_brain_snapshot(
+        state_db=state_db,
+        brain=brain,
+        human_id=human_id,
+        topic=topic,
+    )
+    recommendations = _build_recommendations(
+        findings=findings,
+        active_profile=active_profile,
+        topic_scan=topic_scan,
+        context_capsule=context_capsule,
+        repair_requested=repair_requested,
+    )
+    recommendations.extend(_brain_recommendations(brain))
+    return MemoryDoctorReport(
+        findings=findings,
+        scanned_delete_turns=scanned_delete_turns,
+        scanned_multi_delete_turns=scanned_multi_delete_turns,
+        recommendations=recommendations,
+        path_traces=path_traces,
+        dashboard=dashboard,
+        active_profile=active_profile,
+        topic_scan=topic_scan,
+        context_capsule=context_capsule,
+        movement_trace=movement_trace,
+        brain=brain,
+        capability={
+            "mode": "diagnosis_only",
+            "repair_requested": repair_requested,
+            "automatic_repair": False,
+            "authority_boundary": "Memory Doctor reads traces and recommends; it does not delete or rewrite memory.",
+            "brain": {
+                "mode": "diagnostic_and_proactive_recommendation",
+                "automatic_repair": False,
+                "snapshot_event": "memory_doctor_brain_evaluated",
+                "snapshot_authority": "observability_non_authoritative",
+            },
+        },
+    )
+
+
+def _build_active_profile(
+    *,
+    config_manager: Any | None,
+    state_db: StateDB,
+    human_id: str | None,
+) -> dict[str, object]:
+    if config_manager is None or not str(human_id or "").strip():
+        return {"status": "not_requested"}
+    try:
+        from spark_intelligence.memory.orchestrator import (
+            inspect_human_memory_in_memory,
+            lookup_current_state_in_memory,
+        )
+    except Exception as exc:  # pragma: no cover - defensive import boundary
+        return {"status": "unavailable", "reason": f"lookup import failed: {exc}"}
+
+    facts: dict[str, object] = {}
+    reads: dict[str, object] = {}
+    predicates = {
+        "preferred_name": "profile.preferred_name",
+        "current_owner": "profile.current_owner",
+        "cofounder": "profile.cofounder_name",
+    }
+    subject = _doctor_subject_for_human_id(str(human_id))
+    for label, predicate in predicates.items():
+        try:
+            result = lookup_current_state_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=subject,
+                predicate=predicate,
+                actor_id="memory_doctor",
+            )
+        except Exception as exc:  # pragma: no cover - SDK/runtime dependent
+            reads[label] = {"status": "error", "reason": str(exc)}
+            continue
+        value = _first_memory_value(result.read_result.records)
+        if value not in (None, ""):
+            facts[label] = value
+        reads[label] = {
+            "status": result.read_result.status,
+            "record_count": len(result.read_result.records),
+            "abstained": bool(result.read_result.abstained),
+            "reason": result.read_result.reason,
+        }
+    try:
+        inspection = inspect_human_memory_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=str(human_id),
+            actor_id="memory_doctor",
+        )
+        records = [
+            _compact_current_state_record(record)
+            for record in inspection.read_result.records
+            if isinstance(record, dict)
+        ]
+        current_state = {
+            "status": inspection.read_result.status,
+            "record_count": len(inspection.read_result.records),
+            "abstained": bool(inspection.read_result.abstained),
+            "reason": inspection.read_result.reason,
+            "records": records[:50],
+        }
+    except Exception as exc:  # pragma: no cover - SDK/runtime dependent
+        current_state = {"status": "error", "reason": str(exc), "record_count": 0, "records": []}
+    return {
+        "status": "checked",
+        "human_id": human_id,
+        "subject": subject,
+        "facts": facts,
+        "reads": reads,
+        "current_state": current_state,
+    }
+
+
+def _doctor_subject_for_human_id(human_id: str) -> str:
+    text = str(human_id or "").strip()
+    if text.startswith("human:"):
+        return text
+    return f"human:{text}"
+
+
+def _first_memory_value(records: list[dict[str, Any]]) -> object | None:
+    if not records:
+        return None
+    record = records[0]
+    if not isinstance(record, dict):
+        return None
+    if record.get("value") not in (None, ""):
+        return record.get("value")
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("value") not in (None, ""):
+        return metadata.get("value")
+    return record.get("text")
+
+
+def _compact_current_state_record(record: dict[str, Any]) -> dict[str, object]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return {
+        "predicate": record.get("predicate"),
+        "value": record.get("value") if record.get("value") not in (None, "") else metadata.get("value"),
+        "text": _shorten(str(record.get("text") or ""), 180),
+        "memory_role": record.get("memory_role") or metadata.get("memory_role"),
+        "retention_class": record.get("retention_class") or metadata.get("retention_class"),
+        "entity_key": metadata.get("entity_key"),
+        "entity_label": metadata.get("entity_label"),
+        "entity_attribute": metadata.get("entity_attribute") or metadata.get("field_name"),
+        "timestamp": record.get("timestamp"),
+    }
+
+
+def _record_search_text(record: dict[str, object]) -> str:
+    return " ".join(
+        str(record.get(key) or "")
+        for key in (
+            "predicate",
+            "value",
+            "text",
+            "memory_role",
+            "retention_class",
+            "entity_key",
+            "entity_label",
+            "entity_attribute",
+        )
+    )
+
+
+def _record_label(record: dict[str, object]) -> str:
+    predicate = str(record.get("predicate") or "current_state")
+    entity_label = str(record.get("entity_label") or "").strip()
+    entity_attribute = str(record.get("entity_attribute") or "").strip()
+    if entity_label and entity_attribute:
+        return f"{predicate}:{entity_label}.{entity_attribute}"
+    return predicate
+
+
+def _build_dashboard_summary(state_db: StateDB) -> dict[str, object]:
+    try:
+        snapshot = build_watchtower_snapshot(state_db)
+    except Exception as exc:  # pragma: no cover - dashboard should not block diagnosis
+        return {"status": "unavailable", "reason": str(exc)}
+    panels = snapshot.get("panels") if isinstance(snapshot, dict) else {}
+    memory_shadow = (panels or {}).get("memory_shadow") or {}
+    memory_lane_hygiene = (panels or {}).get("memory_lane_hygiene") or {}
+    return {
+        "top_level_state": snapshot.get("top_level_state"),
+        "memory_shadow_counts": dict(memory_shadow.get("counts") or {}),
+        "memory_role_mix": list(memory_shadow.get("memory_role_mix") or []),
+        "abstention_reasons": list(memory_shadow.get("abstention_reasons") or [])[:5],
+        "memory_lane_hygiene_status": memory_lane_hygiene.get("status"),
+        "memory_lane_hygiene_counts": dict(memory_lane_hygiene.get("counts") or {}),
+    }
+
+
+def _scan_topic(events: list[dict[str, object]], *, topic: str | None) -> dict[str, object]:
+    normalized_topic = str(topic or "").strip()
+    if not normalized_topic:
+        return {"status": "not_requested", "topic": None, "occurrence_count": 0, "matches": []}
+    needle = normalized_topic.lower()
+    matches: list[dict[str, object]] = []
+    for event in events:
+        haystack = _event_search_text(event).lower()
+        if needle not in haystack:
+            continue
+        matches.append(
+            {
+                "event_type": event.get("event_type"),
+                "component": event.get("component"),
+                "request_id": event.get("request_id"),
+                "created_at": event.get("created_at"),
+                "summary": _shorten(str(event.get("summary") or ""), 120),
+            }
+        )
+        if len(matches) >= 8:
+            break
+    return {
+        "status": "checked",
+        "topic": normalized_topic,
+        "occurrence_count": len(matches),
+        "matches": matches,
+    }
+
+
+def _build_topic_findings(
+    *,
+    topic_scan: dict[str, object],
+    active_profile: dict[str, object],
+) -> list[MemoryDoctorFinding]:
+    topic = str(topic_scan.get("topic") or "").strip()
+    if not topic:
+        return []
+    facts = active_profile.get("facts") if isinstance(active_profile, dict) else {}
+    active_fields: list[str] = []
+    if isinstance(facts, dict):
+        for field, value in facts.items():
+            if str(value or "").strip().lower() == topic.lower():
+                active_fields.append(str(field))
+    current_state = active_profile.get("current_state") if isinstance(active_profile, dict) else {}
+    current_matches: list[str] = []
+    if isinstance(current_state, dict):
+        records = current_state.get("records")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                if topic.lower() not in _record_search_text(record).lower():
+                    continue
+                current_matches.append(_record_label(record))
+    if active_fields:
+        active_fields.extend(match for match in current_matches if match not in active_fields)
+        return [
+            MemoryDoctorFinding(
+                name="topic_active_state_presence",
+                ok=True,
+                severity="medium",
+                detail=f"topic '{topic}' is active in: {', '.join(active_fields)}",
+            )
+        ]
+    if current_matches:
+        return [
+            MemoryDoctorFinding(
+                name="topic_active_state_presence",
+                ok=True,
+                severity="medium",
+                detail=f"topic '{topic}' is active in: {', '.join(current_matches)}",
+            )
+        ]
+    occurrence_count = int(topic_scan.get("occurrence_count") or 0)
+    return [
+        MemoryDoctorFinding(
+            name="topic_trace_scan",
+            ok=True,
+            severity="medium",
+            detail=(
+                f"topic '{topic}' appears in {occurrence_count} recent memory event(s), "
+                "but not in checked active current-state records"
+            ),
+        )
+    ]
+
+
+def _build_context_capsule_audit(
+    events: list[dict[str, object]],
+    *,
+    config_manager: Any | None,
+    human_id: str | None,
+) -> dict[str, object]:
+    if not events:
+        return {"status": "not_found"}
+    normalized_human_id = str(human_id or "").strip()
+    selected: dict[str, object] | None = None
+    for event in events:
+        event_human_id = str(event.get("human_id") or "").strip()
+        if normalized_human_id and event_human_id and event_human_id != normalized_human_id:
+            continue
+        selected = event
+        break
+    if selected is None:
+        return {"status": "not_found"}
+    facts = selected.get("facts_json") if isinstance(selected.get("facts_json"), dict) else {}
+    source_counts = facts.get("source_counts") if isinstance(facts.get("source_counts"), dict) else {}
+    source_ledger = facts.get("source_ledger") if isinstance(facts.get("source_ledger"), list) else []
+    recent_entry = next(
+        (item for item in source_ledger if isinstance(item, dict) and item.get("source") == "recent_conversation"),
+        {},
+    )
+    result = {
+        "status": "checked",
+        "request_id": selected.get("request_id"),
+        "created_at": selected.get("created_at"),
+        "reason_code": selected.get("reason_code"),
+        "recent_conversation_count": int(source_counts.get("recent_conversation") or 0),
+        "recent_conversation_present": bool(recent_entry.get("present")) if isinstance(recent_entry, dict) else False,
+        "source_counts": dict(source_counts),
+        "source_ledger": [
+            {
+                "source": item.get("source"),
+                "role": item.get("role"),
+                "priority": item.get("priority"),
+                "present": item.get("present"),
+                "count": item.get("count"),
+            }
+            for item in source_ledger[:12]
+            if isinstance(item, dict)
+        ],
+    }
+    result["gateway_trace"] = _build_gateway_trace_audit(
+        config_manager=config_manager,
+        capsule_request_id=str(selected.get("request_id") or ""),
+        capsule_recent_conversation_count=int(source_counts.get("recent_conversation") or 0),
+    )
+    return result
+
+
+def _build_gateway_trace_audit(
+    *,
+    config_manager: Any | None,
+    capsule_request_id: str,
+    capsule_recent_conversation_count: int,
+) -> dict[str, object]:
+    if config_manager is None:
+        return {"status": "not_requested"}
+    try:
+        from spark_intelligence.gateway.tracing import read_gateway_traces
+
+        traces = read_gateway_traces(config_manager, limit=300)
+    except Exception as exc:  # pragma: no cover - trace logs should not block diagnosis
+        return {"status": "unavailable", "reason": str(exc)}
+    if not traces:
+        return {"status": "not_found"}
+
+    target_index = next(
+        (
+            index
+            for index, record in enumerate(traces)
+            if str(record.get("request_id") or "").strip() == capsule_request_id
+        ),
+        None,
+    )
+    if target_index is None:
+        return {"status": "request_not_found", "request_id": capsule_request_id}
+
+    target = traces[target_index]
+    session_id = str(target.get("session_id") or "").strip()
+    chat_id = str(target.get("chat_id") or "").strip()
+    telegram_user_id = str(target.get("telegram_user_id") or "").strip()
+    recent_messages: list[dict[str, object]] = []
+    for record in reversed(traces[:target_index]):
+        if str(record.get("event") or "") != "telegram_update_processed":
+            continue
+        if session_id and str(record.get("session_id") or "") != session_id:
+            continue
+        if chat_id and str(record.get("chat_id") or "") != chat_id:
+            continue
+        if telegram_user_id and str(record.get("telegram_user_id") or "") != telegram_user_id:
+            continue
+        preview = str(record.get("user_message_preview") or "").strip()
+        if not preview:
+            continue
+        recent_messages.append(
+            {
+                "request_id": record.get("request_id"),
+                "recorded_at": record.get("recorded_at"),
+                "user_message_preview": _shorten(preview, 120),
+                "bridge_mode": record.get("bridge_mode"),
+                "routing_decision": record.get("routing_decision"),
+            }
+        )
+        if len(recent_messages) >= 5:
+            break
+
+    return {
+        "status": "checked",
+        "request_id": capsule_request_id,
+        "target_recorded_at": target.get("recorded_at"),
+        "session_id": session_id,
+        "recent_gateway_message_count": len(recent_messages),
+        "capsule_recent_conversation_count": capsule_recent_conversation_count,
+        "lineage_gap": bool(recent_messages and capsule_recent_conversation_count == 0),
+        "recent_gateway_messages": recent_messages,
+    }
+
+
+def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[MemoryDoctorFinding]:
+    if context_capsule.get("status") != "checked":
+        return []
+    gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    if gateway_trace.get("lineage_gap"):
+        return [
+            MemoryDoctorFinding(
+            name="context_capsule_gateway_trace_gap",
+            ok=False,
+            severity="high",
+                detail=(
+                    "gateway trace had "
+                    f"{int(gateway_trace.get('recent_gateway_message_count') or 0)} earlier Telegram message(s) "
+                    "for the same session, but the latest provider capsule had 0 recent-conversation source(s)"
+                ),
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        ]
+    if int(context_capsule.get("recent_conversation_count") or 0) != 0:
+        return [
+            MemoryDoctorFinding(
+                name="context_capsule_recent_conversation",
+                ok=True,
+                severity="medium",
+                detail="latest provider capsule included recent same-session conversation.",
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        ]
+    return [
+        MemoryDoctorFinding(
+            name="context_capsule_recent_conversation_gap",
+            ok=True,
+            severity="medium",
+            detail=(
+                "latest provider capsule had 0 recent-conversation source(s); "
+                "close-turn recall may fail even when durable memory is healthy"
+            ),
+            request_id=str(context_capsule.get("request_id") or "") or None,
+        )
+    ]
+
+
+def _build_movement_trace(
+    *,
+    influence_events: list[dict[str, object]],
+    write_requested_events: list[dict[str, object]],
+    write_succeeded_events: list[dict[str, object]],
+    read_requested_events: list[dict[str, object]],
+    read_result_events: list[dict[str, object]],
+    lifecycle_events: list[dict[str, object]],
+    policy_gate_events: list[dict[str, object]],
+    tool_result_events: list[dict[str, object]],
+    context_capsule: dict[str, object],
+    dashboard: dict[str, object],
+) -> dict[str, object]:
+    gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    read_abstentions = [
+        event for event in read_result_events if str(event.get("event_type") or "") == "memory_read_abstained"
+    ]
+    memory_shadow_counts = dashboard.get("memory_shadow_counts") if isinstance(dashboard.get("memory_shadow_counts"), dict) else {}
+    lane_counts = dashboard.get("memory_lane_hygiene_counts") if isinstance(dashboard.get("memory_lane_hygiene_counts"), dict) else {}
+    stages = [
+        {
+            "stage": "telegram_gateway",
+            "status": gateway_trace.get("status") or "not_checked",
+            "recent_message_count": int(gateway_trace.get("recent_gateway_message_count") or 0)
+            if isinstance(gateway_trace, dict)
+            else 0,
+            "lineage_gap": bool(gateway_trace.get("lineage_gap")) if isinstance(gateway_trace, dict) else False,
+        },
+        {
+            "stage": "builder_influence",
+            "status": "checked",
+            "event_count": len(influence_events),
+            "tool_result_count": len(tool_result_events),
+        },
+        {
+            "stage": "memory_writes",
+            "status": "checked",
+            "requested_count": len(write_requested_events),
+            "succeeded_count": len(write_succeeded_events),
+        },
+        {
+            "stage": "memory_reads",
+            "status": "checked",
+            "requested_count": len(read_requested_events),
+            "result_count": len(read_result_events),
+            "abstained_count": len(read_abstentions),
+        },
+        {
+            "stage": "memory_lifecycle_and_policy",
+            "status": "checked",
+            "lifecycle_transition_count": len(lifecycle_events),
+            "policy_gate_block_count": len(policy_gate_events),
+        },
+        {
+            "stage": "context_capsule",
+            "status": context_capsule.get("status"),
+            "request_id": context_capsule.get("request_id"),
+            "recent_conversation_count": int(context_capsule.get("recent_conversation_count") or 0),
+            "source_counts": context_capsule.get("source_counts") if isinstance(context_capsule.get("source_counts"), dict) else {},
+        },
+        {
+            "stage": "dashboard_watchtower",
+            "status": dashboard.get("top_level_state") or "unknown",
+            "contract_violations": int(memory_shadow_counts.get("contract_violations") or 0),
+            "invalid_role_events": int(memory_shadow_counts.get("invalid_role_events") or 0),
+            "blocked_promotions": int(lane_counts.get("blocked_promotions") or 0),
+        },
+    ]
+
+    gaps: list[dict[str, object]] = []
+    if isinstance(gateway_trace, dict) and gateway_trace.get("lineage_gap"):
+        gaps.append(
+            {
+                "name": "gateway_to_context_capsule_gap",
+                "severity": "high",
+                "detail": "Telegram gateway has same-session messages that are absent from recent_conversation in the provider capsule.",
+                "request_id": context_capsule.get("request_id"),
+            }
+        )
+    if len(write_requested_events) > len(write_succeeded_events):
+        gaps.append(
+            {
+                "name": "memory_write_result_gap",
+                "severity": "medium",
+                "detail": "Recent memory write requests outnumber write result events.",
+            }
+        )
+    if int(memory_shadow_counts.get("contract_violations") or 0) > 0:
+        gaps.append(
+            {
+                "name": "memory_contract_violation",
+                "severity": "high",
+                "detail": "Watchtower reports memory contract violations.",
+            }
+        )
+    if int(memory_shadow_counts.get("invalid_role_events") or 0) > 0:
+        gaps.append(
+            {
+                "name": "invalid_memory_role_event",
+                "severity": "high",
+                "detail": "Watchtower reports invalid memory role events.",
+            }
+        )
+
+    return {
+        "status": "checked",
+        "scope": "gateway -> builder events -> memory reads/writes -> lifecycle/policy gates -> context capsule -> watchtower dashboard",
+        "stages": stages,
+        "gaps": gaps,
+        "unknowns": _movement_trace_unknowns(context_capsule=context_capsule),
+    }
+
+
+def _movement_trace_unknowns(*, context_capsule: dict[str, object]) -> list[str]:
+    unknowns: list[str] = []
+    gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    if not isinstance(gateway_trace, dict) or gateway_trace.get("status") in {None, "not_requested", "not_found", "request_not_found"}:
+        unknowns.append("Gateway transcript lineage was not fully available for the selected provider capsule.")
+    if context_capsule.get("status") != "checked":
+        unknowns.append("No recent context capsule event was available to audit.")
+    return unknowns
+
+
+def _build_path_traces(
+    *,
+    influence_events: list[dict[str, object]],
+    write_requested_events: list[dict[str, object]],
+    write_succeeded_events: list[dict[str, object]],
+    tool_result_events: list[dict[str, object]],
+    topic: str | None,
+) -> list[dict[str, object]]:
+    normalized_topic = str(topic or "").strip().lower()
+    traces: list[dict[str, object]] = []
+    for event in influence_events:
+        if str(event.get("component") or "") != "researcher_bridge":
+            continue
+        if normalized_topic and normalized_topic not in _event_search_text(event).lower():
+            continue
+        request_id = str(event.get("request_id") or "").strip()
+        if not request_id:
+            continue
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        traces.append(
+            {
+                "request_id": request_id,
+                "message_text": _shorten(_memory_doctor_message_text(facts), 180),
+                "influence_summary": _shorten(str(event.get("summary") or ""), 160),
+                "write_requests": _matching_event_count(write_requested_events, request_id=request_id),
+                "write_results": _matching_event_count(write_succeeded_events, request_id=request_id),
+                "tool_results": _matching_event_count(tool_result_events, request_id=request_id),
+            }
+        )
+        if len(traces) >= 5:
+            break
+    return traces
+
+
+def _build_recommendations(
+    *,
+    findings: list[MemoryDoctorFinding],
+    active_profile: dict[str, object],
+    topic_scan: dict[str, object],
+    context_capsule: dict[str, object],
+    repair_requested: bool,
+) -> list[str]:
+    recommendations: list[str] = []
+    if any(finding.name == "memory_delete_intent_integrity" and not finding.ok for finding in findings):
+        recommendations.append("Rerun the affected forget request, then ask `check memory deletes`.")
+    context_lineage_gap = any(
+        finding.name == "context_capsule_gateway_trace_gap" and not finding.ok
+        for finding in findings
+    )
+    if context_lineage_gap:
+        recommendations.append(
+            "Fix the recent-conversation capsule path: Telegram gateway saw close-turn messages, but provider context did not receive them."
+        )
+    active_presence = next((finding for finding in findings if finding.name == "topic_active_state_presence"), None)
+    if active_presence is not None:
+        topic = str(topic_scan.get("topic") or "that value")
+        recommendations.append(
+            f"If {topic} is wrong in that active field, ask Spark to forget that specific field, then rerun Memory Doctor for {topic}."
+        )
+    elif topic_scan.get("topic") and int(topic_scan.get("occurrence_count") or 0) > 0:
+        recommendations.append(
+            "Treat the topic as historical trace unless it appears in active current state; do not purge trace logs without an audit policy."
+        )
+    if active_profile.get("status") == "not_requested":
+        recommendations.append("Run this from Telegram or pass `--human-id` so the doctor can inspect active profile facts.")
+    if (
+        not context_lineage_gap
+        and
+        context_capsule.get("status") == "checked"
+        and int(context_capsule.get("recent_conversation_count") or 0) == 0
+    ):
+        recommendations.append(
+            "For close-turn blankness, inspect the context capsule source ledger and recent Telegram transcript path; durable memory alone will not prove immediate context survived."
+        )
+    if repair_requested:
+        recommendations.append("Repair mode is not automatic yet; Memory Doctor is diagnosis-only until repair authority is explicitly gated.")
+    if not recommendations:
+        recommendations.append("No immediate repair recommended; use `run memory doctor for <topic>` when a specific recall feels wrong.")
+    return recommendations
+
+
+def _brain_recommendations(brain: dict[str, object]) -> list[str]:
+    improvements = brain.get("proactive_improvements") if isinstance(brain, dict) else []
+    if not isinstance(improvements, list):
+        return []
+    recommendations: list[str] = []
+    for improvement in improvements[:2]:
+        if not isinstance(improvement, dict):
+            continue
+        action = str(improvement.get("action") or "").strip()
+        next_probe = str(improvement.get("next_probe") or "").strip()
+        if not action:
+            continue
+        recommendation = action
+        if next_probe:
+            recommendation = f"{recommendation} Next probe: {next_probe}."
+        if recommendation not in recommendations:
+            recommendations.append(recommendation)
+    return recommendations
+
+
+def _record_brain_snapshot(
+    *,
+    state_db: StateDB,
+    brain: dict[str, object],
+    human_id: str | None,
+    topic: str | None,
+) -> None:
+    summary = brain.get("summary") if isinstance(brain.get("summary"), dict) else {}
+    coverage = brain.get("coverage") if isinstance(brain.get("coverage"), dict) else {}
+    gaps = [gap for gap in (brain.get("gaps") or []) if isinstance(gap, dict)]
+    improvements = [
+        improvement
+        for improvement in (brain.get("proactive_improvements") or [])
+        if isinstance(improvement, dict)
+    ]
+    try:
+        record_event(
+            state_db,
+            event_type="memory_doctor_brain_evaluated",
+            component="memory_doctor",
+            summary=(
+                "Memory Doctor Brain evaluated diagnostic coverage "
+                f"score={summary.get('coverage_score', coverage.get('score', 'unknown'))} "
+                f"gaps={summary.get('gap_count', len(gaps))}"
+            ),
+            human_id=human_id,
+            actor_id="memory_doctor",
+            evidence_lane="observability",
+            severity="medium" if gaps else "info",
+            status="observed",
+            reason_code="memory_doctor_brain_snapshot",
+            facts={
+                "authority": "observability_non_authoritative",
+                "coverage_score": summary.get("coverage_score", coverage.get("score")),
+                "present_senses": list(coverage.get("present") or []),
+                "missing_senses": list(coverage.get("missing") or []),
+                "gap_names": [str(gap.get("name") or "") for gap in gaps],
+                "highest_severity": summary.get("highest_severity"),
+                "next_probe": summary.get("next_probe"),
+                "proactive_improvement_names": [
+                    str(improvement.get("name") or "") for improvement in improvements[:5]
+                ],
+                "topic": topic,
+                "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
+            },
+        )
+    except Exception:
+        return
+
+
+def _matching_event_count(events: list[dict[str, object]], *, request_id: str) -> int:
+    return sum(1 for event in events if _request_id_matches(event.get("request_id"), request_id=request_id))
+
+
+def _event_search_text(event: dict[str, object]) -> str:
+    try:
+        facts_text = json.dumps(event.get("facts_json") or {}, sort_keys=True, default=str)
+        provenance_text = json.dumps(event.get("provenance_json") or {}, sort_keys=True, default=str)
+    except TypeError:
+        facts_text = str(event.get("facts_json") or "")
+        provenance_text = str(event.get("provenance_json") or "")
+    return " ".join(
+        str(part or "")
+        for part in (
+            event.get("event_type"),
+            event.get("component"),
+            event.get("reason_code"),
+            event.get("summary"),
+            facts_text,
+            provenance_text,
+        )
+    )
+
+
+def _shorten(value: str, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _memory_doctor_message_text(facts: dict[str, object]) -> str:
+    for key in ("detected_generic_memory_deletion", "detected_generic_memory_observation"):
+        payload = facts.get(key)
+        if isinstance(payload, dict):
+            message_text = str(payload.get("message_text") or "").strip()
+            if message_text:
+                return message_text
+    payloads = facts.get("detected_generic_memory_deletions")
+    if isinstance(payloads, list):
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            message_text = str(payload.get("message_text") or payload.get("evidence_text") or "").strip()
+            if message_text:
+                return message_text
+    return ""
+
+
+def _normalized_message_key(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _request_id_matches(event_request_id: object, *, request_id: str) -> bool:
+    candidate = str(event_request_id or "").strip()
+    if not candidate or not request_id:
+        return False
+    return candidate == request_id or candidate.startswith(f"{request_id}:delete-")
+
+
+def _delete_write_request_count(events: list[dict[str, object]], *, request_id: str) -> int:
+    count = 0
+    for event in events:
+        if str(event.get("component") or "") != "memory_orchestrator":
+            continue
+        if not _request_id_matches(event.get("request_id"), request_id=request_id):
+            continue
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        if str(facts.get("operation") or "") == "delete":
+            count += 1
+    return count
+
+
+def _accepted_delete_write_count(events: list[dict[str, object]], *, request_id: str) -> int:
+    count = 0
+    for event in events:
+        if str(event.get("component") or "") != "memory_orchestrator":
+            continue
+        if not _request_id_matches(event.get("request_id"), request_id=request_id):
+            continue
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        if str(facts.get("operation") or "") != "delete":
+            continue
+        count += int(facts.get("accepted_count") or 0)
+    return count

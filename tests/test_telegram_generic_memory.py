@@ -5,11 +5,15 @@ from unittest.mock import patch
 from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
+    detect_telegram_generic_deletions,
 )
+from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import (
     latest_events_by_type,
+    record_event,
     recent_memory_lane_records,
     recent_policy_gate_records,
 )
@@ -4810,6 +4814,324 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(current_result.reply_text, "I don't currently have that saved.")
         self.assertEqual(history_result.reply_text, "An earlier saved cofounder was Omar.")
         self.assertEqual(event_history_result.reply_text, "I only have one saved cofounder event: Omar.")
+
+    def test_build_researcher_reply_handles_multiple_generic_deletions_in_one_turn(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        detected_deletions = detect_telegram_generic_deletions(
+            "Forget my cofounder.\nForget my current owner.\nForget who owns the launch checklist."
+        )
+        self.assertEqual(
+            [deletion.predicate for deletion in detected_deletions],
+            ["profile.cofounder_name", "profile.current_owner", "entity.owner"],
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-cofounder-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="My cofounder is Omar.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-owner-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="My current owner is Maya.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-launch-owner-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="For later, Maya owns the launch checklist.",
+        )
+
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message=(
+                "Forget my cofounder.\n"
+                "Forget my current owner.\n"
+                "Forget who owns the launch checklist."
+            ),
+        )
+        cofounder_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-cofounder-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who is my cofounder?",
+        )
+        owner_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-owner-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who is the owner?",
+        )
+        launch_owner_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-launch-owner-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who owns the launch checklist?",
+        )
+
+        self.assertEqual(
+            delete_result.reply_text,
+            "I'll forget your cofounder, your current owner, and the launch checklist owner.",
+        )
+        self.assertIn("delete_count=3", delete_result.evidence_summary)
+        self.assertEqual(cofounder_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(owner_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(launch_owner_result.reply_text, "I don't currently have saved owner for that.")
+
+        doctor_report = run_memory_doctor(self.state_db)
+        self.assertTrue(doctor_report.ok)
+        self.assertIn("No partial multi-delete writes detected", doctor_report.to_text())
+
+    def test_memory_doctor_flags_partial_multi_delete_writes(self) -> None:
+        message_text = (
+            "Forget my cofounder.\n"
+            "Forget my current owner.\n"
+            "Forget who owns the launch checklist."
+        )
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Researcher bridge recorded memory delete influence.",
+            request_id="req-partial-delete",
+            facts={
+                "detected_generic_memory_deletion": {
+                    "predicate": "profile.cofounder_name",
+                    "fact_name": "cofounder",
+                    "label": "cofounder",
+                    "message_text": message_text,
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark memory write requested.",
+            request_id="req-partial-delete",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            component="memory_orchestrator",
+            summary="Spark memory write completed.",
+            request_id="req-partial-delete",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+                "accepted_count": 1,
+            },
+        )
+
+        doctor_report = run_memory_doctor(self.state_db)
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertEqual(doctor_report.scanned_multi_delete_turns, 1)
+        self.assertIn("expected 3 delete write(s), requested 1, accepted 1", doctor_report.to_text())
+
+    def test_memory_doctor_reports_topic_active_profile_conflict(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-doctor-topic-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-doctor-topic",
+            channel_kind="telegram",
+            user_message="Our owner is Maya.",
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Maya",
+        )
+
+        self.assertTrue(doctor_report.ok, doctor_report.to_json())
+        self.assertIn("topic 'Maya' is active in: current_owner", doctor_report.to_text())
+        self.assertIn("If Maya is wrong in that active field", doctor_report.to_telegram_text())
+
+    def test_memory_doctor_scans_entity_current_state_for_topic_presence(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-doctor-entity-topic-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-doctor-entity-topic",
+            channel_kind="telegram",
+            user_message="For later, Maya owns the launch checklist.",
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Maya",
+        )
+
+        self.assertTrue(doctor_report.ok, doctor_report.to_json())
+        self.assertEqual(doctor_report.active_profile["current_state"]["record_count"], 1)
+        self.assertIn(
+            "topic 'Maya' is active in: entity.owner:launch checklist.owner",
+            doctor_report.to_text(),
+        )
+        self.assertIn("Current-state scan: 1 record(s).", doctor_report.to_telegram_text())
+
+    def test_memory_doctor_surfaces_context_capsule_recent_conversation_gap(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            request_id="req-context-gap",
+            human_id="human-1",
+            facts={
+                "source_counts": {
+                    "current_state": 3,
+                    "recent_conversation": 0,
+                    "task_recovery": 2,
+                },
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 3, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": False,
+                        "count": 0,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+
+        doctor_report = run_memory_doctor(self.state_db, human_id="human-1")
+
+        self.assertTrue(doctor_report.ok, doctor_report.to_json())
+        self.assertIn("context_capsule_recent_conversation_gap", doctor_report.to_text())
+        self.assertIn(
+            "Context capsule: no recent-conversation turns",
+            doctor_report.to_telegram_text(),
+        )
+
+    def test_memory_doctor_flags_gateway_messages_missing_from_context_capsule(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-context-prev",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-context-gap",
+                "user_message_preview": "i just told you",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-context-gap",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-context-gap",
+                "user_message_preview": "are you there",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            request_id="req-context-gap",
+            human_id="human-1",
+            facts={
+                "source_counts": {
+                    "current_state": 3,
+                    "recent_conversation": 0,
+                    "task_recovery": 2,
+                },
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 3, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": False,
+                        "count": 0,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+        )
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertEqual(
+            doctor_report.context_capsule["gateway_trace"]["recent_gateway_message_count"],
+            1,
+        )
+        self.assertIn("context_capsule_gateway_trace_gap", doctor_report.to_text())
+        self.assertIn("gateway had 1 earlier same-session message", doctor_report.to_telegram_text())
+        self.assertEqual(
+            doctor_report.movement_trace["gaps"][0]["name"],
+            "gateway_to_context_capsule_gap",
+        )
 
     def test_build_researcher_reply_preserves_generic_decision_history_and_delete_lifecycle(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

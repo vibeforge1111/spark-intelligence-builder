@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
 from spark_intelligence.workflow_recovery import record_bad_self_review_lesson, record_pending_task_timeout
@@ -149,6 +150,47 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(ledger[2]["role"], "authority")
         self.assertEqual(ledger[8]["role"], "advisory")
         self.assertIn("does not close user goals", ledger[2]["note"])
+
+    def test_context_capsule_falls_back_to_gateway_trace_when_builder_events_missing(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "session-gateway-capsule-gap",
+                "request_id": "req-before",
+                "user_message_preview": "i just told you",
+                "response_preview": "I can see the context capsule, but not the message before this.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "session-gateway-capsule-gap",
+                "request_id": "req-now",
+                "user_message_preview": "are you there",
+                "response_preview": "Checking.",
+            },
+        )
+
+        capsule = build_spark_context_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            session_id="session-gateway-capsule-gap",
+            channel_kind="telegram",
+            request_id="req-now",
+            user_message="are you there",
+        )
+
+        rendered = capsule.render()
+        self.assertIn("[recent_conversation]", rendered)
+        self.assertIn("user: i just told you", rendered)
+        self.assertIn("assistant: I can see the context capsule", rendered)
+        self.assertNotIn("are you there", rendered)
+        self.assertEqual(capsule.source_counts["recent_conversation"], 2)
 
     def test_context_capsule_includes_pending_tasks_and_procedural_lessons_for_resume(self) -> None:
         record_pending_task_timeout(

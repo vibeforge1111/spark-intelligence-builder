@@ -64,6 +64,15 @@ from spark_intelligence.memory.architecture_soak import (
     TelegramArchitectureSoakResult,
     run_telegram_memory_architecture_soak,
 )
+from spark_intelligence.memory.doctor import (
+    MemoryDoctorFinding,
+    MemoryDoctorReport,
+    run_memory_doctor,
+)
+from spark_intelligence.memory.doctor_brain import (
+    build_memory_doctor_brain,
+    memory_doctor_brain_summary,
+)
 from spark_intelligence.memory.acceptance import (
     DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
@@ -120,6 +129,10 @@ __all__ = [
     "MemorySdkSmokeResult",
     "MemoryTaskRecoveryResult",
     "MemoryWriteResult",
+    "MemoryDoctorFinding",
+    "MemoryDoctorReport",
+    "build_memory_doctor_brain",
+    "memory_doctor_brain_summary",
     "EpisodicRollupSummary",
     "SessionSummary",
     "archive_belief_from_memory",
@@ -170,6 +183,7 @@ __all__ = [
     "read_personality_preferences_from_memory",
     "retrieve_memory_evidence_in_memory",
     "retrieve_memory_events_in_memory",
+    "run_memory_doctor",
     "run_memory_sdk_smoke_test",
     "run_memory_sdk_maintenance",
     "write_belief_to_memory",

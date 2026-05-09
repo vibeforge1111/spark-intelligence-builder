@@ -7,6 +7,7 @@ from unittest.mock import ANY, patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
@@ -1783,6 +1784,80 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("latest_user_message=I want this to feel less scripted.", context)
         self.assertIn("previous_user_message=Keep the thread continuity hot.", context)
         self.assertNotIn("Now answer like you remember what I said.", context)
+
+    def test_load_recent_conversation_context_falls_back_to_gateway_logs(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-gateway-gap",
+                "request_id": "req-prev",
+                "user_message_preview": "i just told you",
+                "response_preview": "I can see the context capsule, but not the message before this.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "session_id": "sess-gateway-gap",
+                "request_id": "req-current",
+                "user_message_preview": "are you there",
+                "response_preview": "Checking.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-gateway-gap",
+            channel_kind="telegram",
+            request_id="req-current",
+            user_message="are you there",
+        )
+
+        self.assertIn("[Recent conversation]", context)
+        self.assertIn("user: i just told you", context)
+        self.assertIn("assistant: I can see the context capsule", context)
+        self.assertIn("latest_user_message=i just told you", context)
+        self.assertNotIn("are you there", context)
+
+    def test_load_recent_conversation_context_falls_back_to_outbound_audit_without_request_id(self) -> None:
+        append_outbound_audit(
+            self.config_manager,
+            {
+                "event": "telegram_bridge_outbound",
+                "channel_id": "telegram",
+                "session_id": "sess-outbound-gap",
+                "user_message_preview": "and will you write it as Cem",
+                "response_preview": "Got it, Cem.",
+            },
+        )
+        append_outbound_audit(
+            self.config_manager,
+            {
+                "event": "telegram_bridge_outbound",
+                "channel_id": "telegram",
+                "session_id": "sess-outbound-gap",
+                "user_message_preview": "are you there",
+                "response_preview": "Checking the trace.",
+            },
+        )
+
+        context = _load_recent_conversation_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            session_id="sess-outbound-gap",
+            channel_kind="telegram",
+            request_id=None,
+            user_message="are you there",
+        )
+
+        self.assertIn("user: and will you write it as Cem", context)
+        self.assertIn("assistant: Got it, Cem.", context)
+        self.assertNotIn("are you there", context)
 
     def test_build_researcher_reply_includes_recent_telegram_turns_in_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

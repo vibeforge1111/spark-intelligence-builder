@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -14,6 +13,7 @@ from spark_intelligence.memory import (
     recall_episodic_context_in_memory,
     recover_task_context_in_memory,
 )
+from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -140,10 +140,12 @@ def build_spark_context_capsule(
             channel_kind=channel_kind,
         ),
         "recent_conversation": _build_recent_conversation_lines(
+            config_manager=config_manager,
             state_db=state_db,
             session_id=session_id,
             channel_kind=channel_kind,
             request_id=request_id,
+            user_message=user_message,
         ),
         "runtime_capabilities": _build_runtime_capability_lines(
             config_manager=config_manager,
@@ -238,55 +240,24 @@ def _build_current_state_lines(
 
 def _build_recent_conversation_lines(
     *,
+    config_manager: ConfigManager | None = None,
     state_db: StateDB,
     session_id: str,
     channel_kind: str,
     request_id: str | None,
+    user_message: str = "",
     turn_limit: int = 3,
 ) -> list[str]:
-    if not session_id or not channel_kind:
-        return []
-    try:
-        with state_db.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT event_type, request_id, facts_json
-                FROM builder_events
-                WHERE component = 'telegram_runtime'
-                  AND channel_id = ?
-                  AND session_id = ?
-                  AND (
-                        event_type = 'intent_committed'
-                     OR (event_type = 'delivery_succeeded' AND reason_code = 'telegram_bridge_outbound')
-                  )
-                ORDER BY created_at DESC, rowid DESC
-                LIMIT ?
-                """,
-                (channel_kind, session_id, max(turn_limit * 4, 10)),
-            ).fetchall()
-    except Exception:
-        return []
-
-    transcript: list[tuple[str, str]] = []
-    for row in reversed(rows):
-        if request_id and str(row["request_id"] or "") == request_id:
-            continue
-        try:
-            facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
-            facts = {}
-        event_type = str(row["event_type"] or "")
-        if event_type == "intent_committed":
-            text = str(facts.get("message_text") or "").strip()
-            if text:
-                transcript.append(("user", text))
-        elif event_type == "delivery_succeeded":
-            text = str(facts.get("delivered_text") or "").strip()
-            if text:
-                transcript.append(("assistant", text))
-
-    recent_turns = transcript[-(turn_limit * 2) :]
-    return [f"- {role}: {_compact(text, 260)}" for role, text in recent_turns]
+    recent_turns = load_recent_conversation_turns(
+        config_manager=config_manager,
+        state_db=state_db,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        current_user_message=user_message,
+        turn_limit=turn_limit,
+    )
+    return [f"- {turn.role}: {_compact(turn.text, 260)}" for turn in recent_turns]
 
 
 def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:

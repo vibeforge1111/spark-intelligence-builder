@@ -43,6 +43,7 @@ from spark_intelligence.build_quality_review import (
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -75,9 +76,9 @@ from spark_intelligence.memory.episodic_events import (
 from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
-    build_telegram_generic_deletion_answer,
+    build_telegram_generic_deletions_answer,
     build_telegram_generic_observation_answer,
-    detect_telegram_generic_deletion,
+    detect_telegram_generic_deletions,
     detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary, build_session_summary
@@ -5619,58 +5620,29 @@ def _load_recent_active_chip_keys(
 
 def _load_recent_conversation_context(
     *,
+    config_manager: ConfigManager | None = None,
     state_db: StateDB,
     session_id: str,
     channel_kind: str,
     request_id: str | None,
+    user_message: str = "",
     turn_limit: int = _RECENT_CONVERSATION_TURN_LIMIT,
 ) -> str:
-    if not session_id or not channel_kind or turn_limit <= 0:
+    recent_turns = load_recent_conversation_turns(
+        config_manager=config_manager,
+        state_db=state_db,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        current_user_message=user_message,
+        turn_limit=turn_limit,
+    )
+    if not recent_turns:
         return ""
 
-    transcript: list[tuple[str, str]] = []
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT event_type, request_id, facts_json
-            FROM builder_events
-            WHERE component = 'telegram_runtime'
-              AND channel_id = ?
-              AND session_id = ?
-              AND (
-                    event_type = 'intent_committed'
-                 OR (event_type = 'delivery_succeeded' AND reason_code = 'telegram_bridge_outbound')
-              )
-            ORDER BY created_at DESC, rowid DESC
-            LIMIT ?
-            """,
-            (channel_kind, session_id, max(turn_limit * 4, 12)),
-        ).fetchall()
-
-    for row in reversed(rows):
-        if request_id and str(row["request_id"] or "") == request_id:
-            continue
-        try:
-            facts = json.loads(row["facts_json"] or "{}")
-        except json.JSONDecodeError:
-            facts = {}
-        event_type = str(row["event_type"] or "")
-        if event_type == "intent_committed":
-            message_text = str(facts.get("message_text") or "").strip()
-            if message_text:
-                transcript.append(("user", message_text))
-        elif event_type == "delivery_succeeded":
-            delivered_text = str(facts.get("delivered_text") or "").strip()
-            if delivered_text:
-                transcript.append(("assistant", delivered_text))
-
-    if not transcript:
-        return ""
-
-    recent_turns = transcript[-(turn_limit * 2) :]
     lines = ["[Recent conversation]"]
-    for role, text in recent_turns:
-        lines.append(f"{role}: {text}")
+    for turn in recent_turns:
+        lines.append(f"{turn.role}: {turn.text}")
     visible_turn_labels = (
         "latest_visible_turn",
         "previous_visible_turn",
@@ -5678,10 +5650,10 @@ def _load_recent_conversation_context(
     )
     for index, label in enumerate(visible_turn_labels, start=1):
         if len(recent_turns) >= index:
-            role, text = recent_turns[-index]
-            lines.append(f"{label}.role={role}")
-            lines.append(f"{label}.text={text}")
-    user_turns = [text for role, text in recent_turns if role == "user"]
+            turn = recent_turns[-index]
+            lines.append(f"{label}.role={turn.role}")
+            lines.append(f"{label}.text={turn.text}")
+    user_turns = [turn.text for turn in recent_turns if turn.role == "user"]
     user_turn_labels = (
         "latest_user_message",
         "previous_user_message",
@@ -8561,6 +8533,7 @@ def build_researcher_reply(
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
+    detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
     try:
         personality_profile = load_personality_profile(
@@ -10083,23 +10056,37 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletion = detect_telegram_generic_deletion(memory_user_message)
-                            if detected_generic_memory_deletion is not None:
+                            detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
+                            accepted_generic_memory_deletions = []
+                            for deletion_index, generic_memory_deletion in enumerate(
+                                detected_generic_memory_deletions,
+                                start=1,
+                            ):
+                                deletion_turn_id = request_id
+                                if len(detected_generic_memory_deletions) > 1:
+                                    deletion_turn_id = f"{request_id}:delete-{deletion_index}"
                                 generic_delete_result = delete_profile_fact_from_memory(
                                     config_manager=config_manager,
                                     state_db=state_db,
                                     human_id=human_id,
-                                    predicate=detected_generic_memory_deletion.predicate,
-                                    evidence_text=detected_generic_memory_deletion.evidence_text,
-                                    fact_name=detected_generic_memory_deletion.fact_name,
+                                    predicate=generic_memory_deletion.predicate,
+                                    evidence_text=generic_memory_deletion.evidence_text,
+                                    fact_name=generic_memory_deletion.fact_name,
                                     session_id=session_id,
-                                    turn_id=request_id,
+                                    turn_id=deletion_turn_id,
                                     channel_kind=channel_kind,
                                     actor_id="telegram_generic_observation_loader",
                                 )
-                                if generic_delete_result.accepted_count <= 0:
-                                    detected_generic_memory_candidate = None
-                                    detected_generic_memory_deletion = None
+                                if generic_delete_result.accepted_count > 0:
+                                    accepted_generic_memory_deletions.append(generic_memory_deletion)
+                            detected_generic_memory_deletions = accepted_generic_memory_deletions
+                            detected_generic_memory_deletion = (
+                                detected_generic_memory_deletions[0]
+                                if detected_generic_memory_deletions
+                                else None
+                            )
+                            if detected_generic_memory_deletion is None:
+                                detected_generic_memory_candidate = None
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
@@ -10806,12 +10793,13 @@ def build_researcher_reply(
             routing_decision="memory_generic_observation_delete",
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text = build_telegram_generic_deletion_answer(
-            deletion=detected_generic_memory_deletion
+        reply_text = build_telegram_generic_deletions_answer(
+            deletions=detected_generic_memory_deletions or [detected_generic_memory_deletion]
         )
         evidence_summary = (
             "status=memory_generic_observation_delete "
-            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'}"
+            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'} "
+            f"delete_count={len(detected_generic_memory_deletions) or 1}"
         )
         record_event(
             state_db,
@@ -10840,6 +10828,15 @@ def build_researcher_reply(
                     "fact_name": detected_generic_memory_deletion.fact_name,
                     "predicate": detected_generic_memory_deletion.predicate,
                     "label": detected_generic_memory_deletion.label,
+                    "deletions": [
+                        {
+                            "fact_name": deletion.fact_name,
+                            "predicate": deletion.predicate,
+                            "label": deletion.label,
+                            "evidence_text": deletion.evidence_text,
+                        }
+                        for deletion in (detected_generic_memory_deletions or [detected_generic_memory_deletion])
+                    ],
                     "memory_role": (
                         detected_generic_memory_candidate.memory_role
                         if detected_generic_memory_candidate is not None
@@ -13213,10 +13210,12 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
     recent_conversation_context = _load_recent_conversation_context(
+        config_manager=config_manager,
         state_db=state_db,
         session_id=session_id,
         channel_kind=channel_kind,
         request_id=request_id,
+        user_message=user_message,
     )
 
     active_chip_evaluate = _run_active_chip_evaluate(
