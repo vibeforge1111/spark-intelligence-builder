@@ -420,6 +420,25 @@ def _score_root_cause_classification(
             "Root-cause layer had a repair plan, but lacked confidence reasoning or disconfirming checks.",
             "attach confidence_reason and disconfirming_checks so the diagnosis can be falsified",
         )
+    audit_handoff = root_cause.get("audit_handoff") if isinstance(root_cause.get("audit_handoff"), dict) else {}
+    handoff_status = str(audit_handoff.get("status") or "").strip()
+    handoff_mode = str(audit_handoff.get("mode") or "").strip()
+    handoff_questions = (
+        audit_handoff.get("questions")
+        if isinstance(audit_handoff.get("questions"), list)
+        else []
+    )
+    stop_ship_gate = str(audit_handoff.get("stop_ship_gate") or "").strip()
+    if handoff_status != "ready" or not handoff_mode or not handoff_questions or not stop_ship_gate:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.75,
+            "observable_incomplete",
+            "Root-cause layer had a repair plan, but lacked a ready audit handoff.",
+            "attach audit_handoff with mode, falsification questions, and stop gate to every identified root cause",
+        )
     return _case(
         "root_cause_classification",
         "root_cause_classification",

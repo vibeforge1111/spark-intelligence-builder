@@ -1781,6 +1781,10 @@ def _build_root_cause_summary(
             "confidence": "high",
             "confidence_reason": "no failing findings were present",
             "disconfirming_checks": [],
+            "audit_handoff": {
+                "status": "not_needed",
+                "authority": "diagnostic_handoff_not_repair_authority",
+            },
         }
 
     profiles: dict[str, dict[str, object]] = {
@@ -1935,6 +1939,7 @@ def _build_root_cause_summary(
     confidence = "high" if profile and (not movement_gap or movement_gap_seen) else "medium"
     request_id = selected.request_id or str(context_capsule.get("request_id") or "").strip() or None
     if profile is None:
+        disconfirming_checks = ["inspect the raw finding before applying an automated repair plan"]
         return {
             "status": "identified",
             "primary_gap": selected.name,
@@ -1944,7 +1949,14 @@ def _build_root_cause_summary(
             "request_id": request_id,
             "confidence": "medium",
             "confidence_reason": "failing finding has no known root-cause profile",
-            "disconfirming_checks": ["inspect the raw finding before applying an automated repair plan"],
+            "disconfirming_checks": disconfirming_checks,
+            "audit_handoff": _root_cause_audit_handoff(
+                primary_gap=selected.name,
+                repair_plan={},
+                request_id=request_id,
+                chain=[],
+                disconfirming_checks=disconfirming_checks,
+            ),
             "detail": selected.detail,
             "evidence": {
                 "finding": selected.name,
@@ -1952,21 +1964,31 @@ def _build_root_cause_summary(
                 "movement_gap_seen": selected.name in gap_names,
             },
         }
+    repair_plan = dict(profile.get("repair_plan") or {})
+    disconfirming_checks = _root_cause_disconfirming_checks(selected.name)
+    chain = list(profile["chain"]) if isinstance(profile.get("chain"), list) else []
     return {
         "status": "identified",
         "primary_gap": selected.name,
         "movement_gap": movement_gap or None,
         "failure_layer": profile["failure_layer"],
-        "chain": list(profile["chain"]) if isinstance(profile.get("chain"), list) else [],
+        "chain": chain,
         "telegram_summary": profile["telegram_summary"],
-        "repair_plan": dict(profile.get("repair_plan") or {}),
+        "repair_plan": repair_plan,
         "request_id": request_id,
         "confidence": confidence,
         "confidence_reason": _root_cause_confidence_reason(
             movement_gap=movement_gap,
             movement_gap_seen=movement_gap_seen,
         ),
-        "disconfirming_checks": _root_cause_disconfirming_checks(selected.name),
+        "disconfirming_checks": disconfirming_checks,
+        "audit_handoff": _root_cause_audit_handoff(
+            primary_gap=selected.name,
+            repair_plan=repair_plan,
+            request_id=request_id,
+            chain=chain,
+            disconfirming_checks=disconfirming_checks,
+        ),
         "detail": selected.detail,
         "evidence": {
             "finding": selected.name,
@@ -2101,6 +2123,43 @@ def _root_cause_disconfirming_checks(primary_gap: str) -> list[str]:
     return list(checks_by_gap.get(primary_gap) or ["raw trace contradicts the selected failure layer"])
 
 
+def _root_cause_audit_handoff(
+    *,
+    primary_gap: str,
+    repair_plan: dict[str, object],
+    request_id: str | None,
+    chain: list[object],
+    disconfirming_checks: list[str],
+) -> dict[str, object]:
+    audit_focus = [
+        str(item).strip()
+        for item in (repair_plan.get("audit_focus") if isinstance(repair_plan.get("audit_focus"), list) else [])
+        if str(item).strip()
+    ]
+    if not audit_focus:
+        audit_focus = ["raw_finding", "movement_trace", "source_events"]
+    owner_surface = str(repair_plan.get("owner_surface") or "").strip() or "manual_memory_path_triage"
+    return {
+        "status": "ready",
+        "mode": "targeted_memory_path_audit" if repair_plan else "raw_memory_path_audit",
+        "primary_gap": primary_gap,
+        "owner_surface": owner_surface,
+        "audit_focus": audit_focus,
+        "request_id": request_id,
+        "chain": [str(item) for item in chain if str(item).strip()],
+        "questions": list(disconfirming_checks),
+        "sample_strategy": (
+            "sample the diagnosed request plus the nearest prior same-session Telegram turn across gateway, "
+            "context capsule, memory reads/writes, answer generation, and outbound audit"
+        ),
+        "stop_ship_gate": (
+            "do not promote a memory-path repair until the replay probe passes and each disconfirming check "
+            "has been ruled out"
+        ),
+        "authority": "diagnostic_handoff_not_repair_authority",
+    }
+
+
 def _root_cause_recommendation(root_cause: dict[str, object]) -> str | None:
     if root_cause.get("status") != "identified":
         return None
@@ -2188,6 +2247,7 @@ def _record_brain_snapshot(
     telegram_intake = _brain_telegram_intake_snapshot(brain)
     root_cause = brain.get("root_cause") if isinstance(brain.get("root_cause"), dict) else {}
     repair_plan = root_cause.get("repair_plan") if isinstance(root_cause.get("repair_plan"), dict) else {}
+    audit_handoff = root_cause.get("audit_handoff") if isinstance(root_cause.get("audit_handoff"), dict) else {}
     creator_alignment = brain.get("creator_system_alignment") if isinstance(brain.get("creator_system_alignment"), dict) else {}
     creator_alignment_issues = (
         creator_alignment.get("validation_issues")
@@ -2236,6 +2296,11 @@ def _record_brain_snapshot(
                 "root_cause_audit_focus": list(repair_plan.get("audit_focus") or []),
                 "root_cause_repair_action": repair_plan.get("next_action"),
                 "root_cause_replay_probe": repair_plan.get("replay_probe"),
+                "root_cause_audit_handoff_status": audit_handoff.get("status"),
+                "root_cause_audit_handoff_mode": audit_handoff.get("mode"),
+                "root_cause_audit_handoff_questions": list(audit_handoff.get("questions") or []),
+                "root_cause_audit_handoff_sample_strategy": audit_handoff.get("sample_strategy"),
+                "root_cause_audit_handoff_stop_gate": audit_handoff.get("stop_ship_gate"),
                 "creator_alignment_status": creator_alignment.get("status"),
                 "creator_alignment_artifact_targets": list(creator_alignment.get("artifact_targets") or []),
                 "creator_alignment_validation_issue_count": len(creator_alignment_issues),

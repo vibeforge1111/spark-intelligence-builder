@@ -22,6 +22,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["root_cause_failure_layer_counts"], {})
         self.assertEqual(panel["root_cause_owner_surface_counts"], {})
         self.assertEqual(panel["root_cause_audit_focus_counts"], {})
+        self.assertEqual(panel["root_cause_audit_handoff_status_counts"], {})
+        self.assertEqual(panel["root_cause_audit_handoff_mode_counts"], {})
         self.assertEqual(panel["repair_priority"], {"status": "no_data"})
         self.assertEqual(panel["recent_intake_triggers"], [])
         self.assertEqual(panel["recent_root_causes"], [])
@@ -366,6 +368,15 @@ class MemoryDoctorBrainTests(SparkTestCase):
         )
         self.assertIn("context_capsule_source_ledger", brain_events[0]["facts_json"]["root_cause_audit_focus"])
         self.assertIn("provider capsule source ledger", brain_events[0]["facts_json"]["root_cause_repair_action"])
+        self.assertEqual(report.brain["root_cause"]["audit_handoff"]["status"], "ready")
+        self.assertEqual(report.brain["root_cause"]["audit_handoff"]["mode"], "targeted_memory_path_audit")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_audit_handoff_status"], "ready")
+        self.assertEqual(brain_events[0]["facts_json"]["root_cause_audit_handoff_mode"], "targeted_memory_path_audit")
+        self.assertIn(
+            "provider capsule for this request actually contains recent_conversation",
+            brain_events[0]["facts_json"]["root_cause_audit_handoff_questions"],
+        )
+        self.assertIn("replay probe passes", brain_events[0]["facts_json"]["root_cause_audit_handoff_stop_gate"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
         self.assertTrue(senses["root_cause_classification"]["present"])
@@ -432,6 +443,13 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "root_cause_audit_focus": ["gateway_trace", "context_capsule_source_ledger", "recent_conversation"],
                 "root_cause_repair_action": "Repair the recent-conversation capsule path.",
                 "root_cause_replay_probe": "repeat the same two-turn Telegram close-turn recall probe",
+                "root_cause_audit_handoff_status": "ready",
+                "root_cause_audit_handoff_mode": "targeted_memory_path_audit",
+                "root_cause_audit_handoff_questions": [
+                    "provider capsule for this request actually contains recent_conversation",
+                ],
+                "root_cause_audit_handoff_sample_strategy": "sample diagnosed request and previous turn",
+                "root_cause_audit_handoff_stop_gate": "do not promote until replay probe passes",
                 "creator_alignment_status": "aligned_candidate",
                 "creator_alignment_artifact_targets": ["domain_chip", "benchmark_pack", "specialization_path"],
                 "creator_alignment_validation_issue_count": 0,
@@ -468,6 +486,8 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["root_cause_failure_layer_counts"]["context_ingress"], 1)
         self.assertEqual(panel["root_cause_owner_surface_counts"]["telegram_gateway_to_context_capsule"], 1)
         self.assertEqual(panel["root_cause_audit_focus_counts"]["context_capsule_source_ledger"], 1)
+        self.assertEqual(panel["root_cause_audit_handoff_status_counts"]["ready"], 1)
+        self.assertEqual(panel["root_cause_audit_handoff_mode_counts"]["targeted_memory_path_audit"], 1)
         self.assertEqual(panel["repair_priority"]["status"], "candidate")
         self.assertEqual(panel["repair_priority"]["basis"], "single_root_cause_owner_surface")
         self.assertEqual(panel["repair_priority"]["owner_surface"], "telegram_gateway_to_context_capsule")
@@ -494,6 +514,12 @@ class MemoryDoctorBrainTests(SparkTestCase):
         )
         self.assertIn("context_capsule_source_ledger", panel["recent_root_causes"][0]["audit_focus"])
         self.assertEqual(panel["recent_root_causes"][0]["repair_action"], "Repair the recent-conversation capsule path.")
+        self.assertEqual(panel["recent_root_causes"][0]["audit_handoff"]["status"], "ready")
+        self.assertEqual(panel["recent_root_causes"][0]["audit_handoff"]["mode"], "targeted_memory_path_audit")
+        self.assertIn(
+            "provider capsule for this request actually contains recent_conversation",
+            panel["recent_root_causes"][0]["audit_handoff"]["questions"],
+        )
         self.assertEqual(panel["latest"]["root_cause"]["primary_gap"], "context_capsule_gateway_trace_gap")
         self.assertEqual(panel["latest"]["topic"], "Maya")
 

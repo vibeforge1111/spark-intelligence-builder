@@ -9,6 +9,15 @@ from spark_intelligence.memory.doctor_benchmark import (
 )
 
 
+def _ready_audit_handoff() -> dict[str, object]:
+    return {
+        "status": "ready",
+        "mode": "targeted_memory_path_audit",
+        "questions": ["every requested delete target has a matching accepted delete write"],
+        "stop_ship_gate": "do not promote a memory-path repair until the replay probe passes",
+    }
+
+
 class MemoryDoctorBenchmarkTests(unittest.TestCase):
     def test_scores_full_memory_doctor_visibility_pack(self) -> None:
         benchmark = score_memory_doctor_benchmark(
@@ -103,6 +112,7 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
                     "next_action": "Rerun the affected forget request, then ask `check memory deletes`.",
                     "audit_focus": ["memory_write_requested", "memory_write_succeeded"],
                 },
+                "audit_handoff": _ready_audit_handoff(),
             },
         )
 
@@ -212,6 +222,48 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         cases = {case["category"]: case for case in benchmark["cases"]}
         self.assertEqual(cases["root_cause_classification"]["status"], "observable_incomplete")
         self.assertIn("lacked confidence reasoning", cases["root_cause_classification"]["detail"])
+
+    def test_scores_root_cause_classification_requires_audit_handoff(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=0,
+            scanned_multi_delete_turns=0,
+            findings=[
+                MemoryDoctorFinding(
+                    name="context_capsule_gateway_trace_gap",
+                    ok=False,
+                    severity="high",
+                    detail="gateway had prior turns but provider capsule had none",
+                )
+            ],
+            active_profile={"status": "checked", "facts": {"preferred_name": "Cem"}},
+            topic_scan={"status": "checked", "topic": "Cedar Compass 509"},
+            context_capsule={"status": "checked", "recent_conversation_count": 0, "gateway_trace": {"status": "checked"}},
+            movement_trace={
+                "stages": [{"stage": "memory_reads", "abstained_count": 1}],
+                "gaps": [{"name": "gateway_to_context_capsule_gap"}],
+            },
+            dashboard={"abstention_reasons": ["not_found"]},
+            root_cause={
+                "status": "identified",
+                "primary_gap": "context_capsule_gateway_trace_gap",
+                "movement_gap": "gateway_to_context_capsule_gap",
+                "failure_layer": "context_ingress",
+                "chain": ["telegram_gateway", "context_capsule", "provider_context"],
+                "confidence": "high",
+                "confidence_reason": "failing finding and movement trace gap agree",
+                "disconfirming_checks": [
+                    "provider capsule for this request actually contains recent_conversation",
+                ],
+                "repair_plan": {
+                    "next_action": "Repair the recent-conversation capsule path.",
+                    "audit_focus": ["gateway_trace", "context_capsule_source_ledger"],
+                },
+            },
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["root_cause_classification"]["status"], "observable_incomplete")
+        self.assertIn("lacked a ready audit handoff", cases["root_cause_classification"]["detail"])
 
     def test_scores_doctor_intake_requires_calibrated_trigger_metadata(self) -> None:
         benchmark = score_memory_doctor_benchmark(

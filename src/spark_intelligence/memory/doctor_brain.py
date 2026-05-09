@@ -7,7 +7,7 @@ import spark_intelligence.memory.orchestrator as memory_orchestrator
 from spark_intelligence.state.db import StateDB
 
 
-MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v3"
+MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v4"
 
 AUTHORITY_BOUNDARIES: tuple[str, ...] = (
     "current_state_memory_outranks_wiki_for_mutable_user_facts",
@@ -381,6 +381,9 @@ def _build_senses(
                 "failure_layer": root_cause.get("failure_layer"),
                 "chain": list(root_cause.get("chain") or []),
                 "confidence": root_cause.get("confidence"),
+                "audit_handoff": dict(root_cause.get("audit_handoff") or {})
+                if isinstance(root_cause.get("audit_handoff"), dict)
+                else {},
             },
             5,
         ),
@@ -571,6 +574,7 @@ def _build_gaps(
             )
         )
     if root_cause.get("status") == "identified":
+        audit_handoff = root_cause.get("audit_handoff") if isinstance(root_cause.get("audit_handoff"), dict) else {}
         gaps.append(
             _gap(
                 "root_cause_" + str(root_cause.get("primary_gap") or "unknown"),
@@ -581,6 +585,17 @@ def _build_gaps(
                 "aggregate this root-cause layer across incidents and prioritize the most repeated path repair",
             )
         )
+        if audit_handoff.get("status") != "ready":
+            gaps.append(
+                _gap(
+                    "root_cause_audit_handoff_gap",
+                    "medium",
+                    "Memory Doctor identified a failure layer without a targeted audit handoff.",
+                    "root_cause_audit_handoff_status",
+                    str(audit_handoff.get("status") or "missing"),
+                    "attach audit focus, falsification questions, sample strategy, and stop gate to the root cause",
+                )
+            )
     if wiki_packets.get("status") != "supported":
         gaps.append(
             _gap(
@@ -697,6 +712,8 @@ def _improvement_action(gap_name: str) -> str:
     if gap_name == "active_memory_incident_detected":
         return "Treat the failing doctor finding as the repair target, then replay the triggering turn as a regression."
     if gap_name.startswith("root_cause_"):
+        if gap_name == "root_cause_audit_handoff_gap":
+            return "Make each root-cause diagnosis actionable by handing it to a targeted audit with a replay gate."
         return "Use repeated root-cause layers to prioritize the memory/context path that most often breaks recall."
     if gap_name == "incident_path_replay_sparse":
         return "Attach topic and request ids to doctor path traces so failures become replayable, not just visible."

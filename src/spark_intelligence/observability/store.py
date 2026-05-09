@@ -3271,6 +3271,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "root_cause_failure_layer_counts": {},
             "root_cause_owner_surface_counts": {},
             "root_cause_audit_focus_counts": {},
+            "root_cause_audit_handoff_status_counts": {},
+            "root_cause_audit_handoff_mode_counts": {},
             "repair_priority": {"status": "no_data"},
             "creator_alignment": {
                 "status": "no_data",
@@ -3294,6 +3296,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     root_cause_failure_layer_counts: dict[str, int] = {}
     root_cause_owner_surface_counts: dict[str, int] = {}
     root_cause_audit_focus_counts: dict[str, int] = {}
+    root_cause_audit_handoff_status_counts: dict[str, int] = {}
+    root_cause_audit_handoff_mode_counts: dict[str, int] = {}
     recent_intakes: list[dict[str, Any]] = []
     recent_root_causes: list[dict[str, Any]] = []
     humans: set[str] = set()
@@ -3317,6 +3321,13 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         root_cause_audit_focus = _string_list(facts.get("root_cause_audit_focus"))
         root_cause_repair_action = str(facts.get("root_cause_repair_action") or "").strip()
         root_cause_replay_probe = str(facts.get("root_cause_replay_probe") or "").strip()
+        root_cause_audit_handoff_status = str(facts.get("root_cause_audit_handoff_status") or "").strip()
+        root_cause_audit_handoff_mode = str(facts.get("root_cause_audit_handoff_mode") or "").strip()
+        root_cause_audit_handoff_questions = _string_list(facts.get("root_cause_audit_handoff_questions"))
+        root_cause_audit_handoff_sample_strategy = str(
+            facts.get("root_cause_audit_handoff_sample_strategy") or ""
+        ).strip()
+        root_cause_audit_handoff_stop_gate = str(facts.get("root_cause_audit_handoff_stop_gate") or "").strip()
         creator_alignment_status = str(facts.get("creator_alignment_status") or "").strip()
         creator_alignment_artifact_targets = _string_list(facts.get("creator_alignment_artifact_targets"))
         creator_alignment_issue_count = _optional_int(facts.get("creator_alignment_validation_issue_count"))
@@ -3353,6 +3364,14 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                 root_cause_audit_focus_counts[audit_focus] = (
                     root_cause_audit_focus_counts.get(audit_focus, 0) + 1
                 )
+            if root_cause_audit_handoff_status:
+                root_cause_audit_handoff_status_counts[root_cause_audit_handoff_status] = (
+                    root_cause_audit_handoff_status_counts.get(root_cause_audit_handoff_status, 0) + 1
+                )
+            if root_cause_audit_handoff_mode:
+                root_cause_audit_handoff_mode_counts[root_cause_audit_handoff_mode] = (
+                    root_cause_audit_handoff_mode_counts.get(root_cause_audit_handoff_mode, 0) + 1
+                )
             recent_root_causes.append(
                 {
                     "created_at": event.get("created_at"),
@@ -3370,6 +3389,13 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "audit_focus": root_cause_audit_focus,
                     "repair_action": root_cause_repair_action or None,
                     "replay_probe": root_cause_replay_probe or None,
+                    "audit_handoff": {
+                        "status": root_cause_audit_handoff_status or None,
+                        "mode": root_cause_audit_handoff_mode or None,
+                        "questions": root_cause_audit_handoff_questions,
+                        "sample_strategy": root_cause_audit_handoff_sample_strategy or None,
+                        "stop_ship_gate": root_cause_audit_handoff_stop_gate or None,
+                    },
                 }
             )
         if telegram_intake:
@@ -3466,6 +3492,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "root_cause_failure_layer_counts": _top_counts(root_cause_failure_layer_counts),
         "root_cause_owner_surface_counts": _top_counts(root_cause_owner_surface_counts),
         "root_cause_audit_focus_counts": _top_counts(root_cause_audit_focus_counts),
+        "root_cause_audit_handoff_status_counts": _top_counts(root_cause_audit_handoff_status_counts),
+        "root_cause_audit_handoff_mode_counts": _top_counts(root_cause_audit_handoff_mode_counts),
         "repair_priority": repair_priority,
         "creator_alignment": latest.get("creator_alignment") or {},
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
