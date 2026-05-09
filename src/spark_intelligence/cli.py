@@ -178,6 +178,7 @@ from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
 )
+from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
@@ -1463,6 +1464,29 @@ def build_parser() -> argparse.ArgumentParser:
     self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
     self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
     self_turn_trace_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_stale_sweep_parser = self_subparsers.add_parser(
+        "stale-sweep",
+        help="Compare live and context claims and record stale/contradicted source evidence",
+    )
+    self_stale_sweep_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_stale_sweep_parser.add_argument(
+        "--live-claim-json",
+        action="append",
+        default=[],
+        help="Live/current source claim JSON object, repeatable",
+    )
+    self_stale_sweep_parser.add_argument(
+        "--context-claim-json",
+        action="append",
+        default=[],
+        help="Retrieved/context source claim JSON object, repeatable",
+    )
+    self_stale_sweep_parser.add_argument("--record-contradictions", action="store_true", help="Write contradiction and black-box events")
+    self_stale_sweep_parser.add_argument("--request-id", default="", help="Request id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--session-id", default="", help="Session id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--human-id", default="", help="Human id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--actor-id", default="stale_context_sweeper", help="Actor recording the sweep")
+    self_stale_sweep_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -4568,6 +4592,14 @@ def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
     return value
 
 
+def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
+    parsed: list[dict[str, object]] = []
+    for raw in values:
+        value = _parse_optional_json_object(raw)
+        if value is not None:
+            parsed.append(value)
+    return parsed
+
 def handle_self_turn_trace(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4601,6 +4633,24 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         )
     return 0
 
+
+def handle_self_stale_sweep(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_stale_context_sweep(
+        live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
+        context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        state_db=state_db if bool(getattr(args, "record_contradictions", False)) else None,
+        record_contradictions=bool(getattr(args, "record_contradictions", False)),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "stale_context_sweeper"),
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
 
 def _parse_runner_writable(value: str) -> bool | None:
     normalized = str(value or "").strip().lower()
@@ -8626,6 +8676,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_mission_state(args)
     if args.command == "self" and args.self_command == "turn-trace":
         return handle_self_turn_trace(args)
+    if args.command == "self" and args.self_command == "stale-sweep":
+        return handle_self_stale_sweep(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
