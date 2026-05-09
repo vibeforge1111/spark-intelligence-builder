@@ -404,6 +404,22 @@ def _score_root_cause_classification(
             "Root-cause layer was identified, but the repair plan lacked an action or audit focus.",
             "attach a concrete repair action and trace audit focus to every identified root cause",
         )
+    confidence_reason = str(root_cause.get("confidence_reason") or "").strip()
+    disconfirming_checks = (
+        root_cause.get("disconfirming_checks")
+        if isinstance(root_cause.get("disconfirming_checks"), list)
+        else []
+    )
+    if not confidence_reason or not disconfirming_checks:
+        return _case(
+            "root_cause_classification",
+            "root_cause_classification",
+            10,
+            0.75,
+            "observable_incomplete",
+            "Root-cause layer had a repair plan, but lacked confidence reasoning or disconfirming checks.",
+            "attach confidence_reason and disconfirming_checks so the diagnosis can be falsified",
+        )
     return _case(
         "root_cause_classification",
         "root_cause_classification",
