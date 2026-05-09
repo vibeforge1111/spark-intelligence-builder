@@ -5182,7 +5182,9 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
             if any(token in simplified for token in ("eleven", "girl", "female", "woman", "geek", "qa", "tester", "natural", "warm")):
                 return ("/voice voices", payload)
     for pattern in (
-        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick|set|switch\s+to)\s+(?:the\s+)?(?:voice\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})(?:\s+(?:for|as)\s+(?:voice|tts))?$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick|switch\s+to)\s+(?:the\s+)?voice\s+(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick)\s+(?:the\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})\s+(?:for|as)\s+(?:the\s+)?(?:voice|tts)$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick)\s+(?:the\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})\s+voice$",
         r"^(?:please\s+|can you\s+)?(?:set|switch|change)\s+(?:my\s+)?voice\s+(?:to|as)\s+(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
