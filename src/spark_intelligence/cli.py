@@ -178,6 +178,7 @@ from spark_intelligence.self_awareness.agent_events import build_agent_black_box
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
+    record_source_used_agent_event,
 )
 from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
@@ -1402,6 +1403,29 @@ def build_parser() -> argparse.ArgumentParser:
     self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
     self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
     self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_source_used_parser = self_subparsers.add_parser(
+        "source-used",
+        help="Record a source used by the current agent turn in the black box",
+    )
+    self_source_used_parser.add_argument("source", help="Source name, for example current_diagnostics, approved_memory, or wiki")
+    self_source_used_parser.add_argument("--role", default="supporting_evidence", help="Role this source played")
+    self_source_used_parser.add_argument(
+        "--freshness",
+        choices=("fresh", "stale", "contradicted", "unknown", "live_probed"),
+        default="unknown",
+        help="Freshness label for the source",
+    )
+    self_source_used_parser.add_argument("--source-ref", default="", help="Trace, memory, wiki, or diagnostic reference")
+    self_source_used_parser.add_argument("--summary", default="", help="Short source summary")
+    self_source_used_parser.add_argument("--user-intent", default="", help="Perceived user intent")
+    self_source_used_parser.add_argument("--selected-route", default="", help="Route using this source")
+    self_source_used_parser.add_argument("--confidence", default="", help="Route/source confidence label")
+    self_source_used_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_source_used_parser.add_argument("--request-id", default="", help="Request id associated with this source")
+    self_source_used_parser.add_argument("--session-id", default="", help="Session id associated with this source")
+    self_source_used_parser.add_argument("--human-id", default="", help="Human id associated with this source")
+    self_source_used_parser.add_argument("--actor-id", default="source_ledger", help="Actor recording the source")
+    self_source_used_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_inbox_parser = self_subparsers.add_parser(
         "memory-inbox",
         help="Show approval-gated memory candidates waiting for human review",
@@ -4543,6 +4567,41 @@ def handle_self_black_box(args: argparse.Namespace) -> int:
     )
     print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
     return 0
+
+
+def handle_self_source_used(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_source_used_agent_event(
+        state_db,
+        source=str(getattr(args, "source", "") or ""),
+        role=str(getattr(args, "role", "") or ""),
+        freshness=str(getattr(args, "freshness", "") or "unknown"),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        summary=str(getattr(args, "summary", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "source_ledger"),
+    )
+    payload = {
+        "event_type": "source_used",
+        "event_id": event_id,
+        "source": str(getattr(args, "source", "") or ""),
+        "freshness": str(getattr(args, "freshness", "") or "unknown"),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Recorded source: {payload['source']} ({payload['freshness']})")
+        print(f"- event: {event_id}")
+    return 0
+
 
 def handle_self_memory_inbox(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
@@ -8764,6 +8823,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_panel(args)
     if args.command == "self" and args.self_command == "black-box":
         return handle_self_black_box(args)
+    if args.command == "self" and args.self_command == "source-used":
+        return handle_self_source_used(args)
     if args.command == "self" and args.self_command == "memory-inbox":
         return handle_self_memory_inbox(args)
     if args.command == "self" and args.self_command == "memory-decision":

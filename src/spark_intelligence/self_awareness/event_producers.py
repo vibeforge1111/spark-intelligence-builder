@@ -5,6 +5,60 @@ from typing import Any
 from spark_intelligence.self_awareness.agent_events import AgentEvent, AgentSourceRef, record_agent_event
 from spark_intelligence.state.db import StateDB
 
+SOURCE_FRESHNESS_VALUES = {"fresh", "stale", "contradicted", "unknown", "live_probed"}
+
+
+def record_source_used_agent_event(
+    state_db: StateDB,
+    *,
+    source: str,
+    role: str,
+    freshness: str = "unknown",
+    source_ref: str = "",
+    summary: str = "",
+    user_intent: str = "",
+    selected_route: str = "",
+    confidence: str = "",
+    request_id: str = "",
+    session_id: str = "",
+    human_id: str = "",
+    actor_id: str = "",
+) -> str:
+    normalized_source = str(source or "").strip() or "unknown"
+    normalized_role = str(role or "").strip() or "supporting_evidence"
+    normalized_freshness = _normalize_source_freshness(freshness)
+    normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
+    return record_agent_event(
+        state_db,
+        AgentEvent(
+            event_type="source_used",
+            summary=normalized_summary,
+            user_intent=str(user_intent or "").strip() or None,
+            selected_route=str(selected_route or "").strip() or None,
+            route_confidence=str(confidence or "").strip() or None,
+            facts={
+                "source": normalized_source,
+                "role": normalized_role,
+                "freshness": normalized_freshness,
+                "source_ref": str(source_ref or "").strip() or None,
+            },
+            sources=[
+                AgentSourceRef(
+                    source=normalized_source,
+                    role=normalized_role,
+                    freshness=normalized_freshness,  # type: ignore[arg-type]
+                    source_ref=str(source_ref or "").strip() or None,
+                    summary=normalized_summary,
+                )
+            ],
+            changed=["source_ledger_updated"],
+        ),
+        request_id=str(request_id or "").strip() or None,
+        session_id=str(session_id or "").strip() or None,
+        human_id=str(human_id or "").strip() or None,
+        actor_id=str(actor_id or "").strip() or None,
+    )
+
 
 def record_capability_probe_agent_event(
     state_db: StateDB,
@@ -243,3 +297,8 @@ def _source_ref_from_payload(payload: dict[str, Any]) -> AgentSourceRef:
         source_ref=str(payload.get("source_ref") or "").strip() or None,
         summary=str(payload.get("summary") or "").strip(),
     )
+
+
+def _normalize_source_freshness(value: str) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in SOURCE_FRESHNESS_VALUES else "unknown"

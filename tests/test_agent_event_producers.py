@@ -4,6 +4,7 @@ from spark_intelligence.self_awareness.agent_events import build_agent_black_box
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
+    record_source_used_agent_event,
     record_user_override_agent_event,
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
@@ -77,6 +78,30 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertIn("route_selected", event_types)
         self.assertIn("mission_changed_state", event_types)
         self.assertIn("user_override_received", event_types)
+
+    def test_source_used_event_records_fresh_source_refs(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="current_diagnostics",
+            role="health_truth",
+            freshness="live_probed",
+            source_ref="diagnostics:scan-1",
+            summary="Builder healthy, Browser unavailable.",
+            user_intent="diagnose",
+            selected_route="answer_in_chat",
+            confidence="high",
+            request_id="req-source-used",
+            actor_id="operator:test",
+        )
+
+        report = build_agent_black_box_report(self.state_db, request_id="req-source-used").to_payload()
+        entry = report["entries"][0]
+
+        self.assertEqual(entry["event_type"], "source_used")
+        self.assertEqual(entry["perceived_intent"], "diagnose")
+        self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
+        self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
+        self.assertEqual(entry["changed"], ["source_ledger_updated"])
 
     def test_stale_context_sweep_emits_contradiction_found_agent_event(self) -> None:
         report = build_stale_context_sweep(

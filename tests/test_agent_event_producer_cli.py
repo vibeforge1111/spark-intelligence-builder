@@ -6,6 +6,54 @@ from tests.test_support import SparkTestCase
 
 
 class AgentEventProducerCliTests(SparkTestCase):
+    def test_source_used_cli_feeds_aoc_black_box(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "source-used",
+            "current_diagnostics",
+            "--home",
+            str(self.home),
+            "--role",
+            "health_truth",
+            "--freshness",
+            "live_probed",
+            "--source-ref",
+            "diagnostics:scan-1",
+            "--summary",
+            "Builder healthy, Browser unavailable.",
+            "--user-intent",
+            "diagnose",
+            "--selected-route",
+            "answer_in_chat",
+            "--confidence",
+            "high",
+            "--request-id",
+            "req-cli-source-used",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        source_payload = json.loads(stdout)
+        self.assertEqual(source_payload["event_type"], "source_used")
+        self.assertTrue(source_payload["event_id"])
+
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "black-box",
+            "--home",
+            str(self.home),
+            "--request-id",
+            "req-cli-source-used",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        black_box = json.loads(stdout)
+        entry = black_box["entries"][0]
+        self.assertEqual(entry["event_type"], "source_used")
+        self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
+        self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
+
     def test_route_probe_cli_feeds_aoc_black_box(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
