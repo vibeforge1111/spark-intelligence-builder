@@ -172,6 +172,7 @@ from spark_intelligence.self_awareness import (
     record_route_probe_evidence,
     run_route_probe_and_record,
 )
+from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1343,6 +1344,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_context_parser.add_argument("--runner-label", default="", help="Optional display label for the current runner")
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_panel_parser = self_subparsers.add_parser(
+        "panel",
+        help="Show shared AOC panel with black box, memory inbox, stale context, and route confidence",
+    )
+    self_panel_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_panel_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
+    self_panel_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_panel_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_panel_parser.add_argument("--request-id", default="", help="Optional current request id for black-box filtering")
+    self_panel_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_panel_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
+    self_panel_parser.add_argument(
+        "--runner-writable",
+        choices=("yes", "no", "unknown"),
+        default="unknown",
+        help="Whether the current runner can edit/write files",
+    )
+    self_panel_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_panel_parser.add_argument(
+        "--memory-inbox-status",
+        choices=("pending", "decided", "all"),
+        default="pending",
+        help="Memory approval inbox filter",
+    )
+    self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -4312,6 +4338,28 @@ def handle_self_context(args: argparse.Namespace) -> int:
         runner_label=str(getattr(args, "runner_label", "") or ""),
     )
     print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_self_panel(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    panel = build_agent_operating_panel(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_label=str(getattr(args, "runner_label", "") or ""),
+        memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
+    )
+    print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
     return 0
 
 
@@ -8327,6 +8375,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_status(args)
     if args.command == "self" and args.self_command == "context":
         return handle_self_context(args)
+    if args.command == "self" and args.self_command == "panel":
+        return handle_self_panel(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
