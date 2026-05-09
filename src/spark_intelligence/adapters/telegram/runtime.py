@@ -3879,6 +3879,7 @@ def _handle_runtime_command(
             fallback_reply=_render_telegram_voice_status_reply(),
             human_id=human_id,
             agent_id=agent_id,
+            external_user_id=external_user_id,
         )
     if lowered in {"/voice reply", "/voice reply status"} or natural_voice_command == ("/voice reply", None):
         enabled = _voice_reply_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -3922,6 +3923,7 @@ def _handle_runtime_command(
             fallback_reply=_render_telegram_voice_plan_reply(),
             human_id=human_id,
             agent_id=agent_id,
+            external_user_id=external_user_id,
         )
     if lowered in {"/voice map", "/voice architecture"} or natural_voice_command == ("/voice map", None):
         return {
@@ -4122,6 +4124,7 @@ def _handle_runtime_command(
             fallback_reply=_render_telegram_voice_install_reply(target),
             human_id=human_id,
             agent_id=agent_id,
+            external_user_id=external_user_id,
             payload_extra={"target": target},
         )
     if (
@@ -4147,6 +4150,7 @@ def _handle_runtime_command(
             fallback_reply=_render_telegram_voice_onboarding_reply(route or None),
             human_id=human_id,
             agent_id=agent_id,
+            external_user_id=external_user_id,
             payload_extra=payload_extra,
         )
     if lowered in {"/voice ask", "/voice answer"}:
@@ -6545,6 +6549,7 @@ def _run_voice_runtime_command(
     fallback_reply: str,
     human_id: str | None,
     agent_id: str | None,
+    external_user_id: str | None = None,
     payload_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = _build_voice_chip_payload(
@@ -6566,9 +6571,21 @@ def _run_voice_runtime_command(
     reply_text = str((result or {}).get("reply_text") or "").strip()
     if command in {"/voice", "/voice status"}:
         if reply_text:
-            reply_text = _append_telegram_voice_profile_status(reply_text, config_manager=config_manager)
+            reply_text = _append_telegram_voice_profile_status(
+                reply_text,
+                config_manager=config_manager,
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+            )
         else:
-            fallback_reply = _append_telegram_voice_profile_status(fallback_reply, config_manager=config_manager)
+            fallback_reply = _append_telegram_voice_profile_status(
+                fallback_reply,
+                config_manager=config_manager,
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+            )
     if reply_text:
         return {"command": command, "reply_text": reply_text}
     if execution.ok:
@@ -6592,8 +6609,23 @@ def _render_telegram_voice_status_reply() -> str:
     )
 
 
-def _append_telegram_voice_profile_status(reply_text: str, *, config_manager: ConfigManager | None = None) -> str:
-    profile = _telegram_voice_status_profile()
+def _append_telegram_voice_profile_status(
+    reply_text: str,
+    *,
+    config_manager: ConfigManager | None = None,
+    state_db: StateDB | None = None,
+    external_user_id: str | None = None,
+    agent_id: str | None = None,
+) -> str:
+    profile = (
+        _telegram_voice_status_profile_for_user(
+            state_db=state_db,
+            external_user_id=external_user_id,
+            agent_id=agent_id,
+        )
+        if state_db is not None and external_user_id
+        else _telegram_voice_status_profile()
+    )
     if not profile:
         return reply_text
     lines = [
@@ -6630,7 +6662,60 @@ def _append_telegram_voice_profile_status(reply_text: str, *, config_manager: Co
         lines.append("")
         lines.append("Preflight:")
         lines.extend(f"- {item}" for item in preflight)
+    if state_db is not None and external_user_id:
+        delivery = _telegram_voice_last_delivery_for_user(state_db=state_db, external_user_id=external_user_id)
+        if delivery:
+            lines.append("")
+            lines.append("Last voice delivery:")
+            lines.append(f"- Status: {delivery['status']}")
+            lines.append(f"- Method: {delivery['method']}")
+            if delivery.get("when"):
+                lines.append(f"- When: {delivery['when']}")
     return f"{reply_text.rstrip()}\n" + "\n".join(lines)
+
+
+def _telegram_voice_status_profile_for_user(
+    *,
+    state_db: StateDB,
+    external_user_id: str | None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    profile = _telegram_voice_status_profile()
+    if not external_user_id:
+        return profile
+    state_tts = _telegram_voice_tts_override_for_user_from_state(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
+    if not state_tts:
+        return profile
+    merged = _merge_telegram_tts_overrides(profile, state_tts) or {}
+    source = str(profile.get("source") or "").strip()
+    merged["source"] = "+".join(part for part in (source, "state") if part) or "state"
+    merged["telegram_profile"] = str(profile.get("telegram_profile") or _telegram_voice_profile_key()).strip() or "default"
+    merged["provider_id"] = str(merged.get("provider_id") or "default").strip() or "default"
+    merged["voice_name"] = str(merged.get("voice_name") or "default").strip() or "default"
+    effect = str(profile.get("audio_effect") or "").strip()
+    if effect and not str(merged.get("audio_effect") or "").strip():
+        merged["audio_effect"] = effect
+    return merged
+
+
+def _telegram_voice_last_delivery_for_user(*, state_db: StateDB, external_user_id: str) -> dict[str, str]:
+    runtime_state = _load_runtime_json_object(state_db, f"telegram:voice:last_runtime_state:{external_user_id}") or _load_runtime_json_object(
+        state_db,
+        "telegram:voice:last_runtime_state",
+    )
+    delivery = runtime_state.get("telegram_delivery") if isinstance(runtime_state.get("telegram_delivery"), dict) else {}
+    status = str(delivery.get("last_send_voice_status") or "").strip()
+    if not status or status == "not recorded":
+        return {}
+    return {
+        "status": status,
+        "method": str(delivery.get("send_method") or "not recorded").strip() or "not recorded",
+        "when": str(delivery.get("last_send_voice_at") or "").strip(),
+    }
 
 
 def _telegram_voice_status_profile() -> dict[str, Any]:
