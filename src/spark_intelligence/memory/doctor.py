@@ -4,6 +4,10 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from spark_intelligence.memory.doctor_benchmark import (
+    memory_doctor_benchmark_summary,
+    score_memory_doctor_benchmark,
+)
 from spark_intelligence.memory.doctor_brain import build_memory_doctor_brain, memory_doctor_brain_summary
 from spark_intelligence.memory.generic_observations import detect_telegram_generic_deletions
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, record_event
@@ -47,6 +51,7 @@ class MemoryDoctorReport:
     context_capsule: dict[str, object]
     movement_trace: dict[str, object]
     brain: dict[str, object]
+    benchmark: dict[str, object]
     capability: dict[str, object]
 
     @property
@@ -67,6 +72,7 @@ class MemoryDoctorReport:
             "context_capsule": self.context_capsule,
             "movement_trace": self.movement_trace,
             "brain": self.brain,
+            "benchmark": self.benchmark,
             "capability": self.capability,
         }
 
@@ -105,6 +111,8 @@ class MemoryDoctorReport:
             )
         if self.brain:
             lines.append(f"- brain: {memory_doctor_brain_summary(self.brain)}")
+        if self.benchmark:
+            lines.append(f"- benchmark: {memory_doctor_benchmark_summary(self.benchmark)}")
         if self.dashboard:
             lines.append(f"- dashboard: {self.dashboard}")
         if self.recommendations:
@@ -155,6 +163,8 @@ class MemoryDoctorReport:
                     )
         if self.brain:
             lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
+        if self.benchmark:
+            lines.append(f"Benchmark: {memory_doctor_benchmark_summary(self.benchmark)}.")
         failing = [finding for finding in self.findings if not finding.ok]
         if not failing:
             lines.append("Delete integrity looks good: every detected multi-forget turn has matching delete writes.")
@@ -348,6 +358,16 @@ def run_memory_doctor(
         human_id=human_id,
         topic=topic,
     )
+    benchmark = score_memory_doctor_benchmark(
+        scanned_delete_turns=scanned_delete_turns,
+        scanned_multi_delete_turns=scanned_multi_delete_turns,
+        findings=findings,
+        active_profile=active_profile,
+        topic_scan=topic_scan,
+        context_capsule=context_capsule,
+        movement_trace=movement_trace,
+        dashboard=dashboard,
+    )
     recommendations = _build_recommendations(
         findings=findings,
         active_profile=active_profile,
@@ -368,6 +388,7 @@ def run_memory_doctor(
         context_capsule=context_capsule,
         movement_trace=movement_trace,
         brain=brain,
+        benchmark=benchmark,
         capability={
             "mode": "diagnosis_only",
             "repair_requested": repair_requested,
@@ -378,6 +399,11 @@ def run_memory_doctor(
                 "automatic_repair": False,
                 "snapshot_event": "memory_doctor_brain_evaluated",
                 "snapshot_authority": "observability_non_authoritative",
+            },
+            "benchmark": {
+                "mode": "diagnostic_score",
+                "automatic_repair": False,
+                "authority": "diagnostic_score_not_memory_truth",
             },
         },
     )

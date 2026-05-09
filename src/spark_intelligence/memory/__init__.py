@@ -73,6 +73,10 @@ from spark_intelligence.memory.doctor_brain import (
     build_memory_doctor_brain,
     memory_doctor_brain_summary,
 )
+from spark_intelligence.memory.doctor_benchmark import (
+    memory_doctor_benchmark_summary,
+    score_memory_doctor_benchmark,
+)
 from spark_intelligence.memory.acceptance import (
     DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
@@ -132,6 +136,7 @@ __all__ = [
     "MemoryDoctorFinding",
     "MemoryDoctorReport",
     "build_memory_doctor_brain",
+    "memory_doctor_benchmark_summary",
     "memory_doctor_brain_summary",
     "EpisodicRollupSummary",
     "SessionSummary",
@@ -184,6 +189,7 @@ __all__ = [
     "retrieve_memory_evidence_in_memory",
     "retrieve_memory_events_in_memory",
     "run_memory_doctor",
+    "score_memory_doctor_benchmark",
     "run_memory_sdk_smoke_test",
     "run_memory_sdk_maintenance",
     "write_belief_to_memory",

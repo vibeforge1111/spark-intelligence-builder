@@ -49,12 +49,14 @@ class MemoryDoctorBrainTests(SparkTestCase):
             )
 
         self.assertIn("brain", report.to_dict())
+        self.assertIn("benchmark", report.to_dict())
         self.assertLess(report.brain["coverage"]["score"], 100)
         gap_names = {gap["name"] for gap in report.brain["gaps"]}
         self.assertIn("gateway_trace_visibility_gap", gap_names)
         self.assertIn("llm_wiki_packet_visibility_gap", gap_names)
         self.assertIn("dashboard_movement_export_gap", gap_names)
         self.assertIn("Brain: visibility", report.to_telegram_text())
+        self.assertIn("Benchmark:", report.to_telegram_text())
         self.assertTrue(report.brain["proactive_improvements"])
         brain_events = latest_events_by_type(self.state_db, event_type="memory_doctor_brain_evaluated", limit=1)
         self.assertEqual(len(brain_events), 1)
