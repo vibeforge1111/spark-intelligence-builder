@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-BENCHMARK_VERSION = "2026-05-09.v4"
+BENCHMARK_VERSION = "2026-05-09.v5"
 
 
 def score_memory_doctor_benchmark(
@@ -27,7 +27,7 @@ def score_memory_doctor_benchmark(
             findings=findings,
         ),
         _score_abstention(movement_trace=movement_trace, dashboard=dashboard),
-        _score_doctor_intake(context_capsule=context_capsule),
+        _score_doctor_intake(context_capsule=context_capsule, movement_trace=movement_trace),
     ]
     total_weight = sum(int(case["weight"]) for case in cases)
     earned = sum(float(case["score"]) * int(case["weight"]) for case in cases)
@@ -317,7 +317,7 @@ def _score_abstention(
     )
 
 
-def _score_doctor_intake(*, context_capsule: dict[str, object]) -> dict[str, object]:
+def _score_doctor_intake(*, context_capsule: dict[str, object], movement_trace: dict[str, object]) -> dict[str, object]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     invocation_count = int(gateway_trace.get("diagnostic_invocation_count") or 0)
     invocations = gateway_trace.get("diagnostic_invocations") if isinstance(gateway_trace.get("diagnostic_invocations"), list) else []
@@ -326,14 +326,52 @@ def _score_doctor_intake(*, context_capsule: dict[str, object]) -> dict[str, obj
         for invocation in invocations
         if isinstance(invocation, dict) and invocation.get("contextual_trigger_score") is not None
     ]
+    intake_stage = _stage_by_name(movement_trace, "memory_doctor_intake")
     if contextual_invocations:
+        calibrated_invocations = [
+            invocation
+            for invocation in contextual_invocations
+            if invocation.get("contextual_trigger_threshold") is not None
+            and invocation.get("contextual_trigger_signals")
+        ]
+        if not calibrated_invocations:
+            return _case(
+                "doctor_intake",
+                "doctor_intake",
+                10,
+                0.5,
+                "observable_incomplete",
+                "Telegram contextual trigger lineage is visible, but threshold/signals are missing.",
+                "verify runtime_command_metadata records trigger score, threshold, signals, and previous-failure evidence",
+            )
+        if intake_stage.get("status") != "checked":
+            return _case(
+                "doctor_intake",
+                "doctor_intake",
+                10,
+                0.75,
+                "movement_trace_missing",
+                "Telegram contextual trigger metadata is calibrated, but Memory Doctor intake is absent from the movement trace.",
+                "rerun Memory Doctor after wiring the memory_doctor_intake movement stage",
+            )
+        stage_contextual_count = int(intake_stage.get("contextual_trigger_count") or 0)
+        if stage_contextual_count < len(contextual_invocations):
+            return _case(
+                "doctor_intake",
+                "doctor_intake",
+                10,
+                0.75,
+                "movement_trace_partial",
+                "Memory Doctor intake stage exists, but contextual trigger counts do not match gateway invocation lineage.",
+                "make the intake movement stage derive counts from the same diagnostic invocation ledger",
+            )
         return _case(
             "doctor_intake",
             "doctor_intake",
             10,
             1.0,
             "pass",
-            f"Telegram contextual trigger lineage is visible for {invocation_count} Memory Doctor invocation(s).",
+            f"Telegram contextual trigger calibration is visible for {invocation_count} Memory Doctor invocation(s).",
             "keep close-turn frustration phrases in the Telegram Memory Doctor regression pack",
         )
     if invocation_count > 0:

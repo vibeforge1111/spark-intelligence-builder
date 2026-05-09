@@ -30,6 +30,11 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
                             "request_id": "req-doctor-intake",
                             "request_selector": "previous_gateway_turn",
                             "contextual_trigger_score": 4,
+                            "contextual_trigger_threshold": 3,
+                            "contextual_trigger_signals": [
+                                "close_turn_repeat_frustration",
+                                "previous_turn_memory_failure_signal",
+                            ],
                         }
                     ],
                 },
@@ -38,6 +43,11 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
                 "stages": [
                     {"stage": "memory_lifecycle_and_policy", "lifecycle_transition_count": 1},
                     {"stage": "memory_reads", "abstained_count": 1},
+                    {
+                        "stage": "memory_doctor_intake",
+                        "status": "checked",
+                        "contextual_trigger_count": 1,
+                    },
                 ]
             },
             dashboard={"abstention_reasons": ["not_found"]},
@@ -83,6 +93,87 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         self.assertEqual(cases["abstention"]["status"], "fail")
         self.assertEqual(cases["doctor_intake"]["status"], "fail")
         self.assertEqual(benchmark["weakest_case"]["status"], "fail")
+
+    def test_scores_doctor_intake_requires_calibrated_trigger_metadata(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=1,
+            scanned_multi_delete_turns=0,
+            findings=[],
+            active_profile={"status": "checked", "facts": {"preferred_name": "Cem"}},
+            topic_scan={"status": "checked", "topic": "Cedar Compass 509"},
+            context_capsule={
+                "status": "checked",
+                "recent_conversation_count": 2,
+                "gateway_trace": {
+                    "status": "checked",
+                    "recent_gateway_message_count": 1,
+                    "lineage_gap": False,
+                    "diagnostic_invocation_count": 1,
+                    "diagnostic_invocations": [
+                        {
+                            "request_id": "req-doctor-intake",
+                            "request_selector": "previous_gateway_turn",
+                            "contextual_trigger_score": 4,
+                        }
+                    ],
+                },
+            },
+            movement_trace={
+                "stages": [
+                    {"stage": "memory_lifecycle_and_policy", "lifecycle_transition_count": 1},
+                    {"stage": "memory_reads", "abstained_count": 1},
+                    {
+                        "stage": "memory_doctor_intake",
+                        "status": "checked",
+                        "contextual_trigger_count": 1,
+                    },
+                ]
+            },
+            dashboard={"abstention_reasons": ["not_found"]},
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["doctor_intake"]["status"], "observable_incomplete")
+        self.assertIn("threshold/signals are missing", cases["doctor_intake"]["detail"])
+
+    def test_scores_doctor_intake_requires_movement_trace_stage(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=1,
+            scanned_multi_delete_turns=0,
+            findings=[],
+            active_profile={"status": "checked", "facts": {"preferred_name": "Cem"}},
+            topic_scan={"status": "checked", "topic": "Cedar Compass 509"},
+            context_capsule={
+                "status": "checked",
+                "recent_conversation_count": 2,
+                "gateway_trace": {
+                    "status": "checked",
+                    "recent_gateway_message_count": 1,
+                    "lineage_gap": False,
+                    "diagnostic_invocation_count": 1,
+                    "diagnostic_invocations": [
+                        {
+                            "request_id": "req-doctor-intake",
+                            "request_selector": "previous_gateway_turn",
+                            "contextual_trigger_score": 4,
+                            "contextual_trigger_threshold": 3,
+                            "contextual_trigger_signals": ["close_turn_repeat_frustration"],
+                        }
+                    ],
+                },
+            },
+            movement_trace={
+                "stages": [
+                    {"stage": "memory_lifecycle_and_policy", "lifecycle_transition_count": 1},
+                    {"stage": "memory_reads", "abstained_count": 1},
+                ]
+            },
+            dashboard={"abstention_reasons": ["not_found"]},
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["doctor_intake"]["status"], "movement_trace_missing")
+        self.assertIn("absent from the movement trace", cases["doctor_intake"]["detail"])
 
     def test_scores_forget_postcondition_failure(self) -> None:
         benchmark = score_memory_doctor_benchmark(
