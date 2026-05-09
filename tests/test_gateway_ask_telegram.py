@@ -38,6 +38,9 @@ class GatewayAskTelegramTests(SparkTestCase):
             "you forgot what we were discussing": {"memory_context_reference", "memory_distress_verb"},
             "you lost the conversation": {"memory_context_reference", "memory_distress_verb"},
             "the context disappeared": {"memory_context_reference", "memory_distress_verb"},
+            "you blanked on what I just said": {"memory_context_reference", "memory_distress_verb"},
+            "the thread got wiped": {"memory_context_reference", "memory_distress_verb"},
+            "you skipped my last message": {"memory_context_reference", "memory_distress_verb"},
             "did you forget the last thing I said": {
                 "memory_context_reference",
                 "memory_distress_verb",
@@ -50,11 +53,27 @@ class GatewayAskTelegramTests(SparkTestCase):
                 self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
                 self.assertTrue(expected_signals.issubset(signal_names))
 
+        direct_repeat_complaint_cases = {
+            "why are you asking me again": {
+                "close_turn_repeat_frustration",
+                "operator_frustration",
+                "diagnostic_question",
+            },
+        }
+        for phrase, expected_signals in direct_repeat_complaint_cases.items():
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
+                self.assertTrue(expected_signals.issubset(signal_names))
+
         previous_failure_only_cases = {
             "are you still with me": {"operator_frustration"},
             "you asked me again": {"close_turn_repeat_frustration", "operator_frustration"},
             "I already answered that": {"close_turn_repeat_frustration"},
+            "we literally just covered this": {"close_turn_repeat_frustration"},
             "you lost the plot": {"memory_distress_verb"},
+            "you went silent": {"operator_frustration"},
+            "Spark froze again": {"operator_frustration"},
         }
         for phrase, expected_signals in previous_failure_only_cases.items():
             with self.subTest(phrase=phrase):

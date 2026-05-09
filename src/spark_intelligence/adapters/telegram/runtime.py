@@ -4996,7 +4996,7 @@ def _memory_doctor_distress_score(simplified_text: str) -> int:
 
 
 def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
-    text = str(simplified_text or "").strip()
+    text = str(simplified_text or "").strip().lower()
     if not text:
         return []
     signals: list[dict[str, object]] = []
@@ -5004,24 +5004,33 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
         (
             r"\b(?:memory|context|thread|conversation|convo|discussion|previous|last|what i just said|"
             r"what i just told you|what we were talking about|we were talking about|what we were discussing|"
-            r"we were discussing|what we were working on|we were working on)\b"
+            r"we were discussing|what we were working on|we were working on|last message|previous message|"
+            r"right before this|right above|what i said)\b"
         ),
         text,
     ):
         signals.append({"name": "memory_context_reference", "weight": 2})
-    if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused|reset|disappeared)\b", text):
+    if re.search(
+        r"\b(?:blank|blanked|forgot|forget|remember|lost|dropped|missed|skipped|ignored|confused|reset|wiped|disappeared|vanished)\b",
+        text,
+    ):
         signals.append({"name": "memory_distress_verb", "weight": 2})
     if re.search(
         (
             r"\b(?:i just told you|just told you|already told you|i already said|already said that|"
             r"i said that already|already answered|asked me again|you asked me again|"
-            r"you asked me (?:that|this) already|literally just said|just said that)\b"
+            r"asking me again|you asked me (?:that|this) already|literally just said|"
+            r"literally just told you|we literally just covered this|we just covered this|"
+            r"that'?s what i said|thats what i said|just said that)\b"
         ),
         text,
     ):
         signals.append({"name": "close_turn_repeat_frustration", "weight": 2})
     if re.search(
-        r"\b(?:not responding|stopped responding|are you there|you there|still with me|hello|wrong|again|seriously|come on)\b",
+        (
+            r"\b(?:not responding|stopped responding|stopped answering|are you there|you there|still with me|"
+            r"went silent|go silent|silent|froze|frozen|stuck|unresponsive|hello|wrong|again|seriously|come on)\b"
+        ),
         text,
     ):
         signals.append({"name": "operator_frustration", "weight": 1})
@@ -5058,6 +5067,12 @@ def _previous_gateway_turn_memory_failure_signals(record: dict[str, object]) -> 
         "what did you just tell me",
         "what should i call you",
         "what should i call you instead",
+        "remind me what you said",
+        "can you repeat",
+        "could you repeat",
+        "say that again",
+        "missed that",
+        "missed your last",
         "tell me again",
     )
     signals: list[str] = []
