@@ -5208,6 +5208,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertIn("context_capsule_gateway_trace_gap", doctor_report.to_text())
         self.assertIn("gateway had 1 earlier same-session message", doctor_report.to_telegram_text())
+        self.assertEqual(doctor_report.root_cause["primary_gap"], "context_capsule_gateway_trace_gap")
+        self.assertEqual(doctor_report.root_cause["failure_layer"], "context_ingress")
+        self.assertIn("Root cause: gateway -> provider context gap.", doctor_report.to_telegram_text())
         self.assertEqual(
             doctor_report.movement_trace["gaps"][0]["name"],
             "gateway_to_context_capsule_gap",
@@ -5352,7 +5355,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(doctor_report.context_capsule["gateway_trace"]["status"], "checked")
         self.assertIn("context_capsule_request_not_found", doctor_report.to_text())
         self.assertIn("gateway_trace=checked", doctor_report.to_text())
+        self.assertEqual(doctor_report.root_cause["primary_gap"], "context_capsule_request_not_found")
+        self.assertEqual(doctor_report.root_cause["failure_layer"], "provider_context_recording")
         self.assertIn("no provider capsule event was recorded", doctor_report.to_telegram_text())
+        self.assertIn("Root cause: provider context event missing.", doctor_report.to_telegram_text())
 
     def test_memory_doctor_flags_close_turn_answer_grounding_gap(self) -> None:
         append_gateway_trace(
@@ -5422,6 +5428,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertTrue(doctor_report.context_capsule["gateway_trace"]["answer_topic_miss"])
         self.assertIn("context_to_answer_grounding_gap", doctor_report.to_text())
         self.assertIn("Answer grounding: recent context contained the expected topic", doctor_report.to_telegram_text())
+        self.assertEqual(doctor_report.root_cause["primary_gap"], "context_to_answer_grounding_gap")
+        self.assertEqual(doctor_report.root_cause["failure_layer"], "answer_grounding")
+        self.assertIn(
+            "Root cause: provider context -> answer grounding gap.",
+            doctor_report.to_telegram_text(),
+        )
         self.assertEqual(
             doctor_report.movement_trace["gaps"][0]["name"],
             "context_to_answer_grounding_gap",
@@ -5525,6 +5537,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertTrue(delivery_trace["delivery_topic_miss"])
         self.assertIn("delivery_answer_grounding_gap", doctor_report.to_text())
         self.assertIn("Delivery: generated reply contained the expected topic", doctor_report.to_telegram_text())
+        self.assertEqual(doctor_report.root_cause["primary_gap"], "delivery_answer_grounding_gap")
+        self.assertEqual(doctor_report.root_cause["failure_layer"], "telegram_delivery")
+        self.assertIn(
+            "Root cause: answer generation -> Telegram delivery gap.",
+            doctor_report.to_telegram_text(),
+        )
         self.assertEqual(
             doctor_report.movement_trace["gaps"][0]["name"],
             "delivery_answer_grounding_gap",

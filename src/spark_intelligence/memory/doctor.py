@@ -54,6 +54,7 @@ class MemoryDoctorReport:
     topic_scan: dict[str, object]
     context_capsule: dict[str, object]
     movement_trace: dict[str, object]
+    root_cause: dict[str, object]
     brain: dict[str, object]
     benchmark: dict[str, object]
     capability: dict[str, object]
@@ -75,6 +76,7 @@ class MemoryDoctorReport:
             "topic_scan": self.topic_scan,
             "context_capsule": self.context_capsule,
             "movement_trace": self.movement_trace,
+            "root_cause": self.root_cause,
             "brain": self.brain,
             "benchmark": self.benchmark,
             "capability": self.capability,
@@ -119,6 +121,12 @@ class MemoryDoctorReport:
                 f"stages={len(self.movement_trace.get('stages') or [])} "
                 f"gaps={len(self.movement_trace.get('gaps') or [])}"
             )
+        if self.root_cause and self.root_cause.get("status") == "identified":
+            root_cause_summary = str(
+                self.root_cause.get("telegram_summary") or self.root_cause.get("summary") or ""
+            ).strip()
+            if root_cause_summary:
+                lines.append(f"- root cause: {root_cause_summary}")
         if self.brain:
             lines.append(f"- brain: {memory_doctor_brain_summary(self.brain)}")
         if self.benchmark:
@@ -200,6 +208,9 @@ class MemoryDoctorReport:
                 )
             else:
                 lines.append("Context capsule: no provider capsule event was recorded for this request.")
+        root_cause_summary = str(self.root_cause.get("telegram_summary") or "").strip()
+        if root_cause_summary and self.root_cause.get("status") == "identified":
+            lines.append(f"Root cause: {root_cause_summary}.")
         if self.brain:
             lines.append(f"Brain: {memory_doctor_brain_summary(self.brain)}.")
         if self.benchmark:
@@ -431,6 +442,11 @@ def run_memory_doctor(
         repair_requested=repair_requested,
     )
     recommendations.extend(_brain_recommendations(brain))
+    root_cause = _build_root_cause_summary(
+        findings=findings,
+        context_capsule=context_capsule,
+        movement_trace=movement_trace,
+    )
     return MemoryDoctorReport(
         findings=findings,
         scanned_delete_turns=scanned_delete_turns,
@@ -442,6 +458,7 @@ def run_memory_doctor(
         topic_scan=topic_scan,
         context_capsule=context_capsule,
         movement_trace=movement_trace,
+        root_cause=root_cause,
         brain=brain,
         benchmark=benchmark,
         capability={
@@ -1738,6 +1755,136 @@ def _build_path_traces(
         if len(traces) >= 5:
             break
     return traces
+
+
+def _build_root_cause_summary(
+    *,
+    findings: list[MemoryDoctorFinding],
+    context_capsule: dict[str, object],
+    movement_trace: dict[str, object],
+) -> dict[str, object]:
+    failing = [finding for finding in findings if not finding.ok]
+    if not failing:
+        return {
+            "status": "clear",
+            "primary_gap": None,
+            "failure_layer": None,
+            "chain": [],
+            "telegram_summary": "no failing root cause identified",
+            "request_id": context_capsule.get("request_id"),
+            "confidence": "high",
+        }
+
+    profiles: dict[str, dict[str, object]] = {
+        "context_capsule_gateway_trace_gap": {
+            "failure_layer": "context_ingress",
+            "chain": ["telegram_gateway", "context_capsule", "provider_context"],
+            "telegram_summary": "gateway -> provider context gap",
+            "movement_gap": "gateway_to_context_capsule_gap",
+        },
+        "context_capsule_request_not_found": {
+            "failure_layer": "provider_context_recording",
+            "chain": ["telegram_gateway", "provider_invocation", "context_capsule_event"],
+            "telegram_summary": "provider context event missing",
+        },
+        "context_to_answer_grounding_gap": {
+            "failure_layer": "answer_grounding",
+            "chain": ["telegram_gateway", "context_capsule", "answer_grounding"],
+            "telegram_summary": "provider context -> answer grounding gap",
+            "movement_gap": "context_to_answer_grounding_gap",
+        },
+        "close_turn_route_contamination": {
+            "failure_layer": "route_arbitration",
+            "chain": ["telegram_gateway", "context_capsule", "route_arbitration"],
+            "telegram_summary": "close-turn route arbitration gap",
+            "movement_gap": "close_turn_route_contamination",
+        },
+        "delivery_answer_grounding_gap": {
+            "failure_layer": "telegram_delivery",
+            "chain": ["answer_generation", "telegram_delivery"],
+            "telegram_summary": "answer generation -> Telegram delivery gap",
+            "movement_gap": "delivery_answer_grounding_gap",
+        },
+        "telegram_delivery_failure": {
+            "failure_layer": "telegram_delivery",
+            "chain": ["answer_generation", "telegram_delivery"],
+            "telegram_summary": "Telegram delivery failure",
+            "movement_gap": "telegram_delivery_failure",
+        },
+        "memory_forget_postcondition_failed": {
+            "failure_layer": "current_state_delete",
+            "chain": ["forget_request", "current_state", "postcondition"],
+            "telegram_summary": "forget postcondition gap",
+            "movement_gap": "memory_forget_postcondition_failed",
+        },
+        "memory_delete_intent_integrity": {
+            "failure_layer": "delete_write_fanout",
+            "chain": ["forget_request", "memory_write_requests", "memory_write_results"],
+            "telegram_summary": "delete write fanout gap",
+        },
+        "topic_active_state_presence": {
+            "failure_layer": "active_current_state",
+            "chain": ["topic_scan", "active_current_state"],
+            "telegram_summary": "active memory still contains that topic",
+        },
+    }
+    priority = [
+        "context_capsule_request_not_found",
+        "context_capsule_gateway_trace_gap",
+        "context_to_answer_grounding_gap",
+        "close_turn_route_contamination",
+        "delivery_answer_grounding_gap",
+        "telegram_delivery_failure",
+        "memory_forget_postcondition_failed",
+        "memory_delete_intent_integrity",
+        "topic_active_state_presence",
+    ]
+    findings_by_name = {finding.name: finding for finding in failing}
+    selected = next((findings_by_name[name] for name in priority if name in findings_by_name), failing[0])
+    profile = profiles.get(selected.name)
+    gaps = movement_trace.get("gaps") if isinstance(movement_trace.get("gaps"), list) else []
+    gap_names = {
+        str(gap.get("name") or "")
+        for gap in gaps
+        if isinstance(gap, dict) and str(gap.get("name") or "").strip()
+    }
+    movement_gap = str(profile.get("movement_gap") or "") if isinstance(profile, dict) else ""
+    if not movement_gap and selected.name in gap_names:
+        movement_gap = selected.name
+    confidence = "high" if profile and (not movement_gap or movement_gap in gap_names) else "medium"
+    request_id = selected.request_id or str(context_capsule.get("request_id") or "").strip() or None
+    if profile is None:
+        return {
+            "status": "identified",
+            "primary_gap": selected.name,
+            "failure_layer": "unknown",
+            "chain": [],
+            "telegram_summary": selected.name.replace("_", " "),
+            "request_id": request_id,
+            "confidence": "medium",
+            "detail": selected.detail,
+            "evidence": {
+                "finding": selected.name,
+                "context_capsule_status": context_capsule.get("status"),
+                "movement_gap_seen": selected.name in gap_names,
+            },
+        }
+    return {
+        "status": "identified",
+        "primary_gap": selected.name,
+        "movement_gap": movement_gap or None,
+        "failure_layer": profile["failure_layer"],
+        "chain": list(profile["chain"]) if isinstance(profile.get("chain"), list) else [],
+        "telegram_summary": profile["telegram_summary"],
+        "request_id": request_id,
+        "confidence": confidence,
+        "detail": selected.detail,
+        "evidence": {
+            "finding": selected.name,
+            "context_capsule_status": context_capsule.get("status"),
+            "movement_gap_seen": bool(movement_gap and movement_gap in gap_names),
+        },
+    }
 
 
 def _build_recommendations(
