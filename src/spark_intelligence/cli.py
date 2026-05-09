@@ -160,11 +160,14 @@ from spark_intelligence.ops import (
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
     build_capability_drift_heartbeat,
     build_handoff_freshness_check,
     build_live_telegram_regression_cadence,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    record_route_probe_evidence,
+    run_route_probe_and_record,
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
@@ -1318,6 +1321,46 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
     self_status_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_context_parser = self_subparsers.add_parser(
+        "context",
+        help="Show the agent operating context preflight: access, runner, route health, and source ledger",
+    )
+    self_context_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_context_parser.add_argument("--human-id", default="", help="Optional human id for memory-in-play context")
+    self_context_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_context_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_context_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
+    self_context_parser.add_argument("--user-message", default="", help="Optional user message for task-fit routing")
+    self_context_parser.add_argument("--spark-access-level", default="", help="Operator-supplied Spark access level, for example 4")
+    self_context_parser.add_argument(
+        "--runner-writable",
+        choices=["yes", "no", "unknown"],
+        default="unknown",
+        help="Current execution runner write capability, independent from Spark access level",
+    )
+    self_context_parser.add_argument("--runner-label", default="", help="Optional display label for the current runner")
+    self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_probe_parser = self_subparsers.add_parser(
+        "route-probe",
+        help="Record a route-specific probe result for Agent Operating Context evidence",
+    )
+    self_route_probe_parser.add_argument("capability_key", help="Route or capability key, for example spark_spawner")
+    self_route_probe_parser.add_argument(
+        "--status",
+        choices=["success", "failure"],
+        help="Whether the route probe succeeded or failed",
+    )
+    self_route_probe_parser.add_argument("--run", action="store_true", help="Run the built-in safe route probe before recording evidence")
+    self_route_probe_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_probe_parser.add_argument("--latency-ms", type=int, default=None, help="Route probe latency in milliseconds")
+    self_route_probe_parser.add_argument("--eval-ref", default="", help="Eval, smoke, test, or probe reference")
+    self_route_probe_parser.add_argument("--source-ref", default="", help="Trace or command reference for this probe")
+    self_route_probe_parser.add_argument("--failure-reason", default="", help="Failure reason for failed probes")
+    self_route_probe_parser.add_argument("--actor-id", default="operator", help="Actor recording the probe")
+    self_route_probe_parser.add_argument("--human-id", default="", help="Optional human id")
+    self_route_probe_parser.add_argument("--session-id", default="", help="Optional session id")
+    self_route_probe_parser.add_argument("--request-id", default="", help="Optional request id")
+    self_route_probe_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_heartbeat_parser = self_subparsers.add_parser(
         "heartbeat",
         help="Write a typed capability drift report with stale/missing last-success probes",
@@ -4212,6 +4255,73 @@ def handle_self_status(args: argparse.Namespace) -> int:
             print("\n".join(lines).strip())
         return 0
     print(capsule.to_json() if args.json else capsule.to_text())
+    return 0
+
+
+def handle_self_context(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    runner_writable = _parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown"))
+    result = build_agent_operating_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
+        runner_writable=runner_writable,
+        runner_label=str(getattr(args, "runner_label", "") or ""),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def _parse_runner_writable(value: str) -> bool | None:
+    normalized = str(value or "").strip().lower()
+    if normalized == "yes":
+        return True
+    if normalized == "no":
+        return False
+    return None
+
+
+def handle_self_route_probe(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    if bool(getattr(args, "run", False)):
+        result = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key=str(getattr(args, "capability_key", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            human_id=str(getattr(args, "human_id", "") or ""),
+            session_id=str(getattr(args, "session_id", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or ""),
+        )
+        print(json.dumps(result.to_payload(), indent=2) if args.json else result.to_text())
+        return 0
+    if not str(getattr(args, "status", "") or "").strip():
+        raise SystemExit("--status is required unless --run is used")
+    result = record_route_probe_evidence(
+        state_db,
+        capability_key=str(getattr(args, "capability_key", "") or ""),
+        status=str(getattr(args, "status", "") or ""),  # type: ignore[arg-type]
+        route_latency_ms=getattr(args, "latency_ms", None),
+        eval_ref=str(getattr(args, "eval_ref", "") or ""),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        failure_reason=str(getattr(args, "failure_reason", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+    )
+    print(json.dumps(result.to_payload(), indent=2) if args.json else result.to_text())
     return 0
 
 
@@ -8127,6 +8237,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_status(args)
     if args.command == "self" and args.self_command == "status":
         return handle_self_status(args)
+    if args.command == "self" and args.self_command == "context":
+        return handle_self_context(args)
+    if args.command == "self" and args.self_command == "route-probe":
+        return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
         return handle_self_heartbeat(args)
     if args.command == "self" and args.self_command == "live-telegram-cadence":

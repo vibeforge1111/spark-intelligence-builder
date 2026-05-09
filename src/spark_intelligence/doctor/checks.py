@@ -18,6 +18,7 @@ from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     record_environment_snapshot,
     repair_foreground_browser_hook_failures,
+    repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
     repair_non_promotable_chip_hook_dispositions,
 )
@@ -87,6 +88,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     repair_non_promotable_chip_hook_dispositions(state_db)
     repair_foreground_browser_hook_failures(state_db)
     repair_missing_memory_lane_records(state_db)
+    repair_memory_lane_artifact_lanes(state_db)
 
     checks.append(DoctorCheck("home", paths.home.exists(), str(paths.home)))
     checks.append(DoctorCheck("config.yaml", paths.config_yaml.exists(), str(paths.config_yaml)))

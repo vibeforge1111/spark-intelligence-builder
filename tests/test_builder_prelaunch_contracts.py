@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
-from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply
+from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply, record_telegram_auth_result
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
@@ -32,6 +32,7 @@ from spark_intelligence.observability.store import (
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
+    repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
 )
 from spark_intelligence.personality.loader import (
@@ -392,6 +393,70 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
 
+    def test_stop_ship_flags_no_run_intent_without_request_level_proof(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="intent without run or proof",
+            request_id="req-no-run-missing-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
+
+    def test_stop_ship_accepts_no_run_intent_with_request_level_result_proof(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-no-run-result-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="legacy simulated result",
+            request_id="req-no-run-result-proof",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_intent_without_proof"].ok)
+
+    def test_stop_ship_accepts_no_run_intent_with_request_level_dispatch_failure(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-no-run-dispatch-failure",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="legacy simulated dispatch failed",
+            request_id="req-no-run-dispatch-failure",
+            channel_id="telegram",
+            actor_id="test",
+            facts={"failure_family": "test"},
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_intent_without_proof"].ok)
+
     def test_stop_ship_accepts_terminal_run_closure_as_execution_proof(self) -> None:
         run = open_run(
             self.state_db,
@@ -730,6 +795,31 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "healthy")
 
+    def test_watchtower_execution_health_accepts_no_run_intent_with_request_level_result(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="gateway_simulated_dm",
+            summary="legacy simulated intent",
+            request_id="req-watchtower-no-run-result",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="legacy simulated result",
+            request_id="req-watchtower-no-run-result",
+            channel_id="telegram",
+            actor_id="test",
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+
+        self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "healthy")
+        self.assertEqual(snapshot["panels"]["execution_lineage"]["counts"]["intent_without_dispatch"], 0)
+
     def test_classified_bridge_output_creates_typed_memory_lane_record(self) -> None:
         record_event(
             self.state_db,
@@ -884,6 +974,39 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         lane_records = recent_memory_lane_records(self.state_db, limit=10)
         self.assertEqual(len(lane_records), 1)
         self.assertEqual(str(lane_records[0]["event_id"]), event_id)
+
+    def test_repair_memory_lane_artifact_lanes_updates_stale_ephemeral_lane(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result with stale lane",
+            request_id="req-memory-lane-repair",
+            trace_ref="trace:req-memory-lane-repair",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE memory_lane_records SET artifact_lane = ? WHERE lane_record_id = ?",
+                ("execution_evidence", lane_record["lane_record_id"]),
+            )
+            conn.commit()
+
+        repaired = repair_memory_lane_artifact_lanes(self.state_db)
+
+        self.assertEqual(repaired, 1)
+        repaired_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        self.assertEqual(repaired_record["artifact_lane"], "working_scratchpad")
+        self.assertEqual(repaired_record["evidence_json"]["artifact_lane"], "working_scratchpad")
+        self.assertEqual(
+            repaired_record["evidence_json"]["facts"]["trace_contract"]["destination"],
+            "working_scratchpad",
+        )
 
     def test_watchtower_session_integrity_panel_tracks_reset_and_resume_surfaces(self) -> None:
         detect_and_persist_nl_preferences(
@@ -1152,6 +1275,68 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-memory-contract", checks)
         self.assertTrue(checks["watchtower-memory-contract"].ok)
 
+    def test_stop_ship_ignores_empty_unknown_context_read_abstentions(self) -> None:
+        for method in ("recover_task_context", "recall_episodic_context"):
+            record_event(
+                self.state_db,
+                event_type="memory_read_abstained",
+                component="memory_orchestrator",
+                summary="empty context read",
+                request_id=f"req-empty-{method}",
+                session_id="session:test",
+                human_id="human:test",
+                actor_id="memory_orchestrator",
+                facts={
+                    "method": method,
+                    "memory_role": "unknown",
+                    "record_count": 0,
+                    "reason": "invalid_memory_role",
+                },
+                provenance={"memory_role": "unknown", "sdk_provenance": []},
+            )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        observer_panel = snapshot["panels"]["observer_incidents"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
+        self.assertEqual(memory_panel["counts"]["invalid_role_events"], 0)
+        self.assertNotIn("memory_contract_drift", observer_panel["counts_by_class"])
+        self.assertTrue(issues["stop_ship_memory_contract"].ok)
+
+    def test_stop_ship_accepts_legacy_hybrid_role_as_aggregate_read(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_read_succeeded",
+            component="memory_orchestrator",
+            summary="legacy hybrid aggregate read",
+            request_id="req-hybrid-aggregate",
+            session_id="session:test",
+            human_id="human:test",
+            actor_id="memory_orchestrator",
+            facts={
+                "method": "hybrid_memory_retrieve",
+                "memory_role": "hybrid",
+                "record_count": 2,
+                "reason": "invalid_memory_role",
+            },
+            provenance={"memory_role": "hybrid", "sdk_provenance": []},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
+        self.assertTrue(issues["stop_ship_memory_contract"].ok)
+
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -1292,6 +1477,47 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         facts = personality_events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "user_preference_ephemeral")
         self.assertTrue(facts["detected_deltas"])
+
+    def test_stop_ship_plugin_provenance_uses_typed_personality_ledger_beyond_recent_event_window(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Personality influence was recorded before bridge execution.",
+            request_id="req-personality-ledger",
+            actor_id="researcher_bridge",
+            reason_code="personality_context_applied",
+            facts={"keepability": "user_preference_ephemeral"},
+            provenance={"source_kind": "personality_profile", "source_ref": "founder-operator"},
+        )
+        for index in range(240):
+            record_event(
+                self.state_db,
+                event_type="plugin_or_chip_influence_recorded",
+                component="attachment_snapshot",
+                summary="Active chip and specialization-path attachment state was snapshotted with provenance.",
+                request_id=f"req-attachment-{index}",
+                actor_id="attachment_snapshot",
+                reason_code="attachment_snapshot_synced",
+                facts={"keepability": "execution_evidence"},
+                provenance={"source_kind": "attachment_snapshot", "source_ref": f"attachments:{index}"},
+            )
+        record_event(
+            self.state_db,
+            event_type="dispatch_started",
+            component="researcher_bridge",
+            summary="Researcher bridge dispatch started.",
+            request_id="req-personality-ledger",
+            actor_id="researcher_bridge",
+            reason_code="build_advisory",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertTrue(issues["stop_ship_plugin_provenance"].ok)
 
     def test_sync_attachment_snapshot_writes_typed_snapshot_storage(self) -> None:
         snapshot = sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
@@ -1590,6 +1816,31 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_stop_ship_accepts_telegram_runtime_state_with_typed_channel_installation(self) -> None:
+        self.add_telegram_channel(bot_token="telegram-test-token")
+        record_telegram_auth_result(
+            state_db=self.state_db,
+            status="ok",
+            bot_username="SparkTestBot",
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertTrue(issues["stop_ship_runtime_state_authority"].ok)
+
+    def test_stop_ship_flags_telegram_runtime_state_without_typed_channel_installation(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("telegram:auth_state", '{"status":"ok","bot_username":"SparkTestBot"}'),
+            )
+            conn.commit()
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+
+        self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
+        self.assertIn("telegram", issues["stop_ship_runtime_state_authority"].detail)
 
     def test_stop_ship_checks_fail_closed_when_sqlite_event_queries_error(self) -> None:
         with patch(
@@ -2181,6 +2432,33 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             for row in recent_contradictions(self.state_db, limit=20, status="open")
         }
         self.assertNotIn("stop_ship:stop_ship_keepability_rules", open_keys)
+
+    def test_doctor_repairs_stale_memory_lane_labels_before_stop_ship(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result with stale lane",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE memory_lane_records SET artifact_lane = ? WHERE lane_record_id = ?",
+                ("execution_evidence", lane_record["lane_record_id"]),
+            )
+            conn.commit()
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertTrue(checks["stop_ship_keepability_rules"].ok)
+        repaired_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        self.assertEqual(repaired_record["artifact_lane"], "working_scratchpad")
 
     def test_doctor_report_includes_observer_incident_check(self) -> None:
         record_event(

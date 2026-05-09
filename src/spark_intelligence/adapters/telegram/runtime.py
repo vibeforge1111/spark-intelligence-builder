@@ -52,7 +52,6 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_inventory,
     build_llm_wiki_status,
 )
-from spark_intelligence.memory import run_memory_doctor
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
@@ -75,7 +74,6 @@ from spark_intelligence.researcher_bridge.advisory import (
 from spark_intelligence.self_awareness import (
     build_agent_operating_context,
     build_self_awareness_capsule,
-    load_capability_ledger,
     run_route_probe_and_record,
 )
 from spark_intelligence.state.db import StateDB
@@ -3676,76 +3674,6 @@ def _render_telegram_route_probe_reply(probe: Any) -> str:
     return "\n".join(lines)
 
 
-_TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
-
-
-def _is_ledger_runtime_command(lowered: str) -> bool:
-    return lowered in {"/ledger", "/capabilities"} or any(
-        lowered.startswith(f"{prefix} ") for prefix in ("/ledger", "/capabilities")
-    )
-
-
-def _telegram_short_text(value: Any, *, limit: int = 120) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= limit:
-        return text
-    return f"{text[: max(0, limit - 3)].rstrip()}..."
-
-
-def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, requested_command: str) -> str:
-    ledger = load_capability_ledger(config_manager).payload
-    entries = ledger.get("entries") if isinstance(ledger.get("entries"), dict) else {}
-    review_entries = [
-        entry
-        for entry in entries.values()
-        if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
-    ]
-    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
-    command_args = str(requested_command or "").strip().split(maxsplit=1)
-    read_only_note = ""
-    if len(command_args) > 1:
-        read_only_note = "Read-only: Telegram ledger review cannot activate, approve, connect credentials, or change capability state.\n"
-    if not review_entries:
-        return (
-            f"{read_only_note}"
-            "Capability ledger review (read-only)\n"
-            "No proposed, scaffolded, or probed capabilities are waiting for review.\n"
-            "Boundary: activation requires separate CLI ledger evidence with approval plus probe/eval refs."
-        )
-
-    lines = [f"{read_only_note}Capability ledger review (read-only)"]
-    for entry in review_entries[:5]:
-        packet = entry.get("proposal_packet") if isinstance(entry.get("proposal_packet"), dict) else {}
-        harness = packet.get("connector_harness") if isinstance(packet.get("connector_harness"), dict) else {}
-        key = str(entry.get("capability_ledger_key") or packet.get("capability_ledger_key") or "unknown")
-        status = str(entry.get("status") or "unknown")
-        permissions = packet.get("permissions_required") if isinstance(packet.get("permissions_required"), list) else []
-        permission_text = ", ".join(str(item) for item in permissions[:3] if str(item or "").strip())
-        if len(permissions) > 3:
-            permission_text = f"{permission_text}, +{len(permissions) - 3} more"
-        connector = str(harness.get("connector_key") or "").strip()
-        authority_stage = str(harness.get("authority_stage") or "").strip()
-        connector_text = f"{connector} ({authority_stage})" if connector else "none"
-        evidence_count = len(entry.get("activation_evidence") or [])
-        lines.extend(
-            [
-                f"- {key} [{status}]",
-                f"  route: {_telegram_short_text(packet.get('implementation_route') or entry.get('implementation_route') or 'unknown', limit=80)}",
-                f"  connector: {connector_text}",
-                f"  permissions: {_telegram_short_text(permission_text or 'none', limit=140)}",
-                f"  safe_probe: {_telegram_short_text(packet.get('safe_probe'), limit=140)}",
-                f"  approval_boundary: {_telegram_short_text(packet.get('human_approval_boundary'), limit=140)}",
-                f"  eval_or_smoke_test: {_telegram_short_text(packet.get('eval_or_smoke_test'), limit=140)}",
-                f"  rollback_path: {_telegram_short_text(packet.get('rollback_path'), limit=140)}",
-                f"  activation_evidence: {evidence_count}",
-            ]
-        )
-    if len(review_entries) > 5:
-        lines.append(f"...and {len(review_entries) - 5} more review entries.")
-    lines.append("Boundary: review only. Telegram cannot activate capabilities; activation requires separate approval plus probe/eval evidence.")
-    return "\n".join(lines)
-
-
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -3761,7 +3689,6 @@ def _handle_runtime_command(
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
-    natural_memory_doctor_command = _match_natural_memory_doctor_command(normalized)
     style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
@@ -3827,15 +3754,6 @@ def _handle_runtime_command(
         return {
             "command": "/probe",
             "reply_text": _render_telegram_route_probe_reply(probe),
-            "respect_voice_reply_state": True,
-        }
-    if _is_ledger_runtime_command(lowered):
-        return {
-            "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
-            "reply_text": _render_telegram_capability_ledger_review(
-                config_manager=config_manager,
-                requested_command=normalized,
-            ),
             "respect_voice_reply_state": True,
         }
     if lowered in {"/wiki", "/wiki status"}:
@@ -4202,12 +4120,6 @@ def _handle_runtime_command(
                 f"Thinking visibility {state_text} for this Telegram DM. "
                 "This only affects `<think>` blocks in future replies."
             ),
-        }
-    if lowered == "/memory doctor" or natural_memory_doctor_command == "/memory doctor":
-        report = run_memory_doctor(state_db)
-        return {
-            "command": "/memory doctor",
-            "reply_text": report.to_telegram_text(),
         }
     chip_command = _parse_chip_command(normalized)
     if chip_command is not None:
@@ -5333,31 +5245,6 @@ def _match_natural_think_command(inbound_text: str) -> str | None:
         flags=re.IGNORECASE,
     ):
         return "/think on" if simplified.endswith("on") else "/think off"
-    return None
-
-
-def _match_natural_memory_doctor_command(inbound_text: str) -> str | None:
-    normalized = " ".join(str(inbound_text or "").strip().split())
-    lowered = normalized.lower()
-    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
-    if simplified in {
-        "memory doctor",
-        "show memory doctor",
-        "show me memory doctor",
-        "run memory doctor",
-        "check memory doctor",
-        "diagnose memory",
-        "diagnose spark memory",
-        "audit memory",
-        "audit spark memory",
-        "check memory deletes",
-        "check memory deletion",
-        "check memory deletions",
-        "did memory forget work",
-        "did the memory forget work",
-        "did forget memory work",
-    }:
-        return "/memory doctor"
     return None
 
 

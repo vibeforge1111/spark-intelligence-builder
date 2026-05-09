@@ -5,7 +5,7 @@ kind = "runtime"
 plane = "runtime"
 description = "Spark runtime core for identity, routing, memory, and provider orchestration"
 homepage = "https://github.com/vibeforge1111/spark-intelligence-builder"
-license = "UNLICENSED"
+license = "MIT"
 
 [runtime]
 kind = "python"
