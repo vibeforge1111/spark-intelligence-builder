@@ -1105,6 +1105,8 @@ def simulate_telegram_update(
     respect_voice_reply_state_for_bridge = True
     voice_answer_requested_for_bridge = False
     media_input: dict[str, Any] = {}
+    runtime_command_name: str | None = None
+    runtime_command_metadata: dict[str, object] = {}
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -1151,6 +1153,8 @@ def simulate_telegram_update(
         if media_input.get("reply_text"):
             pass
         elif command_result is not None:
+            runtime_command_name = str(command_result.get("command") or "").strip() or None
+            runtime_command_metadata = _runtime_command_trace_metadata(command_result)
             outbound_text = _apply_saved_telegram_surface_style(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -1691,6 +1695,10 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    if runtime_command_name:
+        detail["runtime_command"] = runtime_command_name
+    if runtime_command_metadata:
+        detail["runtime_command_metadata"] = runtime_command_metadata
     voice_timing = (
         dict(media_input.get("voice_timing"))
         if isinstance(media_input, dict) and isinstance(media_input.get("voice_timing"), dict)
@@ -1734,6 +1742,8 @@ def simulate_telegram_update(
                 "simulation": simulation,
                 "origin_surface": origin_surface,
                 "request_id": request_id,
+                "runtime_command": runtime_command_name,
+                "runtime_command_metadata": runtime_command_metadata or None,
             },
         )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
@@ -2098,6 +2108,7 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
         )
         if command_result is not None:
+            runtime_command_metadata = _runtime_command_trace_metadata(command_result)
             record_event(
                 state_db,
                 event_type="intent_committed",
@@ -2115,6 +2126,7 @@ def poll_telegram_updates_once(
                     "command": command_result["command"],
                     "update_id": normalized.update_id,
                     "message_text": normalized.text,
+                    "runtime_command_metadata": runtime_command_metadata,
                 },
             )
             outbound_text = _apply_think_visibility(
@@ -2169,6 +2181,7 @@ def poll_telegram_updates_once(
                 facts={
                     "command": command_result["command"],
                     "delivery_ok": send_result["ok"],
+                    "runtime_command_metadata": runtime_command_metadata,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
@@ -2186,6 +2199,7 @@ def poll_telegram_updates_once(
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    "runtime_command_metadata": runtime_command_metadata or None,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
@@ -3742,6 +3756,13 @@ def _handle_runtime_command(
         return {
             "command": "/memory doctor",
             "reply_text": report.to_telegram_text(),
+            "trace_metadata": {
+                "diagnosed_request_id": doctor_request_id or None,
+                "diagnosed_topic": doctor_topic or None,
+                "request_selector": doctor_target.get("request_selector") or None,
+                "contextual_trigger_score": doctor_target.get("contextual_trigger_score"),
+                "memory_doctor_ok": report.ok,
+            },
         }
     chip_command = _parse_chip_command(normalized)
     if chip_command is not None:
@@ -4857,6 +4878,11 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
                 "repair_requested": simplified.startswith("repair memory"),
             }
     return None
+
+
+def _runtime_command_trace_metadata(command_result: dict[str, Any]) -> dict[str, object]:
+    metadata = command_result.get("trace_metadata")
+    return dict(metadata) if isinstance(metadata, dict) else {}
 
 
 def _match_contextual_memory_doctor_command(

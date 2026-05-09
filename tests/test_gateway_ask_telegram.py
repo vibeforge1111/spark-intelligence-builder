@@ -172,9 +172,13 @@ class GatewayAskTelegramTests(SparkTestCase):
         )
 
         response_text = output["result"]["detail"]["response_text"]
+        metadata = output["result"]["detail"]["runtime_command_metadata"]
         self.assertEqual(response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-doctor-last-target.", response_text)
         self.assertIn("no provider capsule event was recorded", response_text)
+        self.assertEqual(metadata["diagnosed_request_id"], "req-doctor-last-target")
+        self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
+        self.assertFalse(metadata["memory_doctor_ok"])
 
         blank_output = json.loads(
             gateway_ask_telegram(
