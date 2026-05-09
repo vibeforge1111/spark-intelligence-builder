@@ -16,6 +16,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
 
         self.assertEqual(panel["status"], "no_data")
         self.assertEqual(panel["intake_trigger_counts"], {})
+        self.assertEqual(panel["intake_calibration_counts"], {})
         self.assertEqual(panel["previous_failure_signal_counts"], {})
         self.assertEqual(panel["recent_intake_triggers"], [])
 
@@ -391,8 +392,11 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["repeated_missing_senses"]["gateway_trace_lineage"], 2)
         self.assertEqual(panel["repeated_gaps"]["gateway_trace_visibility_gap"], 2)
         self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
+        self.assertEqual(panel["intake_calibration_counts"]["previous_turn_boosted"], 1)
         self.assertEqual(panel["previous_failure_signal_counts"]["previous_response_context_gap"], 1)
         self.assertEqual(panel["recent_intake_triggers"][0]["doctor_request_id"], "req-blank-doctor")
         self.assertEqual(panel["recent_intake_triggers"][0]["diagnosed_request_id"], "req-blank-target")
+        self.assertEqual(panel["recent_intake_triggers"][0]["contextual_trigger_margin"], 1)
+        self.assertEqual(panel["recent_intake_triggers"][0]["calibration_label"], "previous_turn_boosted")
         self.assertEqual(panel["recent_intake_triggers"][0]["previous_failure_signals"], ["previous_response_context_gap"])
         self.assertEqual(panel["latest"]["topic"], "Maya")

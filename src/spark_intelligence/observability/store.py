@@ -3265,6 +3265,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             "repeated_missing_senses": {},
             "repeated_gaps": {},
             "intake_trigger_counts": {},
+            "intake_calibration_counts": {},
             "previous_failure_signal_counts": {},
             "recent_intake_triggers": [],
             "recent_probes": [],
@@ -3276,6 +3277,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     missing_sense_counts: dict[str, int] = {}
     gap_name_counts: dict[str, int] = {}
     intake_trigger_counts: dict[str, int] = {}
+    intake_calibration_counts: dict[str, int] = {}
     previous_failure_signal_counts: dict[str, int] = {}
     recent_intakes: list[dict[str, Any]] = []
     humans: set[str] = set()
@@ -3304,6 +3306,15 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         for signal in previous_failure_signals:
             previous_failure_signal_counts[signal] = previous_failure_signal_counts.get(signal, 0) + 1
         if telegram_intake:
+            intake_score = _optional_int(telegram_intake.get("contextual_trigger_score"))
+            intake_threshold = _optional_int(telegram_intake.get("contextual_trigger_threshold"))
+            calibration_label = _memory_doctor_intake_calibration_label(
+                score=intake_score,
+                threshold=intake_threshold,
+                previous_failure_signal=bool(telegram_intake.get("previous_failure_signal")),
+            )
+            if calibration_label:
+                intake_calibration_counts[calibration_label] = intake_calibration_counts.get(calibration_label, 0) + 1
             recent_intakes.append(
                 {
                     "created_at": event.get("created_at"),
@@ -3312,8 +3323,12 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "doctor_request_id": telegram_intake.get("request_id"),
                     "user_message_preview": telegram_intake.get("user_message_preview"),
                     "request_selector": telegram_intake.get("request_selector"),
-                    "contextual_trigger_score": telegram_intake.get("contextual_trigger_score"),
-                    "contextual_trigger_threshold": telegram_intake.get("contextual_trigger_threshold"),
+                    "contextual_trigger_score": intake_score,
+                    "contextual_trigger_threshold": intake_threshold,
+                    "contextual_trigger_margin": intake_score - intake_threshold
+                    if intake_score is not None and intake_threshold is not None
+                    else None,
+                    "calibration_label": calibration_label,
                     "contextual_trigger_signals": intake_signals,
                     "previous_failure_signal": telegram_intake.get("previous_failure_signal"),
                     "previous_failure_signals": previous_failure_signals,
@@ -3367,6 +3382,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "repeated_missing_senses": _top_counts(missing_sense_counts),
         "repeated_gaps": _top_counts(gap_name_counts),
         "intake_trigger_counts": _top_counts(intake_trigger_counts),
+        "intake_calibration_counts": _top_counts(intake_calibration_counts),
         "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_probes": [
@@ -3385,6 +3401,26 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _memory_doctor_intake_calibration_label(
+    *,
+    score: int | None,
+    threshold: int | None,
+    previous_failure_signal: bool,
+) -> str | None:
+    if score is None or threshold is None:
+        return None
+    if score < threshold:
+        return "below_threshold_recorded"
+    if previous_failure_signal:
+        raw_score = max(score - 2, 0)
+        if raw_score < 4:
+            return "previous_turn_boosted"
+        return "direct_with_previous_context"
+    if score == threshold:
+        return "borderline_direct"
+    return "strong_direct"
 
 
 def _string_list(value: Any) -> list[str]:
