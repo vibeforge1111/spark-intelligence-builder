@@ -41,6 +41,8 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - `approval_inbox.py`: shows approval-gated memory candidates; it does not write memory by itself.
 - `route_confidence.py`: explains recommended route confidence and evidence.
 - `agent_scratchpad.py`: structured operational scratchpad derived from AOC; not hidden chain-of-thought.
+- `operating_strip.py`: compact top-strip renderer for always-visible AOC status.
+- `operating_source_ledger.py`: unified source freshness ledger for panel consumers.
 - `operating_panel.py`: shared read-model joining AOC, scratchpad, black box, memory inbox, and stale sweeper.
 - `drift_evals.py`: regression suite for the drift cases from the AOC design thread.
 
@@ -49,6 +51,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - AOC is a shared read-model, not a new brain.
 - The scratchpad is derived from AOC, not separately authored.
 - Stale context is shown and typed; do not silently reconcile it.
+- Source freshness is rendered explicitly; do not make agents infer freshness from prose.
 - Memory candidates go to the approval inbox; do not auto-save raw logs.
 - Route-changing actions must pass the conversation action gate.
 - Final answers should be checked against the latest user turn before sending.
