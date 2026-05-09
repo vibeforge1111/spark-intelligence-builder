@@ -4,7 +4,10 @@ import json
 
 from spark_intelligence.self_awareness.agent_events import AgentEvent, record_agent_event
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
-from spark_intelligence.self_awareness.spawner_agent_events import read_spawner_black_box_entries
+from spark_intelligence.self_awareness.spawner_agent_events import (
+    read_spawner_black_box_entries,
+    resolve_spawner_agent_event_ledger_path,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -124,3 +127,14 @@ class SpawnerAgentEventLedgerTests(SparkTestCase):
         self.assertTrue(
             any(item["source"] == "agent_black_box" for item in payload["source_ledger"]["items"])
         )
+
+    def test_resolves_spawner_ledger_from_local_project_roots(self) -> None:
+        repo_root = self.home / "spawner-ui"
+        ledger_path = repo_root / ".spawner" / "agent-events.jsonl"
+        ledger_path.parent.mkdir(parents=True)
+        ledger_path.write_text("", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.roots", [str(repo_root)])
+
+        resolved = resolve_spawner_agent_event_ledger_path(self.config_manager)
+
+        self.assertEqual(resolved, ledger_path)

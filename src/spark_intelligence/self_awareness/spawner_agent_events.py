@@ -24,6 +24,10 @@ def resolve_spawner_agent_event_ledger_path(config_manager: ConfigManager) -> Pa
     if repo_root:
         return repo_root / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH
 
+    for candidate in _spawner_ledger_candidates(config_manager):
+        if candidate.exists():
+            return candidate
+
     return None
 
 
@@ -104,6 +108,41 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
 def _optional_path(value: object) -> Path | None:
     text = str(value or "").strip()
     return Path(text).expanduser() if text else None
+
+
+def _spawner_ledger_candidates(config_manager: ConfigManager) -> list[Path]:
+    candidates: list[Path] = []
+    roots = config_manager.get_path("spark.local_projects.roots", default=[]) or []
+    if isinstance(roots, list):
+        for root in roots:
+            root_path = _optional_path(root)
+            if root_path and root_path.name.casefold() == "spawner-ui":
+                candidates.append(root_path / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH)
+
+    workspace_home = _optional_path(config_manager.get_path("workspace.home"))
+    if workspace_home:
+        candidates.append(workspace_home / "spawner-ui" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH)
+
+    user_home = Path.home()
+    candidates.extend(
+        [
+            user_home / "Desktop" / "spawner-ui" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH,
+            user_home / ".spark" / "modules" / "spawner-ui" / "source" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH,
+        ]
+    )
+    return _dedupe_paths(candidates)
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    output: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(path)
+    return output
 
 
 def _optional_text(value: object) -> str | None:
