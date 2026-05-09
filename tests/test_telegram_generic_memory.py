@@ -5213,6 +5213,95 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "gateway_to_context_capsule_gap",
         )
 
+    def test_memory_doctor_replays_context_capsule_by_request_id(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-request-replay-seed",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-request-replay",
+                "user_message_preview": "The probe phrase is Cedar Compass 509.",
+                "response_preview": "Noted.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-request-replay-target",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-request-replay",
+                "user_message_preview": "What phrase did I just give you? Answer with only the phrase.",
+                "response_preview": "I can see context capsule but not the prior message.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Failed request context capsule.",
+            request_id="req-request-replay-target",
+            human_id="human-1",
+            facts={
+                "source_counts": {"current_state": 1, "recent_conversation": 0},
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 1, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": False,
+                        "count": 0,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Newer healthy context capsule.",
+            request_id="req-request-replay-latest",
+            human_id="human-1",
+            facts={
+                "source_counts": {"current_state": 1, "recent_conversation": 2},
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 1, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": True,
+                        "count": 2,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Cedar Compass 509",
+            request_id="req-request-replay-target",
+        )
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertEqual(doctor_report.context_capsule["request_id"], "req-request-replay-target")
+        self.assertTrue(doctor_report.context_capsule["gateway_trace"]["lineage_gap"])
+        self.assertIn("context_capsule_gateway_trace_gap", doctor_report.to_text())
+        self.assertIn("request=req-request-replay-target", doctor_report.to_text())
+        self.assertIn("Request: req-request-replay-target.", doctor_report.to_telegram_text())
+
     def test_memory_doctor_flags_close_turn_answer_grounding_gap(self) -> None:
         append_gateway_trace(
             self.config_manager,

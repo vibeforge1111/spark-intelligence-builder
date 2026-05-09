@@ -107,6 +107,12 @@ class MemoryDoctorReport:
                 f"recent_conversation={self.context_capsule.get('recent_conversation_count', 0)} "
                 f"request={self.context_capsule.get('request_id') or 'unknown'}"
             )
+        elif self.context_capsule.get("request_id"):
+            lines.append(
+                "- context capsule: "
+                f"status={self.context_capsule.get('status') or 'unknown'} "
+                f"request={self.context_capsule.get('request_id')}"
+            )
         if self.movement_trace.get("status") == "checked":
             lines.append(
                 "- movement trace: "
@@ -146,6 +152,8 @@ class MemoryDoctorReport:
         topic_count = int(self.topic_scan.get("occurrence_count") or 0)
         if self.topic_scan.get("topic") and topic_count:
             lines.append(f"Trace: found {topic_count} recent memory event(s) mentioning that topic.")
+        if self.context_capsule.get("request_id"):
+            lines.append(f"Request: {self.context_capsule['request_id']}.")
         if self.context_capsule.get("status") == "checked":
             recent_count = int(self.context_capsule.get("recent_conversation_count") or 0)
             gateway_trace = self.context_capsule.get("gateway_trace")
@@ -156,7 +164,7 @@ class MemoryDoctorReport:
                     "but the provider capsule had no recent-conversation turns."
                 )
             elif recent_count == 0:
-                lines.append("Context capsule: no recent-conversation turns in the latest provider capsule.")
+                lines.append("Context capsule: no recent-conversation turns in the selected provider capsule.")
             if isinstance(gateway_trace, dict):
                 if gateway_trace.get("answer_topic_miss"):
                     lines.append(
@@ -210,6 +218,7 @@ def run_memory_doctor(
     config_manager: Any | None = None,
     human_id: str | None = None,
     topic: str | None = None,
+    request_id: str | None = None,
     repair_requested: bool = False,
     limit: int = 200,
 ) -> MemoryDoctorReport:
@@ -334,6 +343,7 @@ def run_memory_doctor(
         config_manager=config_manager,
         human_id=human_id,
         topic=topic,
+        request_id=request_id,
     )
     dashboard = _build_dashboard_summary(state_db)
     movement_trace = _build_movement_trace(
@@ -363,6 +373,7 @@ def run_memory_doctor(
         write_succeeded_events=write_succeeded_events,
         tool_result_events=tool_result_events,
         topic=topic,
+        request_id=request_id,
     )
     brain = build_memory_doctor_brain(
         state_db=state_db,
@@ -391,6 +402,7 @@ def run_memory_doctor(
         brain=brain,
         human_id=human_id,
         topic=topic,
+        request_id=request_id,
     )
     benchmark = score_memory_doctor_benchmark(
         scanned_delete_turns=scanned_delete_turns,
@@ -439,6 +451,7 @@ def run_memory_doctor(
                 "automatic_repair": False,
                 "authority": "diagnostic_score_not_memory_truth",
             },
+            "request_id": request_id,
         },
     )
 
@@ -854,8 +867,21 @@ def _build_context_capsule_audit(
     config_manager: Any | None,
     human_id: str | None,
     topic: str | None,
+    request_id: str | None,
 ) -> dict[str, object]:
+    normalized_request_id = str(request_id or "").strip()
     if not events:
+        if normalized_request_id:
+            return {
+                "status": "request_not_found",
+                "request_id": normalized_request_id,
+                "gateway_trace": _build_gateway_trace_audit(
+                    config_manager=config_manager,
+                    capsule_request_id=normalized_request_id,
+                    capsule_recent_conversation_count=0,
+                    topic=topic,
+                ),
+            }
         return {"status": "not_found"}
     normalized_human_id = str(human_id or "").strip()
     selected: dict[str, object] | None = None
@@ -863,9 +889,22 @@ def _build_context_capsule_audit(
         event_human_id = str(event.get("human_id") or "").strip()
         if normalized_human_id and event_human_id and event_human_id != normalized_human_id:
             continue
+        if normalized_request_id and str(event.get("request_id") or "").strip() != normalized_request_id:
+            continue
         selected = event
         break
     if selected is None:
+        if normalized_request_id:
+            return {
+                "status": "request_not_found",
+                "request_id": normalized_request_id,
+                "gateway_trace": _build_gateway_trace_audit(
+                    config_manager=config_manager,
+                    capsule_request_id=normalized_request_id,
+                    capsule_recent_conversation_count=0,
+                    topic=topic,
+                ),
+            }
         return {"status": "not_found"}
     facts = selected.get("facts_json") if isinstance(selected.get("facts_json"), dict) else {}
     source_counts = facts.get("source_counts") if isinstance(facts.get("source_counts"), dict) else {}
@@ -1264,7 +1303,7 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
                 detail=(
                     "gateway trace had "
                     f"{int(gateway_trace.get('recent_gateway_message_count') or 0)} earlier Telegram message(s) "
-                    "for the same session, but the latest provider capsule had 0 recent-conversation source(s)"
+                    "for the same session, but the selected provider capsule had 0 recent-conversation source(s)"
                 ),
                 request_id=str(context_capsule.get("request_id") or "") or None,
             )
@@ -1325,10 +1364,10 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
     if int(context_capsule.get("recent_conversation_count") or 0) != 0:
         findings.append(
             MemoryDoctorFinding(
-                name="context_capsule_recent_conversation",
-                ok=True,
-                severity="medium",
-                detail="latest provider capsule included recent same-session conversation.",
+            name="context_capsule_recent_conversation",
+            ok=True,
+            severity="medium",
+            detail="selected provider capsule included recent same-session conversation.",
                 request_id=str(context_capsule.get("request_id") or "") or None,
             )
         )
@@ -1339,7 +1378,7 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
             ok=True,
             severity="medium",
             detail=(
-                "latest provider capsule had 0 recent-conversation source(s); "
+                "selected provider capsule had 0 recent-conversation source(s); "
                 "close-turn recall may fail even when durable memory is healthy"
             ),
             request_id=str(context_capsule.get("request_id") or "") or None,
@@ -1562,26 +1601,31 @@ def _build_path_traces(
     write_succeeded_events: list[dict[str, object]],
     tool_result_events: list[dict[str, object]],
     topic: str | None,
+    request_id: str | None,
 ) -> list[dict[str, object]]:
     normalized_topic = str(topic or "").strip().lower()
+    normalized_request_id = str(request_id or "").strip()
     traces: list[dict[str, object]] = []
     for event in influence_events:
         if str(event.get("component") or "") != "researcher_bridge":
             continue
-        if normalized_topic and normalized_topic not in _event_search_text(event).lower():
+        event_request_id = str(event.get("request_id") or "").strip()
+        if not event_request_id:
             continue
-        request_id = str(event.get("request_id") or "").strip()
-        if not request_id:
+        if normalized_request_id:
+            if not _request_id_matches(event_request_id, request_id=normalized_request_id):
+                continue
+        elif normalized_topic and normalized_topic not in _event_search_text(event).lower():
             continue
         facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
         traces.append(
             {
-                "request_id": request_id,
+                "request_id": event_request_id,
                 "message_text": _shorten(_memory_doctor_message_text(facts), 180),
                 "influence_summary": _shorten(str(event.get("summary") or ""), 160),
-                "write_requests": _matching_event_count(write_requested_events, request_id=request_id),
-                "write_results": _matching_event_count(write_succeeded_events, request_id=request_id),
-                "tool_results": _matching_event_count(tool_result_events, request_id=request_id),
+                "write_requests": _matching_event_count(write_requested_events, request_id=event_request_id),
+                "write_results": _matching_event_count(write_succeeded_events, request_id=event_request_id),
+                "tool_results": _matching_event_count(tool_result_events, request_id=event_request_id),
             }
         )
         if len(traces) >= 5:
@@ -1681,6 +1725,7 @@ def _record_brain_snapshot(
     brain: dict[str, object],
     human_id: str | None,
     topic: str | None,
+    request_id: str | None,
 ) -> None:
     summary = brain.get("summary") if isinstance(brain.get("summary"), dict) else {}
     coverage = brain.get("coverage") if isinstance(brain.get("coverage"), dict) else {}
@@ -1718,6 +1763,7 @@ def _record_brain_snapshot(
                     str(improvement.get("name") or "") for improvement in improvements[:5]
                 ],
                 "topic": topic,
+                "request_id": request_id,
                 "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
             },
         )

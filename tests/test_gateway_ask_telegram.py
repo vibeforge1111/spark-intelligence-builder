@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary
+from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
+from spark_intelligence.observability.store import record_event
 
 from tests.test_support import SparkTestCase
 
@@ -60,6 +62,74 @@ class GatewayAskTelegramTests(SparkTestCase):
         response_text = output["result"]["detail"]["response_text"]
         self.assertEqual(response_text.splitlines()[0], "Memory Doctor: healthy.")
         self.assertIn("Topic: Maya.", response_text)
+
+    def test_gateway_ask_telegram_runs_memory_doctor_for_request_id(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-doctor-prior",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "sess-doctor-request",
+                "user_message_preview": "The phrase is Cedar Compass 509.",
+                "response_preview": "Noted.",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-doctor-target",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "sess-doctor-request",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I can see the context capsule, but not the message before this.",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Target context capsule.",
+            request_id="req-doctor-target",
+            human_id="human:telegram:111",
+            facts={"source_counts": {"recent_conversation": 0}, "source_ledger": []},
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Newer healthy context capsule.",
+            request_id="req-doctor-newer",
+            human_id="human:telegram:111",
+            facts={
+                "source_counts": {"recent_conversation": 2},
+                "source_ledger": [
+                    {"source": "recent_conversation", "present": True, "count": 2, "priority": 8, "role": "supporting"}
+                ],
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="run memory doctor for request req-doctor-target",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        response_text = output["result"]["detail"]["response_text"]
+        self.assertEqual(response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-doctor-target.", response_text)
+        self.assertIn("gateway had 1 earlier same-session message", response_text)
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

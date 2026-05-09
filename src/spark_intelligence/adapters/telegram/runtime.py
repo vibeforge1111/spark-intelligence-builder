@@ -3702,16 +3702,19 @@ def _handle_runtime_command(
             ),
         }
     if lowered == "/memory doctor" or lowered.startswith("/memory doctor ") or natural_memory_doctor_command:
-        doctor_topic = (
-            _memory_doctor_topic_from_slash_command(normalized)
+        doctor_target = (
+            _memory_doctor_target_from_slash_command(normalized)
             if lowered.startswith("/memory doctor")
-            else str(natural_memory_doctor_command.get("topic") or "").strip()
+            else dict(natural_memory_doctor_command or {})
         )
+        doctor_topic = str(doctor_target.get("topic") or "").strip()
+        doctor_request_id = str(doctor_target.get("request_id") or "").strip()
         report = run_memory_doctor(
             state_db,
             config_manager=config_manager,
             human_id=human_id or f"human:telegram:{external_user_id}",
             topic=doctor_topic or None,
+            request_id=doctor_request_id or None,
             repair_requested=bool(
                 natural_memory_doctor_command and natural_memory_doctor_command.get("repair_requested")
             ),
@@ -4771,7 +4774,7 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
         "recommend memory fixes",
         "recommend memory improvements",
     }:
-        return {"command": "/memory doctor", "topic": None, "repair_requested": False}
+        return {"command": "/memory doctor", "topic": None, "request_id": None, "repair_requested": False}
     topic_patterns = (
         r"^(?:run|check|show)\s+memory\s+doctor\s+for\s+(.+)$",
         r"^(?:trace|check|diagnose|audit)\s+memory\s+for\s+(.+)$",
@@ -4782,29 +4785,50 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
     for pattern in topic_patterns:
         match = re.match(pattern, normalized, flags=re.IGNORECASE)
         if match:
+            target = _memory_doctor_target_from_value(match.group(1))
             return {
                 "command": "/memory doctor",
-                "topic": _clean_memory_doctor_topic(match.group(1)),
+                "topic": target["topic"],
+                "request_id": target["request_id"],
                 "repair_requested": simplified.startswith("repair memory"),
             }
     for pattern in topic_patterns:
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
+            target = _memory_doctor_target_from_value(match.group(1))
             return {
                 "command": "/memory doctor",
-                "topic": _clean_memory_doctor_topic(match.group(1)),
+                "topic": target["topic"],
+                "request_id": target["request_id"],
                 "repair_requested": simplified.startswith("repair memory"),
             }
     return None
 
 
-def _memory_doctor_topic_from_slash_command(inbound_text: str) -> str | None:
+def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
     if not suffix:
-        return None
+        return {"topic": None, "request_id": None}
     if suffix.lower().startswith("for "):
         suffix = suffix[4:].strip()
-    return _clean_memory_doctor_topic(suffix)
+    return _memory_doctor_target_from_value(suffix)
+
+
+def _memory_doctor_target_from_value(value: str) -> dict[str, str | None]:
+    cleaned = " ".join(str(value or "").strip().strip(".?!`'\"").split())
+    request_match = re.match(
+        r"^(?:request(?:\s+id)?|request-id|request_id|req(?:uest)?[_-]?id|req)\s*[:=#-]?\s*(.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if request_match:
+        request_id = _clean_memory_doctor_request_id(request_match.group(1))
+        return {"topic": None, "request_id": request_id or None}
+    return {"topic": _clean_memory_doctor_topic(cleaned), "request_id": None}
+
+
+def _clean_memory_doctor_request_id(value: str) -> str:
+    return " ".join(str(value or "").strip().strip(".?!`'\"").split())
 
 
 def _clean_memory_doctor_topic(value: str) -> str:
