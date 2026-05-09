@@ -1832,6 +1832,11 @@ def build_parser() -> argparse.ArgumentParser:
     mission_plan_parser.add_argument("--harness-id", help="Force a specific harness id")
     mission_plan_parser.add_argument("--recipe", help="Force a named harness recipe")
     mission_plan_parser.add_argument("--target-repo", help="Confirm the target local repo for build/file-writing work")
+    mission_plan_parser.add_argument("--record-aoc-events", action="store_true", help="Record the selected route in the AOC black box")
+    mission_plan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
+    mission_plan_parser.add_argument("--session-id", default="", help="Session id for recorded AOC events")
+    mission_plan_parser.add_argument("--human-id", default="", help="Human id for recorded AOC events")
+    mission_plan_parser.add_argument("--actor-id", default="mission_control_plan", help="Actor id for recorded AOC events")
     mission_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
@@ -7770,11 +7775,38 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         forced_recipe_id=args.recipe,
         forced_target_repo=args.target_repo,
     )
+    payload = plan.to_payload()
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    agent_event_id = ""
+    if args.record_aoc_events:
+        selected_route = str(summary.get("selected_harness") or summary.get("route_target_system") or "mission_control_plan")
+        blockers = [str(item) for item in (summary.get("blockers") or []) if str(item)]
+        next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
+        agent_event_id = record_route_selection_agent_event(
+            state_db,
+            selected_route=selected_route,
+            user_intent="plan",
+            confidence="blocked" if blockers else "high",
+            reason=next_actions[0] if next_actions else str(summary.get("selection_mode") or "Mission Control selected a route."),
+            sources=[
+                {
+                    "source": "mission_control_plan",
+                    "role": "route_selection_evidence",
+                    "freshness": "fresh",
+                    "source_ref": plan.generated_at,
+                    "summary": str(args.task or ""),
+                }
+            ],
+            request_id=args.request_id,
+            session_id=args.session_id,
+            human_id=args.human_id,
+            actor_id=args.actor_id,
+        )
     if args.json:
-        print(plan.to_json())
+        if args.record_aoc_events:
+            payload["agent_event_id"] = agent_event_id
+        print(json.dumps(payload, indent=2))
     else:
-        payload = plan.to_payload()
-        summary = payload.get("summary") or {}
         lines = ["Spark mission plan"]
         lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
         lines.append(f"- system: {summary.get('selected_system') or 'unknown'}")
@@ -7792,6 +7824,8 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         lines.extend(f"- blocker: {item}" for item in blockers[:4])
         next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
         lines.extend(f"- next action: {item}" for item in next_actions[:4])
+        if args.record_aoc_events:
+            lines.append(f"- aoc_event: {agent_event_id}")
         print("\n".join(lines))
     return 0
 def handle_agent_inspect(args: argparse.Namespace) -> int:

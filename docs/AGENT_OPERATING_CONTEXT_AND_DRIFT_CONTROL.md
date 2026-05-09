@@ -100,6 +100,7 @@ Next integrations should consume the existing read-models:
 - `self turn-trace` records a full turn frame, action gate, final-answer drift check, and optional memory candidate into the black box.
 - `self stale-sweep` compares live/context claims and can record `contradiction_found` evidence for the black box.
 - `diagnostics scan --record-aoc-events` records current diagnostic service checks as live-probed `capability_probed` events for the AOC black box.
+- `mission plan --record-aoc-events` records the Mission Control route choice as `route_selected` evidence for the AOC black box.
 - Spawner/Codex should record `route_selected`, `mission_changed_state`, and turn-trace events.
 
 Rollback is simple: callers can stop rendering the panel while the underlying event and source contracts remain append-only evidence.
