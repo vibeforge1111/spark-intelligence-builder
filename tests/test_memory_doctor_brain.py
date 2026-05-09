@@ -294,6 +294,11 @@ class MemoryDoctorBrainTests(SparkTestCase):
             gateway_trace["diagnostic_invocations"][0]["contextual_trigger_signals"],
         )
         self.assertTrue(gateway_trace["diagnostic_invocations"][0]["previous_failure_signal"])
+        brain_events = latest_events_by_type(self.state_db, event_type="memory_doctor_brain_evaluated", limit=1)
+        telegram_intake = brain_events[0]["facts_json"]["telegram_intake"]
+        self.assertEqual(telegram_intake["request_id"], "req-blank-doctor")
+        self.assertEqual(telegram_intake["contextual_trigger_threshold"], 3)
+        self.assertIn("close_turn_repeat_frustration", telegram_intake["contextual_trigger_signals"])
         senses = {sense["name"]: sense for sense in report.brain["senses"]}
         self.assertTrue(senses["telegram_doctor_intake_lineage"]["present"])
         cases = {case["category"]: case for case in report.benchmark["cases"]}
@@ -344,6 +349,19 @@ class MemoryDoctorBrainTests(SparkTestCase):
                 "highest_severity": "medium",
                 "next_probe": "run memory doctor after the next Telegram turn",
                 "topic": "Maya",
+                "request_id": "req-blank-target",
+                "telegram_intake": {
+                    "request_id": "req-blank-doctor",
+                    "user_message_preview": "i just told you",
+                    "request_selector": "previous_gateway_turn",
+                    "contextual_trigger_score": 4,
+                    "contextual_trigger_threshold": 3,
+                    "contextual_trigger_signals": [
+                        "close_turn_repeat_frustration",
+                        "previous_turn_memory_failure_signal",
+                    ],
+                    "previous_failure_signal": True,
+                },
             },
         )
 
@@ -357,4 +375,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["score"]["delta"], 25)
         self.assertEqual(panel["repeated_missing_senses"]["gateway_trace_lineage"], 2)
         self.assertEqual(panel["repeated_gaps"]["gateway_trace_visibility_gap"], 2)
+        self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
+        self.assertEqual(panel["recent_intake_triggers"][0]["doctor_request_id"], "req-blank-doctor")
+        self.assertEqual(panel["recent_intake_triggers"][0]["diagnosed_request_id"], "req-blank-target")
         self.assertEqual(panel["latest"]["topic"], "Maya")

@@ -3272,6 +3272,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     gap_counts: list[int] = []
     missing_sense_counts: dict[str, int] = {}
     gap_name_counts: dict[str, int] = {}
+    intake_trigger_counts: dict[str, int] = {}
+    recent_intakes: list[dict[str, Any]] = []
     humans: set[str] = set()
     topics: set[str] = set()
 
@@ -3280,6 +3282,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         score = _optional_int(facts.get("coverage_score"))
         missing_senses = _string_list(facts.get("missing_senses"))
         gap_names = _string_list(facts.get("gap_names"))
+        telegram_intake = facts.get("telegram_intake") if isinstance(facts.get("telegram_intake"), dict) else {}
         topic = str(facts.get("topic") or "").strip()
         human_id = str(event.get("human_id") or "").strip()
         if human_id:
@@ -3290,6 +3293,24 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
             missing_sense_counts[sense] = missing_sense_counts.get(sense, 0) + 1
         for gap_name in gap_names:
             gap_name_counts[gap_name] = gap_name_counts.get(gap_name, 0) + 1
+        intake_signals = _string_list(telegram_intake.get("contextual_trigger_signals")) if telegram_intake else []
+        for signal in intake_signals:
+            intake_trigger_counts[signal] = intake_trigger_counts.get(signal, 0) + 1
+        if telegram_intake:
+            recent_intakes.append(
+                {
+                    "created_at": event.get("created_at"),
+                    "human_id": human_id or None,
+                    "diagnosed_request_id": facts.get("request_id"),
+                    "doctor_request_id": telegram_intake.get("request_id"),
+                    "user_message_preview": telegram_intake.get("user_message_preview"),
+                    "request_selector": telegram_intake.get("request_selector"),
+                    "contextual_trigger_score": telegram_intake.get("contextual_trigger_score"),
+                    "contextual_trigger_threshold": telegram_intake.get("contextual_trigger_threshold"),
+                    "contextual_trigger_signals": intake_signals,
+                    "previous_failure_signal": telegram_intake.get("previous_failure_signal"),
+                }
+            )
         if score is not None:
             scores.append(score)
         gap_counts.append(len(gap_names))
@@ -3303,6 +3324,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                 "gap_count": len(gap_names),
                 "highest_severity": facts.get("highest_severity"),
                 "next_probe": facts.get("next_probe"),
+                "telegram_intake": recent_intakes[-1] if telegram_intake else None,
             }
         )
 
@@ -3336,6 +3358,8 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         },
         "repeated_missing_senses": _top_counts(missing_sense_counts),
         "repeated_gaps": _top_counts(gap_name_counts),
+        "intake_trigger_counts": _top_counts(intake_trigger_counts),
+        "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_probes": [
             probe
             for probe in (str(item.get("next_probe") or "").strip() for item in reversed(trend))

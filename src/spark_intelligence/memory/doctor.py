@@ -1811,6 +1811,7 @@ def _record_brain_snapshot(
         for improvement in (brain.get("proactive_improvements") or [])
         if isinstance(improvement, dict)
     ]
+    telegram_intake = _brain_telegram_intake_snapshot(brain)
     try:
         record_event(
             state_db,
@@ -1840,11 +1841,34 @@ def _record_brain_snapshot(
                 ],
                 "topic": topic,
                 "request_id": request_id,
+                "telegram_intake": telegram_intake,
                 "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
             },
         )
     except Exception:
         return
+
+
+def _brain_telegram_intake_snapshot(brain: dict[str, object]) -> dict[str, object]:
+    senses = brain.get("senses") if isinstance(brain.get("senses"), list) else []
+    intake_sense = next(
+        (sense for sense in senses if isinstance(sense, dict) and sense.get("name") == "telegram_doctor_intake_lineage"),
+        {},
+    )
+    evidence = intake_sense.get("evidence") if isinstance(intake_sense.get("evidence"), dict) else {}
+    invocations = evidence.get("diagnostic_invocations") if isinstance(evidence.get("diagnostic_invocations"), list) else []
+    invocation = next((item for item in invocations if isinstance(item, dict)), None)
+    if invocation is None:
+        return {}
+    return {
+        "request_id": invocation.get("request_id"),
+        "user_message_preview": invocation.get("user_message_preview"),
+        "request_selector": invocation.get("request_selector"),
+        "contextual_trigger_score": invocation.get("contextual_trigger_score"),
+        "contextual_trigger_threshold": invocation.get("contextual_trigger_threshold"),
+        "contextual_trigger_signals": list(invocation.get("contextual_trigger_signals") or []),
+        "previous_failure_signal": invocation.get("previous_failure_signal"),
+    }
 
 
 def _matching_event_count(events: list[dict[str, object]], *, request_id: str) -> int:
