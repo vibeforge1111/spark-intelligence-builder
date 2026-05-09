@@ -75,6 +75,29 @@ class MemoryDoctorBenchmarkTests(unittest.TestCase):
         self.assertEqual(cases["abstention"]["status"], "fail")
         self.assertEqual(benchmark["weakest_case"]["status"], "fail")
 
+    def test_scores_forget_postcondition_failure(self) -> None:
+        benchmark = score_memory_doctor_benchmark(
+            scanned_delete_turns=1,
+            scanned_multi_delete_turns=0,
+            findings=[
+                MemoryDoctorFinding(
+                    name="memory_forget_postcondition_failed",
+                    ok=False,
+                    severity="high",
+                    detail="forget request completed, but active current-state memory still contains: current owner.",
+                )
+            ],
+            active_profile={"status": "checked", "facts": {"current_owner": "Maya"}},
+            topic_scan={"status": "not_requested"},
+            context_capsule={"status": "checked", "recent_conversation_count": 1, "gateway_trace": {"status": "checked"}},
+            movement_trace={"stages": [{"stage": "memory_reads", "abstained_count": 1}]},
+            dashboard={"abstention_reasons": ["not_found"]},
+        )
+
+        cases = {case["category"]: case for case in benchmark["cases"]}
+        self.assertEqual(cases["forgetting"]["status"], "fail")
+        self.assertIn("active current-state memory still contains", cases["forgetting"]["detail"])
+
     def test_scores_close_turn_answer_grounding_failure(self) -> None:
         benchmark = score_memory_doctor_benchmark(
             scanned_delete_turns=1,

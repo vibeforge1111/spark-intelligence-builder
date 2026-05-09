@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-BENCHMARK_VERSION = "2026-05-09.v2"
+BENCHMARK_VERSION = "2026-05-09.v3"
 
 
 def score_memory_doctor_benchmark(
@@ -242,7 +242,8 @@ def _score_forgetting(
     failing_delete_findings = [
         finding
         for finding in findings
-        if str(getattr(finding, "name", "")) == "memory_delete_intent_integrity"
+        if str(getattr(finding, "name", ""))
+        in {"memory_delete_intent_integrity", "memory_forget_postcondition_failed"}
         and not bool(getattr(finding, "ok", True))
     ]
     if failing_delete_findings:

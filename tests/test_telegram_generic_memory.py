@@ -4968,6 +4968,86 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(doctor_report.scanned_multi_delete_turns, 1)
         self.assertIn("expected 3 delete write(s), requested 1, accepted 1", doctor_report.to_text())
 
+    def test_memory_doctor_flags_forget_postcondition_active_state_presence(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-forget-postcondition-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-forget-postcondition",
+            channel_kind="telegram",
+            user_message="Our owner is Maya.",
+        )
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Researcher bridge recorded memory delete influence.",
+            request_id="req-forget-postcondition-delete",
+            human_id="human-1",
+            facts={
+                "detected_generic_memory_deletion": {
+                    "predicate": "profile.current_owner",
+                    "fact_name": "current_owner",
+                    "label": "current owner",
+                    "message_text": "Forget my current owner.",
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark memory write requested.",
+            request_id="req-forget-postcondition-delete",
+            human_id="human-1",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+                "predicates": ["profile.current_owner"],
+                "observations": [{"predicate": "profile.current_owner", "operation": "delete"}],
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            component="memory_orchestrator",
+            summary="Spark memory write completed.",
+            request_id="req-forget-postcondition-delete",
+            human_id="human-1",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+                "accepted_count": 1,
+            },
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+        )
+
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertIn("memory_forget_postcondition_failed", doctor_report.to_text())
+        self.assertIn("active current-state memory still contains: current owner", doctor_report.to_text())
+        self.assertEqual(
+            doctor_report.movement_trace["gaps"][0]["name"],
+            "memory_forget_postcondition_failed",
+        )
+        stages = {stage["stage"]: stage for stage in doctor_report.movement_trace["stages"]}
+        self.assertEqual(stages["forget_postconditions"]["stale_target_count"], 1)
+        cases = {case["category"]: case for case in doctor_report.benchmark["cases"]}
+        self.assertEqual(cases["forgetting"]["status"], "fail")
+        self.assertIn("active current-state memory", cases["forgetting"]["detail"])
+        self.assertIn("delete postconditions", doctor_report.recommendations[0])
+
     def test_memory_doctor_reports_topic_active_profile_conflict(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -9,7 +9,11 @@ from spark_intelligence.memory.doctor_benchmark import (
     score_memory_doctor_benchmark,
 )
 from spark_intelligence.memory.doctor_brain import build_memory_doctor_brain, memory_doctor_brain_summary
-from spark_intelligence.memory.generic_observations import detect_telegram_generic_deletions
+from spark_intelligence.memory.generic_observations import (
+    TelegramGenericDeletion,
+    detect_telegram_generic_deletions,
+    parse_entity_state_deletion,
+)
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, record_event
 from spark_intelligence.state.db import StateDB
 
@@ -319,6 +323,11 @@ def run_memory_doctor(
         state_db=state_db,
         human_id=human_id,
     )
+    forget_postcondition = _build_forget_postcondition_audit(
+        influence_events=influence_events,
+        active_profile=active_profile,
+        human_id=human_id,
+    )
     topic_scan = _scan_topic(all_memory_events + tool_result_events, topic=topic)
     context_capsule = _build_context_capsule_audit(
         context_capsule_events,
@@ -338,8 +347,14 @@ def run_memory_doctor(
         tool_result_events=tool_result_events,
         context_capsule=context_capsule,
         dashboard=dashboard,
+        forget_postcondition=forget_postcondition,
     )
     topic_findings = _build_topic_findings(topic_scan=topic_scan, active_profile=active_profile)
+    findings.extend(
+        _build_forget_postcondition_findings(
+            forget_postcondition=forget_postcondition,
+        )
+    )
     findings.extend(topic_findings)
     findings.extend(_build_context_capsule_findings(context_capsule))
     path_traces = _build_path_traces(
@@ -668,6 +683,169 @@ def _build_topic_findings(
             ),
         )
     ]
+
+
+def _build_forget_postcondition_audit(
+    *,
+    influence_events: list[dict[str, object]],
+    active_profile: dict[str, object],
+    human_id: str | None,
+) -> dict[str, object]:
+    if active_profile.get("status") != "checked":
+        return {"status": "not_checked", "reason": "active_profile_not_checked", "checked_delete_target_count": 0}
+    normalized_human_id = str(human_id or "").strip()
+    stale_targets: list[dict[str, object]] = []
+    checked_delete_target_count = 0
+    seen: set[tuple[str, str, str]] = set()
+    for event in influence_events:
+        if str(event.get("component") or "") != "researcher_bridge":
+            continue
+        event_human_id = str(event.get("human_id") or "").strip()
+        if normalized_human_id and event_human_id and event_human_id != normalized_human_id:
+            continue
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        message_text = _memory_doctor_message_text(facts)
+        if not message_text:
+            continue
+        for deletion in detect_telegram_generic_deletions(message_text):
+            key = (
+                str(event.get("request_id") or ""),
+                deletion.predicate,
+                _delete_target_label(deletion),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            checked_delete_target_count += 1
+            matches = _active_current_state_matches_deletion(
+                active_profile=active_profile,
+                deletion=deletion,
+            )
+            if matches:
+                stale_targets.append(
+                    {
+                        "request_id": event.get("request_id"),
+                        "target": _delete_target_label(deletion),
+                        "predicate": deletion.predicate,
+                        "active_matches": matches[:3],
+                    }
+                )
+
+    return {
+        "status": "checked",
+        "checked_delete_target_count": checked_delete_target_count,
+        "stale_target_count": len(stale_targets),
+        "stale_targets": stale_targets,
+    }
+
+
+def _build_forget_postcondition_findings(
+    *,
+    forget_postcondition: dict[str, object],
+) -> list[MemoryDoctorFinding]:
+    stale_targets = forget_postcondition.get("stale_targets")
+    if not isinstance(stale_targets, list) or not stale_targets:
+        return []
+    target_names = ", ".join(str(item["target"]) for item in stale_targets[:4])
+    return [
+        MemoryDoctorFinding(
+            name="memory_forget_postcondition_failed",
+            ok=False,
+            severity="high",
+            detail=(
+                f"forget request completed, but active current-state memory still contains: {target_names}. "
+                "Write counts alone are insufficient; inspect delete postconditions."
+            ),
+            request_id=str(stale_targets[0].get("request_id") or "") or None,
+        )
+    ]
+
+
+def _active_current_state_matches_deletion(
+    *,
+    active_profile: dict[str, object],
+    deletion: TelegramGenericDeletion,
+) -> list[dict[str, object]]:
+    matches: list[dict[str, object]] = []
+    facts = active_profile.get("facts") if isinstance(active_profile.get("facts"), dict) else {}
+    fact_label = _profile_fact_label_for_predicate(deletion.predicate)
+    if fact_label and facts.get(fact_label) not in (None, ""):
+        matches.append(
+            {
+                "source": "active_profile_fact",
+                "predicate": deletion.predicate,
+                "label": fact_label,
+                "value": _shorten(str(facts.get(fact_label) or ""), 120),
+            }
+        )
+    current_state = active_profile.get("current_state") if isinstance(active_profile, dict) else {}
+    records = current_state.get("records") if isinstance(current_state, dict) else []
+    if not isinstance(records, list):
+        return matches
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if not _current_state_record_matches_deletion(record=record, deletion=deletion):
+            continue
+        matches.append(
+            {
+                "source": "current_state_record",
+                "predicate": record.get("predicate"),
+                "value": _shorten(str(record.get("value") or record.get("text") or ""), 120),
+                "label": _record_label(record),
+            }
+        )
+    return matches
+
+
+def _current_state_record_matches_deletion(
+    *,
+    record: dict[str, object],
+    deletion: TelegramGenericDeletion,
+) -> bool:
+    if str(record.get("predicate") or "").strip() != deletion.predicate:
+        return False
+    if not _record_has_active_value(record):
+        return False
+    if not deletion.predicate.startswith("entity."):
+        return True
+    parsed = parse_entity_state_deletion(deletion.evidence_text)
+    if parsed is None:
+        return True
+    record_entity_key = str(record.get("entity_key") or "").strip()
+    record_entity_label = str(record.get("entity_label") or "").strip().lower()
+    record_attribute = str(record.get("entity_attribute") or "").strip().lower()
+    entity_matches = record_entity_key == parsed.entity_key or record_entity_label == parsed.entity_label.lower()
+    attribute_matches = not record_attribute or record_attribute == parsed.attribute.lower()
+    return entity_matches and attribute_matches
+
+
+def _record_has_active_value(record: dict[str, object]) -> bool:
+    raw_value = str(record.get("value") or record.get("text") or "").strip()
+    if not raw_value:
+        return False
+    lowered = raw_value.lower()
+    return not (
+        lowered.startswith("forget ")
+        or lowered.startswith("delete ")
+        or lowered.startswith("remove ")
+    )
+
+
+def _profile_fact_label_for_predicate(predicate: str) -> str | None:
+    return {
+        "profile.preferred_name": "preferred_name",
+        "profile.current_owner": "current_owner",
+        "profile.cofounder_name": "cofounder",
+    }.get(predicate)
+
+
+def _delete_target_label(deletion: TelegramGenericDeletion) -> str:
+    if deletion.predicate.startswith("entity."):
+        parsed = parse_entity_state_deletion(deletion.evidence_text)
+        if parsed is not None:
+            return f"{parsed.entity_label}.{parsed.attribute}"
+    return deletion.label
 
 
 def _build_context_capsule_audit(
@@ -1182,6 +1360,7 @@ def _build_movement_trace(
     tool_result_events: list[dict[str, object]],
     context_capsule: dict[str, object],
     dashboard: dict[str, object],
+    forget_postcondition: dict[str, object],
 ) -> dict[str, object]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
@@ -1236,6 +1415,12 @@ def _build_movement_trace(
             "status": "checked",
             "requested_count": len(write_requested_events),
             "succeeded_count": len(write_succeeded_events),
+        },
+        {
+            "stage": "forget_postconditions",
+            "status": forget_postcondition.get("status") or "not_checked",
+            "checked_delete_target_count": int(forget_postcondition.get("checked_delete_target_count") or 0),
+            "stale_target_count": int(forget_postcondition.get("stale_target_count") or 0),
         },
         {
             "stage": "memory_reads",
@@ -1320,6 +1505,14 @@ def _build_movement_trace(
                 "detail": "Recent memory write requests outnumber write result events.",
             }
         )
+    if int(forget_postcondition.get("stale_target_count") or 0) > 0:
+        gaps.append(
+            {
+                "name": "memory_forget_postcondition_failed",
+                "severity": "high",
+                "detail": "A forget/delete write was accepted, but matching active current-state memory remained visible.",
+            }
+        )
     if int(memory_shadow_counts.get("contract_violations") or 0) > 0:
         gaps.append(
             {
@@ -1341,7 +1534,7 @@ def _build_movement_trace(
         "status": "checked",
         "scope": (
             "gateway -> delivery audit -> cross-session/channel lineage -> builder events -> memory reads/writes -> "
-            "lifecycle/policy gates -> context capsule -> watchtower dashboard"
+            "forget postconditions -> lifecycle/policy gates -> context capsule -> watchtower dashboard"
         ),
         "stages": stages,
         "gaps": gaps,
@@ -1407,6 +1600,10 @@ def _build_recommendations(
     recommendations: list[str] = []
     if any(finding.name == "memory_delete_intent_integrity" and not finding.ok for finding in findings):
         recommendations.append("Rerun the affected forget request, then ask `check memory deletes`.")
+    if any(finding.name == "memory_forget_postcondition_failed" and not finding.ok for finding in findings):
+        recommendations.append(
+            "Inspect current-state delete postconditions: the forget write was accepted, but an active fact still matched the deleted target."
+        )
     context_lineage_gap = any(
         finding.name == "context_capsule_gateway_trace_gap" and not finding.ok
         for finding in findings
