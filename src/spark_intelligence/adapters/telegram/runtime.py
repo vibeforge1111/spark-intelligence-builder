@@ -4793,7 +4793,33 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
             "request_selector": None,
             "repair_requested": False,
         }
+    if simplified in {
+        "memory doctor last request",
+        "memory doctor previous request",
+        "memory doctor last turn",
+        "memory doctor previous turn",
+        "diagnose last request",
+        "diagnose previous request",
+        "diagnose last turn",
+        "diagnose previous turn",
+        "check last request memory",
+        "check previous request memory",
+        "check last turn memory",
+        "check previous turn memory",
+        "why did you go blank",
+        "why did spark go blank",
+        "why did memory go blank",
+        "why did context go blank",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": "previous_gateway_turn",
+            "repair_requested": False,
+        }
     topic_patterns = (
+        r"^memory\s+doctor\s+(.+)$",
         r"^(?:run|check|show)\s+memory\s+doctor\s+for\s+(.+)$",
         r"^(?:trace|check|diagnose|audit)\s+memory\s+for\s+(.+)$",
         r"^why\s+did\s+(?:memory|you|spark)\s+recall\s+(.+)$",

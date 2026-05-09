@@ -176,6 +176,20 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("Request: req-doctor-last-target.", response_text)
         self.assertIn("no provider capsule event was recorded", response_text)
 
+        blank_output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="why did Spark go blank?",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        blank_response_text = blank_output["result"]["detail"]["response_text"]
+        self.assertEqual(blank_response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-doctor-last-target.", blank_response_text)
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
