@@ -5490,7 +5490,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_voice_status_shows_profile_voice_registry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.paths.env_file.write_text(
-            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=test-key\n",
+            self.config_manager.paths.env_file.read_text(encoding="utf-8") + "\nELEVENLABS_API_KEY=<fixture>\n",
             encoding="utf-8",
         )
         registry_path = self.home / "telegram-voice-profiles.json"
