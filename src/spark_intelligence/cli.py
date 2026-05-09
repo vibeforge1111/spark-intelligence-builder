@@ -175,6 +175,7 @@ from spark_intelligence.self_awareness import (
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
 from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
+from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
     record_route_selection_agent_event,
@@ -4566,10 +4567,18 @@ def handle_self_black_box(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    request_id = str(getattr(args, "request_id", "") or "") or None
+    limit = int(getattr(args, "limit", 20) or 20)
+    spawner_entries = read_configured_spawner_black_box_entries(
+        config_manager,
+        request_id=request_id,
+        limit=limit,
+    )
     report = build_agent_black_box_report(
         state_db,
-        request_id=str(getattr(args, "request_id", "") or "") or None,
-        limit=int(getattr(args, "limit", 20) or 20),
+        request_id=request_id,
+        limit=limit,
+        external_entries=spawner_entries,
     )
     print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
     return 0
