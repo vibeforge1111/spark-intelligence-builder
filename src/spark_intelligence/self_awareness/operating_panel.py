@@ -8,6 +8,7 @@ from spark_intelligence.memory.approval_inbox import MemoryApprovalInboxReport, 
 from spark_intelligence.self_awareness.agent_scratchpad import AgentScratchpad, build_agent_scratchpad
 from spark_intelligence.self_awareness.agent_events import AgentBlackBoxReport, build_agent_black_box_report
 from spark_intelligence.self_awareness.operating_context import AgentOperatingContextResult, build_agent_operating_context
+from spark_intelligence.self_awareness.operating_panel_sections import AgentPanelSections, build_agent_panel_sections
 from spark_intelligence.self_awareness.operating_source_ledger import AgentSourceLedger, build_agent_source_ledger
 from spark_intelligence.self_awareness.operating_strip import AgentOperatingStrip, build_agent_operating_strip
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
@@ -27,6 +28,7 @@ class AgentOperatingPanel:
     strip: AgentOperatingStrip
     agent_scratchpad: AgentScratchpad
     source_ledger: AgentSourceLedger
+    sections: AgentPanelSections
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
     stale_context_sweep: StaleContextSweepReport
@@ -38,6 +40,7 @@ class AgentOperatingPanel:
             "aoc": self.aoc.to_payload(),
             "agent_scratchpad": self.agent_scratchpad.to_payload(),
             "source_ledger": self.source_ledger.to_payload(),
+            "sections": self.sections.to_payload(),
             "black_box": self.black_box.to_payload(),
             "memory_approval_inbox": self.memory_approval_inbox.to_payload(),
             "stale_context_sweep": self.stale_context_sweep.to_payload(),
@@ -129,11 +132,18 @@ def build_agent_operating_panel(
         memory_inbox_payload=memory_inbox.to_payload(),
         stale_sweep_payload=stale_sweep.to_payload(),
     )
+    sections = build_agent_panel_sections(
+        aoc_payload=aoc_payload,
+        scratchpad_payload=scratchpad.to_payload(),
+        source_ledger_payload=source_ledger.to_payload(),
+        stale_sweep_payload=stale_sweep.to_payload(),
+    )
     return AgentOperatingPanel(
         aoc=aoc,
         strip=strip,
         agent_scratchpad=scratchpad,
         source_ledger=source_ledger,
+        sections=sections,
         black_box=black_box,
         memory_approval_inbox=memory_inbox,
         stale_context_sweep=stale_sweep,
