@@ -3432,6 +3432,14 @@ def _handle_runtime_command(
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
     natural_memory_doctor_command = _match_natural_memory_doctor_command(normalized)
+    if natural_memory_doctor_command is None:
+        natural_memory_doctor_command = _match_contextual_memory_doctor_command(
+            inbound_text=normalized,
+            config_manager=config_manager,
+            external_user_id=external_user_id,
+            session_id=session_id or "",
+            current_request_id=request_id or "",
+        )
     style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
@@ -4851,6 +4859,84 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
     return None
 
 
+def _match_contextual_memory_doctor_command(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object] | None:
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
+    previous_record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    if previous_record is None:
+        return None
+    score = _memory_doctor_distress_score(simplified)
+    if _previous_gateway_turn_looks_like_memory_failure(previous_record):
+        score += 2
+    if score < 3:
+        return None
+    return {
+        "command": "/memory doctor",
+        "topic": None,
+        "request_id": None,
+        "request_selector": "previous_gateway_turn",
+        "repair_requested": False,
+        "contextual_trigger_score": score,
+    }
+
+
+def _memory_doctor_distress_score(simplified_text: str) -> int:
+    text = str(simplified_text or "").strip()
+    if not text:
+        return 0
+    score = 0
+    if re.search(r"\b(?:memory|context|thread|previous|last|what i just said|what we were talking about)\b", text):
+        score += 2
+    if re.search(r"\b(?:blank|forgot|forget|remember|lost|dropped|missed|confused)\b", text):
+        score += 2
+    if re.search(r"\b(?:not responding|stopped responding|are you there|hello|wrong|again|seriously|come on)\b", text):
+        score += 1
+    if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
+        score += 1
+    return score
+
+
+def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
+    user_preview = str(record.get("user_message_preview") or "").lower()
+    response_preview = str(record.get("response_preview") or "").lower()
+    route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
+    close_turn_markers = (
+        "what did i just",
+        "what phrase did i",
+        "what did you just",
+        "i just told you",
+        "message right before",
+        "last thing i said",
+        "previous message",
+    )
+    blank_response_markers = (
+        "not the message before",
+        "not the prior message",
+        "do not have the previous",
+        "don't have the previous",
+        "not in context",
+        "lost context",
+        "context capsule",
+        "what did you just tell me",
+    )
+    if any(marker in user_preview for marker in close_turn_markers):
+        return True
+    if any(marker in response_preview for marker in blank_response_markers):
+        return True
+    return "researcher_advisory" in route_text and "previous" in user_preview
+
+
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
     if not suffix:
@@ -4893,6 +4979,22 @@ def _memory_doctor_previous_gateway_request_id(
     session_id: str,
     current_request_id: str,
 ) -> str | None:
+    record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    return str(record.get("request_id") or "").strip() if record else None
+
+
+def _memory_doctor_previous_gateway_record(
+    *,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object] | None:
     try:
         from spark_intelligence.gateway.tracing import read_gateway_traces
 
@@ -4916,7 +5018,7 @@ def _memory_doctor_previous_gateway_request_id(
         preview_lower = preview.lower()
         if preview_lower.startswith("/memory doctor") or _match_natural_memory_doctor_command(preview):
             continue
-        return request_id
+        return record
     return None
 
 
