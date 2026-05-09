@@ -7,7 +7,7 @@ from spark_intelligence.memory.generic_observations import (
     classify_telegram_generic_memory_candidate,
     detect_telegram_generic_deletions,
 )
-from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
@@ -5217,6 +5217,99 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertTrue(unrelated_topic_report.ok, unrelated_topic_report.to_json())
         self.assertFalse(unrelated_topic_report.context_capsule["gateway_trace"]["route_contamination"])
+
+    def test_memory_doctor_flags_delivery_answer_grounding_gap(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-delivery-seed",
+                "update_id": "update-seed",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-delivery-gap",
+                "user_message_preview": "The probe phrase is Cedar Compass 509.",
+                "response_preview": "Noted.",
+                "bridge_mode": "external_configured",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-delivery-current",
+                "update_id": "update-current",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-delivery-gap",
+                "user_message_preview": "What phrase did I just give you? Answer with only the phrase.",
+                "response_preview": "Cedar Compass 509",
+                "bridge_mode": "recent_conversation_recall",
+                "routing_decision": "recent_conversation_recall",
+                "evidence_summary": "status=recent_conversation recall=direct",
+            },
+        )
+        append_outbound_audit(
+            self.config_manager,
+            {
+                "event": "telegram_bridge_outbound",
+                "channel_id": "telegram",
+                "update_id": "update-current",
+                "telegram_user_id": "human-1",
+                "chat_id": "chat-1",
+                "session_id": "session-delivery-gap",
+                "delivery_ok": True,
+                "user_message_preview": "What phrase did I just give you? Answer with only the phrase.",
+                "response_preview": "Beneficial single mutations may compound when applied together.",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            request_id="req-delivery-current",
+            human_id="human-1",
+            facts={
+                "source_counts": {
+                    "current_state": 1,
+                    "recent_conversation": 2,
+                },
+                "source_ledger": [
+                    {"source": "current_state", "present": True, "count": 1, "priority": 1, "role": "authority"},
+                    {
+                        "source": "recent_conversation",
+                        "present": True,
+                        "count": 2,
+                        "priority": 8,
+                        "role": "supporting",
+                    },
+                ],
+            },
+        )
+
+        doctor_report = run_memory_doctor(
+            self.state_db,
+            config_manager=self.config_manager,
+            human_id="human-1",
+            topic="Cedar Compass 509",
+        )
+
+        delivery_trace = doctor_report.context_capsule["gateway_trace"]["delivery_trace"]
+        self.assertFalse(doctor_report.ok, doctor_report.to_json())
+        self.assertTrue(delivery_trace["response_mismatch"])
+        self.assertTrue(delivery_trace["delivery_topic_miss"])
+        self.assertIn("delivery_answer_grounding_gap", doctor_report.to_text())
+        self.assertIn("Delivery: generated reply contained the expected topic", doctor_report.to_telegram_text())
+        self.assertEqual(
+            doctor_report.movement_trace["gaps"][0]["name"],
+            "delivery_answer_grounding_gap",
+        )
+        stages = {stage["stage"]: stage for stage in doctor_report.movement_trace["stages"]}
+        self.assertTrue(stages["telegram_delivery_trace"]["delivery_topic_miss"])
 
     def test_build_researcher_reply_preserves_generic_decision_history_and_delete_lifecycle(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

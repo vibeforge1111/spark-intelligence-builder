@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-BENCHMARK_VERSION = "2026-05-09.v1"
+BENCHMARK_VERSION = "2026-05-09.v2"
 
 
 def score_memory_doctor_benchmark(
@@ -59,6 +59,7 @@ def memory_doctor_benchmark_summary(benchmark: dict[str, object]) -> str:
 
 def _score_close_turn_recall(*, context_capsule: dict[str, object]) -> dict[str, object]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
+    delivery_trace = gateway_trace.get("delivery_trace") if isinstance(gateway_trace.get("delivery_trace"), dict) else {}
     recent_count = int(context_capsule.get("recent_conversation_count") or 0)
     gateway_status = str(gateway_trace.get("status") or "unknown")
     gateway_count = int(gateway_trace.get("recent_gateway_message_count") or 0)
@@ -71,6 +72,26 @@ def _score_close_turn_recall(*, context_capsule: dict[str, object]) -> dict[str,
             "fail",
             "No provider context capsule was available.",
             "send a Telegram turn that reaches provider context and rerun Memory Doctor",
+        )
+    if delivery_trace.get("delivery_failed"):
+        return _case(
+            "close_turn_recall",
+            "close_turn_recall",
+            25,
+            0.0,
+            "fail",
+            "Generated reply reached Telegram outbound audit, but delivery failed.",
+            "inspect Telegram delivery errors and replay the same close-turn probe",
+        )
+    if delivery_trace.get("delivery_topic_miss"):
+        return _case(
+            "close_turn_recall",
+            "close_turn_recall",
+            25,
+            0.0,
+            "fail",
+            "Generated reply contained the expected topic, but delivered text did not.",
+            "inspect outbound guardrails/delivery mutation and replay the same close-turn probe",
         )
     if gateway_trace.get("answer_topic_miss"):
         return _case(

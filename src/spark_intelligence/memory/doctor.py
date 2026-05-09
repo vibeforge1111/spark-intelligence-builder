@@ -163,6 +163,15 @@ class MemoryDoctorReport:
                     lines.append(
                         "Answer grounding: close-turn recall routed through provisional researcher advisory."
                     )
+                delivery_trace = gateway_trace.get("delivery_trace")
+                if isinstance(delivery_trace, dict) and delivery_trace.get("delivery_failed"):
+                    lines.append(
+                        "Delivery: Telegram outbound audit shows delivery failed for the diagnosed turn."
+                    )
+                elif isinstance(delivery_trace, dict) and delivery_trace.get("delivery_topic_miss"):
+                    lines.append(
+                        "Delivery: generated reply contained the expected topic, but the delivered reply did not."
+                    )
                 cross_scope = gateway_trace.get("cross_scope_lineage")
                 if isinstance(cross_scope, dict) and cross_scope.get("status") == "checked":
                     lines.append(
@@ -726,9 +735,10 @@ def _build_gateway_trace_audit(
     if config_manager is None:
         return {"status": "not_requested"}
     try:
-        from spark_intelligence.gateway.tracing import read_gateway_traces
+        from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 
         traces = read_gateway_traces(config_manager, limit=300)
+        outbound_records = read_outbound_audit(config_manager, limit=300)
     except Exception as exc:  # pragma: no cover - trace logs should not block diagnosis
         return {"status": "unavailable", "reason": str(exc)}
     if not traces:
@@ -805,6 +815,12 @@ def _build_gateway_trace_audit(
         and capsule_recent_conversation_count > 0
         and (not normalized_topic or topic_recent_message is not None)
     )
+    delivery_trace = _build_delivery_trace_audit(
+        outbound_records=outbound_records,
+        target=target,
+        close_turn_recall_question=close_turn_recall_question,
+        normalized_topic=normalized_topic,
+    )
 
     return {
         "status": "checked",
@@ -825,6 +841,7 @@ def _build_gateway_trace_audit(
         "recent_gateway_message_count": len(recent_messages),
         "capsule_recent_conversation_count": capsule_recent_conversation_count,
         "lineage_gap": bool(recent_messages and capsule_recent_conversation_count == 0),
+        "delivery_trace": delivery_trace,
         "recent_gateway_messages": recent_messages,
         "cross_scope_lineage": _build_cross_scope_lineage_summary(
             traces=traces,
@@ -832,6 +849,109 @@ def _build_gateway_trace_audit(
             target=target,
         ),
     }
+
+
+def _build_delivery_trace_audit(
+    *,
+    outbound_records: list[dict[str, object]],
+    target: dict[str, object],
+    close_turn_recall_question: bool,
+    normalized_topic: str,
+) -> dict[str, object]:
+    if not outbound_records:
+        return {"status": "not_found", "reason": "outbound_audit_empty"}
+
+    target_update_id = str(target.get("update_id") or "").strip()
+    target_session_id = str(target.get("session_id") or "").strip()
+    target_chat_id = str(target.get("chat_id") or "").strip()
+    target_user_id = str(target.get("telegram_user_id") or "").strip()
+    target_user_preview = str(target.get("user_message_preview") or "").strip()
+    best: tuple[int, dict[str, object]] | None = None
+    for record in reversed(outbound_records):
+        if str(record.get("event") or "") != "telegram_bridge_outbound":
+            continue
+        score = 0
+        if target_update_id and str(record.get("update_id") or "").strip() == target_update_id:
+            score += 8
+        elif target_user_preview and _preview_equivalent(
+            str(record.get("user_message_preview") or ""),
+            target_user_preview,
+        ):
+            score += 4
+        else:
+            continue
+        if target_session_id and str(record.get("session_id") or "").strip() == target_session_id:
+            score += 3
+        elif target_session_id:
+            continue
+        if target_chat_id and str(record.get("chat_id") or "").strip() == target_chat_id:
+            score += 2
+        elif target_chat_id:
+            continue
+        if target_user_id and str(record.get("telegram_user_id") or "").strip() == target_user_id:
+            score += 2
+        elif target_user_id:
+            continue
+        if best is None or score > best[0]:
+            best = (score, record)
+
+    if best is None:
+        return {
+            "status": "not_found",
+            "reason": "matching_outbound_audit_not_found",
+            "target_update_id": target_update_id or None,
+        }
+
+    record = best[1]
+    generated_preview = str(target.get("response_preview") or "").strip()
+    delivered_preview = str(record.get("response_preview") or record.get("delivered_text") or "").strip()
+    delivery_ok = bool(record.get("delivery_ok")) if record.get("delivery_ok") is not None else None
+    response_mismatch = bool(
+        generated_preview
+        and delivered_preview
+        and not _preview_equivalent(generated_preview, delivered_preview)
+    )
+    delivery_topic_miss = bool(
+        close_turn_recall_question
+        and normalized_topic
+        and normalized_topic.lower() in generated_preview.lower()
+        and normalized_topic.lower() not in delivered_preview.lower()
+    )
+    return {
+        "status": "checked",
+        "recorded_at": record.get("recorded_at"),
+        "update_id": record.get("update_id"),
+        "delivery_ok": delivery_ok,
+        "delivery_failed": delivery_ok is False,
+        "response_mismatch": response_mismatch,
+        "delivery_topic_miss": delivery_topic_miss,
+        "generated_response_preview": _shorten(generated_preview, 160),
+        "delivered_response_preview": _shorten(delivered_preview, 160),
+        "guardrail_actions": list(record.get("guardrail_actions") or [])[:8]
+        if isinstance(record.get("guardrail_actions"), list)
+        else [],
+        "delivery_medium": record.get("delivery_medium"),
+        "voice_requested": record.get("voice_requested"),
+        "voice_error": record.get("voice_error"),
+    }
+
+
+def _preview_equivalent(left: str, right: str) -> bool:
+    left_text = _compare_preview_text(left)
+    right_text = _compare_preview_text(right)
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    if left_text.endswith("...") and right_text.startswith(left_text[:-3].rstrip()):
+        return True
+    if right_text.endswith("...") and left_text.startswith(right_text[:-3].rstrip()):
+        return True
+    return False
+
+
+def _compare_preview_text(value: str) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
 
 
 def _build_cross_scope_lineage_summary(
@@ -972,6 +1092,30 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
             )
         ]
     findings: list[MemoryDoctorFinding] = []
+    delivery_trace = gateway_trace.get("delivery_trace") if isinstance(gateway_trace.get("delivery_trace"), dict) else {}
+    if delivery_trace.get("delivery_failed"):
+        findings.append(
+            MemoryDoctorFinding(
+                name="telegram_delivery_failure",
+                ok=False,
+                severity="high",
+                detail="generated reply reached the Telegram outbound audit, but delivery failed for the diagnosed turn.",
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        )
+    elif delivery_trace.get("delivery_topic_miss"):
+        findings.append(
+            MemoryDoctorFinding(
+                name="delivery_answer_grounding_gap",
+                ok=False,
+                severity="high",
+                detail=(
+                    "generated reply contained the expected close-turn topic, "
+                    "but the Telegram outbound audit shows a delivered reply without it."
+                ),
+                request_id=str(context_capsule.get("request_id") or "") or None,
+            )
+        )
     if gateway_trace.get("answer_topic_miss"):
         findings.append(
             MemoryDoctorFinding(
@@ -1041,6 +1185,7 @@ def _build_movement_trace(
 ) -> dict[str, object]:
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
+    delivery_trace = gateway_trace.get("delivery_trace") if isinstance(gateway_trace.get("delivery_trace"), dict) else {}
     read_abstentions = [
         event for event in read_result_events if str(event.get("event_type") or "") == "memory_read_abstained"
     ]
@@ -1062,6 +1207,15 @@ def _build_movement_trace(
             "route_contamination": bool(gateway_trace.get("route_contamination")) if isinstance(gateway_trace, dict) else False,
             "routing_decision": gateway_trace.get("target_routing_decision") if isinstance(gateway_trace, dict) else None,
             "bridge_mode": gateway_trace.get("target_bridge_mode") if isinstance(gateway_trace, dict) else None,
+        },
+        {
+            "stage": "telegram_delivery_trace",
+            "status": delivery_trace.get("status") or "not_checked",
+            "delivery_ok": delivery_trace.get("delivery_ok"),
+            "delivery_failed": bool(delivery_trace.get("delivery_failed")),
+            "response_mismatch": bool(delivery_trace.get("response_mismatch")),
+            "delivery_topic_miss": bool(delivery_trace.get("delivery_topic_miss")),
+            "delivery_medium": delivery_trace.get("delivery_medium"),
         },
         {
             "stage": "cross_session_channel_lineage",
@@ -1122,6 +1276,24 @@ def _build_movement_trace(
                 "request_id": context_capsule.get("request_id"),
             }
         )
+    if isinstance(delivery_trace, dict) and delivery_trace.get("delivery_failed"):
+        gaps.append(
+            {
+                "name": "telegram_delivery_failure",
+                "severity": "high",
+                "detail": "The diagnosed reply reached outbound audit but did not deliver successfully.",
+                "request_id": context_capsule.get("request_id"),
+            }
+        )
+    elif isinstance(delivery_trace, dict) and delivery_trace.get("delivery_topic_miss"):
+        gaps.append(
+            {
+                "name": "delivery_answer_grounding_gap",
+                "severity": "high",
+                "detail": "Generated close-turn answer included the expected topic, but delivered text did not.",
+                "request_id": context_capsule.get("request_id"),
+            }
+        )
     if isinstance(gateway_trace, dict) and gateway_trace.get("answer_topic_miss"):
         gaps.append(
             {
@@ -1168,7 +1340,7 @@ def _build_movement_trace(
     return {
         "status": "checked",
         "scope": (
-            "gateway -> cross-session/channel lineage -> builder events -> memory reads/writes -> "
+            "gateway -> delivery audit -> cross-session/channel lineage -> builder events -> memory reads/writes -> "
             "lifecycle/policy gates -> context capsule -> watchtower dashboard"
         ),
         "stages": stages,
@@ -1244,12 +1416,19 @@ def _build_recommendations(
             "Fix the recent-conversation capsule path: Telegram gateway saw close-turn messages, but provider context did not receive them."
         )
     answer_grounding_gap = any(
-        finding.name in {"context_to_answer_grounding_gap", "close_turn_route_contamination"} and not finding.ok
+        finding.name
+        in {
+            "context_to_answer_grounding_gap",
+            "close_turn_route_contamination",
+            "delivery_answer_grounding_gap",
+            "telegram_delivery_failure",
+        }
+        and not finding.ok
         for finding in findings
     )
     if answer_grounding_gap:
         recommendations.append(
-            "Fix answer arbitration for close-turn recall: when recent conversation contains the answer, bypass provisional researcher packets and route to grounded conversational/provider recall."
+            "Fix the answer path for close-turn recall: verify gateway generation, Telegram delivery audit, and route arbitration all carry the same grounded answer."
         )
     active_presence = next((finding for finding in findings if finding.name == "topic_active_state_presence"), None)
     if active_presence is not None:
