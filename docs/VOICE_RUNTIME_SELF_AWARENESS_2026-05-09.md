@@ -30,6 +30,7 @@ License: AGPL-3.0-or-later.
 - `/probe voice`: record route evidence for Agent Operating Context using `voice.status`.
 - `/voice map`: explain the stable runtime connections.
 - `/voice dashboard` or `open voice dashboard`: write a redacted voice-system snapshot for Spawner UI and return the local `/voice-system` dashboard URL.
+- `/voice self-test`: report bot update readiness, chip status, provider readiness, last inbound voice proof, last `sendVoice` proof, and conversation proof without spending TTS or sending a new voice note.
 - `/voice provider`: show the current TTS provider for the Telegram DM.
 - `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`: change the DM-level TTS provider preference.
 - `find me a natural geeky QA tester voice`: search ElevenLabs voices from Telegram.
@@ -104,6 +105,7 @@ Spark should only claim voice is ready when current evidence supports the exact 
 - STT readiness: `voice.status` reports transcription readiness for the selected path.
 - TTS readiness: the selected provider has local config references and a successful synthesis test.
 - Telegram delivery: a real voice message was delivered, not merely synthesized.
+- Real inbound proof: a Telegram voice/audio message carries `telegram-inbound-voice-trace` through the runtime state once Builder has downloaded and transcribed it.
 - Reply behavior: `/voice reply on/off` is per Telegram DM and separate from provider readiness.
 
 If these disagree, Spark should say what is ready and what still needs proof.
@@ -117,6 +119,7 @@ Before claiming voice is production-ready for a new user or deployment, verify:
 - `/voice map` describes the Telegram, Builder, `spark-voice-comms`, memory, and delivery boundaries.
 - `/voice dashboard` opens the Spawner UI voice-system page using redacted runtime evidence only.
 - `/voice-system` reads live Builder runtime state for the current provider/profile and last Telegram delivery proof, so `/voice dashboard` is no longer required after every voice reply just to refresh status.
+- `/voice self-test` reports configured, synthesized, Telegram delivered, and real inbound voice seen as separate claims.
 - A real Telegram voice note transcribes through the selected STT path.
 - `/voice ask <question>` generates a Builder answer first and speaks that answer, rather than reading the prompt back.
 - `/voice speak <text>` reads exact supplied text and is labeled as exact-read behavior.
