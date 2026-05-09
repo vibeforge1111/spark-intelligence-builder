@@ -990,6 +990,7 @@ def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
 
 def _external_execution_governance_issue() -> StopShipIssue:
     allowed_subprocess_paths = {
+        "src/spark_intelligence/adapters/telegram/runtime.py",
         "src/spark_intelligence/build_quality_review.py",
         "src/spark_intelligence/cli.py",
         "src/spark_intelligence/config/loader.py",
