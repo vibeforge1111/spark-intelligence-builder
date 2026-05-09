@@ -383,6 +383,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertEqual(panel["repeated_missing_senses"]["gateway_trace_lineage"], 2)
         self.assertEqual(panel["repeated_gaps"]["gateway_trace_visibility_gap"], 2)
         self.assertEqual(panel["intake_trigger_counts"]["close_turn_repeat_frustration"], 1)
+        self.assertEqual(panel["previous_failure_signal_counts"]["previous_response_context_gap"], 1)
         self.assertEqual(panel["recent_intake_triggers"][0]["doctor_request_id"], "req-blank-doctor")
         self.assertEqual(panel["recent_intake_triggers"][0]["diagnosed_request_id"], "req-blank-target")
         self.assertEqual(panel["recent_intake_triggers"][0]["previous_failure_signals"], ["previous_response_context_gap"])

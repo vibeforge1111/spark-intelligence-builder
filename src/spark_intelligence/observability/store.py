@@ -3273,6 +3273,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
     missing_sense_counts: dict[str, int] = {}
     gap_name_counts: dict[str, int] = {}
     intake_trigger_counts: dict[str, int] = {}
+    previous_failure_signal_counts: dict[str, int] = {}
     recent_intakes: list[dict[str, Any]] = []
     humans: set[str] = set()
     topics: set[str] = set()
@@ -3294,8 +3295,11 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         for gap_name in gap_names:
             gap_name_counts[gap_name] = gap_name_counts.get(gap_name, 0) + 1
         intake_signals = _string_list(telegram_intake.get("contextual_trigger_signals")) if telegram_intake else []
+        previous_failure_signals = _string_list(telegram_intake.get("previous_failure_signals")) if telegram_intake else []
         for signal in intake_signals:
             intake_trigger_counts[signal] = intake_trigger_counts.get(signal, 0) + 1
+        for signal in previous_failure_signals:
+            previous_failure_signal_counts[signal] = previous_failure_signal_counts.get(signal, 0) + 1
         if telegram_intake:
             recent_intakes.append(
                 {
@@ -3309,7 +3313,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
                     "contextual_trigger_threshold": telegram_intake.get("contextual_trigger_threshold"),
                     "contextual_trigger_signals": intake_signals,
                     "previous_failure_signal": telegram_intake.get("previous_failure_signal"),
-                    "previous_failure_signals": _string_list(telegram_intake.get("previous_failure_signals")),
+                    "previous_failure_signals": previous_failure_signals,
                 }
             )
         if score is not None:
@@ -3360,6 +3364,7 @@ def _build_memory_doctor_brain_panel(state_db: StateDB) -> dict[str, Any]:
         "repeated_missing_senses": _top_counts(missing_sense_counts),
         "repeated_gaps": _top_counts(gap_name_counts),
         "intake_trigger_counts": _top_counts(intake_trigger_counts),
+        "previous_failure_signal_counts": _top_counts(previous_failure_signal_counts),
         "recent_intake_triggers": list(reversed(recent_intakes))[:5],
         "recent_probes": [
             probe
