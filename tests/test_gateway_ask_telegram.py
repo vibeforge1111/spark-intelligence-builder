@@ -377,7 +377,46 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["contextual_trigger_threshold"], 3)
         self.assertIn("close_turn_repeat_frustration", metadata["contextual_trigger_signals"])
         self.assertIn("previous_turn_memory_failure_signal", metadata["contextual_trigger_signals"])
-        self.assertEqual(metadata["previous_failure_signals"], ["previous_response_context_gap"])
+        self.assertIn("previous_response_context_gap", metadata["previous_failure_signals"])
+        self.assertIn("previous_response_identity_conflict", metadata["previous_failure_signals"])
+
+    def test_gateway_ask_telegram_runs_memory_doctor_for_identity_correction_after_wrong_name(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-name-conflict",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "My written name is Cem, pronounced like Gem.",
+                "response_preview": "Got it, Maya. I'll write it as Cem and pronounce it like Gem.",
+                "bridge_mode": "external_autodiscovered",
+                "routing_decision": "researcher_advisory",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="not Maya",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        metadata = detail["runtime_command_metadata"]
+        self.assertEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Trigger: identity correction complaint; previous turn looked like memory failure.", detail["response_text"])
+        self.assertEqual(metadata["diagnosed_request_id"], "req-name-conflict")
+        self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
+        self.assertIn("identity_correction_after_wrong_name", metadata["contextual_trigger_signals"])
+        self.assertIn("previous_response_identity_conflict", metadata["previous_failure_signals"])
 
     def test_gateway_ask_telegram_runs_memory_doctor_for_strong_context_loss_complaint(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

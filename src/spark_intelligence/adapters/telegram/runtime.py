@@ -4936,6 +4936,8 @@ def _memory_doctor_trigger_summary(doctor_target: dict[str, object]) -> str | No
         labels.append("close-turn repeat complaint")
     if "memory_context_reference" in signals or "memory_distress_verb" in signals:
         labels.append("memory/context loss complaint")
+    if "identity_correction_after_wrong_name" in signals:
+        labels.append("identity correction complaint")
     if "operator_frustration" in signals and not labels:
         labels.append("operator frustration")
     if "previous_turn_memory_failure_signal" in signals:
@@ -4968,6 +4970,12 @@ def _match_contextual_memory_doctor_command(
     if previous_record is None:
         return None
     trigger_signals = _memory_doctor_distress_signals(simplified)
+    trigger_signals.extend(
+        _memory_doctor_contextual_turn_signals(
+            simplified_text=simplified,
+            previous_record=previous_record,
+        )
+    )
     score = sum(int(signal["weight"]) for signal in trigger_signals)
     previous_failure_signals = _previous_gateway_turn_memory_failure_signals(previous_record)
     previous_failure_signal = bool(previous_failure_signals)
@@ -5039,6 +5047,29 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
     return signals
 
 
+def _memory_doctor_contextual_turn_signals(
+    *,
+    simplified_text: str,
+    previous_record: dict[str, object],
+) -> list[dict[str, object]]:
+    text = str(simplified_text or "").strip().lower()
+    if not text:
+        return []
+    signals: list[dict[str, object]] = []
+    previous_failure_signals = _previous_gateway_turn_memory_failure_signals(previous_record)
+    if "previous_response_identity_conflict" in previous_failure_signals and _looks_like_name_correction(text):
+        signals.append({"name": "identity_correction_after_wrong_name", "weight": 2})
+    return signals
+
+
+def _looks_like_name_correction(text: str) -> bool:
+    if re.search(r"\b(?:not my name|that(?:s| is) not my name|wrong name|called me the wrong name)\b", text):
+        return True
+    if re.search(r"\b(?:my name is|name is|call me|write it as|pronounced like)\b", text):
+        return True
+    return bool(re.match(r"^not\s+[a-z][a-z0-9_-]{1,40}$", text))
+
+
 def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
     return bool(_previous_gateway_turn_memory_failure_signals(record))
 
@@ -5080,9 +5111,41 @@ def _previous_gateway_turn_memory_failure_signals(record: dict[str, object]) -> 
         signals.append("previous_user_close_turn_probe")
     if any(marker in response_preview for marker in blank_response_markers):
         signals.append("previous_response_context_gap")
+    if _previous_gateway_turn_identity_conflict(record):
+        signals.append("previous_response_identity_conflict")
     if "researcher_advisory" in route_text and "previous" in user_preview:
         signals.append("previous_researcher_route_for_previous_turn")
     return signals
+
+
+def _previous_gateway_turn_identity_conflict(record: dict[str, object]) -> bool:
+    user_preview = str(record.get("user_message_preview") or "").lower()
+    response_preview = str(record.get("response_preview") or "").lower()
+    identity_markers = (
+        "my name",
+        "name is",
+        "pronounced",
+        "call me",
+        "write it as",
+        "preferred name",
+    )
+    response_uncertainty_markers = (
+        "what should i call you",
+        "what should i call you instead",
+        "who should i call you",
+        "what name should i use",
+    )
+    if any(marker in response_preview for marker in response_uncertainty_markers):
+        return True
+    if not any(marker in user_preview for marker in identity_markers):
+        return False
+    extracted_names = re.findall(r"\b(?:name is|call me|write it as)\s+([a-z][a-z0-9_-]{1,40})\b", user_preview)
+    if not extracted_names:
+        return False
+    acknowledged_name = re.search(r"\bgot it[\s,.:;-]+([a-z][a-z0-9_-]{1,40})\b", response_preview)
+    if acknowledged_name and acknowledged_name.group(1) not in extracted_names:
+        return True
+    return not any(name in response_preview for name in extracted_names)
 
 
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, object]:
