@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from spark_intelligence.creator.contracts import ArtifactManifest, validate_artifact_manifest
 import spark_intelligence.memory.orchestrator as memory_orchestrator
 from spark_intelligence.state.db import StateDB
 
 
-MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v2"
+MEMORY_DOCTOR_BRAIN_VERSION = "2026-05-09.v3"
 
 AUTHORITY_BOUNDARIES: tuple[str, ...] = (
     "current_state_memory_outranks_wiki_for_mutable_user_facts",
@@ -43,6 +44,7 @@ def build_memory_doctor_brain(
     wiki_packets = _inspect_wiki_packets(config_manager)
     dashboard_movement = _inspect_dashboard_movement(config_manager)
     llm_wiki = _inspect_llm_wiki_status(config_manager=config_manager, state_db=state_db)
+    creator_system_alignment = _build_creator_system_alignment()
     senses = _build_senses(
         runtime=runtime,
         wiki_packets=wiki_packets,
@@ -94,6 +96,7 @@ def build_memory_doctor_brain(
         "wiki_packets": wiki_packets,
         "llm_wiki": llm_wiki,
         "dashboard_movement": dashboard_movement,
+        "creator_system_alignment": creator_system_alignment,
         "eval_capabilities": list(MEMORY_EVAL_CAPABILITIES),
         "authority_boundaries": list(AUTHORITY_BOUNDARIES),
         "summary": _brain_summary(coverage=coverage, gaps=gaps, improvements=improvements),
@@ -187,6 +190,87 @@ def _inspect_llm_wiki_status(*, config_manager: Any | None, state_db: StateDB) -
         "stale_page_count": int(freshness.get("stale_page_count") or 0),
         "warnings": list(payload.get("warnings") or [])[:10],
         "authority": payload.get("authority") or "supporting_not_authoritative",
+    }
+
+
+def _build_creator_system_alignment() -> dict[str, object]:
+    manifests = [
+        ArtifactManifest(
+            artifact_id="memory-doctor-domain-chip-candidate-v1",
+            artifact_type="domain_chip",
+            repo="domain-chip-memory",
+            inputs=["memory-doctor-brain", "memory-doctor-benchmark"],
+            outputs=["spark-chip.json", "hooks/evaluate", "hooks/watchtower", "packets/memory-doctor.md"],
+            validation_commands=[
+                "python -m pytest tests/test_memory_doctor_brain.py tests/test_memory_doctor_benchmark.py"
+            ],
+            promotion_gates=["schema_gate", "lineage_gate", "memory_hygiene_gate", "benchmark_gate", "rollback_gate"],
+            rollback_plan="Disable the attached memory-doctor chip candidate and keep Builder's diagnosis-only runtime path.",
+        ),
+        ArtifactManifest(
+            artifact_id="memory-doctor-specialization-path-v1",
+            artifact_type="specialization_path",
+            repo="specialization-path-memory-doctor",
+            inputs=["memory-doctor-domain-chip-candidate-v1"],
+            outputs=["specialization-path.json", "benchmarks/memory-doctor.blankness.json", "AUTORESEARCH.md"],
+            validation_commands=["spark-swarm specialization-path autoloop memory-doctor <repo> --plan-only"],
+            promotion_gates=["schema_gate", "lineage_gate", "benchmark_gate", "complexity_gate", "rollback_gate"],
+            rollback_plan="Clear the active memory-doctor specialization path and revert the path repo commit.",
+        ),
+        ArtifactManifest(
+            artifact_id="memory-doctor-benchmark-pack-v1",
+            artifact_type="benchmark_pack",
+            repo="spark-intelligence-builder",
+            inputs=["gateway-traces", "context-capsule-events", "memory-doctor-brain-snapshots"],
+            outputs=["tests/test_gateway_ask_telegram.py", "tests/test_memory_doctor_benchmark.py"],
+            validation_commands=[
+                "python -m pytest tests/test_gateway_ask_telegram.py tests/test_memory_doctor_benchmark.py -k memory_doctor"
+            ],
+            promotion_gates=["schema_gate", "lineage_gate", "benchmark_gate", "memory_hygiene_gate", "risk_gate"],
+            rollback_plan="Revert the benchmark-pack commit and keep the previous Memory Doctor runtime thresholds.",
+        ),
+        ArtifactManifest(
+            artifact_id="memory-doctor-creator-report-v1",
+            artifact_type="creator_report",
+            repo="specialization-path-memory-doctor",
+            inputs=[
+                "memory-doctor-domain-chip-candidate-v1",
+                "memory-doctor-specialization-path-v1",
+                "memory-doctor-benchmark-pack-v1",
+            ],
+            outputs=[
+                "reports/memory-doctor-creator-run-summary.json",
+                "reports/memory-doctor-creator-run-summary.md",
+                "reports/memory-doctor-validation-ledger.jsonl",
+            ],
+            validation_commands=["python -m json.tool reports/memory-doctor-creator-run-summary.json"],
+            promotion_gates=["schema_gate", "lineage_gate", "transfer_gate", "rollback_gate"],
+            rollback_plan="Delete the candidate creator report artifacts and preserve Builder observability events only.",
+        ),
+    ]
+    validation_issues = [
+        issue.to_text()
+        for manifest in manifests
+        for issue in validate_artifact_manifest(manifest)
+    ]
+    artifact_targets = [manifest.artifact_type for manifest in manifests]
+    promotion_gates = sorted({gate for manifest in manifests for gate in manifest.promotion_gates})
+    return {
+        "schema_version": "spark-creator-intent.v1",
+        "status": "aligned_candidate" if not validation_issues else "alignment_issues",
+        "authority": "creator_alignment_non_authoritative",
+        "intent_id": "creator-intent-memory-doctor-specialization-path",
+        "target_domain": "memory-doctor",
+        "target_operator_surface": "telegram",
+        "artifact_targets": artifact_targets,
+        "promotion_gates": promotion_gates,
+        "usage_surfaces": ["telegram", "watchtower", "cli"],
+        "claim_boundary": (
+            "Memory Doctor is diagnosis and recommendation authority only; repair or specialization activation "
+            "requires explicit creator trace evidence and operator approval."
+        ),
+        "validation_issues": validation_issues,
+        "manifests": [manifest.to_dict() for manifest in manifests],
     }
 
 

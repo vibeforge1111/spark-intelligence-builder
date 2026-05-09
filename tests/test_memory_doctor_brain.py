@@ -67,6 +67,13 @@ class MemoryDoctorBrainTests(SparkTestCase):
         self.assertIn("Brain: visibility", report.to_telegram_text())
         self.assertIn("Benchmark:", report.to_telegram_text())
         self.assertTrue(report.brain["proactive_improvements"])
+        alignment = report.brain["creator_system_alignment"]
+        self.assertEqual(alignment["schema_version"], "spark-creator-intent.v1")
+        self.assertEqual(alignment["status"], "aligned_candidate")
+        self.assertEqual(alignment["target_domain"], "memory-doctor")
+        self.assertIn("specialization_path", alignment["artifact_targets"])
+        self.assertIn("benchmark_gate", alignment["promotion_gates"])
+        self.assertEqual(alignment["validation_issues"], [])
         brain_events = latest_events_by_type(self.state_db, event_type="memory_doctor_brain_evaluated", limit=1)
         self.assertEqual(len(brain_events), 1)
         self.assertEqual(brain_events[0]["facts_json"]["authority"], "observability_non_authoritative")
