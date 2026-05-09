@@ -1816,6 +1816,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the current mission-control snapshot",
     )
     mission_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_status_parser.add_argument("--include-aoc-panel", action="store_true", help="Include the shared AOC panel drilldown payload")
     mission_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     mission_plan_parser = mission_subparsers.add_parser(
         "plan",
@@ -7709,7 +7710,11 @@ def handle_mission_status(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    snapshot = build_mission_control_snapshot(config_manager, state_db)
+    snapshot = build_mission_control_snapshot(
+        config_manager,
+        state_db,
+        include_agent_operating_panel=bool(getattr(args, "include_aoc_panel", False)),
+    )
     if args.json:
         print(snapshot.to_json())
     else:

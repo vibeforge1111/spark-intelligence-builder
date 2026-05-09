@@ -89,7 +89,12 @@ def looks_like_mission_control_query(message: str) -> bool:
     return any(signal in lowered_message for signal in direct_signals)
 
 
-def build_mission_control_snapshot(config_manager: ConfigManager, state_db: StateDB) -> MissionControlSnapshot:
+def build_mission_control_snapshot(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    include_agent_operating_panel: bool = False,
+) -> MissionControlSnapshot:
     from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
     from spark_intelligence.adapters.telegram.runtime import (
         build_telegram_runtime_summary,
@@ -114,6 +119,11 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
     whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
     job_records = list_job_records(state_db)
     workspace_id = str(config_manager.get_path("workspace.id", default="default"))
+    agent_operating_panel = (
+        _build_mission_control_agent_operating_panel(config_manager, state_db)
+        if include_agent_operating_panel
+        else None
+    )
 
     active_systems = _derive_active_systems(system_registry)
     degraded_surfaces = _derive_degraded_surfaces(
@@ -243,6 +253,8 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
         },
         "spawner_payload_drift": spawner_payload_drift,
     }
+    if agent_operating_panel:
+        panels["agent_operating_panel"] = agent_operating_panel
     summary = {
         "top_level_state": top_level_state,
         "active_systems": active_systems,
@@ -253,12 +265,39 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
         "recommended_actions": recommended_actions,
         "current_capabilities": list((system_registry.get("summary") or {}).get("current_capabilities") or []),
     }
+    if agent_operating_panel:
+        summary.update(_agent_operating_panel_summary(agent_operating_panel))
     return MissionControlSnapshot(
         generated_at=_now_iso(),
         workspace_id=workspace_id,
         summary=summary,
         panels=panels,
     )
+
+
+def _build_mission_control_agent_operating_panel(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+
+    return build_agent_operating_panel(
+        config_manager=config_manager,
+        state_db=state_db,
+        channel_kind="mission_control",
+        request_id="mission_control_snapshot",
+        user_message="Mission Control snapshot",
+        runner_writable=None,
+        runner_label="mission control snapshot",
+    ).to_payload()
+
+
+def _agent_operating_panel_summary(agent_operating_panel: dict[str, Any]) -> dict[str, Any]:
+    strip = agent_operating_panel.get("strip") if isinstance(agent_operating_panel.get("strip"), dict) else {}
+    aoc = agent_operating_panel.get("aoc") if isinstance(agent_operating_panel.get("aoc"), dict) else {}
+    route_confidence = aoc.get("route_confidence") if isinstance(aoc.get("route_confidence"), dict) else {}
+    return {
+        "aoc_status": strip.get("status"),
+        "aoc_best_route": strip.get("best_route"),
+        "aoc_route_confidence": route_confidence.get("confidence"),
+    }
 
 
 def build_mission_control_plan(

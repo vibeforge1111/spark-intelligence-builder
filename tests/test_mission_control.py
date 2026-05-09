@@ -170,6 +170,21 @@ class MissionControlTests(SparkTestCase):
         self.assertNotIn("Scheduled maintenance pending", summary["degraded_surfaces"])
         self.assertNotIn("Run `spark-intelligence jobs tick` to execute due maintenance work.", summary["recommended_actions"])
 
+    def test_mission_control_snapshot_can_include_aoc_panel_drilldown(self) -> None:
+        snapshot = build_mission_control_snapshot(
+            self.config_manager,
+            self.state_db,
+            include_agent_operating_panel=True,
+        )
+        payload = snapshot.to_payload()
+        summary = payload["summary"]
+        panel = payload["panels"]["agent_operating_panel"]
+
+        self.assertEqual(panel["schema_version"], "spark.agent_operating_panel.v1")
+        self.assertEqual(panel["strip"]["schema_version"], "spark.agent_operating_strip.v1")
+        self.assertEqual(summary["aoc_best_route"], panel["strip"]["best_route"])
+        self.assertIn(summary["aoc_route_confidence"], {"high", "medium", "low", "blocked", "unknown"})
+
     def test_mission_control_plan_blocks_build_without_confirmed_target_repo(self) -> None:
         repo_root = self.home / "spawner-ui"
         repo_root.mkdir(parents=True)

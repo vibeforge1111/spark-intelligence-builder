@@ -86,7 +86,7 @@ python -m pytest tests\test_conversation_operating_frame.py tests\test_agent_eve
 Next integrations should consume the existing read-models:
 
 - Telegram should render a compact AOC strip from `operating_panel.py`.
-- Mission Control should drill into the same panel payload, not rebuild route state.
+- Mission Control snapshots can include the shared AOC panel payload for drilldown instead of rebuilding route state.
 - Memory Dashboard should read typed stale actions and approval inbox items.
 - Diagnostics should emit `capability_probed` and `contradiction_found` events.
 - Telegram `/aoc` now renders the compact AOC strip and records a turn trace into the black box.
