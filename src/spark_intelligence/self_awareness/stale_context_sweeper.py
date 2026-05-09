@@ -24,7 +24,9 @@ class StaleContextItem:
     winning_source: str
     winning_value: str
     freshness: str
+    action_type: str
     suggested_action: str
+    review_required: bool
     source_ref: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
@@ -35,7 +37,9 @@ class StaleContextItem:
             "winning_source": self.winning_source,
             "winning_value": self.winning_value,
             "freshness": self.freshness,
+            "action_type": self.action_type,
             "suggested_action": self.suggested_action,
+            "review_required": self.review_required,
             "source_ref": self.source_ref,
         }
 
@@ -79,7 +83,7 @@ class StaleContextSweepReport:
         for item in [*self.stale_items, *self.contradicted_items][:8]:
             lines.append(
                 f"- {item.claim_key}: {item.stale_source}={item.stale_value} "
-                f"lost to {item.winning_source}={item.winning_value}"
+                f"lost to {item.winning_source}={item.winning_value}; action={item.action_type}"
             )
         return "\n".join(lines)
 
@@ -132,7 +136,9 @@ def _items_from_claims(
             winning_source=resolution.winner.source,
             winning_value=resolution.winner.value,
             freshness=freshness,
+            action_type=_stale_action_type(claim, freshness=freshness),
             suggested_action=resolution.suggested_action,
+            review_required=_review_required(claim, freshness=freshness),
             source_ref=claim.source_ref,
         )
         for claim in claims
@@ -157,3 +163,19 @@ def _coerce_claim(value: SourceClaim | dict[str, Any]) -> SourceClaim | None:
         freshness=str(value.get("freshness") or "unknown"),  # type: ignore[arg-type]
         summary=str(value.get("summary") or "").strip(),
     )
+
+
+def _stale_action_type(claim: SourceClaim, *, freshness: str) -> str:
+    source = str(claim.source or "").casefold()
+    if freshness == "contradicted":
+        return "resolve_contradiction_before_reuse"
+    if "memory" in source:
+        return "mark_memory_stale"
+    if "wiki" in source:
+        return "mark_wiki_claim_stale"
+    return "treat_as_stale_for_turn"
+
+
+def _review_required(claim: SourceClaim, *, freshness: str) -> bool:
+    source = str(claim.source or "").casefold()
+    return freshness == "contradicted" or "memory" in source or "wiki" in source

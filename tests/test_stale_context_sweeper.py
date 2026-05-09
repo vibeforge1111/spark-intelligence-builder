@@ -35,6 +35,8 @@ class StaleContextSweeperTests(SparkTestCase):
         self.assertEqual(report.status, "needs_review")
         self.assertEqual(payload["counts"]["stale"], 1)
         self.assertEqual(report.stale_items[0].winning_source, "current_diagnostics")
+        self.assertEqual(report.stale_items[0].action_type, "mark_memory_stale")
+        self.assertTrue(report.stale_items[0].review_required)
         self.assertIn("Mark lower-authority memory stale", report.stale_items[0].suggested_action)
 
     def test_sweeper_records_contradictions_when_requested(self) -> None:
@@ -66,7 +68,8 @@ class StaleContextSweeperTests(SparkTestCase):
         self.assertEqual(len(report.recorded_contradiction_ids), 1)
         self.assertEqual(rows[0]["component"], "stale_context_sweeper")
         self.assertEqual(rows[0]["facts_json"]["winner"]["source"], "current_user_message")
-        self.assertIn("Stale context sweep: 1 stale, 0 contradicted.", report.to_text())
+        self.assertEqual(report.stale_items[0].action_type, "mark_wiki_claim_stale")
+        self.assertIn("action=mark_wiki_claim_stale", report.to_text())
 
     def test_sweeper_is_clear_when_values_agree(self) -> None:
         report = build_stale_context_sweep(
