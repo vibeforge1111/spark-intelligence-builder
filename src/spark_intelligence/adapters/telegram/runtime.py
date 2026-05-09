@@ -4835,10 +4835,6 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
         "check previous request memory",
         "check last turn memory",
         "check previous turn memory",
-        "why did you go blank",
-        "why did spark go blank",
-        "why did memory go blank",
-        "why did context go blank",
     }:
         return {
             "command": "/memory doctor",
@@ -5039,6 +5035,9 @@ def _memory_doctor_previous_gateway_record(
         if normalized_user_id and str(record.get("telegram_user_id") or "").strip() != normalized_user_id:
             continue
         if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
+            continue
+        route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
+        if "runtime_command" in route_text:
             continue
         preview = str(record.get("user_message_preview") or "").strip()
         preview_lower = preview.lower()
