@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import (
     _apply_telegram_voice_effect_from_env,
+    _match_natural_voice_command,
     _prepare_voice_reply_text,
     _rank_elevenlabs_voices,
     _select_elevenlabs_voice_for_telegram_dm,
@@ -6579,6 +6580,13 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(profile["voice_name"], "Elise")
         self.assertEqual(profile["secret_env_ref"], "ELEVENLABS_API_KEY")
         self.assertEqual(profile["scope"], "this agent, Telegram profile, and DM")
+
+    def test_natural_language_voice_pick_requires_explicit_voice_anchor(self) -> None:
+        self.assertIsNone(_match_natural_voice_command("Set my current plan to launch and keep it current."))
+        self.assertIsNone(_match_natural_voice_command("Set Startup Operator to hosted in swarm"))
+        self.assertEqual(_match_natural_voice_command("Use voice Elise"), ("/voice voice", "elise"))
+        self.assertEqual(_match_natural_voice_command("Set voice to Elise"), ("/voice voice", "elise"))
+        self.assertEqual(_match_natural_voice_command("Use Elise as voice"), ("/voice voice", "elise"))
 
     def test_natural_language_voice_mutation_updates_saved_profile_settings(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
