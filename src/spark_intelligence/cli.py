@@ -366,7 +366,7 @@ class SystemStatus:
 def _browser_status_repair_hint(browser: dict[str, object]) -> str | None:
     error_code = str(browser.get("error_code") or "").strip()
     if error_code == "BROWSER_SESSION_STALE":
-        return "Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`."
+        return "Reconnect the governed browser-use session, then rerun `spark-intelligence browser status --json`."
     if error_code:
         return "Rerun `spark-intelligence browser status --json` for the full governed browser failure payload."
     return None

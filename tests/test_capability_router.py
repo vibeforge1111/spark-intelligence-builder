@@ -21,7 +21,7 @@ class CapabilityRouterTests(SparkTestCase):
             task="Search the web for Spark and check the website.",
         )
 
-        self.assertEqual(decision.target_system, "Spark Browser")
+        self.assertEqual(decision.target_system, "Spark CLI browser-use")
         self.assertEqual(decision.route_mode, "browser_grounded")
         self.assertIn("web_search", decision.required_capabilities)
 
@@ -68,7 +68,7 @@ class CapabilityRouterTests(SparkTestCase):
         )
 
         self.assertIn("[Spark capability router]", prompt_context)
-        self.assertIn("target_system=Spark Browser", prompt_context)
+        self.assertIn("target_system=Spark CLI browser-use", prompt_context)
         self.assertIn("[Reply rule]", prompt_context)
 
     def test_capability_router_query_detection_catches_routing_questions(self) -> None:

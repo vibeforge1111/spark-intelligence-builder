@@ -4258,8 +4258,8 @@ def _browser_hook_blocked_reply(output: dict[str, Any]) -> tuple[str | None, str
     origin = str(details.get("origin") or "").strip() or "the requested origin"
     return (
         (
-            f"Web search is blocked because the browser extension does not have host access for {origin}. "
-            f"Open the extension popup and grant explicit site access for {origin}, then retry the search."
+            f"Web search is blocked because browser-use does not have host access for {origin}. "
+            f"Grant explicit site access for {origin}, then retry the search."
         ),
         code,
     )
@@ -4651,8 +4651,8 @@ def _build_browser_search_context(
     session_unavailable = {
         "context": "",
         "blocked_reply": (
-            "Web search is currently unavailable because the Spark Browser Extension live session "
-            "is disconnected. Reload or reconnect the extension, then retry the search."
+            "Web search is currently unavailable because the governed browser-use session "
+            "is disconnected. Reconnect browser-use, then retry the search."
         ),
         "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
     }

@@ -97,7 +97,7 @@ def build_capability_route_decision(
         supporting_systems = ["Spark Intelligence Builder"]
         required_capabilities = ["speech_to_text", "text_to_speech"]
     elif _looks_like_browser_task(lowered):
-        target_system = "Spark Browser" if availability["browser"] else "Spark Researcher"
+        target_system = "Spark CLI browser-use" if availability["browser"] else "Spark Researcher"
         route_mode = "browser_grounded" if availability["browser"] else "researcher_without_browser"
         reason = (
             "The task needs live web or page evidence, so use the browser/search surface when it is available."
