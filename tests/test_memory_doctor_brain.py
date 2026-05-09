@@ -295,10 +295,17 @@ class MemoryDoctorBrainTests(SparkTestCase):
         )
 
         gateway_trace = report.context_capsule["gateway_trace"]
+        stages = {stage["stage"]: stage for stage in report.movement_trace["stages"]}
         self.assertEqual(gateway_trace["diagnostic_invocation_count"], 1)
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["request_id"], "req-blank-doctor")
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_score"], 4)
         self.assertEqual(gateway_trace["diagnostic_invocations"][0]["contextual_trigger_threshold"], 3)
+        self.assertEqual(stages["memory_doctor_intake"]["status"], "checked")
+        self.assertEqual(stages["memory_doctor_intake"]["diagnostic_invocation_count"], 1)
+        self.assertEqual(stages["memory_doctor_intake"]["contextual_trigger_count"], 1)
+        self.assertEqual(stages["memory_doctor_intake"]["previous_failure_signal_count"], 1)
+        self.assertEqual(stages["memory_doctor_intake"]["latest_request_id"], "req-blank-doctor")
+        self.assertEqual(stages["memory_doctor_intake"]["latest_contextual_trigger_score"], 4)
         self.assertIn(
             "close_turn_repeat_frustration",
             gateway_trace["diagnostic_invocations"][0]["contextual_trigger_signals"],

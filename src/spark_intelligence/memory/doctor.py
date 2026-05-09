@@ -1472,6 +1472,20 @@ def _build_movement_trace(
     gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
     cross_scope = gateway_trace.get("cross_scope_lineage") if isinstance(gateway_trace.get("cross_scope_lineage"), dict) else {}
     delivery_trace = gateway_trace.get("delivery_trace") if isinstance(gateway_trace.get("delivery_trace"), dict) else {}
+    diagnostic_invocations = (
+        gateway_trace.get("diagnostic_invocations")
+        if isinstance(gateway_trace.get("diagnostic_invocations"), list)
+        else []
+    )
+    contextual_diagnostic_invocations = [
+        invocation
+        for invocation in diagnostic_invocations
+        if isinstance(invocation, dict) and invocation.get("contextual_trigger_score") is not None
+    ]
+    latest_diagnostic_invocation = next(
+        (invocation for invocation in diagnostic_invocations if isinstance(invocation, dict)),
+        {},
+    )
     read_abstentions = [
         event for event in read_result_events if str(event.get("event_type") or "") == "memory_read_abstained"
     ]
@@ -1502,6 +1516,31 @@ def _build_movement_trace(
             "response_mismatch": bool(delivery_trace.get("response_mismatch")),
             "delivery_topic_miss": bool(delivery_trace.get("delivery_topic_miss")),
             "delivery_medium": delivery_trace.get("delivery_medium"),
+        },
+        {
+            "stage": "memory_doctor_intake",
+            "status": "checked" if diagnostic_invocations else "not_seen",
+            "diagnostic_invocation_count": len(diagnostic_invocations),
+            "contextual_trigger_count": len(contextual_diagnostic_invocations),
+            "previous_failure_signal_count": sum(
+                1
+                for invocation in contextual_diagnostic_invocations
+                if isinstance(invocation, dict) and invocation.get("previous_failure_signal")
+            ),
+            "latest_request_id": latest_diagnostic_invocation.get("request_id")
+            if isinstance(latest_diagnostic_invocation, dict)
+            else None,
+            "latest_contextual_trigger_score": latest_diagnostic_invocation.get("contextual_trigger_score")
+            if isinstance(latest_diagnostic_invocation, dict)
+            else None,
+            "latest_contextual_trigger_threshold": latest_diagnostic_invocation.get("contextual_trigger_threshold")
+            if isinstance(latest_diagnostic_invocation, dict)
+            else None,
+            "latest_contextual_trigger_signals": list(
+                latest_diagnostic_invocation.get("contextual_trigger_signals") or []
+            )
+            if isinstance(latest_diagnostic_invocation, dict)
+            else [],
         },
         {
             "stage": "cross_session_channel_lineage",
