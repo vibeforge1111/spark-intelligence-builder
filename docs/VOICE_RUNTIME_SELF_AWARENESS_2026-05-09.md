@@ -29,6 +29,7 @@ License: AGPL-3.0-or-later.
 - `/voice` or `/voice status`: show current speech readiness from `voice.status`.
 - `/probe voice`: record route evidence for Agent Operating Context using `voice.status`.
 - `/voice map`: explain the stable runtime connections.
+- `/voice dashboard` or `open voice dashboard`: write a redacted voice-system snapshot for Spawner UI and return the local `/voice-system` dashboard URL.
 - `/voice provider`: show the current TTS provider for the Telegram DM.
 - `switch my voice to ElevenLabs`, `use Kokoro for voice`, or `use GPT Realtime 2 for voice`: change the DM-level TTS provider preference.
 - `find me a natural geeky QA tester voice`: search ElevenLabs voices from Telegram.
@@ -112,6 +113,7 @@ Before claiming voice is production-ready for a new user or deployment, verify:
 - `/voice` reports the intended chip and provider readiness.
 - `/voice provider` shows the expected provider and preference scope.
 - `/voice map` describes the Telegram, Builder, `spark-voice-comms`, memory, and delivery boundaries.
+- `/voice dashboard` opens the Spawner UI voice-system page using redacted runtime evidence only.
 - A real Telegram voice note transcribes through the selected STT path.
 - `/voice ask <question>` generates a Builder answer first and speaks that answer, rather than reading the prompt back.
 - `/voice speak <text>` reads exact supplied text and is labeled as exact-read behavior.
@@ -130,6 +132,8 @@ Regression tests currently cover:
 ## Security Boundary
 
 Secrets stay in local config or Spark's secret layer. Telegram onboarding can name required environment variable names, but it must not ask users to paste API keys into chat. Status and diagnostics should report `present`, `missing`, or masked IDs only.
+
+The voice-system dashboard follows the same rule. Builder writes only a redacted snapshot: provider labels, masked voice IDs, readiness flags, runtime ownership, Telegram delivery status, and safe command hints. Provider keys, Telegram tokens, raw local env values, and private account identifiers must not be included in the snapshot.
 
 ## Rollback
 
