@@ -304,6 +304,40 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertTrue(frustration_metadata["previous_failure_signal"])
         self.assertIn("previous_response_context_gap", frustration_metadata["previous_failure_signals"])
 
+    def test_gateway_ask_telegram_runs_memory_doctor_for_audit_previous_turn_phrase(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-audit-previous-turn",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="audit previous turn",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        metadata = detail["runtime_command_metadata"]
+        self.assertEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-audit-previous-turn.", detail["response_text"])
+        self.assertEqual(metadata["diagnosed_request_id"], "req-audit-previous-turn")
+        self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
+
     def test_gateway_ask_telegram_does_not_run_memory_doctor_for_weak_blankness_after_normal_turn(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
