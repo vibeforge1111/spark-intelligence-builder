@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from spark_intelligence.self_awareness.agent_events import AgentEvent, record_agent_event
+from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
+
+from tests.test_support import SparkTestCase
+
+
+class AgentOperatingPanelTests(SparkTestCase):
+    def test_panel_combines_aoc_black_box_memory_inbox_and_stale_sweep(self) -> None:
+        record_agent_event(
+            self.state_db,
+            AgentEvent(
+                event_type="route_selected",
+                summary="Route selected for patch work.",
+                user_intent="edit",
+                selected_route="writable_spawner_codex_mission",
+                route_confidence="high",
+            ),
+            request_id="req-panel",
+        )
+        record_agent_event(
+            self.state_db,
+            AgentEvent(
+                event_type="memory_candidate_created",
+                summary="Memory candidate proposed.",
+                memory_candidate={
+                    "text": "Mission updates should be concise.",
+                    "memory_role": "preference",
+                    "target_scope": "personal_preference",
+                },
+            ),
+            request_id="req-panel",
+        )
+
+        panel = build_agent_operating_panel(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-panel",
+            user_message="patch the mission memory loop",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only chat runner",
+            stale_context_claims=[
+                SourceClaim(
+                    claim_key="spark_access_level",
+                    value="Level 1",
+                    source="approved_memory",
+                    freshness="stale",
+                    source_ref="memory:old",
+                )
+            ],
+        )
+
+        payload = panel.to_payload()
+
+        self.assertEqual(payload["aoc"]["conversation_frame"]["current_mode"], "patch_work")
+        self.assertEqual(payload["black_box"]["counts"]["entries"], 2)
+        self.assertEqual(payload["memory_approval_inbox"]["counts"]["pending"], 1)
+        self.assertEqual(payload["stale_context_sweep"]["counts"]["stale"], 1)
+        rendered = panel.to_text()
+        self.assertIn("Agent Operating Panel", rendered)
+        self.assertIn("Memory approvals pending: 1", rendered)
+        self.assertIn("Stale context: 1 stale", rendered)
