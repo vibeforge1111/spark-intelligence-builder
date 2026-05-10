@@ -7515,6 +7515,19 @@ def _retrieve_memory_query_in_memory(
     )
 
 
+def _memory_trace_ref(*, session_id: str | None, turn_id: str | None) -> str | None:
+    normalized_turn = _optional_string(turn_id)
+    normalized_session = _optional_string(session_id)
+    if normalized_turn and normalized_turn.startswith("trace:"):
+        return normalized_turn
+    if not normalized_turn and not normalized_session:
+        return None
+    surface = "memory"
+    if normalized_session:
+        surface = normalized_session.split(":", 1)[0].strip() or surface
+    return f"trace:{surface}:{normalized_turn or normalized_session}"
+
+
 def _record_memory_write_requested(
     *,
     state_db: StateDB,
@@ -7542,6 +7555,7 @@ def _record_memory_write_requested(
         component="memory_orchestrator",
         summary="Spark memory write requested for durable personality preferences.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -7689,6 +7703,7 @@ def _record_memory_write_requested_observations(
         component="memory_orchestrator",
         summary=summary,
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -7784,6 +7799,7 @@ def _record_memory_lifecycle_transition(
         component="memory_orchestrator",
         summary=f"Spark memory lifecycle transition: {memory_role} {lifecycle_action}.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         channel_id=channel_kind,
@@ -7938,6 +7954,7 @@ def _record_memory_salience_policy_block(
         input_ref=turn_id,
         severity="high" if decision.reason_code == "salience_secret_like_material" else "medium",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         actor_id=actor_id,
         provenance={"memory_role": "current_state", "human_id": human_id},
@@ -7990,6 +8007,7 @@ def _record_memory_write_requested_events(
         component="memory_orchestrator",
         summary="Spark memory event write requested for durable Telegram events.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -8033,6 +8051,7 @@ def _record_memory_write_event(
         component="memory_orchestrator",
         summary="Spark memory write completed." if result.accepted_count > 0 else "Spark memory write abstained.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -8067,6 +8086,7 @@ def _record_memory_read_requested(
         component="memory_orchestrator",
         summary="Spark memory current-state lookup requested.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -8103,6 +8123,7 @@ def _record_memory_read_requested_subject(
         component="memory_orchestrator",
         summary="Spark memory read requested.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=_human_id_from_subject(subject),
         actor_id=actor_id,
@@ -8126,6 +8147,7 @@ def _record_memory_read_event(
         component="memory_orchestrator",
         summary="Spark memory read completed." if not result.abstained else "Spark memory read abstained.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
