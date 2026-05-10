@@ -237,10 +237,35 @@ def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
+        "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
         "claim_boundary": (
             "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
             "not final task outcome or memory truth."
         ),
+    }
+
+
+def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
+    sources = _dict(trace_health.get("missing_trace_ref_sources"))
+    rows: list[dict[str, Any]] = []
+    for raw_row in _list(sources.get("rows"))[:10]:
+        row = _dict(raw_row)
+        rows.append(
+            {
+                "component": str(row.get("component") or "[missing]"),
+                "event_type": str(row.get("event_type") or "[missing]"),
+                "status": str(row.get("status") or "[missing]"),
+                "severity": str(row.get("severity") or "[missing]"),
+                "target_surface": str(row.get("target_surface") or "[missing]"),
+                "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
+                "event_count": _int(row.get("event_count")),
+            }
+        )
+    return {
+        "group_by": [str(item) for item in _list(sources.get("group_by"))],
+        "row_count": len(rows),
+        "rows": rows,
+        "claim_boundary": "Ranked repair queue for trace propagation only; not memory truth or task outcome.",
     }
 
 

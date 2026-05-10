@@ -31,6 +31,11 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["trace_health_flags"], 2)
         self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
         self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
+        self.assertEqual(context["trace_health"]["missing_trace_ref_sources"]["row_count"], 2)
+        self.assertEqual(
+            context["trace_health"]["missing_trace_ref_sources"]["rows"][0]["component"],
+            "memory_orchestrator",
+        )
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
@@ -144,6 +149,36 @@ class SystemMapReadModelTests(SparkTestCase):
                         "high_severity_open_count": 1,
                         "orphan_parent_event_id_count": 0,
                         "trace_group_count": 2,
+                        "missing_trace_ref_sources": {
+                            "group_by": [
+                                "component",
+                                "event_type",
+                                "status",
+                                "severity",
+                                "target_surface",
+                                "evidence_lane",
+                            ],
+                            "rows": [
+                                {
+                                    "component": "memory_orchestrator",
+                                    "event_type": "memory_read_requested",
+                                    "status": "recorded",
+                                    "severity": "medium",
+                                    "target_surface": "spark_intelligence_builder",
+                                    "evidence_lane": "realworld_validated",
+                                    "event_count": 5,
+                                },
+                                {
+                                    "component": "researcher_bridge",
+                                    "event_type": "tool_result_received",
+                                    "status": "recorded",
+                                    "severity": "medium",
+                                    "target_surface": "spark_intelligence_builder",
+                                    "evidence_lane": "realworld_validated",
+                                    "event_count": 3,
+                                },
+                            ],
+                        },
                     },
                 }
             ),
