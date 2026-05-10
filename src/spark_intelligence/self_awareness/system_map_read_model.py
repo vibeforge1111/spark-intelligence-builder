@@ -69,6 +69,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "skill_graphs": len(_list(capability_catalog.get("skill_graphs"))),
         "authority_sources": _authority_source_count(authority_view),
         "builder_event_rows": _builder_event_rows(trace_index),
+        "builder_event_samples": _builder_event_sample_count(trace_index),
         "memory_movement_rows": memory_movement.get("row_count"),
         "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
     }
@@ -121,6 +122,9 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
             f"memory movement {memory_movement.get('status') or 'unknown'} "
             f"({int(memory_movement.get('row_count') or 0)} rows)"
         )
+    sample_count = int(counts.get("builder_event_samples") or 0)
+    if sample_count:
+        parts.append(f"black-box samples {sample_count}")
     return ", ".join(parts)
 
 
@@ -201,6 +205,11 @@ def _builder_event_rows(trace_index: dict[str, Any]) -> int:
         return int(builder_events.get("row_count") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _builder_event_sample_count(trace_index: dict[str, Any]) -> int:
+    builder_event_samples = _dict(trace_index.get("builder_event_samples"))
+    return _int(builder_event_samples.get("sample_count"))
 
 
 def _memory_movement_context(memory_movement_index: dict[str, Any]) -> dict[str, Any]:

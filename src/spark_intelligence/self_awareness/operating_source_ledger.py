@@ -153,6 +153,9 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     memory_rows = int(counts.get("memory_movement_rows") or 0)
     if memory_rows:
         summary += f", memory rows {memory_rows}"
+    sample_count = int(counts.get("builder_event_samples") or 0)
+    if sample_count:
+        summary += f", black-box samples {sample_count}"
     return summary
 
 
