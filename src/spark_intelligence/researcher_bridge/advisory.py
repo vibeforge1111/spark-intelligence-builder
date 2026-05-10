@@ -10462,6 +10462,7 @@ def build_researcher_reply(
             summary="Personality influence was recorded before bridge execution.",
             run_id=run_id,
             request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
             channel_id=channel_kind,
             session_id=session_id,
             human_id=human_id,
