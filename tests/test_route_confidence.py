@@ -15,7 +15,7 @@ class RouteConfidenceTests(SparkTestCase):
                 "why": ["The request needs local code or file work."],
             },
             runner={"writable": False, "label": "read-only chat runner"},
-            access={"label": "Level 4 - local workspace allowed", "local_workspace_allowed": True},
+            access={"label": "Level 4 - sandboxed workspace allowed", "local_workspace_allowed": True},
             routes=[
                 {
                     "key": "spark_spawner",

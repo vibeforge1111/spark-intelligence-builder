@@ -343,17 +343,32 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
 
 def _build_access(spark_access_level: str) -> dict[str, Any]:
     normalized = str(spark_access_level or "").strip()
-    local_allowed = _access_allows_local_work(normalized)
-    if normalized:
+    kind = _access_kind(normalized)
+    local_allowed = kind in {"workspace", "operator"}
+    whole_computer_allowed = kind == "operator"
+    if kind == "workspace":
+        label = "Level 4 - sandboxed workspace allowed"
+        effective_level = "4"
+        boundary = "spark_workspace_sandbox"
+    elif kind == "operator":
+        label = "Level 5 - whole-computer operator mode"
+        effective_level = "5"
+        boundary = "whole_computer_operator"
+    elif normalized:
         label = f"Level {normalized}" if normalized.isdigit() else normalized
-        if local_allowed:
-            label = f"{label} - local workspace allowed"
+        effective_level = normalized if normalized.isdigit() else None
+        boundary = "chat_or_remote_only"
     else:
         label = "unknown"
+        effective_level = None
+        boundary = "unknown"
     return {
         "spark_access_level": normalized or None,
+        "effective_level": effective_level,
         "label": label,
         "local_workspace_allowed": local_allowed if normalized else None,
+        "whole_computer_allowed": whole_computer_allowed if normalized else None,
+        "boundary": boundary,
         "source": "operator_supplied" if normalized else "not_supplied",
         "claim_boundary": "Spark permission describes allowed authority; it does not prove the current runner can read or write files.",
     }
@@ -556,7 +571,7 @@ def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_messag
                 "claim_boundary": "Contradiction rows are review flags and should not be promoted into memory truth without resolution.",
             }
         )
-    access_level = str(access.get("spark_access_level") or "")
+    access_level = str(access.get("effective_level") or access.get("spark_access_level") or "")
     message = str(user_message or "").lower()
     if access_level == "4" and any(token in message for token in ("access 1", "level 1", "chat only")):
         flags.append(
@@ -791,8 +806,36 @@ def _safe_route_probe(key: str) -> str:
 
 
 def _access_allows_local_work(value: str) -> bool:
-    lowered = value.lower()
-    return lowered in {"4", "level 4", "full access", "level 4 - full access"}
+    return _access_kind(value) in {"workspace", "operator"}
+
+
+def _access_kind(value: str) -> str:
+    lowered = value.lower().strip()
+    if lowered in {
+        "4",
+        "level 4",
+        "access 4",
+        "developer",
+        "sandbox",
+        "sandboxed local access",
+        "local workspace access",
+        "level 4 - full access",
+        "level 4 - local workspace allowed",
+        "level 4 - sandboxed workspace allowed",
+    }:
+        return "workspace"
+    if lowered in {
+        "5",
+        "level 5",
+        "access 5",
+        "operator",
+        "full access",
+        "whole computer",
+        "operating system",
+        "level 5 - whole-computer operator mode",
+    }:
+        return "operator"
+    return "other"
 
 
 def _evidence_alias(key: str) -> str:

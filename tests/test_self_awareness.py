@@ -226,9 +226,38 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("current_runner_read_only", payload["task_fit"]["blocked_here_by"])
         self.assertIn("Permission is not proof of runner writability", payload["truth_boundary"])
         rendered = result.to_text()
-        self.assertIn("Access: Level 4 - local workspace allowed", rendered)
+        self.assertIn("Access: Level 4 - sandboxed workspace allowed", rendered)
         self.assertIn("Runner: read-only Codex sandbox", rendered)
         self.assertIn("writable Spawner/Codex mission", rendered)
+
+    def test_agent_operating_context_splits_level4_workspace_from_level5_operator_mode(self) -> None:
+        level4 = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="workspace-write runner",
+        ).to_payload()
+        level5 = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="full access",
+            runner_writable=True,
+            runner_label="operator runner",
+        ).to_payload()
+
+        self.assertEqual(level4["access"]["label"], "Level 4 - sandboxed workspace allowed")
+        self.assertEqual(level4["access"]["effective_level"], "4")
+        self.assertEqual(level4["access"]["boundary"], "spark_workspace_sandbox")
+        self.assertTrue(level4["access"]["local_workspace_allowed"])
+        self.assertFalse(level4["access"]["whole_computer_allowed"])
+        self.assertEqual(level5["access"]["label"], "Level 5 - whole-computer operator mode")
+        self.assertEqual(level5["access"]["effective_level"], "5")
+        self.assertEqual(level5["access"]["boundary"], "whole_computer_operator")
+        self.assertTrue(level5["access"]["local_workspace_allowed"])
+        self.assertTrue(level5["access"]["whole_computer_allowed"])
 
     def test_agent_operating_context_exposes_route_health_with_claim_boundaries(self) -> None:
         result = build_agent_operating_context(

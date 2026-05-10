@@ -57,7 +57,7 @@ class AgentOperatingPanelTests(SparkTestCase):
 
         self.assertEqual(payload["strip"]["schema_version"], "spark.agent_operating_strip.v1")
         self.assertEqual(payload["strip"]["best_route"], "writable Spawner/Codex mission")
-        self.assertEqual(payload["strip"]["access"], "Level 4 - local workspace allowed")
+        self.assertEqual(payload["strip"]["access"], "Level 4 - sandboxed workspace allowed")
         self.assertEqual(payload["strip"]["runner"], "read-only chat runner")
         section_ids = {section["section_id"] for section in payload["sections"]["sections"]}
         self.assertIn("permissions", section_ids)
