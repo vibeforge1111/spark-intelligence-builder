@@ -36,6 +36,8 @@ class SystemMapReadModelTests(SparkTestCase):
             context["trace_health"]["missing_trace_ref_sources"]["rows"][0]["component"],
             "memory_orchestrator",
         )
+        self.assertEqual(context["trace_health"]["recent_windows"][0]["window"], "24h")
+        self.assertEqual(context["trace_health"]["recent_windows"][0]["missing_trace_ref_ratio"], 0.25)
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
@@ -179,6 +181,15 @@ class SystemMapReadModelTests(SparkTestCase):
                                 },
                             ],
                         },
+                        "recent_windows": [
+                            {
+                                "window": "24h",
+                                "threshold": "2026-05-09T14:42:28Z",
+                                "row_count": 4,
+                                "missing_trace_ref_count": 1,
+                                "missing_trace_ref_ratio": 0.25,
+                            }
+                        ],
                     },
                 }
             ),

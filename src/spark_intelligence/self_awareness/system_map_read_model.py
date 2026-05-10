@@ -238,6 +238,7 @@ def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
+        "recent_windows": _trace_health_recent_windows(trace_health),
         "claim_boundary": (
             "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
             "not final task outcome or memory truth."
@@ -267,6 +268,22 @@ def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
         "rows": rows,
         "claim_boundary": "Ranked repair queue for trace propagation only; not memory truth or task outcome.",
     }
+
+
+def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_row in _list(trace_health.get("recent_windows")):
+        row = _dict(raw_row)
+        rows.append(
+            {
+                "window": str(row.get("window") or ""),
+                "threshold": str(row.get("threshold") or ""),
+                "row_count": _int(row.get("row_count")),
+                "missing_trace_ref_count": _int(row.get("missing_trace_ref_count")),
+                "missing_trace_ref_ratio": _float(row.get("missing_trace_ref_ratio")),
+            }
+        )
+    return rows
 
 
 def _memory_movement_context(memory_movement_index: dict[str, Any]) -> dict[str, Any]:
@@ -318,6 +335,13 @@ def _int(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _int_mapping(value: object) -> dict[str, int]:
