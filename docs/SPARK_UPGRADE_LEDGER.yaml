@@ -238,9 +238,10 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.ts
       - commit:8e5e3d2
       - commit:12d3759
+      - commit:3deafac
     known_gaps:
       - Telegram now treats Level 4 as sandboxed local access and Level 5 as whole-computer operator mode, matching Spawner workspace and high-agency worker guards.
-      - Builder AOC should get a follow-up pass to label Level 4 as sandboxed and Level 5 as whole-computer instead of only displaying generic local workspace allowed.
+      - Builder AOC now labels Level 4 as `sandboxed workspace allowed`, resolves `full access` to effective Level 5, and exposes `whole_computer_allowed` plus the active access boundary.
       - Docker/SSH/model execution lanes are still recommendation backends to plug into Level 4 setup, not yet a finalized automatic installer path.
     rollback:
       - Map `full access` back to Level 4 only if Level 5 onboarding proves too disruptive; keep high-agency worker guards enabled regardless.
