@@ -164,6 +164,8 @@ def _reconcile_stop_ship_contradictions(*, state_db: StateDB, issues: list[StopS
                     detail=issue.detail,
                     facts={"detail": issue.detail, "issue_name": issue.name},
                     provenance={"source_kind": "stop_ship_registry"},
+                    request_id=contradiction_key,
+                    trace_ref=f"trace:{contradiction_key}",
                 )
             continue
         record_contradiction(
@@ -176,6 +178,8 @@ def _reconcile_stop_ship_contradictions(*, state_db: StateDB, issues: list[StopS
             severity=issue.severity,
             facts={"detail": issue.detail, "issue_name": issue.name},
             provenance={"source_kind": "stop_ship_registry"},
+            request_id=contradiction_key,
+            trace_ref=f"trace:{contradiction_key}",
         )
 
 

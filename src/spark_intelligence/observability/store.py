@@ -1541,6 +1541,8 @@ def record_contradiction(
     severity: str,
     facts: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> str:
     now = utc_now_iso()
     contradiction_id: str
@@ -1631,6 +1633,8 @@ def record_contradiction(
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
+        request_id=request_id,
+        trace_ref=trace_ref,
         reason_code=reason_code,
         severity=severity,
         status="open",
@@ -1669,6 +1673,8 @@ def resolve_contradiction(
     detail: str | None = None,
     facts: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> bool:
     now = utc_now_iso()
     contradiction_id: str | None = None
@@ -1715,6 +1721,8 @@ def resolve_contradiction(
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
+        request_id=request_id,
+        trace_ref=trace_ref,
         reason_code=reason_code,
         severity="low",
         status="resolved",
