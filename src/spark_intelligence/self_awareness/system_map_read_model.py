@@ -64,6 +64,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     trace_health = _trace_health_context(trace_index)
     trace_topology = _trace_topology_context(trace_index)
     cross_system_trace = _cross_system_trace_context(trace_index)
+    authority_status = _authority_status_context(authority_view)
     capability_garden = _capability_garden_context(capability_catalog)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
@@ -75,6 +76,9 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "specialization_path_surfaces": _int(capability_garden.get("specialization_path_surfaces")),
         "capability_cards": _int(capability_garden.get("card_count")),
         "authority_sources": _authority_source_count(authority_view),
+        "authority_toxic_pairs": _int(authority_status.get("toxic_pair_count")),
+        "authority_browser_approval_hooks": _int(authority_status.get("browser_approval_required_hook_count")),
+        "authority_publication_checks": _int(authority_status.get("publication_checks_required")),
         "builder_event_rows": _builder_event_rows(trace_index),
         "builder_event_samples": _builder_event_sample_count(trace_index),
         "builder_trace_groups": _builder_trace_group_count(trace_index),
@@ -100,6 +104,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "trace_health": trace_health,
         "trace_topology": trace_topology,
         "cross_system_trace": cross_system_trace,
+        "authority_status": authority_status,
         "capability_garden": capability_garden,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
         "files": {
@@ -156,6 +161,13 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
     derived_spawner_refs = int(cross_system_trace.get("spawner_prd_derived_trace_ref_count") or 0)
     if derived_spawner_refs:
         parts.append(f"spawner trace refs {derived_spawner_refs}")
+    authority_status = _dict(context.get("authority_status"))
+    if authority_status.get("present"):
+        parts.append(
+            "authority "
+            f"L{int(authority_status.get('default_access_level') or 0)} "
+            f"{authority_status.get('default_sandbox_lane') or 'unknown'}"
+        )
     capability_garden = _dict(context.get("capability_garden"))
     card_count = int(capability_garden.get("card_count") or 0)
     if card_count:
@@ -354,6 +366,53 @@ def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "claim_boundary": (
             "Cross-system trace context is metadata-only join shape. It shows whether traces can be stitched; "
             "it is not action success, permission evidence, or user-message content."
+        ),
+    }
+
+
+def _authority_status_context(authority_view: dict[str, Any]) -> dict[str, Any]:
+    if not authority_view:
+        return {
+            "present": False,
+            "status": "missing",
+            "authority": "observability_non_authoritative",
+            "claim_boundary": "Authority view missing; run spark os compile.",
+        }
+
+    cli_access = _dict(authority_view.get("cli_access"))
+    telegram_policy = _dict(authority_view.get("telegram_access_policy"))
+    spawner_policy = _dict(authority_view.get("spawner_execution_policy"))
+    browser_authority = _dict(authority_view.get("browser_authority"))
+    public_output = _dict(authority_view.get("public_output_authority"))
+    guardrails = _dict(authority_view.get("guardrail_summary"))
+    required_checks = [_short(item) for item in _list(public_output.get("required_publication_checks"))[:8]]
+    return {
+        "present": True,
+        "status": "observed",
+        "schema_version": authority_view.get("schema_version"),
+        "authority": str(authority_view.get("authority") or "observability_non_authoritative"),
+        "default_access_level": _int(authority_view.get("default_access_level_hint")),
+        "default_sandbox_lane": _short(cli_access.get("default_sandbox_lane") or "unknown"),
+        "default_codex_sandbox": _short(cli_access.get("default_codex_sandbox") or "unknown"),
+        "telegram_profile_count": len(_list(telegram_policy.get("profiles"))),
+        "telegram_requirements": [_short(item) for item in _list(telegram_policy.get("requirements"))[:8]],
+        "telegram_allow_matrix": _safe_summary_mapping(telegram_policy.get("allow_matrix")),
+        "spawner_lane_count": len(_list(spawner_policy.get("lane_ids"))),
+        "spawner_run_policies": [_short(item) for item in _list(spawner_policy.get("run_policies"))[:8]],
+        "spawner_confirmation_gated_action_count": _int(
+            guardrails.get("spawner_confirmation_gated_action_count")
+        ),
+        "browser_hook_count": _int(browser_authority.get("hook_count")),
+        "browser_risk_class_counts": _int_mapping(browser_authority.get("risk_class_counts")),
+        "browser_approval_mode_counts": _int_mapping(browser_authority.get("approval_mode_counts")),
+        "browser_approval_required_hook_count": _int(guardrails.get("browser_approval_required_hook_count")),
+        "toxic_pair_count": _int(guardrails.get("toxic_pair_count")),
+        "publication_checks_required": _int(guardrails.get("publication_checks_required")),
+        "required_publication_checks": required_checks,
+        "non_override_rule": _short(public_output.get("non_override_rule"), limit=260),
+        "claim_boundary": (
+            "Authority status is compiled policy evidence only. It does not grant access, approve actions, "
+            "publish capabilities, or override source policy."
         ),
     }
 

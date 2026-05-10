@@ -54,7 +54,9 @@ def build_agent_panel_sections(
     black_box_entries = [_dict(entry) for entry in _list(black_box_payload.get("entries"))]
     stale_counts = _dict(stale_sweep_payload.get("counts"))
     trace_repair = _dict(trace_repair_payload)
-    capability_garden = _dict(_dict(aoc_payload.get("spark_system_map")).get("capability_garden"))
+    spark_system_map = _dict(aoc_payload.get("spark_system_map"))
+    authority_status = _dict(spark_system_map.get("authority_status"))
+    capability_garden = _dict(spark_system_map.get("capability_garden"))
     return AgentPanelSections(
         sections=[
             AgentPanelSection(
@@ -109,6 +111,27 @@ def build_agent_panel_sections(
                     _item("Confirmation required", _yes_no_unknown(access_automation.get("requires_confirmation"))),
                     _item("Auto-run allowed", _yes_no_unknown(access_automation.get("allowed_to_auto_run"))),
                     _item("Boundary", access_automation.get("claim_boundary") or "read-only policy context"),
+                ],
+            ),
+            AgentPanelSection(
+                section_id="authority_status",
+                title="Authority Status",
+                status=_authority_status(authority_status),
+                items=[
+                    _item("Authority", authority_status.get("authority") or "observability_non_authoritative"),
+                    _item("Default access level", int(authority_status.get("default_access_level") or 0)),
+                    _item("Default sandbox lane", authority_status.get("default_sandbox_lane") or "unknown"),
+                    _item("Telegram profiles", int(authority_status.get("telegram_profile_count") or 0)),
+                    _item("Spawner lanes", int(authority_status.get("spawner_lane_count") or 0)),
+                    _item("Browser hooks", int(authority_status.get("browser_hook_count") or 0)),
+                    _item(
+                        "Browser approval-required hooks",
+                        int(authority_status.get("browser_approval_required_hook_count") or 0),
+                    ),
+                    _item("Toxic capability pairs", int(authority_status.get("toxic_pair_count") or 0)),
+                    _item("Publication checks", int(authority_status.get("publication_checks_required") or 0)),
+                    _item("Required publication checks", _list(authority_status.get("required_publication_checks"))),
+                    _item("Boundary", authority_status.get("claim_boundary") or "compiled policy evidence only"),
                 ],
             ),
             AgentPanelSection(
@@ -304,6 +327,16 @@ def _capability_garden_status(capability_garden: dict[str, Any]) -> str:
     if int(capability_garden.get("card_count") or 0):
         return "observed"
     return "empty"
+
+
+def _authority_status(authority_status: dict[str, Any]) -> str:
+    if not authority_status.get("present"):
+        return "missing"
+    if int(authority_status.get("browser_approval_required_hook_count") or 0) or int(
+        authority_status.get("publication_checks_required") or 0
+    ):
+        return "gated"
+    return "observed"
 
 
 def _trace_count(trace_repair_payload: dict[str, Any], key: str) -> int:

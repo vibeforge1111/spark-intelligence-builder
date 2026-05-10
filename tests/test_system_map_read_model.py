@@ -28,6 +28,9 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["specialization_path_surfaces"], 1)
         self.assertEqual(context["counts"]["capability_cards"], 2)
         self.assertEqual(context["counts"]["authority_sources"], 2)
+        self.assertEqual(context["counts"]["authority_toxic_pairs"], 5)
+        self.assertEqual(context["counts"]["authority_browser_approval_hooks"], 5)
+        self.assertEqual(context["counts"]["authority_publication_checks"], 3)
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
         self.assertEqual(context["counts"]["builder_event_samples"], 3)
         self.assertEqual(context["counts"]["builder_trace_groups"], 2)
@@ -58,6 +61,12 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
+        self.assertEqual(context["authority_status"]["default_access_level"], 4)
+        self.assertEqual(context["authority_status"]["default_sandbox_lane"], "spark_workspace")
+        self.assertEqual(context["authority_status"]["telegram_profile_count"], 5)
+        self.assertEqual(context["authority_status"]["spawner_lane_count"], 5)
+        self.assertEqual(context["authority_status"]["browser_approval_required_hook_count"], 5)
+        self.assertEqual(context["authority_status"]["publication_checks_required"], 3)
         self.assertEqual(context["capability_garden"]["card_count"], 2)
         self.assertEqual(context["capability_garden"]["status_counts"]["local-artifacts"], 1)
         self.assertEqual(context["capability_garden"]["cards"][0]["id"], "creator-system:spark-domain-chip-labs")
@@ -90,7 +99,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1, capability cards 2",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1, authority L4 spark_workspace, capability cards 2",
             context.to_text(),
         )
 
@@ -111,9 +120,11 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
-            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3, spawner trace refs 1, capability cards 2",
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3, authority publication checks 3, spawner trace refs 1, capability cards 2",
         )
         self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
+        self.assertEqual(panel["authority_status"]["default_sandbox_lane"], "spark_workspace")
+        self.assertEqual(panel["authority_status"]["browser_approval_required_hook_count"], 5)
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
         self.assertEqual(panel["trace_repair_queue"]["counts"]["orphan_parent_event_id_count"], 1)
         self.assertEqual(panel["trace_repair_queue"]["trace_topology"]["group_count"], 2)
@@ -126,7 +137,14 @@ class SystemMapReadModelTests(SparkTestCase):
             "workflow_recovery",
         )
         self.assertEqual(sections["trace_repair_queue"]["status"], "needs_repair")
+        self.assertEqual(sections["authority_status"]["status"], "gated")
         self.assertEqual(sections["capability_garden"]["status"], "review_needed")
+        self.assertTrue(
+            any(
+                item["label"] == "Default sandbox lane" and item["value"] == "spark_workspace"
+                for item in sections["authority_status"]["items"]
+            )
+        )
         self.assertTrue(
             any(
                 item["label"] == "creator-system:spark-domain-chip-labs"
@@ -174,10 +192,53 @@ class SystemMapReadModelTests(SparkTestCase):
             json.dumps(
                 {
                     "schema_version": "spark.authority_view.compiled.v0",
+                    "authority": "observability_non_authoritative",
+                    "default_access_level_hint": 4,
                     "observed_sources": {
                         "cli_access_policy": {"exists": True},
                         "telegram_access_policy": {"exists": True},
                         "browser_policy": {"exists": False},
+                    },
+                    "cli_access": {
+                        "default_sandbox_lane": "spark_workspace",
+                        "default_codex_sandbox": "workspace-write",
+                    },
+                    "telegram_access_policy": {
+                        "profiles": [
+                            {"profile": "chat", "level": 1},
+                            {"profile": "builder", "level": 2},
+                            {"profile": "agent", "level": 3},
+                            {"profile": "developer", "level": 4},
+                            {"profile": "operator", "level": 5},
+                        ],
+                        "requirements": ["spawner_build", "external_research", "operating_system"],
+                        "allow_matrix": {
+                            "spawner_build": ["builder", "agent", "developer", "operator"],
+                            "operating_system": ["developer", "operator"],
+                        },
+                    },
+                    "spawner_execution_policy": {
+                        "lane_ids": ["spark_workspace", "docker", "ssh", "modal", "level5_operator"],
+                        "run_policies": ["auto_safe", "auto_read_only", "confirm_once", "explicit_opt_in"],
+                    },
+                    "browser_authority": {
+                        "hook_count": 20,
+                        "risk_class_counts": {"read_only": 12, "high_risk_action": 5},
+                        "approval_mode_counts": {"not_required": 15, "ask_once": 4, "operator_only": 1},
+                    },
+                    "public_output_authority": {
+                        "required_publication_checks": [
+                            "spark-insight-schema",
+                            "spark-insight-secrets",
+                            "spark-insight-policy",
+                        ],
+                        "non_override_rule": "Local artifacts do not grant publication authority.",
+                    },
+                    "guardrail_summary": {
+                        "toxic_pair_count": 5,
+                        "spawner_confirmation_gated_action_count": 3,
+                        "browser_approval_required_hook_count": 5,
+                        "publication_checks_required": 3,
                     },
                 }
             ),

@@ -32,6 +32,7 @@ class AgentOperatingPanel:
     source_ledger: AgentSourceLedger
     sections: AgentPanelSections
     trace_repair_queue: dict[str, Any]
+    authority_status: dict[str, Any]
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
     stale_context_sweep: StaleContextSweepReport
@@ -45,6 +46,7 @@ class AgentOperatingPanel:
             "source_ledger": self.source_ledger.to_payload(),
             "sections": self.sections.to_payload(),
             "trace_repair_queue": dict(self.trace_repair_queue),
+            "authority_status": dict(self.authority_status),
             "black_box": self.black_box.to_payload(),
             "memory_approval_inbox": self.memory_approval_inbox.to_payload(),
             "stale_context_sweep": self.stale_context_sweep.to_payload(),
@@ -62,6 +64,7 @@ class AgentOperatingPanel:
         stale_counts = payload["stale_context_sweep"]["counts"]
         source_counts = payload["source_ledger"]["counts"]
         trace_repair_queue = payload["trace_repair_queue"]
+        authority_status = payload["authority_status"]
         scratchpad = payload["agent_scratchpad"]
         capability_garden = _dict(_dict(aoc.get("spark_system_map")).get("capability_garden"))
         lines = [
@@ -77,6 +80,7 @@ class AgentOperatingPanel:
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
             _trace_repair_text(trace_repair_queue),
+            _authority_status_text(authority_status),
             _capability_garden_text(capability_garden),
             f"Black box events: {black_box_counts.get('entries', 0)}",
             f"Memory approvals pending: {memory_counts.get('pending', 0)}",
@@ -131,6 +135,7 @@ def build_agent_operating_panel(
         )
     aoc_payload = aoc.to_payload()
     trace_repair_queue = _build_trace_repair_queue(aoc_payload)
+    authority_status = _dict(_dict(aoc_payload.get("spark_system_map")).get("authority_status"))
     strip = build_agent_operating_strip(aoc_payload)
     scratchpad = build_agent_scratchpad(aoc_payload)
     spawner_black_box_entries = read_configured_spawner_black_box_entries(
@@ -168,6 +173,7 @@ def build_agent_operating_panel(
         source_ledger=source_ledger,
         sections=sections,
         trace_repair_queue=trace_repair_queue,
+        authority_status=authority_status,
         black_box=black_box,
         memory_approval_inbox=memory_inbox,
         stale_context_sweep=stale_sweep,
@@ -346,6 +352,20 @@ def _capability_garden_text(capability_garden: dict[str, Any]) -> str:
         f"local artifacts={int(status_counts.get('local-artifacts') or 0)}, "
         f"schema-shaped={int(status_counts.get('schema-shaped') or 0)}, "
         f"seen={int(status_counts.get('seen') or 0)}"
+    )
+
+
+def _authority_status_text(authority_status: dict[str, Any]) -> str:
+    if not authority_status.get("present"):
+        return "Authority status: missing; run spark os compile"
+    return (
+        "Authority status: "
+        f"L{int(authority_status.get('default_access_level') or 0)} "
+        f"{authority_status.get('default_sandbox_lane') or 'unknown'}, "
+        f"Telegram profiles={int(authority_status.get('telegram_profile_count') or 0)}, "
+        f"Spawner lanes={int(authority_status.get('spawner_lane_count') or 0)}, "
+        f"browser approvals={int(authority_status.get('browser_approval_required_hook_count') or 0)}, "
+        f"publication checks={int(authority_status.get('publication_checks_required') or 0)}"
     )
 
 
