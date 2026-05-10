@@ -30,6 +30,11 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["builder_trace_groups"], 2)
         self.assertEqual(context["counts"]["builder_trace_topology_groups"], 2)
         self.assertEqual(context["counts"]["trace_health_flags"], 3)
+        self.assertEqual(context["counts"]["spawner_prd_request_ids"], 2)
+        self.assertEqual(context["counts"]["spawner_prd_derived_trace_refs"], 1)
+        self.assertEqual(context["counts"]["spawner_builder_trace_ref_overlaps"], 1)
+        self.assertEqual(context["cross_system_trace"]["spawner_trace_contract_status"], "derived_available")
+        self.assertEqual(context["cross_system_trace"]["telegram_final_answer_trace_join_status"], "join_key_present")
         self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
         self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
         self.assertEqual(context["trace_health"]["orphan_parent_event_id_count"], 1)
@@ -77,7 +82,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1",
             context.to_text(),
         )
 
@@ -98,7 +103,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
-            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3",
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3, spawner trace refs 1",
         )
         self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
@@ -278,6 +283,28 @@ class SystemMapReadModelTests(SparkTestCase):
                                 "missing_trace_ref_ratio": 0.25,
                             }
                         ],
+                    },
+                    "spawner_prd_auto_trace_samples": {
+                        "join_keys": {
+                            "request_id_count": 2,
+                            "mission_id_count": 1,
+                            "trace_ref_count": 0,
+                            "derived_trace_ref_count": 1,
+                        },
+                        "derived_trace_contract": {
+                            "scheme": "trace:spawner-prd:<missionId>",
+                            "source": "missionId",
+                            "status": "derived_available",
+                        },
+                        "builder_request_overlap": {"matched_builder_request_id_count": 0},
+                        "builder_trace_ref_overlap": {"matched_builder_trace_ref_count": 1},
+                    },
+                    "telegram_final_answer_gate_samples": {
+                        "trace_join": {
+                            "request_id_field_present": True,
+                            "trace_ref_field_present": True,
+                            "status": "join_key_present",
+                        }
                     },
                 }
             ),

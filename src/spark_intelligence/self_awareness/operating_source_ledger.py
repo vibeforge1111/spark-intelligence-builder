@@ -162,6 +162,9 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     trace_health_flags = int(counts.get("trace_health_flags") or 0)
     if trace_health_flags:
         summary += f", trace health flags {trace_health_flags}"
+    spawner_trace_refs = int(counts.get("spawner_prd_derived_trace_refs") or 0)
+    if spawner_trace_refs:
+        summary += f", spawner trace refs {spawner_trace_refs}"
     return summary
 
 

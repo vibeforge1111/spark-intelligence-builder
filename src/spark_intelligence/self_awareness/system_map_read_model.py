@@ -63,6 +63,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     memory_movement = _memory_movement_context(memory_movement_index)
     trace_health = _trace_health_context(trace_index)
     trace_topology = _trace_topology_context(trace_index)
+    cross_system_trace = _cross_system_trace_context(trace_index)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
         "repos": len(_list(system_map.get("discovered_repos"))),
@@ -75,6 +76,9 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "builder_trace_groups": _builder_trace_group_count(trace_index),
         "builder_trace_topology_groups": _int(trace_topology.get("group_count")),
         "trace_health_flags": len(_list(trace_health.get("health_flags"))),
+        "spawner_prd_request_ids": _int(cross_system_trace.get("spawner_prd_request_id_count")),
+        "spawner_prd_derived_trace_refs": _int(cross_system_trace.get("spawner_prd_derived_trace_ref_count")),
+        "spawner_builder_trace_ref_overlaps": _int(cross_system_trace.get("spawner_builder_trace_ref_overlap_count")),
         "memory_movement_rows": memory_movement.get("row_count"),
         "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
     }
@@ -91,6 +95,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "memory_movement": memory_movement,
         "trace_health": trace_health,
         "trace_topology": trace_topology,
+        "cross_system_trace": cross_system_trace,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
         "files": {
             name: {
@@ -142,6 +147,10 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
     trace_topology = _dict(context.get("trace_topology"))
     if trace_topology.get("present"):
         parts.append(f"trace topology {int(trace_topology.get('group_count') or 0)} groups")
+    cross_system_trace = _dict(context.get("cross_system_trace"))
+    derived_spawner_refs = int(cross_system_trace.get("spawner_prd_derived_trace_ref_count") or 0)
+    if derived_spawner_refs:
+        parts.append(f"spawner trace refs {derived_spawner_refs}")
     return ", ".join(parts)
 
 
@@ -307,6 +316,35 @@ def _trace_topology_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "claim_boundary": (
             "Trace topology is a redacted event graph projection. It can guide repair and debugging; "
             "it is not event body evidence, memory truth, or proof of task success."
+        ),
+    }
+
+
+def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
+    spawner = _dict(trace_index.get("spawner_prd_auto_trace_samples"))
+    spawner_join = _dict(spawner.get("join_keys"))
+    spawner_derived = _dict(spawner.get("derived_trace_contract"))
+    spawner_request_overlap = _dict(spawner.get("builder_request_overlap"))
+    spawner_trace_overlap = _dict(spawner.get("builder_trace_ref_overlap"))
+    telegram_final_gate = _dict(trace_index.get("telegram_final_answer_gate_samples"))
+    telegram_join = _dict(telegram_final_gate.get("trace_join"))
+    return {
+        "present": bool(spawner or telegram_final_gate),
+        "spawner_prd_request_id_count": _int(spawner_join.get("request_id_count")),
+        "spawner_prd_mission_id_count": _int(spawner_join.get("mission_id_count")),
+        "spawner_prd_trace_ref_count": _int(spawner_join.get("trace_ref_count")),
+        "spawner_prd_derived_trace_ref_count": _int(spawner_join.get("derived_trace_ref_count")),
+        "spawner_trace_contract_status": str(spawner_derived.get("status") or "unknown"),
+        "spawner_builder_request_overlap_count": _int(
+            spawner_request_overlap.get("matched_builder_request_id_count")
+        ),
+        "spawner_builder_trace_ref_overlap_count": _int(
+            spawner_trace_overlap.get("matched_builder_trace_ref_count")
+        ),
+        "telegram_final_answer_trace_join_status": str(telegram_join.get("status") or "unknown"),
+        "claim_boundary": (
+            "Cross-system trace context is metadata-only join shape. It shows whether traces can be stitched; "
+            "it is not action success, permission evidence, or user-message content."
         ),
     }
 
