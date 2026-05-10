@@ -201,13 +201,19 @@ entries:
       - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationFrame.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationFrame.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/buildE2E.test.ts
       - commit:2b40c82
       - commit:c6c4c60
+      - commit:12d3759
+      - test:npm test -- --runInBand
     known_gaps:
-      - This covers the witnessed access/build keyword and Level 4/read-only mismatch cases; other deterministic route families still need continued transcript replay.
-      - Access level 4 is now described as authorization plus runner preflight, but a read-only remote runner still cannot be made writable without relaunching/rerouting the execution environment.
+      - Bare `build`, `workspace`, and `full` no longer mutate access; explicit phrases such as `build when asked`, `workspace access`, and `full access` still work.
+      - Generic game/product `level 3/4/5` language no longer becomes access focus unless recent context was explicitly access-focused.
+      - Access level 4 is now described as authorization plus runner preflight; read-only local-build enqueue is blocked before PRD bridge dispatch.
       - A future AOC strip should show configured access, current runner, writable route, and proof requirement on every action proposal, not only access queries.
     rollback:
       - Remove the access capability mismatch detector and revert `/access` replies to profile-only confirmations if preflight checks become noisy.
@@ -227,9 +233,11 @@ entries:
       - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationFrame.test.ts
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/spark-run-workspace.ts
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.ts
       - commit:8e5e3d2
+      - commit:12d3759
     known_gaps:
       - Telegram now treats Level 4 as sandboxed local access and Level 5 as whole-computer operator mode, matching Spawner workspace and high-agency worker guards.
       - Builder AOC should get a follow-up pass to label Level 4 as sandboxed and Level 5 as whole-computer instead of only displaying generic local workspace allowed.
@@ -254,24 +262,53 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
       - commit:63d44c5
       - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/access.py
+      - C:/Users/USER/Desktop/spark-cli/src/spark_cli/security/approval.py
       - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/docker.py
       - C:/Users/USER/Desktop/spark-cli/tests/test_access.py
+      - C:/Users/USER/Desktop/spark-cli/tests/test_cli.py
       - commit:294cb19
       - commit:1eb6efb
+      - commit:5f56dac
       - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
       - commit:5fb12cc
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
       - test:python -m pytest tests/test_access.py -q
+      - test:python -m pytest tests/test_access.py tests/test_cli.py -q
       - test:npm test -- --runTestsByPath tests/accessPolicy.test.ts
     known_gaps:
       - The recommender is coded, tested, exposed as a Spawner API, mirrored by `spark access setup/status`, and referenced by Telegram Level 4 guidance; it is not yet wired into Mission Control UI.
-      - Level 4 defaults to the Spark workspace sandbox on macOS, Windows, and Linux; Docker, SSH, and Modal are lanes selected only when useful and available.
-      - Level 5 whole-computer operator mode remains blocked unless high-agency worker guardrails are explicitly enabled.
+      - Level 4 now creates and probes the Spark workspace sandbox before claiming writability on macOS, Windows, and Linux.
+      - Level 5 whole-computer operator mode remains blocked unless `spark access setup --level 5 --enable-high-agency` writes auditable guardrails, followed by restart.
       - Docker now has a non-mutating CLI doctor; SSH and Modal already have doctor/smoke surfaces. Full one-click dependency installers still need OS-specific implementation and onboarding copy.
     rollback:
       - Keep the existing Spark workspace and high-agency worker guards; stop consuming the lane recommender until CLI/onboarding integration is ready.
+
+  - id: spawner-execution-boundary-hardening-v1
+    module: spawner-ui
+    feature: Spawner execution sandbox and verification path hardening
+    status: verified
+    routes_affected:
+      - spawner:spark-harness-codex
+      - spawner:/api/verify
+      - spawner:/api/scan
+      - spawner:high-agency-workers
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/provider-clients/spark-harness-client.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/provider-clients/spark-harness-client.test.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.test.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.test.ts
+      - commit:8087840
+      - test:npx vitest run src/lib/server/command-runner.test.ts src/lib/server/high-agency-workers.test.ts src/lib/server/provider-clients/spark-harness-client.test.ts
+    known_gaps:
+      - "`workspace-write` is now the default Codex sandbox sent to the Spark harness; `danger-full-access` requires `SPARK_ALLOW_HIGH_AGENCY_WORKERS=1`."
+      - "`/api/verify` and `/api/scan` now use workspace-root path validation by default and fixed command argv with `shell: false`."
+      - "External project paths still require explicit trusted-local `SPARK_ALLOW_EXTERNAL_PROJECT_PATHS=1`; UI onboarding should surface this as an operator choice, not a terminal puzzle."
+    rollback:
+      - Revert the Spark harness sandbox resolver and command-runner path validation if existing local dev flows need a temporary compatibility window.
 
   - id: voice-runtime-activation-v1
     module: spark-intelligence-builder
