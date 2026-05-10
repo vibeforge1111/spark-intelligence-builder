@@ -55,6 +55,38 @@ entries:
     rollback:
       - Re-enable the generic diagnostic renderer for chat-context Builder failures.
 
+  - id: telegram-failure-mode-reply-suppression-v1
+    module: spark-telegram-bot
+    feature: Suppress stale failure-mode replies before final chat delivery
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - builder:plain-chat-reply
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+    known_gaps:
+      - This catches known hijack shapes; a fuller final-answer gate should produce explicit answered_latest_intent verdicts.
+      - The fallback answer should eventually be generated in the same turn when safe local chat is available.
+    rollback:
+      - Remove the diagnostic-wall and self-critic menu patterns from low-information reply suppression.
+
+  - id: telegram-memory-source-labels-v1
+    module: spark-telegram-bot
+    feature: Source-labeled retrieved memory for plain chat context
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - builder:cold-memory-context
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/builderBridge.test.ts
+    known_gaps:
+      - User-facing "memory in play" display still needs UI or AOC exposure.
+      - Confidence and current-chat override are prompt-visible but not yet stored as first-class telemetry.
+    rollback:
+      - Render retrieved memory lines without metadata brackets.
+
   - id: mission-provider-evidence-v1
     module: spawner-ui
     feature: Mission completion display respects live provider state
@@ -91,4 +123,3 @@ entries:
       - Dashboard should distinguish chip attached, provider selected, key present, voice selected, and last test.
     rollback:
       - Keep `/voice` in text-only setup guidance mode until chip attachment and provider checks pass.
-
