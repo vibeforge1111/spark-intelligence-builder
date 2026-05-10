@@ -64,12 +64,16 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     trace_health = _trace_health_context(trace_index)
     trace_topology = _trace_topology_context(trace_index)
     cross_system_trace = _cross_system_trace_context(trace_index)
+    capability_garden = _capability_garden_context(capability_catalog)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
         "repos": len(_list(system_map.get("discovered_repos"))),
         "gaps": len(_list(system_map.get("gaps"))),
         "chip_manifests": len(_list(capability_catalog.get("chip_manifests"))),
         "skill_graphs": len(_list(capability_catalog.get("skill_graphs"))),
+        "creator_system_surfaces": _int(capability_garden.get("creator_system_surfaces")),
+        "specialization_path_surfaces": _int(capability_garden.get("specialization_path_surfaces")),
+        "capability_cards": _int(capability_garden.get("card_count")),
         "authority_sources": _authority_source_count(authority_view),
         "builder_event_rows": _builder_event_rows(trace_index),
         "builder_event_samples": _builder_event_sample_count(trace_index),
@@ -96,6 +100,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "trace_health": trace_health,
         "trace_topology": trace_topology,
         "cross_system_trace": cross_system_trace,
+        "capability_garden": capability_garden,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
         "files": {
             name: {
@@ -151,6 +156,10 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
     derived_spawner_refs = int(cross_system_trace.get("spawner_prd_derived_trace_ref_count") or 0)
     if derived_spawner_refs:
         parts.append(f"spawner trace refs {derived_spawner_refs}")
+    capability_garden = _dict(context.get("capability_garden"))
+    card_count = int(capability_garden.get("card_count") or 0)
+    if card_count:
+        parts.append(f"capability cards {card_count}")
     return ", ".join(parts)
 
 
@@ -349,6 +358,51 @@ def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _capability_garden_context(capability_catalog: dict[str, Any]) -> dict[str, Any]:
+    raw_cards = [_dict(card) for card in _list(capability_catalog.get("capability_cards"))]
+    status_counts: dict[str, int] = {}
+    surface_counts: dict[str, int] = {}
+    cards: list[dict[str, Any]] = []
+    for card in raw_cards[:12]:
+        status = _short(card.get("status") or "unknown")
+        surface = _short(card.get("surface_type") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        surface_counts[surface] = surface_counts.get(surface, 0) + 1
+        cards.append(
+            {
+                "id": _short(card.get("id")),
+                "name": _short(card.get("name")),
+                "owner_repo": _short(card.get("owner_repo")),
+                "surface_type": surface,
+                "status": status,
+                "requested_authority": [_short(item) for item in _list(card.get("requested_authority"))[:8]],
+                "memory_policy": _short(card.get("memory_policy")),
+                "evidence_summary": _safe_summary_mapping(card.get("evidence_summary")),
+                "benchmark_summary": _safe_summary_mapping(card.get("benchmark_summary")),
+                "review_summary": _safe_summary_mapping(card.get("review_summary")),
+                "blockers": [_short(item) for item in _list(card.get("blockers"))[:5]],
+                "next_action": _short(card.get("next_action"), limit=240),
+                "privacy_boundary": _short(card.get("privacy_boundary"), limit=240),
+                "public_boundary": _short(card.get("public_boundary"), limit=240),
+            }
+        )
+
+    return {
+        "present": bool(capability_catalog),
+        "creator_system_surfaces": len(_list(capability_catalog.get("creator_system_surfaces"))),
+        "specialization_path_surfaces": len(_list(capability_catalog.get("specialization_path_surfaces"))),
+        "card_count": len(raw_cards),
+        "projected_card_count": len(cards),
+        "status_counts": dict(sorted(status_counts.items())),
+        "surface_counts": dict(sorted(surface_counts.items())),
+        "cards": cards,
+        "claim_boundary": (
+            "Capability garden is a metadata-only projection. A card shows observed surfaces and blockers; "
+            "it does not grant trust, memory authority, tool authority, or publication approval."
+        ),
+    }
+
+
 def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
     sources = _dict(trace_health.get("missing_trace_ref_sources"))
     rows: list[dict[str, Any]] = []
@@ -475,3 +529,27 @@ def _int_mapping(value: object) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
     return {str(key): _int(item) for key, item in value.items()}
+
+
+def _safe_summary_mapping(value: object, *, depth: int = 0) -> dict[str, Any]:
+    if depth > 3 or not isinstance(value, dict):
+        return {}
+    output: dict[str, Any] = {}
+    for key, item in list(value.items())[:40]:
+        clean_key = _short(key, limit=80)
+        if isinstance(item, dict):
+            output[clean_key] = _safe_summary_mapping(item, depth=depth + 1)
+        elif isinstance(item, list):
+            output[clean_key] = [_short(entry, limit=120) for entry in item[:20]]
+        elif isinstance(item, (bool, int, float)) or item is None:
+            output[clean_key] = item
+        else:
+            output[clean_key] = _short(item)
+    return output
+
+
+def _short(value: object, *, limit: int = 160) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."

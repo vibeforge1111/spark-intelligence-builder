@@ -165,6 +165,9 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     spawner_trace_refs = int(counts.get("spawner_prd_derived_trace_refs") or 0)
     if spawner_trace_refs:
         summary += f", spawner trace refs {spawner_trace_refs}"
+    capability_cards = int(counts.get("capability_cards") or 0)
+    if capability_cards:
+        summary += f", capability cards {capability_cards}"
     return summary
 
 

@@ -63,6 +63,7 @@ class AgentOperatingPanel:
         source_counts = payload["source_ledger"]["counts"]
         trace_repair_queue = payload["trace_repair_queue"]
         scratchpad = payload["agent_scratchpad"]
+        capability_garden = _dict(_dict(aoc.get("spark_system_map")).get("capability_garden"))
         lines = [
             "Agent Operating Panel",
             self.strip.to_text(),
@@ -76,6 +77,7 @@ class AgentOperatingPanel:
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
             _trace_repair_text(trace_repair_queue),
+            _capability_garden_text(capability_garden),
             f"Black box events: {black_box_counts.get('entries', 0)}",
             f"Memory approvals pending: {memory_counts.get('pending', 0)}",
             f"Stale context: {stale_counts.get('stale', 0)} stale, {stale_counts.get('contradicted', 0)} contradicted",
@@ -331,6 +333,19 @@ def _trace_repair_text(trace_repair_queue: dict[str, Any]) -> str:
         f"high severity={int(counts.get('high_severity_open_count') or 0)}, "
         f"orphan parents={int(counts.get('orphan_parent_event_id_count') or 0)}"
         f"{top_text}{window_text}"
+    )
+
+
+def _capability_garden_text(capability_garden: dict[str, Any]) -> str:
+    if not capability_garden.get("present"):
+        return "Capability garden: missing; run spark os compile"
+    status_counts = _dict(capability_garden.get("status_counts"))
+    return (
+        "Capability garden: "
+        f"{int(capability_garden.get('card_count') or 0)} cards, "
+        f"local artifacts={int(status_counts.get('local-artifacts') or 0)}, "
+        f"schema-shaped={int(status_counts.get('schema-shaped') or 0)}, "
+        f"seen={int(status_counts.get('seen') or 0)}"
     )
 
 

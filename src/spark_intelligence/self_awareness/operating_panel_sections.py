@@ -54,6 +54,7 @@ def build_agent_panel_sections(
     black_box_entries = [_dict(entry) for entry in _list(black_box_payload.get("entries"))]
     stale_counts = _dict(stale_sweep_payload.get("counts"))
     trace_repair = _dict(trace_repair_payload)
+    capability_garden = _dict(_dict(aoc_payload.get("spark_system_map")).get("capability_garden"))
     return AgentPanelSections(
         sections=[
             AgentPanelSection(
@@ -175,6 +176,32 @@ def build_agent_panel_sections(
                 ],
             ),
             AgentPanelSection(
+                section_id="capability_garden",
+                title="Capability Garden",
+                status=_capability_garden_status(capability_garden),
+                items=[
+                    _item("Authority", "observability_non_authoritative"),
+                    _item("Capability cards", int(capability_garden.get("card_count") or 0)),
+                    _item("Creator system surfaces", int(capability_garden.get("creator_system_surfaces") or 0)),
+                    _item("Specialization path surfaces", int(capability_garden.get("specialization_path_surfaces") or 0)),
+                    _item("Statuses", _dict(capability_garden.get("status_counts"))),
+                    *[
+                        _item(
+                            str(card.get("id") or card.get("name") or "capability"),
+                            {
+                                "status": card.get("status") or "unknown",
+                                "surface_type": card.get("surface_type") or "unknown",
+                                "owner_repo": card.get("owner_repo") or "unknown",
+                                "blocker_count": len(_list(card.get("blockers"))),
+                                "next_action": card.get("next_action") or "",
+                            },
+                        )
+                        for card in [_dict(item) for item in _list(capability_garden.get("cards"))[:5]]
+                    ],
+                    _item("Boundary", capability_garden.get("claim_boundary") or "metadata-only capability projection"),
+                ],
+            ),
+            AgentPanelSection(
                 section_id="black_box_recorder",
                 title="Black Box Recorder",
                 status="present" if int(black_box_counts.get("entries") or 0) else "clear",
@@ -266,6 +293,17 @@ def _source_section_status(source_ledger_payload: dict[str, Any]) -> str:
     if int(counts.get("stale") or 0):
         return "stale"
     return "fresh"
+
+
+def _capability_garden_status(capability_garden: dict[str, Any]) -> str:
+    if not capability_garden.get("present"):
+        return "missing"
+    status_counts = _dict(capability_garden.get("status_counts"))
+    if int(status_counts.get("local-artifacts") or 0):
+        return "review_needed"
+    if int(capability_garden.get("card_count") or 0):
+        return "observed"
+    return "empty"
 
 
 def _trace_count(trace_repair_payload: dict[str, Any], key: str) -> int:

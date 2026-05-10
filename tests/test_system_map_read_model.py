@@ -24,6 +24,9 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["gaps"], 1)
         self.assertEqual(context["counts"]["chip_manifests"], 2)
         self.assertEqual(context["counts"]["skill_graphs"], 1)
+        self.assertEqual(context["counts"]["creator_system_surfaces"], 1)
+        self.assertEqual(context["counts"]["specialization_path_surfaces"], 1)
+        self.assertEqual(context["counts"]["capability_cards"], 2)
         self.assertEqual(context["counts"]["authority_sources"], 2)
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
         self.assertEqual(context["counts"]["builder_event_samples"], 3)
@@ -55,9 +58,14 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
+        self.assertEqual(context["capability_garden"]["card_count"], 2)
+        self.assertEqual(context["capability_garden"]["status_counts"]["local-artifacts"], 1)
+        self.assertEqual(context["capability_garden"]["cards"][0]["id"], "creator-system:spark-domain-chip-labs")
+        self.assertIn("Network publication approval", context["capability_garden"]["cards"][0]["blockers"][0])
         self.assertEqual(context["output_dir"], str(system_map_dir))
         self.assertNotIn("telegram.bot_token", encoded)
         self.assertNotIn("telegram.bot_token=secret", encoded)
+        self.assertNotIn("secret command", encoded)
 
     def test_aoc_includes_system_map_as_read_only_source(self) -> None:
         self._write_compiled_system_map()
@@ -82,7 +90,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1, capability cards 2",
             context.to_text(),
         )
 
@@ -103,7 +111,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
-            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3, spawner trace refs 1",
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3, spawner trace refs 1, capability cards 2",
         )
         self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
@@ -118,6 +126,13 @@ class SystemMapReadModelTests(SparkTestCase):
             "workflow_recovery",
         )
         self.assertEqual(sections["trace_repair_queue"]["status"], "needs_repair")
+        self.assertEqual(sections["capability_garden"]["status"], "review_needed")
+        self.assertTrue(
+            any(
+                item["label"] == "creator-system:spark-domain-chip-labs"
+                for item in sections["capability_garden"]["items"]
+            )
+        )
         self.assertTrue(
             any(
                 item["label"] == "memory_orchestrator/memory_read_requested"
@@ -174,6 +189,42 @@ class SystemMapReadModelTests(SparkTestCase):
                     "schema_version": "spark.capability_catalog.compiled.v0",
                     "chip_manifests": [{"chip_name": "memory"}, {"chip_name": "browser"}],
                     "skill_graphs": [{"repo": "spark-skill-graphs"}],
+                    "creator_system_surfaces": [{"repo": "spark-domain-chip-labs"}],
+                    "specialization_path_surfaces": [{"repo": "spark-swarm"}],
+                    "capability_cards": [
+                        {
+                            "schema_version": "spark.capability_card.v1",
+                            "id": "creator-system:spark-domain-chip-labs",
+                            "name": "Spark Domain Chip Labs",
+                            "unknown_future_field": "secret command should stay out",
+                            "owner_repo": "spark-domain-chip-labs",
+                            "surface_type": "creator-system",
+                            "status": "local-artifacts",
+                            "requested_authority": ["local_files_read", "review_only"],
+                            "memory_policy": "non_authoritative_evidence_only",
+                            "evidence_summary": {"schema_count": 56, "creator_run_count": 1},
+                            "benchmark_summary": {"benchmark_manifest_count": 1},
+                            "review_summary": {"review_source_count": 4},
+                            "blockers": ["Network publication approval is not compiled into the card yet."],
+                            "next_action": "Normalize review verdicts.",
+                            "privacy_boundary": "Raw packet bodies are not exported.",
+                            "public_boundary": "Network publication is blocked.",
+                        },
+                        {
+                            "schema_version": "spark.capability_card.v1",
+                            "id": "specialization-path:spark-swarm",
+                            "owner_repo": "spark-swarm",
+                            "surface_type": "specialization-path",
+                            "status": "schema-shaped",
+                            "requested_authority": ["local_files_read", "review_only"],
+                            "memory_policy": "selective_or_surface_defined",
+                            "evidence_summary": {"configured_path_count": 5, "schema_count": 6},
+                            "benchmark_summary": {"benchmark_adapter_counts": {"startup-bench": 2}},
+                            "review_summary": {"publication_governance_source_count": 7},
+                            "blockers": ["Publication approval verdict is not compiled into the card yet."],
+                            "next_action": "Normalize benchmark verdicts.",
+                        },
+                    ],
                 }
             ),
             encoding="utf-8",
