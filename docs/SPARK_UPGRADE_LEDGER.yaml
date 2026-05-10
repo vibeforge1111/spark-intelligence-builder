@@ -136,8 +136,11 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/lib/types/mission-control.ts
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.test.ts
       - commit:9e4b4fe
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/components/MissionBoard.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/services/mission-board-cards.ts
+      - commit:4923b5c
     known_gaps:
-      - The evidence bundle is exposed by board enrichment but not yet rendered prominently in every Mission Control UI card.
+      - The evidence bundle renders on Mission Board cards; mission detail, trace drilldown, and Telegram mission-status replies still need the same proof summary.
       - Artifact/log presence is summarized from provider metadata; dedicated log/artifact proof fields should be added when provider runtime emits them uniformly.
       - Long-running mission stall detection still needs a timeout policy and UI state.
     rollback:
