@@ -21,6 +21,7 @@ from spark_intelligence.state.db import StateDB
 
 
 AGENT_OPERATING_PANEL_SCHEMA_VERSION = "spark.agent_operating_panel.v1"
+TRACE_REPAIR_QUEUE_SCHEMA_VERSION = "spark.trace_repair_queue.v1"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class AgentOperatingPanel:
     agent_scratchpad: AgentScratchpad
     source_ledger: AgentSourceLedger
     sections: AgentPanelSections
+    trace_repair_queue: dict[str, Any]
     black_box: AgentBlackBoxReport
     memory_approval_inbox: MemoryApprovalInboxReport
     stale_context_sweep: StaleContextSweepReport
@@ -42,6 +44,7 @@ class AgentOperatingPanel:
             "agent_scratchpad": self.agent_scratchpad.to_payload(),
             "source_ledger": self.source_ledger.to_payload(),
             "sections": self.sections.to_payload(),
+            "trace_repair_queue": dict(self.trace_repair_queue),
             "black_box": self.black_box.to_payload(),
             "memory_approval_inbox": self.memory_approval_inbox.to_payload(),
             "stale_context_sweep": self.stale_context_sweep.to_payload(),
@@ -58,6 +61,7 @@ class AgentOperatingPanel:
         black_box_counts = payload["black_box"]["counts"]
         stale_counts = payload["stale_context_sweep"]["counts"]
         source_counts = payload["source_ledger"]["counts"]
+        trace_repair_queue = payload["trace_repair_queue"]
         scratchpad = payload["agent_scratchpad"]
         lines = [
             "Agent Operating Panel",
@@ -71,6 +75,7 @@ class AgentOperatingPanel:
             f"Current goal: {scratchpad.get('current_goal') or 'unknown'}",
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
+            _trace_repair_text(trace_repair_queue),
             f"Black box events: {black_box_counts.get('entries', 0)}",
             f"Memory approvals pending: {memory_counts.get('pending', 0)}",
             f"Stale context: {stale_counts.get('stale', 0)} stale, {stale_counts.get('contradicted', 0)} contradicted",
@@ -123,6 +128,7 @@ def build_agent_operating_panel(
             )
         )
     aoc_payload = aoc.to_payload()
+    trace_repair_queue = _build_trace_repair_queue(aoc_payload)
     strip = build_agent_operating_strip(aoc_payload)
     scratchpad = build_agent_scratchpad(aoc_payload)
     spawner_black_box_entries = read_configured_spawner_black_box_entries(
@@ -151,6 +157,7 @@ def build_agent_operating_panel(
         black_box_payload=black_box.to_payload(),
         source_ledger_payload=source_ledger.to_payload(),
         stale_sweep_payload=stale_sweep.to_payload(),
+        trace_repair_payload=trace_repair_queue,
     )
     return AgentOperatingPanel(
         aoc=aoc,
@@ -158,6 +165,7 @@ def build_agent_operating_panel(
         agent_scratchpad=scratchpad,
         source_ledger=source_ledger,
         sections=sections,
+        trace_repair_queue=trace_repair_queue,
         black_box=black_box,
         memory_approval_inbox=memory_inbox,
         stale_context_sweep=stale_sweep,
@@ -188,3 +196,145 @@ def _optional_bool_text(value: object) -> str:
     if value is False:
         return "no"
     return "unknown"
+
+
+def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
+    spark_system_map = _dict(aoc_payload.get("spark_system_map"))
+    trace_health = _dict(spark_system_map.get("trace_health"))
+    missing_sources = _dict(trace_health.get("missing_trace_ref_sources"))
+    rows = [_dict(row) for row in _list(missing_sources.get("rows"))[:5]]
+    recent_windows = [_dict(row) for row in _list(trace_health.get("recent_windows"))[:3]]
+    health_flags = [str(flag) for flag in _list(trace_health.get("health_flags")) if str(flag or "").strip()]
+    counts = {
+        "health_flags": len(health_flags),
+        "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
+        "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+        "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
+        "trace_group_count": _int(trace_health.get("trace_group_count")),
+        "top_missing_source_count": len(rows),
+    }
+    present = bool(spark_system_map.get("present")) and bool(trace_health.get("present"))
+    status = _trace_repair_status(present=present, counts=counts)
+    return {
+        "schema_version": TRACE_REPAIR_QUEUE_SCHEMA_VERSION,
+        "present": present,
+        "status": status,
+        "authority": "observability_non_authoritative",
+        "source": "spark_os_system_map.trace_health",
+        "source_ref": spark_system_map.get("source_ref") or "spark os compile",
+        "health_flags": health_flags,
+        "counts": counts,
+        "top_missing_trace_ref_sources": rows,
+        "recent_windows": recent_windows,
+        "next_actions": _trace_repair_next_actions(
+            present=present,
+            counts=counts,
+            top_sources=rows,
+            recent_windows=recent_windows,
+        ),
+        "claim_boundary": (
+            "Trace repair queue is black-box observability guidance. It ranks trace propagation gaps only; "
+            "it is not task outcome, memory truth, or permission evidence."
+        ),
+    }
+
+
+def _trace_repair_status(*, present: bool, counts: dict[str, int]) -> str:
+    if not present:
+        return "missing"
+    if (
+        int(counts.get("missing_trace_ref_count") or 0)
+        or int(counts.get("high_severity_open_count") or 0)
+        or int(counts.get("orphan_parent_event_id_count") or 0)
+    ):
+        return "needs_repair"
+    return "healthy"
+
+
+def _trace_repair_next_actions(
+    *,
+    present: bool,
+    counts: dict[str, int],
+    top_sources: list[dict[str, Any]],
+    recent_windows: list[dict[str, Any]],
+) -> list[str]:
+    if not present:
+        return ["Run `spark os compile` before using trace health as operating-panel evidence."]
+
+    actions: list[str] = []
+    if int(counts.get("missing_trace_ref_count") or 0):
+        if top_sources:
+            first = top_sources[0]
+            actions.append(
+                "Repair trace propagation at the top producer boundary: "
+                f"{first.get('component') or '[missing]'}/{first.get('event_type') or '[missing]'}."
+            )
+        else:
+            actions.append("Repair missing trace propagation in builder event producers.")
+    if int(counts.get("high_severity_open_count") or 0):
+        actions.append("Resolve open high-severity events before treating black-box health as launch evidence.")
+    if recent_windows:
+        actions.append("After fresh traffic, rerun `spark os compile` and compare recent-window ratios.")
+    if not actions:
+        actions.append("Keep trace propagation checks in the operating panel during new producer work.")
+    return actions
+
+
+def _trace_repair_text(trace_repair_queue: dict[str, Any]) -> str:
+    if not trace_repair_queue.get("present"):
+        return "Trace repair: missing; run spark os compile"
+    counts = _dict(trace_repair_queue.get("counts"))
+    top_sources = [_dict(row) for row in _list(trace_repair_queue.get("top_missing_trace_ref_sources"))]
+    recent_windows = [_dict(row) for row in _list(trace_repair_queue.get("recent_windows"))]
+    top = top_sources[0] if top_sources else {}
+    top_text = (
+        f"; top {top.get('component') or '[missing]'}/{top.get('event_type') or '[missing]'} "
+        f"({int(top.get('event_count') or 0)})"
+        if top
+        else ""
+    )
+    window = _preferred_recent_window(recent_windows)
+    window_text = f"; {window.get('window')} {_trace_window_ratio_text(window)}" if window else ""
+    return (
+        "Trace repair: "
+        f"{trace_repair_queue.get('status') or 'unknown'}, "
+        f"missing refs={int(counts.get('missing_trace_ref_count') or 0)}, "
+        f"high severity={int(counts.get('high_severity_open_count') or 0)}"
+        f"{top_text}{window_text}"
+    )
+
+
+def _preferred_recent_window(recent_windows: list[dict[str, Any]]) -> dict[str, Any]:
+    for row in recent_windows:
+        if row.get("window") == "24h":
+            return row
+    return recent_windows[0] if recent_windows else {}
+
+
+def _trace_window_ratio_text(window: dict[str, Any]) -> str:
+    row_count = int(window.get("row_count") or 0)
+    missing_count = int(window.get("missing_trace_ref_count") or 0)
+    ratio = _float(window.get("missing_trace_ref_ratio"))
+    return f"missing {missing_count}/{row_count} ({ratio:.1%})"
+
+
+def _dict(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _list(value: object) -> list[object]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0

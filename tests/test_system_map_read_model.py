@@ -84,11 +84,25 @@ class SystemMapReadModelTests(SparkTestCase):
         source_items = panel["source_ledger"]["items"]
 
         system_map_source = next(item for item in source_items if item["source"] == "spark_os_system_map")
+        sections = {section["section_id"]: section for section in panel["sections"]["sections"]}
         self.assertTrue(system_map_source["present"])
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
             "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 2",
+        )
+        self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
+        self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
+        self.assertEqual(
+            panel["trace_repair_queue"]["top_missing_trace_ref_sources"][0]["component"],
+            "memory_orchestrator",
+        )
+        self.assertEqual(sections["trace_repair_queue"]["status"], "needs_repair")
+        self.assertTrue(
+            any(
+                item["label"] == "memory_orchestrator/memory_read_requested"
+                for item in sections["trace_repair_queue"]["items"]
+            )
         )
 
     def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:

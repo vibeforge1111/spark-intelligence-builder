@@ -41,6 +41,7 @@ def build_agent_panel_sections(
     black_box_payload: dict[str, Any],
     source_ledger_payload: dict[str, Any],
     stale_sweep_payload: dict[str, Any],
+    trace_repair_payload: dict[str, Any] | None = None,
 ) -> AgentPanelSections:
     access = _dict(aoc_payload.get("access"))
     runner = _dict(aoc_payload.get("runner"))
@@ -52,6 +53,7 @@ def build_agent_panel_sections(
     black_box_counts = _dict(black_box_payload.get("counts"))
     black_box_entries = [_dict(entry) for entry in _list(black_box_payload.get("entries"))]
     stale_counts = _dict(stale_sweep_payload.get("counts"))
+    trace_repair = _dict(trace_repair_payload)
     return AgentPanelSections(
         sections=[
             AgentPanelSection(
@@ -119,6 +121,42 @@ def build_agent_panel_sections(
                     )
                     for item in _list(source_ledger_payload.get("items"))
                     if isinstance(item, dict)
+                ],
+            ),
+            AgentPanelSection(
+                section_id="trace_repair_queue",
+                title="Trace Repair Queue",
+                status=str(trace_repair.get("status") or "missing"),
+                items=[
+                    _item("Authority", trace_repair.get("authority") or "observability_non_authoritative"),
+                    _item("Health flags", len(_list(trace_repair.get("health_flags")))),
+                    _item("Missing trace refs", _trace_count(trace_repair, "missing_trace_ref_count")),
+                    _item("High severity open", _trace_count(trace_repair, "high_severity_open_count")),
+                    *[
+                        _item(
+                            f"{row.get('component') or '[missing]'}/{row.get('event_type') or '[missing]'}",
+                            {
+                                "event_count": int(row.get("event_count") or 0),
+                                "status": row.get("status") or "[missing]",
+                                "severity": row.get("severity") or "[missing]",
+                                "target_surface": row.get("target_surface") or "[missing]",
+                                "evidence_lane": row.get("evidence_lane") or "[missing]",
+                            },
+                        )
+                        for row in [_dict(item) for item in _list(trace_repair.get("top_missing_trace_ref_sources"))[:3]]
+                    ],
+                    *[
+                        _item(
+                            f"Window {row.get('window') or 'unknown'}",
+                            {
+                                "row_count": int(row.get("row_count") or 0),
+                                "missing_trace_ref_count": int(row.get("missing_trace_ref_count") or 0),
+                                "missing_trace_ref_ratio": float(row.get("missing_trace_ref_ratio") or 0.0),
+                            },
+                        )
+                        for row in [_dict(item) for item in _list(trace_repair.get("recent_windows"))[:3]]
+                    ],
+                    _item("Boundary", trace_repair.get("claim_boundary") or "observability guidance only"),
                 ],
             ),
             AgentPanelSection(
@@ -213,6 +251,14 @@ def _source_section_status(source_ledger_payload: dict[str, Any]) -> str:
     if int(counts.get("stale") or 0):
         return "stale"
     return "fresh"
+
+
+def _trace_count(trace_repair_payload: dict[str, Any], key: str) -> int:
+    counts = _dict(trace_repair_payload.get("counts"))
+    try:
+        return int(counts.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _yes_no_unknown(value: object) -> str:
