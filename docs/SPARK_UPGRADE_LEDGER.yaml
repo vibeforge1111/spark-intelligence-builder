@@ -139,17 +139,59 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/lib/components/MissionBoard.svelte
       - C:/Users/USER/Desktop/spawner-ui/src/lib/services/mission-board-cards.ts
       - commit:4923b5c
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/missions/[id]/+page.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/trace/+page.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-trace.ts
+      - commit:87ec88c
+      - commit:29a9989
     known_gaps:
-      - The evidence bundle renders on Mission Board cards; mission detail, trace drilldown, and Telegram mission-status replies still need the same proof summary.
+      - The evidence bundle renders on Mission Board cards, mission detail, and trace drilldown; Telegram mission-status replies still need the same proof summary.
       - Artifact/log presence is summarized from provider metadata; dedicated log/artifact proof fields should be added when provider runtime emits them uniformly.
-      - Long-running mission stall detection still needs a timeout policy and UI state.
+      - Stalled missions now fail closed after `MISSION_CONTROL_STALLED_RUNNING_MS`, default 30 minutes; product tuning may still adjust the timeout.
     rollback:
       - Keep provider summaries but hide `completionEvidence` from UI/API consumers until runtime proof fields stabilize.
+
+  - id: spawner-final-answer-audit-ingest-v1
+    module: spawner-ui
+    feature: Ingest Telegram final-answer gate audits into Agent Black Box
+    status: wired
+    routes_affected:
+      - spawner:agent-black-box
+      - spawner:mission-control-trace
+      - telegram:plain-chat
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/agent-event-ledger.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/agent-event-ledger.test.ts
+      - commit:5ba03e0
+    known_gaps:
+      - Final-answer audit events are scoped as `telegram:<chat_id>` sessions, not mission sessions, because suppressed plain-chat replies do not always belong to a mission.
+      - A model/eval-backed `answered_latest_intent` verdict still needs a second pass.
+    rollback:
+      - Stop reading `SPARK_FINAL_ANSWER_GATE_AUDIT_PATH` from Spawner black-box reports.
+
+  - id: telegram-aoc-memory-in-play-v1
+    module: spark-telegram-bot
+    feature: Memory-in-play metadata in AOC/context replies
+    status: wired
+    routes_affected:
+      - telegram:/aoc
+      - telegram:/context
+      - builder:cold-memory-context
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/builderBridge.test.ts
+      - commit:d1122c3
+    known_gaps:
+      - Memory-in-play is visible for explicit AOC/context queries; regular chat answers do not yet show a user-facing memory strip by default.
+      - Confidence remains freshness/source-class based, not a calibrated memory reliability score.
+    rollback:
+      - Keep memory metadata prompt-only and remove the appended AOC memory summary.
 
   - id: voice-runtime-activation-v1
     module: spark-intelligence-builder
     feature: Voice runtime and ElevenLabs activation path
-    status: documented
+    status: active
     routes_affected:
       - telegram:/voice
       - builder:voice-runtime
@@ -159,9 +201,12 @@ entries:
       - src/spark_intelligence/attachments/snapshot.py
       - tests/test_attachment_voice_aliases.py
       - tests/test_operator_pairing_flows.py
+      - C:/Users/USER/Desktop/spark-voice-comms/spark-chip.json
+      - attachments snapshot shows `spark-voice-comms` active
+      - attachments run-hook voice.status reports faster-whisper local STT and Kokoro local TTS ready
     known_gaps:
-      - Documentation and command handlers exist, but runtime activation depends on `spark-voice-comms` being attached.
       - ElevenLabs requires a local secret and selected voice id before live TTS can be claimed.
-      - Dashboard should distinguish chip attached, provider selected, key present, voice selected, and last test.
+      - Telegram delivery is not proven yet; `voice.status` reports delivery_ready=false and conversation_ready=false.
+      - Dashboard should distinguish chip attached, provider selected, key present, voice selected, last synthesis test, and last Telegram delivery.
     rollback:
       - Keep `/voice` in text-only setup guidance mode until chip attachment and provider checks pass.
