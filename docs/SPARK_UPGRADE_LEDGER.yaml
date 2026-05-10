@@ -256,11 +256,15 @@ entries:
       - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/access.py
       - C:/Users/USER/Desktop/spark-cli/tests/test_access.py
       - commit:294cb19
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - commit:5fb12cc
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
       - test:python -m pytest tests/test_access.py -q
+      - test:npm test -- --runTestsByPath tests/accessPolicy.test.ts
     known_gaps:
-      - The recommender is coded, tested, exposed as a Spawner API, and mirrored by `spark access setup/status`; it is not yet wired into Telegram AOC or Mission Control UI.
+      - The recommender is coded, tested, exposed as a Spawner API, mirrored by `spark access setup/status`, and referenced by Telegram Level 4 guidance; it is not yet wired into Mission Control UI.
       - Level 4 defaults to the Spark workspace sandbox on macOS, Windows, and Linux; Docker, SSH, and Modal are lanes selected only when useful and available.
       - Level 5 whole-computer operator mode remains blocked unless high-agency worker guardrails are explicitly enabled.
       - Docker/SSH/Modal are guided optional lanes through the CLI; full one-click dependency installers still need OS-specific implementation and onboarding copy.
