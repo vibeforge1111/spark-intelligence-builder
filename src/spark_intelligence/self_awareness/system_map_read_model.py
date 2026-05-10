@@ -62,6 +62,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     )
     memory_movement = _memory_movement_context(memory_movement_index)
     trace_health = _trace_health_context(trace_index)
+    trace_topology = _trace_topology_context(trace_index)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
         "repos": len(_list(system_map.get("discovered_repos"))),
@@ -72,6 +73,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "builder_event_rows": _builder_event_rows(trace_index),
         "builder_event_samples": _builder_event_sample_count(trace_index),
         "builder_trace_groups": _builder_trace_group_count(trace_index),
+        "builder_trace_topology_groups": _int(trace_topology.get("group_count")),
         "trace_health_flags": len(_list(trace_health.get("health_flags"))),
         "memory_movement_rows": memory_movement.get("row_count"),
         "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
@@ -88,6 +90,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "counts": counts,
         "memory_movement": memory_movement,
         "trace_health": trace_health,
+        "trace_topology": trace_topology,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
         "files": {
             name: {
@@ -136,6 +139,9 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
     health_flags = _list(trace_health.get("health_flags"))
     if health_flags:
         parts.append(f"trace health flags {len(health_flags)}")
+    trace_topology = _dict(context.get("trace_topology"))
+    if trace_topology.get("present"):
+        parts.append(f"trace topology {int(trace_topology.get('group_count') or 0)} groups")
     return ", ".join(parts)
 
 
@@ -238,10 +244,69 @@ def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
+        "orphan_parent_event_sources": _orphan_parent_event_sources(trace_health),
         "recent_windows": _trace_health_recent_windows(trace_health),
         "claim_boundary": (
             "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
             "not final task outcome or memory truth."
+        ),
+    }
+
+
+def _trace_topology_context(trace_index: dict[str, Any]) -> dict[str, Any]:
+    trace_groups = _dict(trace_index.get("builder_trace_groups"))
+    groups: list[dict[str, Any]] = []
+    parent_link_count = 0
+    orphan_parent_event_count = 0
+    edge_sample_count = 0
+    for raw_group in _list(trace_groups.get("groups"))[:10]:
+        group = _dict(raw_group)
+        topology = _dict(group.get("topology"))
+        edges = [_dict(edge) for edge in _list(topology.get("edge_sample"))[:5]]
+        parent_links = _int(topology.get("parent_link_count"))
+        orphan_count = _int(topology.get("orphan_parent_event_count"))
+        edge_count = _int(topology.get("edge_sample_count"))
+        parent_link_count += parent_links
+        orphan_parent_event_count += orphan_count
+        edge_sample_count += edge_count
+        groups.append(
+            {
+                "trace_ref": str(group.get("trace_ref") or ""),
+                "event_count": _int(group.get("event_count")),
+                "first_seen_at": group.get("first_seen_at"),
+                "last_seen_at": group.get("last_seen_at"),
+                "topology": {
+                    "available": bool(topology.get("available")),
+                    "root_event_count": _int(topology.get("root_event_count")),
+                    "parent_link_count": parent_links,
+                    "orphan_parent_event_count": orphan_count,
+                    "edge_sample_count": edge_count,
+                    "edge_sample": [
+                        {
+                            "parent_event_id": edge.get("parent_event_id"),
+                            "child_event_id": edge.get("child_event_id"),
+                            "parent_event_type": edge.get("parent_event_type"),
+                            "child_event_type": edge.get("child_event_type"),
+                            "child_component": edge.get("child_component"),
+                            "parent_exists": bool(edge.get("parent_exists")),
+                            "parent_in_same_trace": bool(edge.get("parent_in_same_trace")),
+                        }
+                        for edge in edges
+                    ],
+                },
+            }
+        )
+    return {
+        "present": bool(trace_groups),
+        "group_count": _int(trace_groups.get("group_count")) or len(groups),
+        "projected_group_count": len(groups),
+        "parent_link_count": parent_link_count,
+        "orphan_parent_event_count": orphan_parent_event_count,
+        "edge_sample_count": edge_sample_count,
+        "groups": groups,
+        "claim_boundary": (
+            "Trace topology is a redacted event graph projection. It can guide repair and debugging; "
+            "it is not event body evidence, memory truth, or proof of task success."
         ),
     }
 
@@ -267,6 +332,30 @@ def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
         "row_count": len(rows),
         "rows": rows,
         "claim_boundary": "Ranked repair queue for trace propagation only; not memory truth or task outcome.",
+    }
+
+
+def _orphan_parent_event_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
+    sources = _dict(trace_health.get("orphan_parent_event_sources"))
+    rows: list[dict[str, Any]] = []
+    for raw_row in _list(sources.get("rows"))[:10]:
+        row = _dict(raw_row)
+        rows.append(
+            {
+                "component": str(row.get("component") or "[missing]"),
+                "event_type": str(row.get("event_type") or "[missing]"),
+                "status": str(row.get("status") or "[missing]"),
+                "severity": str(row.get("severity") or "[missing]"),
+                "target_surface": str(row.get("target_surface") or "[missing]"),
+                "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
+                "event_count": _int(row.get("event_count")),
+            }
+        )
+    return {
+        "group_by": [str(item) for item in _list(sources.get("group_by"))],
+        "row_count": len(rows),
+        "rows": rows,
+        "claim_boundary": "Ranked repair queue for missing parent links only; not memory truth or task outcome.",
     }
 
 

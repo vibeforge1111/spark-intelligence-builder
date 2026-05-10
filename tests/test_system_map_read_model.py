@@ -28,14 +28,23 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
         self.assertEqual(context["counts"]["builder_event_samples"], 3)
         self.assertEqual(context["counts"]["builder_trace_groups"], 2)
-        self.assertEqual(context["counts"]["trace_health_flags"], 2)
+        self.assertEqual(context["counts"]["builder_trace_topology_groups"], 2)
+        self.assertEqual(context["counts"]["trace_health_flags"], 3)
         self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
         self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
+        self.assertEqual(context["trace_health"]["orphan_parent_event_id_count"], 1)
         self.assertEqual(context["trace_health"]["missing_trace_ref_sources"]["row_count"], 2)
         self.assertEqual(
             context["trace_health"]["missing_trace_ref_sources"]["rows"][0]["component"],
             "memory_orchestrator",
         )
+        self.assertEqual(
+            context["trace_health"]["orphan_parent_event_sources"]["rows"][0]["component"],
+            "workflow_recovery",
+        )
+        self.assertEqual(context["trace_topology"]["group_count"], 2)
+        self.assertEqual(context["trace_topology"]["parent_link_count"], 1)
+        self.assertEqual(context["trace_topology"]["groups"][0]["topology"]["edge_sample"][0]["child_event_id"], "evt-2")
         self.assertEqual(context["trace_health"]["recent_windows"][0]["window"], "24h")
         self.assertEqual(context["trace_health"]["recent_windows"][0]["missing_trace_ref_ratio"], 0.25)
         self.assertEqual(context["memory_movement"]["status"], "supported")
@@ -68,7 +77,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 2",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups",
             context.to_text(),
         )
 
@@ -89,18 +98,30 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
-            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 2",
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 3",
         )
         self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
+        self.assertEqual(panel["trace_repair_queue"]["counts"]["orphan_parent_event_id_count"], 1)
+        self.assertEqual(panel["trace_repair_queue"]["trace_topology"]["group_count"], 2)
         self.assertEqual(
             panel["trace_repair_queue"]["top_missing_trace_ref_sources"][0]["component"],
             "memory_orchestrator",
+        )
+        self.assertEqual(
+            panel["trace_repair_queue"]["top_orphan_parent_sources"][0]["component"],
+            "workflow_recovery",
         )
         self.assertEqual(sections["trace_repair_queue"]["status"], "needs_repair")
         self.assertTrue(
             any(
                 item["label"] == "memory_orchestrator/memory_read_requested"
+                for item in sections["trace_repair_queue"]["items"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item["label"] == "Orphan workflow_recovery/lesson_promoted"
                 for item in sections["trace_repair_queue"]["items"]
             )
         )
@@ -158,12 +179,44 @@ class SystemMapReadModelTests(SparkTestCase):
                     "schema_version": "spark.trace_index.compiled.v0",
                     "builder_events": {"row_count": 123},
                     "builder_event_samples": {"sample_count": 3},
-                    "builder_trace_groups": {"group_count": 2},
+                    "builder_trace_groups": {
+                        "group_count": 2,
+                        "groups": [
+                            {
+                                "trace_ref": "trace-1",
+                                "event_count": 2,
+                                "first_seen_at": "2026-05-10T13:00:00Z",
+                                "last_seen_at": "2026-05-10T13:01:00Z",
+                                "topology": {
+                                    "available": True,
+                                    "root_event_count": 1,
+                                    "parent_link_count": 1,
+                                    "orphan_parent_event_count": 0,
+                                    "edge_sample_count": 1,
+                                    "edge_sample": [
+                                        {
+                                            "parent_event_id": "evt-1",
+                                            "child_event_id": "evt-2",
+                                            "parent_event_type": "intent_committed",
+                                            "child_event_type": "route_selected",
+                                            "child_component": "router",
+                                            "parent_exists": True,
+                                            "parent_in_same_trace": True,
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                    },
                     "builder_trace_health": {
-                        "health_flags": ["missing_trace_refs", "open_high_severity_events"],
+                        "health_flags": [
+                            "missing_trace_refs",
+                            "open_high_severity_events",
+                            "orphan_parent_event_ids",
+                        ],
                         "missing_trace_ref_count": 8,
                         "high_severity_open_count": 1,
-                        "orphan_parent_event_id_count": 0,
+                        "orphan_parent_event_id_count": 1,
                         "trace_group_count": 2,
                         "missing_trace_ref_sources": {
                             "group_by": [
@@ -193,6 +246,27 @@ class SystemMapReadModelTests(SparkTestCase):
                                     "evidence_lane": "realworld_validated",
                                     "event_count": 3,
                                 },
+                            ],
+                        },
+                        "orphan_parent_event_sources": {
+                            "group_by": [
+                                "component",
+                                "event_type",
+                                "status",
+                                "severity",
+                                "target_surface",
+                                "evidence_lane",
+                            ],
+                            "rows": [
+                                {
+                                    "component": "workflow_recovery",
+                                    "event_type": "lesson_promoted",
+                                    "status": "recorded",
+                                    "severity": "medium",
+                                    "target_surface": "spark_intelligence_builder",
+                                    "evidence_lane": "realworld_validated",
+                                    "event_count": 1,
+                                }
                             ],
                         },
                         "recent_windows": [

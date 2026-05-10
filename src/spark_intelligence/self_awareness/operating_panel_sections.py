@@ -132,6 +132,8 @@ def build_agent_panel_sections(
                     _item("Health flags", len(_list(trace_repair.get("health_flags")))),
                     _item("Missing trace refs", _trace_count(trace_repair, "missing_trace_ref_count")),
                     _item("High severity open", _trace_count(trace_repair, "high_severity_open_count")),
+                    _item("Orphan parent events", _trace_count(trace_repair, "orphan_parent_event_id_count")),
+                    _item("Trace topology groups", _trace_count(trace_repair, "topology_group_count")),
                     *[
                         _item(
                             f"{row.get('component') or '[missing]'}/{row.get('event_type') or '[missing]'}",
@@ -144,6 +146,19 @@ def build_agent_panel_sections(
                             },
                         )
                         for row in [_dict(item) for item in _list(trace_repair.get("top_missing_trace_ref_sources"))[:3]]
+                    ],
+                    *[
+                        _item(
+                            f"Orphan {row.get('component') or '[missing]'}/{row.get('event_type') or '[missing]'}",
+                            {
+                                "event_count": int(row.get("event_count") or 0),
+                                "status": row.get("status") or "[missing]",
+                                "severity": row.get("severity") or "[missing]",
+                                "target_surface": row.get("target_surface") or "[missing]",
+                                "evidence_lane": row.get("evidence_lane") or "[missing]",
+                            },
+                        )
+                        for row in [_dict(item) for item in _list(trace_repair.get("top_orphan_parent_sources"))[:3]]
                     ],
                     *[
                         _item(

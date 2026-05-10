@@ -201,8 +201,11 @@ def _optional_bool_text(value: object) -> str:
 def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
     spark_system_map = _dict(aoc_payload.get("spark_system_map"))
     trace_health = _dict(spark_system_map.get("trace_health"))
+    trace_topology = _dict(spark_system_map.get("trace_topology"))
     missing_sources = _dict(trace_health.get("missing_trace_ref_sources"))
+    orphan_sources = _dict(trace_health.get("orphan_parent_event_sources"))
     rows = [_dict(row) for row in _list(missing_sources.get("rows"))[:5]]
+    orphan_rows = [_dict(row) for row in _list(orphan_sources.get("rows"))[:5]]
     recent_windows = [_dict(row) for row in _list(trace_health.get("recent_windows"))[:3]]
     health_flags = [str(flag) for flag in _list(trace_health.get("health_flags")) if str(flag or "").strip()]
     counts = {
@@ -212,6 +215,10 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "top_missing_source_count": len(rows),
+        "top_orphan_parent_source_count": len(orphan_rows),
+        "topology_group_count": _int(trace_topology.get("group_count")),
+        "topology_parent_link_count": _int(trace_topology.get("parent_link_count")),
+        "topology_edge_sample_count": _int(trace_topology.get("edge_sample_count")),
     }
     present = bool(spark_system_map.get("present")) and bool(trace_health.get("present"))
     status = _trace_repair_status(present=present, counts=counts)
@@ -225,11 +232,23 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
         "health_flags": health_flags,
         "counts": counts,
         "top_missing_trace_ref_sources": rows,
+        "top_orphan_parent_sources": orphan_rows,
+        "trace_topology": {
+            "present": bool(trace_topology.get("present")),
+            "group_count": _int(trace_topology.get("group_count")),
+            "projected_group_count": _int(trace_topology.get("projected_group_count")),
+            "parent_link_count": _int(trace_topology.get("parent_link_count")),
+            "orphan_parent_event_count": _int(trace_topology.get("orphan_parent_event_count")),
+            "edge_sample_count": _int(trace_topology.get("edge_sample_count")),
+            "groups": [_dict(group) for group in _list(trace_topology.get("groups"))[:3]],
+            "claim_boundary": trace_topology.get("claim_boundary"),
+        },
         "recent_windows": recent_windows,
         "next_actions": _trace_repair_next_actions(
             present=present,
             counts=counts,
             top_sources=rows,
+            orphan_sources=orphan_rows,
             recent_windows=recent_windows,
         ),
         "claim_boundary": (
@@ -256,6 +275,7 @@ def _trace_repair_next_actions(
     present: bool,
     counts: dict[str, int],
     top_sources: list[dict[str, Any]],
+    orphan_sources: list[dict[str, Any]],
     recent_windows: list[dict[str, Any]],
 ) -> list[str]:
     if not present:
@@ -273,6 +293,15 @@ def _trace_repair_next_actions(
             actions.append("Repair missing trace propagation in builder event producers.")
     if int(counts.get("high_severity_open_count") or 0):
         actions.append("Resolve open high-severity events before treating black-box health as launch evidence.")
+    if int(counts.get("orphan_parent_event_id_count") or 0):
+        if orphan_sources:
+            first_orphan = orphan_sources[0]
+            actions.append(
+                "Repair parent propagation at the top orphan boundary: "
+                f"{first_orphan.get('component') or '[missing]'}/{first_orphan.get('event_type') or '[missing]'}."
+            )
+        else:
+            actions.append("Repair parent propagation for events with missing parent links.")
     if recent_windows:
         actions.append("After fresh traffic, rerun `spark os compile` and compare recent-window ratios.")
     if not actions:
@@ -299,7 +328,8 @@ def _trace_repair_text(trace_repair_queue: dict[str, Any]) -> str:
         "Trace repair: "
         f"{trace_repair_queue.get('status') or 'unknown'}, "
         f"missing refs={int(counts.get('missing_trace_ref_count') or 0)}, "
-        f"high severity={int(counts.get('high_severity_open_count') or 0)}"
+        f"high severity={int(counts.get('high_severity_open_count') or 0)}, "
+        f"orphan parents={int(counts.get('orphan_parent_event_id_count') or 0)}"
         f"{top_text}{window_text}"
     )
 
