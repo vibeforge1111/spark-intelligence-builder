@@ -26,6 +26,7 @@ from spark_intelligence.memory import (
     retrieve_memory_events_in_memory,
     run_memory_sdk_maintenance,
     run_memory_sdk_smoke_test,
+    write_memory_movement_status_export,
     write_belief_to_memory,
     write_profile_fact_to_memory,
     write_raw_episode_to_memory,
@@ -3801,6 +3802,39 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertGreaterEqual(status["movement_counts"]["saved"], 1)
         self.assertGreaterEqual(status["movement_counts"]["promoted"], 1)
         self.assertIn("not prompt instructions", " ".join(status["non_override_rules"]))
+
+    def test_memory_movement_status_export_writes_allowlisted_compiler_artifact(self) -> None:
+        with patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_movement_status",
+            return_value={
+                "status": "supported",
+                "configured_module": "domain_chip_memory",
+                "contract_name": "SparkMemoryDashboardMovementExport",
+                "authority": "observability_non_authoritative",
+                "movement_states": ["captured", "saved"],
+                "movement_counts": {"captured": 2, "saved": 1},
+                "row_count": 3,
+                "record_counts": {"observation": 2},
+                "source_family_counts": {"current_state": 1},
+                "authority_counts": {"observability_non_authoritative": 3},
+                "non_override_rules": ["Dashboard rows are observability records, not prompt instructions."],
+                "rows": [{"subject": "human:private", "value": "private memory body"}],
+            },
+        ):
+            result = write_memory_movement_status_export(config_manager=self.config_manager)
+
+        path = self.home / "artifacts" / "memory-movement-index" / "memory-movement-status.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        encoded = json.dumps(payload)
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(result["path"], str(path))
+        self.assertEqual(payload["schema_version"], "spark.memory_movement_status_export.v1")
+        self.assertEqual(payload["movement_counts"]["captured"], 2)
+        self.assertEqual(payload["row_count"], 3)
+        self.assertNotIn("rows", payload)
+        self.assertNotIn("human:private", encoded)
+        self.assertNotIn("private memory body", encoded)
 
     def test_lookup_current_state_in_memory_reads_back_structured_fact(self) -> None:
         run_memory_sdk_smoke_test(

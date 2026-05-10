@@ -26,6 +26,9 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["skill_graphs"], 1)
         self.assertEqual(context["counts"]["authority_sources"], 2)
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
+        self.assertEqual(context["memory_movement"]["status"], "supported")
+        self.assertEqual(context["memory_movement"]["row_count"], 42)
+        self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
         self.assertEqual(context["output_dir"], str(system_map_dir))
         self.assertNotIn("telegram.bot_token", encoded)
         self.assertNotIn("telegram.bot_token=secret", encoded)
@@ -52,7 +55,10 @@ class SystemMapReadModelTests(SparkTestCase):
                 for item in payload["source_ledger"]
             )
         )
-        self.assertIn("Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps", context.to_text())
+        self.assertIn(
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows)",
+            context.to_text(),
+        )
 
     def test_panel_source_ledger_receives_system_map_source(self) -> None:
         self._write_compiled_system_map()
@@ -68,7 +74,7 @@ class SystemMapReadModelTests(SparkTestCase):
         system_map_source = next(item for item in source_items if item["source"] == "spark_os_system_map")
         self.assertTrue(system_map_source["present"])
         self.assertEqual(system_map_source["freshness"], "fresh")
-        self.assertEqual(system_map_source["summary"], "2 modules, 3 repos, 1 gaps")
+        self.assertEqual(system_map_source["summary"], "2 modules, 3 repos, 1 gaps, memory rows 42")
 
     def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:
         system_map_dir = self.home / "system-map"
@@ -122,6 +128,25 @@ class SystemMapReadModelTests(SparkTestCase):
                 {
                     "schema_version": "spark.trace_index.compiled.v0",
                     "builder_events": {"row_count": 123},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "memory-movement-index.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.memory_movement_index.compiled.v0",
+                    "authority": "observability_non_authoritative",
+                    "builder_memory_tables": {"table_count": 1},
+                    "safe_status_export": {
+                        "exists": True,
+                        "status": {
+                            "status": "supported",
+                            "row_count": 42,
+                            "movement_counts": {"captured": 9, "saved": 7},
+                        },
+                    },
+                    "unknown_future_field": raw_sentinel,
                 }
             ),
             encoding="utf-8",

@@ -83,6 +83,21 @@ MEMORY_DASHBOARD_MOVEMENT_STATES: tuple[str, ...] = (
     "summarized",
     "retrieved",
 )
+MEMORY_MOVEMENT_STATUS_EXPORT_SCHEMA = "spark.memory_movement_status_export.v1"
+MEMORY_MOVEMENT_STATUS_EXPORT_KEYS: tuple[str, ...] = (
+    "status",
+    "reason",
+    "configured_module",
+    "contract_name",
+    "authority",
+    "movement_states",
+    "movement_counts",
+    "row_count",
+    "record_counts",
+    "source_family_counts",
+    "authority_counts",
+    "non_override_rules",
+)
 
 
 def _apply_runtime_architecture_pin() -> None:
@@ -1563,6 +1578,47 @@ def inspect_memory_movement_status(
         }
     )
     return payload
+
+
+def build_memory_movement_status_export_payload(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+) -> dict[str, Any]:
+    status = inspect_memory_movement_status(config_manager=config_manager, sdk_module=sdk_module)
+    payload: dict[str, Any] = {
+        "schema_version": MEMORY_MOVEMENT_STATUS_EXPORT_SCHEMA,
+        "generated_at": _now_iso(),
+        "source": "spark_intelligence.memory.inspect_memory_movement_status",
+        "redaction": "allowlisted movement status only; dashboard rows and memory bodies are not exported",
+        "claim_boundary": (
+            "This export is observability evidence for Spark OS compilation. It cannot override current-state memory, "
+            "profile facts, or human instructions."
+        ),
+    }
+    for key in MEMORY_MOVEMENT_STATUS_EXPORT_KEYS:
+        if key in status:
+            payload[key] = status[key]
+    return payload
+
+
+def write_memory_movement_status_export(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+    write_path: str | Path | None = None,
+) -> dict[str, Any]:
+    path = (
+        Path(write_path)
+        if write_path is not None
+        else config_manager.paths.home / "artifacts" / "memory-movement-index" / "memory-movement-status.json"
+    )
+    payload = build_memory_movement_status_export_payload(config_manager=config_manager, sdk_module=sdk_module)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    tmp_path.replace(path)
+    return {"status": "written", "path": str(path), "payload": payload}
 
 
 def inspect_wiki_packet_metadata(

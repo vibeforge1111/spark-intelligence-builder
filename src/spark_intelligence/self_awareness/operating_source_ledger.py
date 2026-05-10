@@ -145,11 +145,15 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     if not context.get("present"):
         return "missing"
     counts = _dict(context.get("counts"))
-    return (
+    summary = (
         f"{int(counts.get('modules') or 0)} modules, "
         f"{int(counts.get('repos') or 0)} repos, "
         f"{int(counts.get('gaps') or 0)} gaps"
     )
+    memory_rows = int(counts.get("memory_movement_rows") or 0)
+    if memory_rows:
+        summary += f", memory rows {memory_rows}"
+    return summary
 
 
 def _dict(value: object) -> dict[str, Any]:
