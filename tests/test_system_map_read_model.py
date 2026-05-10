@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from spark_intelligence.self_awareness import build_agent_operating_context
+from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.system_map_read_model import build_spark_system_map_context
+
+from tests.test_support import SparkTestCase
+
+
+class SystemMapReadModelTests(SparkTestCase):
+    def test_system_map_context_summarizes_without_exporting_unknown_values(self) -> None:
+        system_map_dir = self._write_compiled_system_map(raw_sentinel="telegram.bot_token=secret")
+
+        context = build_spark_system_map_context(self.config_manager)
+        encoded = json.dumps(context)
+
+        self.assertTrue(context["present"])
+        self.assertEqual(context["source_ref"], "spark os compile")
+        self.assertEqual(context["counts"]["modules"], 2)
+        self.assertEqual(context["counts"]["repos"], 3)
+        self.assertEqual(context["counts"]["gaps"], 1)
+        self.assertEqual(context["counts"]["chip_manifests"], 2)
+        self.assertEqual(context["counts"]["skill_graphs"], 1)
+        self.assertEqual(context["counts"]["authority_sources"], 2)
+        self.assertEqual(context["counts"]["builder_event_rows"], 123)
+        self.assertEqual(context["output_dir"], str(system_map_dir))
+        self.assertNotIn("telegram.bot_token", encoded)
+        self.assertNotIn("telegram.bot_token=secret", encoded)
+
+    def test_aoc_includes_system_map_as_read_only_source(self) -> None:
+        self._write_compiled_system_map()
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-system-map-aoc",
+            user_message="what can Spark see across the system?",
+        )
+        payload = context.to_payload()
+
+        self.assertTrue(payload["spark_system_map"]["present"])
+        self.assertEqual(payload["spark_system_map"]["authority"], "observability_non_authoritative")
+        self.assertEqual(payload["spark_system_map"]["counts"]["modules"], 2)
+        self.assertTrue(
+            any(
+                item["source"] == "spark_os_system_map"
+                and item["role"] == "cross_repo_system_truth_snapshot"
+                and item["present"]
+                for item in payload["source_ledger"]
+            )
+        )
+        self.assertIn("Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps", context.to_text())
+
+    def test_panel_source_ledger_receives_system_map_source(self) -> None:
+        self._write_compiled_system_map()
+
+        panel = build_agent_operating_panel(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-system-map-panel",
+            user_message="show the operating panel",
+        ).to_payload()
+        source_items = panel["source_ledger"]["items"]
+
+        system_map_source = next(item for item in source_items if item["source"] == "spark_os_system_map")
+        self.assertTrue(system_map_source["present"])
+        self.assertEqual(system_map_source["freshness"], "fresh")
+        self.assertEqual(system_map_source["summary"], "2 modules, 3 repos, 1 gaps")
+
+    def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:
+        system_map_dir = self.home / "system-map"
+        system_map_dir.mkdir(parents=True)
+        self.config_manager.set_path("spark.system_map.output_dir", str(system_map_dir))
+        (system_map_dir / "system-map.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.system_map.compiled.v0",
+                    "generated_at": "2026-05-10T13:21:20Z",
+                    "privacy": {
+                        "raw_secret_values_read": False,
+                        "raw_logs_read": False,
+                        "raw_conversation_content_read": False,
+                        "raw_memory_evidence_read": False,
+                        "sqlite_row_contents_read": False,
+                    },
+                    "modules": [{"id": "spark-cli"}, {"id": "spark-intelligence-builder"}],
+                    "discovered_repos": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
+                    "gaps": [{"severity": "decision"}],
+                    "unknown_future_field": raw_sentinel,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "authority-view.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.authority_view.compiled.v0",
+                    "observed_sources": {
+                        "cli_access_policy": {"exists": True},
+                        "telegram_access_policy": {"exists": True},
+                        "browser_policy": {"exists": False},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "capability-catalog.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.capability_catalog.compiled.v0",
+                    "chip_manifests": [{"chip_name": "memory"}, {"chip_name": "browser"}],
+                    "skill_graphs": [{"repo": "spark-skill-graphs"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "trace-index.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.trace_index.compiled.v0",
+                    "builder_events": {"row_count": 123},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "gaps.md").write_text("# gaps\n", encoding="utf-8")
+        return system_map_dir

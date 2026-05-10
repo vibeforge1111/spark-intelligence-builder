@@ -41,6 +41,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - `stale_context_sweeper.py`: turns source conflicts into stale/contradicted review items with typed review actions.
 - `approval_inbox.py`: shows approval-gated memory candidates; it does not write memory by itself.
 - `route_confidence.py`: explains recommended route confidence and evidence.
+- `system_map_read_model.py`: reads the `spark os compile` artifacts as redacted cross-repo observability for AOC.
 - `agent_scratchpad.py`: structured operational scratchpad derived from AOC; not hidden chain-of-thought.
 - `operating_strip.py`: compact top-strip renderer for always-visible AOC status.
 - `operating_source_ledger.py`: unified source freshness ledger for panel consumers.
@@ -54,6 +55,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - The scratchpad is derived from AOC, not separately authored.
 - Stale context is shown and typed; do not silently reconcile it.
 - Source freshness is rendered explicitly; do not make agents infer freshness from prose.
+- Compiled Spark OS maps are read-only source visibility, not route success, permission, or memory truth.
 - Memory candidates go to the approval inbox; do not auto-save raw logs.
 - Route-changing actions must pass the conversation action gate.
 - Final answers should be checked against the latest user turn before sending.
@@ -81,6 +83,12 @@ Run the broader AOC foundation checks:
 python -m pytest tests\test_conversation_operating_frame.py tests\test_agent_events.py tests\test_memory_approval_inbox.py tests\test_route_confidence.py tests\test_source_hierarchy.py tests\test_agent_operating_summary.py tests\test_stale_context_sweeper.py tests\test_agent_operating_panel.py tests\test_agent_operating_panel_cli.py tests\test_agent_turn_recorder.py tests\test_agent_drift_evals.py tests\test_agent_scratchpad.py -q
 ```
 
+Run the Spark OS map bridge checks:
+
+```powershell
+python -m pytest tests\test_system_map_read_model.py -q
+```
+
 ## Extension Path
 
 Next integrations should consume the existing read-models:
@@ -96,6 +104,7 @@ Next integrations should consume the existing read-models:
 - `self black-box` provides a direct read-only trace view over the agent event model.
 - `self memory-inbox` and `self memory-decision` provide the CLI review path for approval-gated memory candidates.
 - `self panel` accepts live/context claim JSON so the shared panel can show stale source conflicts directly.
+- AOC now includes `spark_system_map` when `spark-cli` has emitted `spark os compile` artifacts under the configured or sibling Spark state path.
 - `self source-used` records source-ledger evidence such as diagnostics, memory, wiki, or mission trace as `source_used`.
 - `self route-selection` and `self mission-state` provide the CLI trace path for route choices and mission state changes.
 - `self turn-trace` records a full turn frame, action gate, final-answer drift check, optional source-used evidence, and optional memory candidate into the black box.

@@ -62,6 +62,7 @@ def build_agent_source_ledger(
     access = _dict(aoc_payload.get("access"))
     runner = _dict(aoc_payload.get("runner"))
     route_confidence = _dict(aoc_payload.get("route_confidence"))
+    spark_system_map = _dict(aoc_payload.get("spark_system_map"))
     black_box_counts = _dict(black_box_payload.get("counts"))
     memory_counts = _dict(memory_inbox_payload.get("counts"))
     stale_counts = _dict(stale_sweep_payload.get("counts"))
@@ -97,6 +98,14 @@ def build_agent_source_ledger(
                 summary=str(route_confidence.get("confidence") or ""),
             ),
             AgentSourceLedgerItem(
+                source="spark_os_system_map",
+                role="cross_repo_system_truth_snapshot",
+                freshness="fresh" if spark_system_map.get("present") else "unknown",
+                present=bool(spark_system_map.get("present")),
+                summary=_spark_system_map_summary(spark_system_map),
+                source_ref=str(spark_system_map.get("source_ref") or "") or None,
+            ),
+            AgentSourceLedgerItem(
                 source="agent_black_box",
                 role="recent_agent_action_trace",
                 freshness="fresh" if int(black_box_counts.get("entries") or 0) else "unknown",
@@ -130,6 +139,17 @@ def _stale_sweep_freshness(counts: dict[str, Any]) -> SourceFreshness:
     if int(counts.get("stale") or 0):
         return "stale"
     return "fresh"
+
+
+def _spark_system_map_summary(context: dict[str, Any]) -> str:
+    if not context.get("present"):
+        return "missing"
+    counts = _dict(context.get("counts"))
+    return (
+        f"{int(counts.get('modules') or 0)} modules, "
+        f"{int(counts.get('repos') or 0)} repos, "
+        f"{int(counts.get('gaps') or 0)} gaps"
+    )
 
 
 def _dict(value: object) -> dict[str, Any]:
