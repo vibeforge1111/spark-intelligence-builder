@@ -28,6 +28,9 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
         self.assertEqual(context["counts"]["builder_event_samples"], 3)
         self.assertEqual(context["counts"]["builder_trace_groups"], 2)
+        self.assertEqual(context["counts"]["trace_health_flags"], 2)
+        self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
+        self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
@@ -58,7 +61,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 2",
             context.to_text(),
         )
 
@@ -78,7 +81,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(system_map_source["freshness"], "fresh")
         self.assertEqual(
             system_map_source["summary"],
-            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2",
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2, trace health flags 2",
         )
 
     def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:
@@ -135,6 +138,13 @@ class SystemMapReadModelTests(SparkTestCase):
                     "builder_events": {"row_count": 123},
                     "builder_event_samples": {"sample_count": 3},
                     "builder_trace_groups": {"group_count": 2},
+                    "builder_trace_health": {
+                        "health_flags": ["missing_trace_refs", "open_high_severity_events"],
+                        "missing_trace_ref_count": 8,
+                        "high_severity_open_count": 1,
+                        "orphan_parent_event_id_count": 0,
+                        "trace_group_count": 2,
+                    },
                 }
             ),
             encoding="utf-8",

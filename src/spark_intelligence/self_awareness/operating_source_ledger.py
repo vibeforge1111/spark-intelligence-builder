@@ -159,6 +159,9 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     trace_group_count = int(counts.get("builder_trace_groups") or 0)
     if trace_group_count:
         summary += f", trace groups {trace_group_count}"
+    trace_health_flags = int(counts.get("trace_health_flags") or 0)
+    if trace_health_flags:
+        summary += f", trace health flags {trace_health_flags}"
     return summary
 
 

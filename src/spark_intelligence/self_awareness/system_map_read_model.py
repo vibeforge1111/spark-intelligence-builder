@@ -61,6 +61,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         privacy=privacy,
     )
     memory_movement = _memory_movement_context(memory_movement_index)
+    trace_health = _trace_health_context(trace_index)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
         "repos": len(_list(system_map.get("discovered_repos"))),
@@ -71,6 +72,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "builder_event_rows": _builder_event_rows(trace_index),
         "builder_event_samples": _builder_event_sample_count(trace_index),
         "builder_trace_groups": _builder_trace_group_count(trace_index),
+        "trace_health_flags": len(_list(trace_health.get("health_flags"))),
         "memory_movement_rows": memory_movement.get("row_count"),
         "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
     }
@@ -85,6 +87,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "generated_at": system_map.get("generated_at"),
         "counts": counts,
         "memory_movement": memory_movement,
+        "trace_health": trace_health,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
         "files": {
             name: {
@@ -129,6 +132,10 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
     trace_group_count = int(counts.get("builder_trace_groups") or 0)
     if trace_group_count:
         parts.append(f"trace groups {trace_group_count}")
+    trace_health = _dict(context.get("trace_health"))
+    health_flags = _list(trace_health.get("health_flags"))
+    if health_flags:
+        parts.append(f"trace health flags {len(health_flags)}")
     return ", ".join(parts)
 
 
@@ -219,6 +226,22 @@ def _builder_event_sample_count(trace_index: dict[str, Any]) -> int:
 def _builder_trace_group_count(trace_index: dict[str, Any]) -> int:
     builder_trace_groups = _dict(trace_index.get("builder_trace_groups"))
     return _int(builder_trace_groups.get("group_count"))
+
+
+def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
+    trace_health = _dict(trace_index.get("builder_trace_health"))
+    return {
+        "present": bool(trace_health),
+        "health_flags": _list(trace_health.get("health_flags")),
+        "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
+        "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+        "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
+        "trace_group_count": _int(trace_health.get("trace_group_count")),
+        "claim_boundary": (
+            "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
+            "not final task outcome or memory truth."
+        ),
+    }
 
 
 def _memory_movement_context(memory_movement_index: dict[str, Any]) -> dict[str, Any]:
