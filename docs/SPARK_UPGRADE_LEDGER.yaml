@@ -269,6 +269,7 @@ entries:
       - commit:294cb19
       - commit:1eb6efb
       - commit:5f56dac
+      - commit:6a62a15
       - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
       - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
       - commit:5fb12cc
@@ -276,10 +277,12 @@ entries:
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
       - test:python -m pytest tests/test_access.py -q
       - test:python -m pytest tests/test_access.py tests/test_cli.py -q
+      - "test:python -m pytest tests/test_access.py tests/test_cli.py -q -> 510 passed, 1 skipped, 34 subtests"
       - test:npm test -- --runTestsByPath tests/accessPolicy.test.ts
     known_gaps:
       - The recommender is coded, tested, exposed as a Spawner API, mirrored by `spark access setup/status`, and referenced by Telegram Level 4 guidance; it is not yet wired into Mission Control UI.
-      - Level 4 now creates and probes the Spark workspace sandbox before claiming writability on macOS, Windows, and Linux.
+      - Level 4 now creates and probes the Spark workspace sandbox during setup before claiming writability on macOS, Windows, and Linux.
+      - "`spark setup`, generated module envs, onboarding guide JSON, and `spark access guide` now default users into Level 4 workspace-write without whole-computer access."
       - Level 5 whole-computer operator mode remains blocked unless `spark access setup --level 5 --enable-high-agency` writes auditable guardrails, followed by restart.
       - Docker now has a non-mutating CLI doctor; SSH and Modal already have doctor/smoke surfaces. Full one-click dependency installers still need OS-specific implementation and onboarding copy.
     rollback:
@@ -302,10 +305,13 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.ts
       - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.test.ts
       - commit:8087840
+      - commit:3834ea8
       - test:npx vitest run src/lib/server/command-runner.test.ts src/lib/server/high-agency-workers.test.ts src/lib/server/provider-clients/spark-harness-client.test.ts
+      - "test:npm test -- --run src/lib/server/spark-run-workspace.test.ts src/lib/server/high-agency-workers.test.ts src/lib/services/spark-agent-bridge.test.ts src/lib/server/provider-clients/spark-harness-client.test.ts -> 4 files, 18 tests"
     known_gaps:
       - "`workspace-write` is now the default Codex sandbox sent to the Spark harness; `danger-full-access` requires `SPARK_ALLOW_HIGH_AGENCY_WORKERS=1`."
-      - "`/api/verify` and `/api/scan` now use workspace-root path validation by default and fixed command argv with `shell: false`."
+      - "`/api/verify`, `/api/scan`, provider working directories, harness prompt-extracted workspaces, and high-agency cwd checks now use canonical workspace containment instead of lexical path checks."
+      - "Symlink/junction escapes from the Spark workspace root are rejected before creating or using a working directory."
       - "External project paths still require explicit trusted-local `SPARK_ALLOW_EXTERNAL_PROJECT_PATHS=1`; UI onboarding should surface this as an operator choice, not a terminal puzzle."
     rollback:
       - Revert the Spark harness sandbox resolver and command-runner path validation if existing local dev flows need a temporary compatibility window.
