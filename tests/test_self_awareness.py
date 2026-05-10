@@ -302,6 +302,60 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["task_fit"]["needs_local_workspace"])
         self.assertIn("probe runner or Spawner/Codex mission", result.to_text())
 
+    def test_agent_operating_context_concept_chat_keywords_do_not_hijack_writable_route(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="How should local workspace access, Docker build, and tests fit into the AOC design?",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only chat runner",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["conversation_frame"]["current_mode"], "concept_chat")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "chat")
+        self.assertFalse(payload["task_fit"]["needs_local_workspace"])
+        self.assertFalse(payload["task_fit"]["needs_write"])
+
+    def test_agent_operating_context_concept_chat_explicit_action_can_route_local_work(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="run tests in the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="workspace-write runner",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["conversation_frame"]["current_mode"], "concept_chat")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "current_writable_runner")
+        self.assertTrue(payload["task_fit"]["needs_local_workspace"])
+        self.assertTrue(payload["task_fit"]["needs_write"])
+
+    def test_agent_operating_context_exposes_execution_lane_without_level5_overclaim(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            execution_lane_state={
+                "docker": {"available": True, "selected": False, "probed": True},
+                "workspace_sandbox": True,
+                "level5_whole_computer_claim": True,
+            },
+        )
+
+        lane = result.to_payload()["execution_lane"]
+        self.assertEqual(lane["docker"]["available"], True)
+        self.assertEqual(lane["docker"]["selected"], False)
+        self.assertEqual(lane["docker"]["probed"], True)
+        self.assertTrue(lane["workspace_sandbox"])
+        self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+        self.assertIn("level5_whole_computer_claim_allowed=False", result.to_text())
+
     def test_agent_operating_context_labels_builder_command_path_available_with_warnings(self) -> None:
         registry_payload = {
             "workspace_id": "default",

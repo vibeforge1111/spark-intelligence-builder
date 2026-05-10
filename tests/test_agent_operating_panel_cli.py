@@ -73,3 +73,31 @@ class AgentOperatingPanelCliTests(SparkTestCase):
             section for section in payload["sections"]["sections"] if section["section_id"] == "contradictions"
         ][0]
         self.assertEqual(contradictions["status"], "needs_review")
+
+    def test_self_panel_cli_accepts_execution_lane_json(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--spark-access-level",
+            "4",
+            "--execution-lane-json",
+            json.dumps(
+                {
+                    "docker": {"available": True, "selected": True, "probed": False},
+                    "workspace_sandbox": True,
+                    "level5_whole_computer_claim": True,
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        lane = payload["aoc"]["execution_lane"]
+        self.assertEqual(lane["docker"]["available"], True)
+        self.assertEqual(lane["docker"]["selected"], True)
+        self.assertEqual(lane["docker"]["probed"], False)
+        self.assertTrue(lane["workspace_sandbox"])
+        self.assertFalse(lane["level5_whole_computer_claim_allowed"])

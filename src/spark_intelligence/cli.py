@@ -1341,22 +1341,27 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_context_parser = self_subparsers.add_parser(
         "context",
-        help="Show the agent operating context preflight: access, runner, route health, and source ledger",
+        help="Show agent operating context for route, access, runner, and probe preflight",
     )
     self_context_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    self_context_parser.add_argument("--human-id", default="", help="Optional human id for memory-in-play context")
+    self_context_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
     self_context_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
     self_context_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
     self_context_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
-    self_context_parser.add_argument("--user-message", default="", help="Optional user message for task-fit routing")
-    self_context_parser.add_argument("--spark-access-level", default="", help="Operator-supplied Spark access level, for example 4")
+    self_context_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_context_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
     self_context_parser.add_argument(
         "--runner-writable",
-        choices=["yes", "no", "unknown"],
+        choices=("yes", "no", "unknown"),
         default="unknown",
-        help="Current execution runner write capability, independent from Spark access level",
+        help="Whether the current runner can edit/write files",
     )
-    self_context_parser.add_argument("--runner-label", default="", help="Optional display label for the current runner")
+    self_context_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_context_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_panel_parser = self_subparsers.add_parser(
         "panel",
@@ -1376,6 +1381,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Whether the current runner can edit/write files",
     )
     self_panel_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_panel_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
     self_panel_parser.add_argument(
         "--memory-inbox-status",
         choices=("pending", "decided", "all"),
@@ -4520,8 +4530,9 @@ def handle_self_context(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
-        runner_writable=runner_writable,
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
@@ -4543,6 +4554,7 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
         stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
         stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),

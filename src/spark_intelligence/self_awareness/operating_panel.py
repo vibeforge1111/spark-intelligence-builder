@@ -66,6 +66,7 @@ class AgentOperatingPanel:
             f"Mode: {(aoc.get('conversation_frame') or {}).get('current_mode') or 'unknown'}",
             f"Best route: {(aoc.get('task_fit') or {}).get('recommended_route_label') or 'unknown'}",
             f"Route confidence: {(aoc.get('route_confidence') or {}).get('confidence') or 'unknown'}",
+            f"Execution lane: {_execution_lane_text(aoc.get('execution_lane') or {})}",
             f"Current goal: {scratchpad.get('current_goal') or 'unknown'}",
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
@@ -91,6 +92,7 @@ def build_agent_operating_panel(
     spark_access_level: str = "",
     runner_writable: bool | None = None,
     runner_label: str = "",
+    execution_lane_state: dict[str, Any] | None = None,
     memory_inbox_status: str = "pending",
     stale_live_claims: list[SourceClaim | dict[str, Any]] | None = None,
     stale_context_claims: list[SourceClaim | dict[str, Any]] | None = None,
@@ -106,6 +108,7 @@ def build_agent_operating_panel(
         spark_access_level=spark_access_level,
         runner_writable=runner_writable,
         runner_label=runner_label,
+        execution_lane_state=execution_lane_state,
     )
     live_claims = list(stale_live_claims or [])
     if spark_access_level:
@@ -158,3 +161,22 @@ def build_agent_operating_panel(
         memory_approval_inbox=memory_inbox,
         stale_context_sweep=stale_sweep,
     )
+
+
+def _execution_lane_text(execution_lane: dict[str, Any]) -> str:
+    docker = execution_lane.get("docker") if isinstance(execution_lane.get("docker"), dict) else {}
+    return (
+        f"docker available={_optional_bool_text(docker.get('available'))}, "
+        f"selected={_optional_bool_text(docker.get('selected'))}, "
+        f"probed={_optional_bool_text(docker.get('probed'))}; "
+        f"workspace sandbox={_optional_bool_text(execution_lane.get('workspace_sandbox'))}; "
+        f"level5 whole-computer claim={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
+    )
+
+
+def _optional_bool_text(value: object) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"

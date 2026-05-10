@@ -168,6 +168,24 @@ def default_agent_drift_eval_cases() -> list[AgentDriftEvalCase]:
                 "route to writable Spawner/Codex",
             ),
         ),
+        AgentDriftEvalCase(
+            case_id="concept_chat_keywords_do_not_hijack_writable_route",
+            user_message="How should local workspace access, Docker build, and tests fit into the AOC design?",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only chat runner",
+            expected_mode="concept_chat",
+            expected_recommended_route="chat",
+        ),
+        AgentDriftEvalCase(
+            case_id="explicit_action_intent_can_route_local_work",
+            user_message="run tests in the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="workspace-write runner",
+            expected_mode="concept_chat",
+            expected_recommended_route="current_writable_runner",
+        ),
     ]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +36,7 @@ class AgentOperatingContextResult:
     status: str
     access: dict[str, Any]
     runner: dict[str, Any]
+    execution_lane: dict[str, Any]
     conversation_frame: dict[str, Any]
     task_fit: dict[str, Any]
     route_confidence: dict[str, Any]
@@ -56,6 +58,7 @@ class AgentOperatingContextResult:
             "status": self.status,
             "access": self.access,
             "runner": self.runner,
+            "execution_lane": self.execution_lane,
             "conversation_frame": self.conversation_frame,
             "task_fit": self.task_fit,
             "route_confidence": self.route_confidence,
@@ -91,6 +94,7 @@ class AgentOperatingContextResult:
             f"Route confidence: {self.route_confidence.get('confidence') or 'unknown'} ({self.route_confidence.get('score') or 0})",
             f"Access: {self.access.get('label') or 'unknown'}",
             f"Runner: {self.runner.get('label') or 'unknown'}",
+            f"Execution lane: {_execution_lane_summary(self.execution_lane)}",
             f"Current mode: {self.conversation_frame.get('current_mode') or 'unknown'}",
             f"Allowed next action: {_frame_action_summary(self.conversation_frame.get('allowed_next_actions'))}",
             f"Disallowed: {_frame_action_summary(self.conversation_frame.get('disallowed_next_actions'))}",
@@ -154,6 +158,7 @@ def build_agent_operating_context(
     spark_access_level: str = "",
     runner_writable: bool | None = None,
     runner_label: str = "",
+    execution_lane_state: dict[str, Any] | None = None,
 ) -> AgentOperatingContextResult:
     registry_payload = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
     capsule = build_self_awareness_capsule(
@@ -175,11 +180,18 @@ def build_agent_operating_context(
     route_repairs = _build_route_repairs(routes)
     access = _build_access(spark_access_level)
     runner = _build_runner(runner_writable=runner_writable, runner_label=runner_label)
+    execution_lane = _build_execution_lane(execution_lane_state, access=access)
     conversation_frame = build_conversation_operating_frame(
         user_message=user_message,
         source_turn_id=request_id,
     ).to_payload()
-    task_fit = _build_task_fit(user_message=user_message, access=access, runner=runner, routes=routes)
+    task_fit = _build_task_fit(
+        user_message=user_message,
+        access=access,
+        runner=runner,
+        routes=routes,
+        conversation_frame=conversation_frame,
+    )
     route_confidence = build_route_confidence(task_fit=task_fit, routes=routes, runner=runner, access=access).to_payload()
     stale_flags = _build_stale_flags(state_db=state_db, access=access, user_message=user_message)
     status = _build_status(routes=routes, runner=runner, stale_flags=stale_flags)
@@ -196,6 +208,7 @@ def build_agent_operating_context(
         capsule_payload=capsule_payload,
         access=access,
         runner=runner,
+        execution_lane=execution_lane,
         conversation_frame=conversation_frame,
         route_confidence=route_confidence,
         routes=routes,
@@ -207,6 +220,7 @@ def build_agent_operating_context(
         status=status,
         access=access,
         runner=runner,
+        execution_lane=execution_lane,
         conversation_frame=conversation_frame,
         task_fit=task_fit,
         route_confidence=route_confidence,
@@ -390,16 +404,47 @@ def _build_runner(*, runner_writable: bool | None, runner_label: str) -> dict[st
     }
 
 
+def _build_execution_lane(raw: dict[str, Any] | None, *, access: dict[str, Any]) -> dict[str, Any]:
+    state = raw if isinstance(raw, dict) else {}
+    docker = state.get("docker") if isinstance(state.get("docker"), dict) else {}
+    workspace_sandbox = state.get("workspace_sandbox")
+    if workspace_sandbox is None:
+        workspace_sandbox = access.get("boundary") == "spark_workspace_sandbox"
+    whole_computer_claim_requested = bool(
+        state.get("level5_whole_computer_claim")
+        or state.get("whole_computer_claim")
+        or state.get("whole_computer_claim_allowed")
+    )
+    access_is_level5 = str(access.get("effective_level") or "") == "5"
+    return {
+        "docker": {
+            "available": _optional_bool(docker.get("available", state.get("docker_available"))),
+            "selected": _optional_bool(docker.get("selected", state.get("docker_selected"))),
+            "probed": _optional_bool(docker.get("probed", state.get("docker_probed"))),
+        },
+        "workspace_sandbox": _optional_bool(workspace_sandbox),
+        "level5_whole_computer_claim_allowed": bool(access_is_level5 and whole_computer_claim_requested),
+        "source": "operator_supplied_runner_state" if state else "derived_from_access",
+        "claim_boundary": "Level 5 whole-computer claims stay false unless current supplied access is Level 5.",
+    }
+
+
 def _build_task_fit(
     *,
     user_message: str,
     access: dict[str, Any],
     runner: dict[str, Any],
     routes: list[dict[str, Any]],
+    conversation_frame: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     message = str(user_message or "").lower()
-    needs_write = any(token in message for token in ("fix", "patch", "build", "implement", "install", "write", "code", "test"))
-    needs_local = needs_write or any(token in message for token in ("repo", "file", "workspace", "mission memory", "local"))
+    frame_mode = str((conversation_frame or {}).get("current_mode") or "")
+    explicit_action_intent = _has_explicit_action_intent(message)
+    keyword_write = any(token in message for token in ("fix", "patch", "build", "implement", "install", "write", "code", "test"))
+    keyword_local = keyword_write or any(token in message for token in ("repo", "file", "workspace", "mission memory", "local"))
+    suppress_keyword_route = frame_mode == "concept_chat" and not explicit_action_intent
+    needs_write = False if suppress_keyword_route else keyword_write
+    needs_local = False if suppress_keyword_route else keyword_local
     local_allowed = access.get("local_workspace_allowed") is True
     runner_writable = runner.get("writable")
     route_by_key = {str(route.get("key") or ""): route for route in routes}
@@ -467,6 +512,24 @@ def _build_task_fit(
         "blocked_here_by": [],
         "why": why,
     }
+
+
+def _has_explicit_action_intent(message: str) -> bool:
+    normalized = str(message or "").lower()
+    action_patterns = (
+        "run",
+        "edit",
+        "install",
+        "attach",
+        "execute",
+        "apply",
+        "fix",
+        "patch",
+        "implement",
+        "write",
+        "commit",
+    )
+    return any(re.search(rf"(?:^|[/\s]){re.escape(action)}(?:\b|\s+it\b)", normalized) for action in action_patterns)
 
 
 def _build_agent_needs(
@@ -622,6 +685,7 @@ def _build_source_ledger(
     capsule_payload: dict[str, Any],
     access: dict[str, Any],
     runner: dict[str, Any],
+    execution_lane: dict[str, Any],
     conversation_frame: dict[str, Any],
     route_confidence: dict[str, Any],
     routes: list[dict[str, Any]],
@@ -651,6 +715,12 @@ def _build_source_ledger(
             "role": "execution_capability_context",
             "present": runner.get("writable") is not None,
             "claim_boundary": runner.get("claim_boundary"),
+        },
+        {
+            "source": "execution_lane_state",
+            "role": "sandbox_and_runner_lane_context",
+            "present": str(execution_lane.get("source") or "") == "operator_supplied_runner_state",
+            "claim_boundary": execution_lane.get("claim_boundary"),
         },
         {
             "source": "system_registry",
@@ -973,6 +1043,41 @@ def _compact_probe_summary(value: object, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+
+def _execution_lane_summary(execution_lane: dict[str, Any]) -> str:
+    docker = execution_lane.get("docker") if isinstance(execution_lane.get("docker"), dict) else {}
+    docker_parts = [
+        f"docker_available={_display_optional_bool(docker.get('available'))}",
+        f"docker_selected={_display_optional_bool(docker.get('selected'))}",
+        f"docker_probed={_display_optional_bool(docker.get('probed'))}",
+    ]
+    return (
+        ", ".join(docker_parts)
+        + f", workspace_sandbox={_display_optional_bool(execution_lane.get('workspace_sandbox'))}"
+        + f", level5_whole_computer_claim_allowed={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
+    )
+
+
+def _optional_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().casefold()
+    if normalized in {"yes", "true", "1", "y"}:
+        return True
+    if normalized in {"no", "false", "0", "n"}:
+        return False
+    return None
+
+
+def _display_optional_bool(value: object) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"
 
 
 def _display_status(status: str) -> str:

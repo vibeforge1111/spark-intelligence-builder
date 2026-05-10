@@ -37,6 +37,32 @@ entries:
     rollback:
       - Route Telegram AOC commands back to Builder self context if panel rendering breaks.
 
+  - id: builder-aoc-task-fit-execution-lane-v1
+    module: spark-intelligence-builder
+    feature: AOC task-fit keyword hardening and execution lane state
+    status: verified
+    routes_affected:
+      - builder:self-context
+      - builder:self-panel
+      - aoc:task-fit
+      - aoc:execution-lane
+    evidence:
+      - src/spark_intelligence/self_awareness/operating_context.py
+      - src/spark_intelligence/self_awareness/operating_panel.py
+      - src/spark_intelligence/self_awareness/drift_evals.py
+      - src/spark_intelligence/cli.py
+      - tests/test_self_awareness.py
+      - tests/test_agent_operating_panel_cli.py
+      - tests/test_agent_drift_evals.py
+      - test:python -m pytest tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_concept_chat_keywords_do_not_hijack_writable_route tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_concept_chat_explicit_action_can_route_local_work tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_exposes_execution_lane_without_level5_overclaim -q
+      - test:python -m pytest tests/test_agent_operating_panel_cli.py tests/test_agent_drift_evals.py -q
+    known_gaps:
+      - AOC now suppresses writable route recommendations for concept-chat keyword mentions unless the turn has explicit action intent.
+      - The panel accepts optional execution lane JSON for Docker availability, selection, probe state, and workspace sandbox state.
+      - Level 5 whole-computer claims remain false unless the supplied current access resolves to Level 5.
+    rollback:
+      - Remove execution lane JSON ingestion and route concept-chat task-fit back to chat-only behavior if the panel payload contract becomes noisy.
+
   - id: telegram-degraded-chat-fallback-v1
     module: spark-telegram-bot
     feature: Conversational degraded mode for Builder or memory failure
