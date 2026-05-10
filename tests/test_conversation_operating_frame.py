@@ -69,6 +69,33 @@ class ConversationOperatingFrameUnitTests(unittest.TestCase):
         self.assertEqual(frame.current_mode, "concept_chat")
         self.assertIn("open_mission_control", frame.disallowed_next_actions)
 
+    def test_conceptual_mission_board_aoc_talk_stays_in_chat(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="How should the mission board fit into AOC without becoming an instant menu?",
+        )
+
+        self.assertEqual(frame.current_mode, "concept_chat")
+        self.assertEqual(frame.user_intent, "answer")
+        self.assertEqual(evaluate_action_gate(frame, proposed_action="open_mission_control").decision, "blocked")
+
+    def test_conceptual_route_probe_aoc_talk_stays_in_chat(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="How should route probe results be shown in the AOC design?",
+        )
+
+        self.assertEqual(frame.current_mode, "concept_chat")
+        self.assertEqual(frame.user_intent, "answer")
+        self.assertEqual(evaluate_action_gate(frame, proposed_action="run_route_probe").decision, "blocked")
+
+    def test_conceptual_fix_before_coding_stays_in_chat(self) -> None:
+        frame = build_conversation_operating_frame(
+            user_message="Can we fix deterministic route hijacks conceptually before coding?",
+        )
+
+        self.assertEqual(frame.current_mode, "concept_chat")
+        self.assertEqual(frame.user_intent, "answer")
+        self.assertEqual(evaluate_action_gate(frame, proposed_action="edit_files").decision, "blocked")
+
     def test_option_reference_resolves_against_active_list(self) -> None:
         frame = build_conversation_operating_frame(
             user_message="option 2",

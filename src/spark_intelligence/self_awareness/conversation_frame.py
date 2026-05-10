@@ -190,6 +190,8 @@ def check_final_answer_drift(
 def _classify_mode_and_intent(lowered: str) -> tuple[CurrentMode, UserIntent]:
     if _negates_mission_control(lowered):
         return "concept_chat", "answer"
+    if _is_conceptual_design_question(lowered):
+        return "concept_chat", "answer"
     if _has_any(lowered, ("approve memory", "memory inbox", "save this memory", "remember this")):
         return "memory_review", "approve_memory"
     if _has_any(lowered, ("research web", "browse web", "look up", "latest ", "search the web")):
@@ -205,6 +207,51 @@ def _classify_mode_and_intent(lowered: str) -> tuple[CurrentMode, UserIntent]:
     if _has_any(lowered, ("what do you remember", "recall", "what did i tell you")):
         return "memory_review", "recall"
     return "concept_chat", "answer"
+
+
+def _is_conceptual_design_question(lowered: str) -> bool:
+    conceptual = _has_any(
+        lowered,
+        (
+            "how should",
+            "how would",
+            "how could",
+            "how can",
+            "can we",
+            "could we",
+            "should we",
+            "conceptually",
+            "before coding",
+            "fit into",
+            "without becoming",
+            "design",
+        ),
+    )
+    if not conceptual:
+        return False
+    if not re.search(
+        r"\b(?:aoc|agent operating context|mission board|mission control|route probe|health probe|route hijack|deterministic|access level|runner|sandbox(?:es|ed)?|workspace|docker|ssh|modal)\b",
+        lowered,
+    ):
+        return False
+    explicit_action = _has_any(
+        lowered,
+        (
+            "/probe",
+            "run diagnostics",
+            "diagnose route",
+            "open mission control",
+            "show mission control",
+            "show mission board",
+            "mission board status",
+            "patch this",
+            "implement this",
+            "edit the files",
+            "commit this",
+        ),
+    )
+    conceptual_override = _has_any(lowered, ("conceptually", "before coding", "fit into", "without becoming", "design"))
+    return conceptual_override or not explicit_action
 
 
 def _active_reference_payload(
@@ -266,6 +313,9 @@ def _disallowed_actions(current_mode: CurrentMode) -> list[str]:
         "run_diagnostics",
         "run_route_probe",
         "claim_live_probe",
+        "edit_files",
+        "run_tests",
+        "commit_changes",
     ]
     if current_mode == "concept_chat":
         return route_changing
