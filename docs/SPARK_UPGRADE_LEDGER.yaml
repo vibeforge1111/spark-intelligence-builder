@@ -1,0 +1,94 @@
+# Spark upgrade ledger.
+#
+# Purpose: keep docs, code, wiring, activation, and verification from blurring
+# together during fast subsystem upgrades. Status values are intentionally
+# separate: documented, coded, wired, active, verified, broken, deprecated.
+
+schema_version: spark.upgrade_ledger.v1
+updated_at: "2026-05-10"
+status_values:
+  - documented
+  - coded
+  - wired
+  - active
+  - verified
+  - broken
+  - deprecated
+
+entries:
+  - id: aoc-shared-panel-v1
+    module: spark-intelligence-builder
+    feature: Agent Operating Context shared panel
+    status: wired
+    routes_affected:
+      - builder:self-panel
+      - telegram:/aoc
+      - telegram:/context
+      - telegram:/operating_context
+      - telegram:/agent_context
+    evidence:
+      - docs/AGENT_OPERATING_CONTEXT_AND_DRIFT_CONTROL.md
+      - src/spark_intelligence/self_awareness/operating_panel.py
+      - tests/test_agent_operating_panel.py
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+    known_gaps:
+      - Mission Control drilldown still needs to consume the shared panel payload directly.
+      - AOC should show mission completion evidence state once Spawner evidence gates are fully wired.
+    rollback:
+      - Route Telegram AOC commands back to Builder self context if panel rendering breaks.
+
+  - id: telegram-degraded-chat-fallback-v1
+    module: spark-telegram-bot
+    feature: Conversational degraded mode for Builder or memory failure
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - telegram:memory-directive
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/errorExplain.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/errorExplain.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+    known_gaps:
+      - Final answer gate still needs explicit latest-intent verdict fields.
+      - Fallback should eventually answer from current chat in the same turn when local chat fallback is available.
+    rollback:
+      - Re-enable the generic diagnostic renderer for chat-context Builder failures.
+
+  - id: mission-provider-evidence-v1
+    module: spawner-ui
+    feature: Mission completion display respects live provider state
+    status: wired
+    routes_affected:
+      - spawner:mission-control-board
+      - spawner:mission-control-trace
+      - telegram:mission-status
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.test.ts
+    known_gaps:
+      - Stale running timeout still defaults to 24 hours and needs a product decision before shortening.
+      - Completion evidence bundle should include artifact/log/final-provider-event requirements.
+    rollback:
+      - Restore lifecycle completion as the source of truth for provider summaries.
+
+  - id: voice-runtime-activation-v1
+    module: spark-intelligence-builder
+    feature: Voice runtime and ElevenLabs activation path
+    status: documented
+    routes_affected:
+      - telegram:/voice
+      - builder:voice-runtime
+      - chip:spark-voice-comms
+    evidence:
+      - src/spark_intelligence/adapters/telegram/runtime.py
+      - src/spark_intelligence/attachments/snapshot.py
+      - tests/test_attachment_voice_aliases.py
+      - tests/test_operator_pairing_flows.py
+    known_gaps:
+      - Documentation and command handlers exist, but runtime activation depends on `spark-voice-comms` being attached.
+      - ElevenLabs requires a local secret and selected voice id before live TTS can be claimed.
+      - Dashboard should distinguish chip attached, provider selected, key present, voice selected, and last test.
+    rollback:
+      - Keep `/voice` in text-only setup guidance mode until chip attachment and provider checks pass.
+
