@@ -253,13 +253,17 @@ entries:
       - C:/Users/USER/Desktop/spawner-ui/src/routes/api/access/execution-lanes/+server.ts
       - C:/Users/USER/Desktop/spawner-ui/src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
       - commit:63d44c5
+      - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/access.py
+      - C:/Users/USER/Desktop/spark-cli/tests/test_access.py
+      - commit:294cb19
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts
       - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
+      - test:python -m pytest tests/test_access.py -q
     known_gaps:
-      - The recommender is coded, tested, and exposed as a Spawner API; it is not yet wired into Telegram AOC, Mission Control UI, or Spark CLI onboarding.
+      - The recommender is coded, tested, exposed as a Spawner API, and mirrored by `spark access setup/status`; it is not yet wired into Telegram AOC or Mission Control UI.
       - Level 4 defaults to the Spark workspace sandbox on macOS, Windows, and Linux; Docker, SSH, and Modal are lanes selected only when useful and available.
       - Level 5 whole-computer operator mode remains blocked unless high-agency worker guardrails are explicitly enabled.
-      - The actual Docker/SSH/Modal installers still need OS-specific guided setup commands and nontechnical onboarding copy.
+      - Docker/SSH/Modal are guided optional lanes through the CLI; full one-click dependency installers still need OS-specific implementation and onboarding copy.
     rollback:
       - Keep the existing Spark workspace and high-agency worker guards; stop consuming the lane recommender until CLI/onboarding integration is ready.
 
