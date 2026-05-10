@@ -27,6 +27,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["authority_sources"], 2)
         self.assertEqual(context["counts"]["builder_event_rows"], 123)
         self.assertEqual(context["counts"]["builder_event_samples"], 3)
+        self.assertEqual(context["counts"]["builder_trace_groups"], 2)
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
@@ -57,7 +58,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2",
             context.to_text(),
         )
 
@@ -75,7 +76,10 @@ class SystemMapReadModelTests(SparkTestCase):
         system_map_source = next(item for item in source_items if item["source"] == "spark_os_system_map")
         self.assertTrue(system_map_source["present"])
         self.assertEqual(system_map_source["freshness"], "fresh")
-        self.assertEqual(system_map_source["summary"], "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3")
+        self.assertEqual(
+            system_map_source["summary"],
+            "2 modules, 3 repos, 1 gaps, memory rows 42, black-box samples 3, trace groups 2",
+        )
 
     def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:
         system_map_dir = self.home / "system-map"
@@ -130,6 +134,7 @@ class SystemMapReadModelTests(SparkTestCase):
                     "schema_version": "spark.trace_index.compiled.v0",
                     "builder_events": {"row_count": 123},
                     "builder_event_samples": {"sample_count": 3},
+                    "builder_trace_groups": {"group_count": 2},
                 }
             ),
             encoding="utf-8",

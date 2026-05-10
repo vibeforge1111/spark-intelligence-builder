@@ -156,6 +156,9 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     sample_count = int(counts.get("builder_event_samples") or 0)
     if sample_count:
         summary += f", black-box samples {sample_count}"
+    trace_group_count = int(counts.get("builder_trace_groups") or 0)
+    if trace_group_count:
+        summary += f", trace groups {trace_group_count}"
     return summary
 
 
