@@ -44,6 +44,7 @@ def build_agent_panel_sections(
 ) -> AgentPanelSections:
     access = _dict(aoc_payload.get("access"))
     runner = _dict(aoc_payload.get("runner"))
+    access_automation = _dict(aoc_payload.get("access_automation"))
     frame = _dict(aoc_payload.get("conversation_frame"))
     task_fit = _dict(aoc_payload.get("task_fit"))
     routes = [_dict(route) for route in _list(aoc_payload.get("routes"))]
@@ -92,6 +93,19 @@ def build_agent_panel_sections(
                     _item("Recommended route", task_fit.get("recommended_route_label") or "unknown"),
                     _item("Blocked here by", ", ".join(_strings(task_fit.get("blocked_here_by"))) or "none"),
                     _item("Safe next action", scratchpad_payload.get("next_safe_action") or "answer_in_chat"),
+                ],
+            ),
+            AgentPanelSection(
+                section_id="access_automation",
+                title="Access Automation",
+                status=str(access_automation.get("recommended_run_policy") or "unknown"),
+                items=[
+                    _item("Next safe access action", access_automation.get("next_safe_access_action") or "unknown"),
+                    _item("Recommended lane", access_automation.get("recommended_lane") or "unknown"),
+                    _item("Run policy", access_automation.get("recommended_run_policy") or "unknown"),
+                    _item("Confirmation required", _yes_no_unknown(access_automation.get("requires_confirmation"))),
+                    _item("Auto-run allowed", _yes_no_unknown(access_automation.get("allowed_to_auto_run"))),
+                    _item("Boundary", access_automation.get("claim_boundary") or "read-only policy context"),
                 ],
             ),
             AgentPanelSection(

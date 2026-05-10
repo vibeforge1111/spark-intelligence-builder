@@ -67,6 +67,7 @@ class AgentOperatingPanel:
             f"Best route: {(aoc.get('task_fit') or {}).get('recommended_route_label') or 'unknown'}",
             f"Route confidence: {(aoc.get('route_confidence') or {}).get('confidence') or 'unknown'}",
             f"Execution lane: {_execution_lane_text(aoc.get('execution_lane') or {})}",
+            f"Next safe access action: {_access_automation_text(aoc.get('access_automation') or {})}",
             f"Current goal: {scratchpad.get('current_goal') or 'unknown'}",
             f"Next safe action: {scratchpad.get('next_safe_action') or 'answer_in_chat'}",
             f"Sources: {source_counts.get('present', 0)} present, {source_counts.get('stale', 0)} stale, {source_counts.get('contradicted', 0)} contradicted",
@@ -172,6 +173,13 @@ def _execution_lane_text(execution_lane: dict[str, Any]) -> str:
         f"workspace sandbox={_optional_bool_text(execution_lane.get('workspace_sandbox'))}; "
         f"level5 whole-computer claim={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
     )
+
+
+def _access_automation_text(access_automation: dict[str, Any]) -> str:
+    action = str(access_automation.get("next_safe_access_action") or access_automation.get("recommended_action") or "unknown")
+    policy = str(access_automation.get("recommended_run_policy") or "unknown")
+    confirmation = "yes" if access_automation.get("requires_confirmation") else "no"
+    return f"{action} (run policy: {policy}, confirmation required: {confirmation})"
 
 
 def _optional_bool_text(value: object) -> str:

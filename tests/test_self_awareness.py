@@ -356,6 +356,94 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertFalse(lane["level5_whole_computer_claim_allowed"])
         self.assertIn("level5_whole_computer_claim_allowed=False", result.to_text())
 
+    def test_agent_operating_context_surfaces_cli_access_automation_contract(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=False,
+            execution_lane_state={
+                "automation": {
+                    "no_terminal_required": True,
+                    "recommended_action": "spark access setup",
+                    "recommended_lane": "spark_workspace",
+                    "actions": [
+                        {
+                            "id": "workspace_setup",
+                            "command": "spark access setup",
+                            "run_policy": "auto_safe",
+                            "confirmation": "none",
+                            "user_message": "Spark can create or repair the safe workspace automatically.",
+                        },
+                        {
+                            "id": "level5_enable",
+                            "command": "spark access setup --level 5 --enable-high-agency",
+                            "run_policy": "explicit_opt_in",
+                            "confirmation": "Enable whole-computer operator mode",
+                        },
+                    ],
+                    "deletion_safety": {"default": "do_not_delete"},
+                }
+            },
+        )
+
+        automation = result.to_payload()["access_automation"]
+        self.assertEqual(automation["source"], "spark_cli_access_payload")
+        self.assertTrue(automation["no_terminal_required"])
+        self.assertEqual(automation["next_safe_access_action"], "spark access setup")
+        self.assertEqual(automation["recommended_lane"], "spark_workspace")
+        self.assertEqual(automation["recommended_run_policy"], "auto_safe")
+        self.assertFalse(automation["requires_confirmation"])
+        self.assertTrue(automation["allowed_to_auto_run"])
+        self.assertEqual(automation["deletion_safety"]["default"], "do_not_delete")
+        self.assertIn("does not run setup", automation["claim_boundary"])
+        self.assertIn("Access automation: next=spark access setup", result.to_text())
+        ledger = {item["source"]: item for item in result.to_payload()["source_ledger"]}
+        self.assertTrue(ledger["spark_cli_access_automation"]["present"])
+
+    def test_agent_operating_context_keeps_level5_access_action_explicit_opt_in(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="enable whole-computer operator mode",
+            spark_access_level="5",
+            runner_writable=True,
+            execution_lane_state={
+                "level5_whole_computer_claim": False,
+                "automation": {
+                    "recommended_action": "spark access setup --level 5 --enable-high-agency",
+                    "recommended_lane": "level5_operator",
+                    "actions": [
+                        {
+                            "id": "level5_enable",
+                            "command": "spark access setup --level 5 --enable-high-agency",
+                            "run_policy": "explicit_opt_in",
+                            "confirmation": "Enable whole-computer operator mode",
+                        }
+                    ],
+                    "level5_runtime_policy": {
+                        "destructive_actions_after_activation": "still_approval_required",
+                        "secret_reveal_or_export": "still_approval_required",
+                    },
+                },
+            },
+        )
+
+        payload = result.to_payload()
+        lane = payload["execution_lane"]
+        automation = payload["access_automation"]
+        self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+        self.assertEqual(automation["recommended_run_policy"], "explicit_opt_in")
+        self.assertTrue(automation["requires_confirmation"])
+        self.assertFalse(automation["allowed_to_auto_run"])
+        self.assertEqual(automation["confirmation"], "Enable whole-computer operator mode")
+        self.assertEqual(
+            automation["level5_runtime_policy"]["destructive_actions_after_activation"],
+            "still_approval_required",
+        )
+        self.assertIn("confirmation_required=yes", result.to_text())
+
     def test_agent_operating_context_labels_builder_command_path_available_with_warnings(self) -> None:
         registry_payload = {
             "workspace_id": "default",

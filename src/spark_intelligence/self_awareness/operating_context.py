@@ -37,6 +37,7 @@ class AgentOperatingContextResult:
     access: dict[str, Any]
     runner: dict[str, Any]
     execution_lane: dict[str, Any]
+    access_automation: dict[str, Any]
     conversation_frame: dict[str, Any]
     task_fit: dict[str, Any]
     route_confidence: dict[str, Any]
@@ -59,6 +60,7 @@ class AgentOperatingContextResult:
             "access": self.access,
             "runner": self.runner,
             "execution_lane": self.execution_lane,
+            "access_automation": self.access_automation,
             "conversation_frame": self.conversation_frame,
             "task_fit": self.task_fit,
             "route_confidence": self.route_confidence,
@@ -95,6 +97,7 @@ class AgentOperatingContextResult:
             f"Access: {self.access.get('label') or 'unknown'}",
             f"Runner: {self.runner.get('label') or 'unknown'}",
             f"Execution lane: {_execution_lane_summary(self.execution_lane)}",
+            f"Access automation: {_access_automation_summary(self.access_automation)}",
             f"Current mode: {self.conversation_frame.get('current_mode') or 'unknown'}",
             f"Allowed next action: {_frame_action_summary(self.conversation_frame.get('allowed_next_actions'))}",
             f"Disallowed: {_frame_action_summary(self.conversation_frame.get('disallowed_next_actions'))}",
@@ -181,6 +184,7 @@ def build_agent_operating_context(
     access = _build_access(spark_access_level)
     runner = _build_runner(runner_writable=runner_writable, runner_label=runner_label)
     execution_lane = _build_execution_lane(execution_lane_state, access=access)
+    access_automation = _build_access_automation(execution_lane_state, access=access, execution_lane=execution_lane)
     conversation_frame = build_conversation_operating_frame(
         user_message=user_message,
         source_turn_id=request_id,
@@ -209,6 +213,7 @@ def build_agent_operating_context(
         access=access,
         runner=runner,
         execution_lane=execution_lane,
+        access_automation=access_automation,
         conversation_frame=conversation_frame,
         route_confidence=route_confidence,
         routes=routes,
@@ -221,6 +226,7 @@ def build_agent_operating_context(
         access=access,
         runner=runner,
         execution_lane=execution_lane,
+        access_automation=access_automation,
         conversation_frame=conversation_frame,
         task_fit=task_fit,
         route_confidence=route_confidence,
@@ -427,6 +433,224 @@ def _build_execution_lane(raw: dict[str, Any] | None, *, access: dict[str, Any])
         "source": "operator_supplied_runner_state" if state else "derived_from_access",
         "claim_boundary": "Level 5 whole-computer claims stay false unless current supplied access is Level 5.",
     }
+
+
+def _build_access_automation(
+    raw: dict[str, Any] | None,
+    *,
+    access: dict[str, Any],
+    execution_lane: dict[str, Any],
+) -> dict[str, Any]:
+    state = raw if isinstance(raw, dict) else {}
+    automation = state.get("automation") if isinstance(state.get("automation"), dict) else {}
+    actions = _access_automation_actions(automation.get("actions"))
+    recommended_action = _first_non_empty(
+        automation.get("recommended_action"),
+        state.get("next"),
+        _derived_access_action(access=access, execution_lane=execution_lane),
+    )
+    recommended_lane = _first_non_empty(
+        automation.get("recommended_lane"),
+        ((state.get("recommended") or {}).get("id") if isinstance(state.get("recommended"), dict) else None),
+        _derived_access_lane(access=access, execution_lane=execution_lane),
+    )
+    matched_action = _match_access_action(actions, command=recommended_action, lane=recommended_lane)
+    run_policy = _first_non_empty(
+        matched_action.get("run_policy"),
+        matched_action.get("runPolicy"),
+        _run_policy_for_access_action(recommended_action),
+    )
+    confirmation = _first_non_empty(matched_action.get("confirmation"), _confirmation_for_run_policy(run_policy))
+    requires_confirmation = run_policy in {"confirm_once", "explicit_opt_in"}
+    no_terminal_required = automation.get("no_terminal_required")
+    return {
+        "present": bool(automation or state or access.get("spark_access_level")),
+        "source": "spark_cli_access_payload" if automation else "builder_static_contract_mirror",
+        "no_terminal_required": no_terminal_required if isinstance(no_terminal_required, bool) else None,
+        "recommended_action": recommended_action,
+        "next_safe_access_action": recommended_action,
+        "recommended_lane": recommended_lane,
+        "recommended_run_policy": run_policy,
+        "requires_confirmation": requires_confirmation,
+        "allowed_to_auto_run": run_policy in {"auto_safe", "auto_read_only"} and not requires_confirmation,
+        "confirmation": confirmation,
+        "actions": actions,
+        "level5_runtime_policy": _dict_or_default(
+            automation.get("level5_runtime_policy"),
+            {
+                "routine_actions_after_activation": "allowed_without_repeated_confirmation",
+                "destructive_actions_after_activation": "still_approval_required",
+                "secret_reveal_or_export": "still_approval_required",
+                "public_publish_or_deploy": "still_approval_required",
+            },
+        ),
+        "deletion_safety": _dict_or_default(
+            automation.get("deletion_safety"),
+            {
+                "default": "do_not_delete",
+                "outside_workspace": "exact-target approval required",
+                "broad_recursive_delete": "blocked unless policy and explicit confirmation approve it",
+                "backup_first": "required for user data, secrets, and stateful Spark homes",
+            },
+        ),
+        "claim_boundary": (
+            "AOC is exposing the Spark CLI access automation policy as a read-only contract. "
+            "It does not run setup, prove workspace writability, or make Level 5 active without the fixed CLI action, "
+            "its run policy, required confirmation, and a fresh post-action status check."
+        ),
+    }
+
+
+def _access_automation_actions(raw_actions: object) -> list[dict[str, Any]]:
+    if isinstance(raw_actions, list) and raw_actions:
+        actions = []
+        for action in raw_actions[:8]:
+            if not isinstance(action, dict):
+                continue
+            actions.append(
+                {
+                    "id": str(action.get("id") or "").strip() or None,
+                    "command": _command_text(action.get("command")),
+                    "run_policy": _first_non_empty(action.get("run_policy"), action.get("runPolicy"), "unknown"),
+                    "confirmation": _confirmation_text(action.get("confirmation")),
+                    "user_message": str(action.get("user_message") or "").strip() or None,
+                    "rollback": str(action.get("rollback") or "").strip() or None,
+                }
+            )
+        return actions
+    return _default_access_automation_actions()
+
+
+def _default_access_automation_actions() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "workspace_setup",
+            "command": "spark access setup",
+            "run_policy": "auto_safe",
+            "confirmation": None,
+            "user_message": "Spark can create or repair the safe workspace automatically.",
+            "rollback": "No rollback needed; this only creates Spark-owned workspace folders.",
+        },
+        {
+            "id": "docker_doctor",
+            "command": "spark sandbox docker doctor --json",
+            "run_policy": "auto_read_only",
+            "confirmation": None,
+            "user_message": "Spark can check Docker readiness without changing the computer.",
+            "rollback": None,
+        },
+        {
+            "id": "docker_smoke",
+            "command": "spark sandbox docker smoke --json",
+            "run_policy": "confirm_once",
+            "confirmation": "Run Docker sandbox test",
+            "user_message": "Spark can run a no-secret Docker smoke after confirmation.",
+            "rollback": "Docker smoke uses an ephemeral container; cleanup still needs explicit approval.",
+        },
+        {
+            "id": "level5_enable",
+            "command": "spark access setup --level 5 --enable-high-agency",
+            "run_policy": "explicit_opt_in",
+            "confirmation": "Enable whole-computer operator mode",
+            "user_message": "Spark must ask before enabling Level 5 guardrails and then verify after restart.",
+            "rollback": "spark access disable-level5",
+        },
+        {
+            "id": "level5_disable",
+            "command": "spark access disable-level5",
+            "run_policy": "confirm_once",
+            "confirmation": "Return to workspace sandbox",
+            "user_message": "Spark can disable Level 5 guardrails and return to sandbox-first mode after restart.",
+            "rollback": "spark access setup --level 5 --enable-high-agency",
+        },
+    ]
+
+
+def _match_access_action(actions: list[dict[str, Any]], *, command: str, lane: str) -> dict[str, Any]:
+    command_text = str(command or "").strip()
+    for action in actions:
+        if str(action.get("command") or "").strip() == command_text:
+            return action
+    lane_to_action = {
+        "spark_workspace": "workspace_setup",
+        "docker": "docker_doctor",
+        "level5_operator": "level5_enable" if "--enable-high-agency" in command_text else "level5_status",
+    }
+    action_id = lane_to_action.get(str(lane or ""))
+    for action in actions:
+        if str(action.get("id") or "") == action_id:
+            return action
+    return {}
+
+
+def _derived_access_action(*, access: dict[str, Any], execution_lane: dict[str, Any]) -> str:
+    effective_level = str(access.get("effective_level") or "")
+    if effective_level == "5":
+        return "spark access status --level 5"
+    if effective_level == "4":
+        return "spark access setup"
+    if effective_level in {"1", "2", "3"}:
+        return f"spark access status --level {effective_level}"
+    if execution_lane.get("workspace_sandbox") is True:
+        return "spark access setup"
+    return "spark access status"
+
+
+def _derived_access_lane(*, access: dict[str, Any], execution_lane: dict[str, Any]) -> str:
+    if str(access.get("effective_level") or "") == "5":
+        return "level5_operator"
+    if execution_lane.get("workspace_sandbox") is True or str(access.get("effective_level") or "") == "4":
+        return "spark_workspace"
+    return "access_status"
+
+
+def _run_policy_for_access_action(command: str) -> str:
+    command_text = str(command or "")
+    if "--enable-high-agency" in command_text:
+        return "explicit_opt_in"
+    if "disable-level5" in command_text or "docker smoke" in command_text or command_text == "spark restart":
+        return "confirm_once"
+    if " status" in command_text or "doctor" in command_text:
+        return "auto_read_only"
+    if "access setup" in command_text:
+        return "auto_safe"
+    return "auto_read_only"
+
+
+def _confirmation_for_run_policy(run_policy: str) -> str | None:
+    if run_policy == "explicit_opt_in":
+        return "Enable whole-computer operator mode"
+    if run_policy == "confirm_once":
+        return "Confirm once before running this access action"
+    return None
+
+
+def _command_text(command: object) -> str:
+    if isinstance(command, list):
+        parts = [str(part).strip() for part in command if str(part).strip()]
+        if parts and parts[0] != "spark":
+            parts.insert(0, "spark")
+        return " ".join(parts)
+    return str(command or "").strip()
+
+
+def _confirmation_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.casefold() == "none":
+        return None
+    return text
+
+
+def _first_non_empty(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _dict_or_default(value: object, default: dict[str, Any]) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else dict(default)
 
 
 def _build_task_fit(
@@ -686,6 +910,7 @@ def _build_source_ledger(
     access: dict[str, Any],
     runner: dict[str, Any],
     execution_lane: dict[str, Any],
+    access_automation: dict[str, Any],
     conversation_frame: dict[str, Any],
     route_confidence: dict[str, Any],
     routes: list[dict[str, Any]],
@@ -721,6 +946,12 @@ def _build_source_ledger(
             "role": "sandbox_and_runner_lane_context",
             "present": str(execution_lane.get("source") or "") == "operator_supplied_runner_state",
             "claim_boundary": execution_lane.get("claim_boundary"),
+        },
+        {
+            "source": "spark_cli_access_automation",
+            "role": "fixed_access_action_policy",
+            "present": bool(access_automation.get("present")),
+            "claim_boundary": access_automation.get("claim_boundary"),
         },
         {
             "source": "system_registry",
@@ -1057,6 +1288,14 @@ def _execution_lane_summary(execution_lane: dict[str, Any]) -> str:
         + f", workspace_sandbox={_display_optional_bool(execution_lane.get('workspace_sandbox'))}"
         + f", level5_whole_computer_claim_allowed={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
     )
+
+
+def _access_automation_summary(access_automation: dict[str, Any]) -> str:
+    action = str(access_automation.get("next_safe_access_action") or access_automation.get("recommended_action") or "unknown")
+    lane = str(access_automation.get("recommended_lane") or "unknown")
+    policy = str(access_automation.get("recommended_run_policy") or "unknown")
+    confirmation = "yes" if access_automation.get("requires_confirmation") else "no"
+    return f"next={action}, lane={lane}, run_policy={policy}, confirmation_required={confirmation}"
 
 
 def _optional_bool(value: object) -> bool | None:
