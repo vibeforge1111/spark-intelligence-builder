@@ -237,6 +237,28 @@ entries:
     rollback:
       - Map `full access` back to Level 4 only if Level 5 onboarding proves too disruptive; keep high-agency worker guards enabled regardless.
 
+  - id: spawner-access-execution-lanes-v1
+    module: spawner-ui
+    feature: OS-aware Access Level 4/5 execution lane recommender
+    status: coded
+    routes_affected:
+      - spawner:access-preflight
+      - spawner:sandboxed-workspaces
+      - spawner:high-agency-workers
+      - future-cli:spark-access-setup
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/access-execution-lanes.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/access-execution-lanes.test.ts
+      - commit:d45e507
+      - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts
+    known_gaps:
+      - The recommender is coded and tested, but not yet wired into Telegram AOC, Mission Control, or Spark CLI onboarding.
+      - Level 4 defaults to the Spark workspace sandbox on macOS, Windows, and Linux; Docker, SSH, and Modal are lanes selected only when useful and available.
+      - Level 5 whole-computer operator mode remains blocked unless high-agency worker guardrails are explicitly enabled.
+      - The actual Docker/SSH/Modal installers still need OS-specific guided setup commands and nontechnical onboarding copy.
+    rollback:
+      - Keep the existing Spark workspace and high-agency worker guards; stop consuming the lane recommender until CLI/onboarding integration is ready.
+
   - id: voice-runtime-activation-v1
     module: spark-intelligence-builder
     feature: Voice runtime and ElevenLabs activation path
