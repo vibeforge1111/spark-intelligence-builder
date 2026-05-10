@@ -188,6 +188,30 @@ entries:
     rollback:
       - Keep memory metadata prompt-only and remove the appended AOC memory summary.
 
+  - id: telegram-access-capability-hijack-v1
+    module: spark-telegram-bot
+    feature: Access keyword hijack prevention and runner capability truth
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - telegram:/access
+      - telegram:natural-access-change
+      - aoc:runner-capability
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - commit:2b40c82
+      - commit:c6c4c60
+    known_gaps:
+      - This covers the witnessed access/build keyword and Level 4/read-only mismatch cases; other deterministic route families still need continued transcript replay.
+      - Access level 4 is now described as authorization plus runner preflight, but a read-only remote runner still cannot be made writable without relaunching/rerouting the execution environment.
+      - A future AOC strip should show configured access, current runner, writable route, and proof requirement on every action proposal, not only access queries.
+    rollback:
+      - Remove the access capability mismatch detector and revert `/access` replies to profile-only confirmations if preflight checks become noisy.
+
   - id: voice-runtime-activation-v1
     module: spark-intelligence-builder
     feature: Voice runtime and ElevenLabs activation path
