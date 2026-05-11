@@ -131,6 +131,9 @@ def build_agent_panel_sections(
                     _item("Toxic capability pairs", int(authority_status.get("toxic_pair_count") or 0)),
                     _item("Publication checks", int(authority_status.get("publication_checks_required") or 0)),
                     _item("Required publication checks", _list(authority_status.get("required_publication_checks"))),
+                    _item("Trace verdicts", int(authority_status.get("trace_verdict_count") or 0)),
+                    _item("Verdict counts", _dict(authority_status.get("trace_verdict_counts"))),
+                    _item("Verdict actions", _dict(authority_status.get("trace_verdict_action_family_counts"))),
                     _item("Boundary", authority_status.get("claim_boundary") or "compiled policy evidence only"),
                 ],
             ),
@@ -208,14 +211,20 @@ def build_agent_panel_sections(
                     _item("Creator system surfaces", int(capability_garden.get("creator_system_surfaces") or 0)),
                     _item("Specialization path surfaces", int(capability_garden.get("specialization_path_surfaces") or 0)),
                     _item("Statuses", _dict(capability_garden.get("status_counts"))),
+                    _item("Trust statuses", _dict(capability_garden.get("trust_counts"))),
+                    _item("Proof states", _dict(capability_garden.get("proof_state_counts"))),
+                    _item("Top proof gap", capability_garden.get("top_missing_proof") or "none"),
                     *[
                         _item(
                             str(card.get("id") or card.get("name") or "capability"),
                             {
                                 "status": card.get("status") or "unknown",
+                                "trust_status": card.get("trust_status") or "untrusted",
+                                "proof_state": card.get("proof_state") or "missing",
                                 "surface_type": card.get("surface_type") or "unknown",
                                 "owner_repo": card.get("owner_repo") or "unknown",
                                 "blocker_count": len(_list(card.get("blockers"))),
+                                "missing_proof_count": len(_list(card.get("missing_proofs"))),
                                 "next_action": card.get("next_action") or "",
                             },
                         )

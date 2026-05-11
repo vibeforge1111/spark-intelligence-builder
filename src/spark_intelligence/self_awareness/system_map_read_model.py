@@ -65,6 +65,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     trace_topology = _trace_topology_context(trace_index)
     cross_system_trace = _cross_system_trace_context(trace_index)
     authority_status = _authority_status_context(authority_view)
+    authority_status.update(_authority_verdict_context(trace_index))
     capability_garden = _capability_garden_context(capability_catalog)
     counts = {
         "modules": len(_list(system_map.get("modules"))),
@@ -79,6 +80,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "authority_toxic_pairs": _int(authority_status.get("toxic_pair_count")),
         "authority_browser_approval_hooks": _int(authority_status.get("browser_approval_required_hook_count")),
         "authority_publication_checks": _int(authority_status.get("publication_checks_required")),
+        "authority_trace_verdicts": _int(authority_status.get("trace_verdict_count")),
         "builder_event_rows": _builder_event_rows(trace_index),
         "builder_event_samples": _builder_event_sample_count(trace_index),
         "builder_trace_groups": _builder_trace_group_count(trace_index),
@@ -163,11 +165,15 @@ def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
         parts.append(f"spawner trace refs {derived_spawner_refs}")
     authority_status = _dict(context.get("authority_status"))
     if authority_status.get("present"):
-        parts.append(
+        authority_part = (
             "authority "
             f"L{int(authority_status.get('default_access_level') or 0)} "
             f"{authority_status.get('default_sandbox_lane') or 'unknown'}"
         )
+        trace_verdict_count = int(authority_status.get("trace_verdict_count") or 0)
+        if trace_verdict_count:
+            authority_part += f", authority verdicts {trace_verdict_count}"
+        parts.append(authority_part)
     capability_garden = _dict(context.get("capability_garden"))
     card_count = int(capability_garden.get("card_count") or 0)
     if card_count:
@@ -417,16 +423,36 @@ def _authority_status_context(authority_view: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _authority_verdict_context(trace_index: dict[str, Any]) -> dict[str, Any]:
+    verdicts = _dict(trace_index.get("authority_verdicts"))
+    return {
+        "trace_verdict_count": _int(verdicts.get("verdict_count")),
+        "trace_verdict_counts": _int_mapping(verdicts.get("verdict_counts")),
+        "trace_verdict_action_family_counts": _int_mapping(verdicts.get("action_family_counts")),
+        "trace_verdict_source_policy_counts": _int_mapping(verdicts.get("source_policy_counts")),
+    }
+
+
 def _capability_garden_context(capability_catalog: dict[str, Any]) -> dict[str, Any]:
     raw_cards = [_dict(card) for card in _list(capability_catalog.get("capability_cards"))]
     status_counts: dict[str, int] = {}
     surface_counts: dict[str, int] = {}
+    trust_counts: dict[str, int] = {}
+    proof_state_counts: dict[str, int] = {}
+    top_missing_proof = "none"
     cards: list[dict[str, Any]] = []
     for card in raw_cards[:12]:
         status = _short(card.get("status") or "unknown")
         surface = _short(card.get("surface_type") or "unknown")
+        trust_status = _short(card.get("trust_status") or "untrusted")
+        proof_state = _short(card.get("proof_state") or "missing")
+        missing_proofs = [_short(item) for item in _list(card.get("missing_proofs"))[:8]]
         status_counts[status] = status_counts.get(status, 0) + 1
         surface_counts[surface] = surface_counts.get(surface, 0) + 1
+        trust_counts[trust_status] = trust_counts.get(trust_status, 0) + 1
+        proof_state_counts[proof_state] = proof_state_counts.get(proof_state, 0) + 1
+        if top_missing_proof == "none" and missing_proofs:
+            top_missing_proof = missing_proofs[0]
         cards.append(
             {
                 "id": _short(card.get("id")),
@@ -434,6 +460,9 @@ def _capability_garden_context(capability_catalog: dict[str, Any]) -> dict[str, 
                 "owner_repo": _short(card.get("owner_repo")),
                 "surface_type": surface,
                 "status": status,
+                "trust_status": trust_status,
+                "proof_state": proof_state,
+                "missing_proofs": missing_proofs,
                 "requested_authority": [_short(item) for item in _list(card.get("requested_authority"))[:8]],
                 "memory_policy": _short(card.get("memory_policy")),
                 "evidence_summary": _safe_summary_mapping(card.get("evidence_summary")),
@@ -454,6 +483,9 @@ def _capability_garden_context(capability_catalog: dict[str, Any]) -> dict[str, 
         "projected_card_count": len(cards),
         "status_counts": dict(sorted(status_counts.items())),
         "surface_counts": dict(sorted(surface_counts.items())),
+        "trust_counts": dict(sorted(trust_counts.items())),
+        "proof_state_counts": dict(sorted(proof_state_counts.items())),
+        "top_missing_proof": top_missing_proof,
         "cards": cards,
         "claim_boundary": (
             "Capability garden is a metadata-only projection. A card shows observed surfaces and blockers; "

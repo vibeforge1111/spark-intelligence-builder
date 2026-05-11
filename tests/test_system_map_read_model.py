@@ -99,7 +99,7 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
         self.assertIn(
-            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1, authority L4 spark_workspace, capability cards 2",
+            "Spark OS map: 2 modules, 3 repos, 2 chips, 1 gaps, memory movement supported (42 rows), black-box samples 3, trace groups 2, trace health flags 3, trace topology 2 groups, spawner trace refs 1, authority L4 spark_workspace, authority verdicts 2, capability cards 2",
             context.to_text(),
         )
 
@@ -125,6 +125,11 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(panel["trace_repair_queue"]["status"], "needs_repair")
         self.assertEqual(panel["authority_status"]["default_sandbox_lane"], "spark_workspace")
         self.assertEqual(panel["authority_status"]["browser_approval_required_hook_count"], 5)
+        self.assertEqual(panel["authority_status"]["trace_verdict_count"], 2)
+        capability_garden = panel["aoc"]["spark_system_map"]["capability_garden"]
+        self.assertEqual(capability_garden["trust_counts"]["untrusted"], 2)
+        self.assertEqual(capability_garden["proof_state_counts"]["schema_only"], 1)
+        self.assertEqual(capability_garden["top_missing_proof"], "normalized gate verdict")
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
         self.assertEqual(panel["trace_repair_queue"]["counts"]["orphan_parent_event_id_count"], 1)
         self.assertEqual(panel["trace_repair_queue"]["trace_topology"]["group_count"], 2)
@@ -141,8 +146,20 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(sections["capability_garden"]["status"], "review_needed")
         self.assertTrue(
             any(
+                item["label"] == "Trace verdicts" and item["value"] == 2
+                for item in sections["authority_status"]["items"]
+            )
+        )
+        self.assertTrue(
+            any(
                 item["label"] == "Default sandbox lane" and item["value"] == "spark_workspace"
                 for item in sections["authority_status"]["items"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item["label"] == "Top proof gap" and item["value"] == "normalized gate verdict"
+                for item in sections["capability_garden"]["items"]
             )
         )
         self.assertTrue(
@@ -261,6 +278,9 @@ class SystemMapReadModelTests(SparkTestCase):
                             "owner_repo": "spark-domain-chip-labs",
                             "surface_type": "creator-system",
                             "status": "local-artifacts",
+                            "trust_status": "untrusted",
+                            "proof_state": "proof_incomplete",
+                            "missing_proofs": ["normalized gate verdict", "rollback ref"],
                             "requested_authority": ["local_files_read", "review_only"],
                             "memory_policy": "non_authoritative_evidence_only",
                             "evidence_summary": {"schema_count": 56, "creator_run_count": 1},
@@ -277,6 +297,9 @@ class SystemMapReadModelTests(SparkTestCase):
                             "owner_repo": "spark-swarm",
                             "surface_type": "specialization-path",
                             "status": "schema-shaped",
+                            "trust_status": "untrusted",
+                            "proof_state": "schema_only",
+                            "missing_proofs": ["publication proof"],
                             "requested_authority": ["local_files_read", "review_only"],
                             "memory_policy": "selective_or_surface_defined",
                             "evidence_summary": {"configured_path_count": 5, "schema_count": 6},
@@ -296,6 +319,12 @@ class SystemMapReadModelTests(SparkTestCase):
                     "schema_version": "spark.trace_index.compiled.v0",
                     "builder_events": {"row_count": 123},
                     "builder_event_samples": {"sample_count": 3},
+                    "authority_verdicts": {
+                        "verdict_count": 2,
+                        "verdict_counts": {"blocked": 1, "allowed": 1},
+                        "action_family_counts": {"mission_execution": 2},
+                        "source_policy_counts": {"spawner_prd_bridge": 2},
+                    },
                     "builder_trace_groups": {
                         "group_count": 2,
                         "groups": [
