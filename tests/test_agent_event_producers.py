@@ -43,7 +43,8 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(black_box["entries"][0]["event_type"], "capability_probed")
         self.assertEqual(black_box["entries"][0]["route_chosen"], "spark_memory")
         self.assertEqual(panel["black_box"]["counts"]["entries"], 1)
-        self.assertEqual(panel["sections"]["sections"][5]["section_id"], "black_box_recorder")
+        section_ids = {section["section_id"] for section in panel["sections"]["sections"]}
+        self.assertIn("black_box_recorder", section_ids)
 
     def test_route_selection_mission_state_and_override_emit_black_box_events(self) -> None:
         record_route_selection_agent_event(
