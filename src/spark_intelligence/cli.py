@@ -379,7 +379,7 @@ class SystemStatus:
 def _browser_status_repair_hint(browser: dict[str, object]) -> str | None:
     error_code = str(browser.get("error_code") or "").strip()
     if error_code == "BROWSER_SESSION_STALE":
-        return "Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`."
+        return "Reconnect the governed browser-use session, then rerun `spark-intelligence browser status --json`."
     if error_code:
         return "Rerun `spark-intelligence browser status --json` for the full governed browser failure payload."
     return None
@@ -1432,6 +1432,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_source_used_parser.add_argument("--confidence", default="", help="Route/source confidence label")
     self_source_used_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_source_used_parser.add_argument("--request-id", default="", help="Request id associated with this source")
+    self_source_used_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this source")
     self_source_used_parser.add_argument("--session-id", default="", help="Session id associated with this source")
     self_source_used_parser.add_argument("--human-id", default="", help="Human id associated with this source")
     self_source_used_parser.add_argument("--actor-id", default="source_ledger", help="Actor recording the source")
@@ -1486,6 +1487,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_route_selection_parser.add_argument("--confidence", default="", help="Route confidence label")
     self_route_selection_parser.add_argument("--reason", default="", help="Short reason for this route choice")
     self_route_selection_parser.add_argument("--request-id", default="", help="Request id associated with this route choice")
+    self_route_selection_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this route choice")
     self_route_selection_parser.add_argument("--session-id", default="", help="Session id associated with this route choice")
     self_route_selection_parser.add_argument("--human-id", default="", help="Human id associated with this route choice")
     self_route_selection_parser.add_argument("--actor-id", default="route_selection", help="Actor recording the route choice")
@@ -1500,6 +1502,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_mission_state_parser.add_argument("--to-state", required=True, help="New mission state")
     self_mission_state_parser.add_argument("--summary", default="", help="Short state-change summary")
     self_mission_state_parser.add_argument("--request-id", default="", help="Request id associated with this state change")
+    self_mission_state_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this state change")
     self_mission_state_parser.add_argument("--session-id", default="", help="Session id associated with this state change")
     self_mission_state_parser.add_argument("--human-id", default="", help="Human id associated with this state change")
     self_mission_state_parser.add_argument("--actor-id", default="mission_control", help="Actor recording the state change")
@@ -1526,6 +1529,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source-used JSON object with source, role, freshness, source_ref, and summary; repeatable",
     )
     self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
+    self_turn_trace_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this turn")
     self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
     self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
     self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
@@ -4601,6 +4605,7 @@ def handle_self_source_used(args: argparse.Namespace) -> int:
         selected_route=str(getattr(args, "selected_route", "") or ""),
         confidence=str(getattr(args, "confidence", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
         actor_id=str(getattr(args, "actor_id", "") or "source_ledger"),
@@ -4680,6 +4685,7 @@ def handle_self_route_selection(args: argparse.Namespace) -> int:
         user_intent=str(getattr(args, "user_intent", "") or ""),
         confidence=str(getattr(args, "confidence", "") or ""),
         reason=str(getattr(args, "reason", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
@@ -4705,6 +4711,7 @@ def handle_self_mission_state(args: argparse.Namespace) -> int:
         from_state=str(getattr(args, "from_state", "") or ""),
         to_state=str(getattr(args, "to_state", "") or ""),
         summary=str(getattr(args, "summary", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
@@ -4748,6 +4755,7 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         state_db,
         user_message=str(getattr(args, "user_message", "") or ""),
         request_id=str(getattr(args, "request_id", "") or "") or None,
+        trace_ref=str(getattr(args, "trace_ref", "") or "") or None,
         session_id=str(getattr(args, "session_id", "") or "") or None,
         human_id=str(getattr(args, "human_id", "") or "") or None,
         agent_id=str(getattr(args, "agent_id", "") or "") or None,

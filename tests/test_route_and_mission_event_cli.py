@@ -21,6 +21,8 @@ class RouteAndMissionEventCliTests(SparkTestCase):
             "Needs file edits and current runner is read-only.",
             "--request-id",
             "req-route-mission-cli",
+            "--trace-ref",
+            "trace:req-route-mission-cli",
             "--json",
         )
 
@@ -43,6 +45,8 @@ class RouteAndMissionEventCliTests(SparkTestCase):
             "Writable mission started.",
             "--request-id",
             "req-route-mission-cli",
+            "--trace-ref",
+            "trace:req-route-mission-cli",
             "--json",
         )
 
@@ -67,3 +71,9 @@ class RouteAndMissionEventCliTests(SparkTestCase):
         self.assertIn("route_selected", event_types)
         self.assertIn("mission_changed_state", event_types)
         self.assertEqual(panel_payload["black_box"]["counts"]["entries"], 2)
+        with self.state_db.connect() as conn:
+            matched = conn.execute(
+                "SELECT count(*) FROM builder_events WHERE request_id = ? AND trace_ref = ?",
+                ("req-route-mission-cli", "trace:req-route-mission-cli"),
+            ).fetchone()[0]
+        self.assertEqual(matched, 2)

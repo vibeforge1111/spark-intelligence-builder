@@ -727,7 +727,7 @@ def _build_browser_record(
             degraded = False
             limitations = [
                 error_message or "Live browser session is not currently connected.",
-                "Reconnect the Spark Browser extension session to restore live search and page inspection.",
+                "Reconnect the governed browser-use session to restore live search and page inspection.",
             ]
         else:
             status = "degraded"

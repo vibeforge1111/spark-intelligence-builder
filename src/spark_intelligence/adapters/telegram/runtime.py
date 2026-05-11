@@ -123,16 +123,28 @@ class TelegramRuntimeSummary:
     bot_username: str | None
     auth_status: str | None
     allowed_user_count: int
+    allowed_user_source: str = "config.allowed_users"
+    runtime_allowlist_entry_count: int = 0
 
     def to_line(self) -> str:
         if not self.configured:
             return "- telegram: not configured"
         bot_ref = f" bot=@{self.bot_username}" if self.bot_username else ""
         auth_ref = f" auth={self.auth_status or 'unknown'}"
+        allowlist_parts = self.allowlist_detail_parts()
         return (
             f"- telegram: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
-            f"auth_ref={self.auth_ref or 'missing'}{bot_ref}{auth_ref} allowed_users={self.allowed_user_count}"
+            f"auth_ref={self.auth_ref or 'missing'}{bot_ref}{auth_ref} {' '.join(allowlist_parts)}"
         )
+
+    def allowlist_detail_parts(self) -> list[str]:
+        parts = [
+            f"allowed_users={self.allowed_user_count}",
+            f"allowlist_source={self.allowed_user_source}",
+        ]
+        if self.runtime_allowlist_entry_count != self.allowed_user_count:
+            parts.append(f"runtime_allowlist_entries={self.runtime_allowlist_entry_count}")
+        return parts
 
 
 @dataclass
@@ -663,7 +675,15 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             bot_username=None,
             auth_status=None,
             allowed_user_count=0,
+            allowed_user_source="none",
+            runtime_allowlist_entry_count=0,
         )
+
+    configured_allowed_users: list[str] = []
+    for item in record.get("allowed_users") or []:
+        user_id = str(item).strip()
+        if user_id and user_id not in configured_allowed_users:
+            configured_allowed_users.append(user_id)
 
     health = read_telegram_runtime_health(state_db)
     with state_db.connect() as conn:
@@ -690,7 +710,9 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             or health.bot_username
         ),
         auth_status=health.auth_status,
-        allowed_user_count=count,
+        allowed_user_count=len(configured_allowed_users),
+        allowed_user_source="config.allowed_users",
+        runtime_allowlist_entry_count=int(count or 0),
     )
 
 
@@ -1052,7 +1074,7 @@ def _build_voice_trace_fields(
 ) -> dict[str, Any]:
     transcript = str(transcript_text or "").strip()
     return {
-        "voice_transcript_preview": _preview_text(transcript, limit=120) if transcript else None,
+        "voice_transcript_present": bool(transcript),
         "voice_transcript_length": len(transcript) if transcript else 0,
         "voice_transcribe_provider_id": str((media_input or {}).get("provider_id") or "").strip() or None,
         "voice_transcribe_model": str((media_input or {}).get("provider_model") or "").strip() or None,
@@ -3843,6 +3865,15 @@ def _handle_runtime_command(
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
+    natural_memory_doctor_command = _match_natural_memory_doctor_command(normalized)
+    if natural_memory_doctor_command is None:
+        natural_memory_doctor_command = _match_contextual_memory_doctor_command(
+            inbound_text=normalized,
+            config_manager=config_manager,
+            external_user_id=external_user_id,
+            session_id=session_id or "",
+            current_request_id=request_id or "",
+        )
     style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
@@ -5573,6 +5604,302 @@ def _match_natural_think_command(inbound_text: str) -> str | None:
     ):
         return "/think on" if simplified.endswith("on") else "/think off"
     return None
+
+
+def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+    if simplified in {
+        "memory doctor",
+        "show memory doctor",
+        "show me memory doctor",
+        "run memory doctor",
+        "check memory doctor",
+        "diagnose memory",
+        "diagnose spark memory",
+        "audit memory",
+        "audit spark memory",
+        "check memory deletes",
+        "check memory deletion",
+        "check memory deletions",
+        "did memory forget work",
+        "did the memory forget work",
+        "did forget memory work",
+        "check active profile memory",
+        "show active profile memory",
+        "recommend memory fixes",
+        "recommend memory improvements",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": None,
+            "repair_requested": False,
+        }
+    if simplified in {
+        "memory doctor last request",
+        "memory doctor previous request",
+        "memory doctor last turn",
+        "memory doctor previous turn",
+        "diagnose last request",
+        "diagnose previous request",
+        "diagnose last turn",
+        "diagnose previous turn",
+        "check last request memory",
+        "check previous request memory",
+        "check last turn memory",
+        "check previous turn memory",
+        "why did you go blank",
+        "why did spark go blank",
+        "why did memory go blank",
+        "why did context go blank",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": "previous_gateway_turn",
+            "repair_requested": False,
+        }
+    topic_patterns = (
+        r"^memory\s+doctor\s+(.+)$",
+        r"^(?:run|check|show)\s+memory\s+doctor\s+for\s+(.+)$",
+        r"^(?:trace|check|diagnose|audit)\s+memory\s+for\s+(.+)$",
+        r"^why\s+did\s+(?:memory|you|spark)\s+recall\s+(.+)$",
+        r"^why\s+is\s+memory\s+recalling\s+(.+)$",
+        r"^repair\s+memory\s+for\s+(.+)$",
+    )
+    for pattern in topic_patterns:
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            target = _memory_doctor_target_from_value(match.group(1))
+            return {
+                "command": "/memory doctor",
+                "topic": target["topic"],
+                "request_id": target["request_id"],
+                "request_selector": target.get("request_selector"),
+                "repair_requested": simplified.startswith("repair memory"),
+            }
+    for pattern in topic_patterns:
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            target = _memory_doctor_target_from_value(match.group(1))
+            return {
+                "command": "/memory doctor",
+                "topic": target["topic"],
+                "request_id": target["request_id"],
+                "request_selector": target.get("request_selector"),
+                "repair_requested": simplified.startswith("repair memory"),
+            }
+    return None
+
+
+def _match_contextual_memory_doctor_command(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object] | None:
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
+    previous_record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    if previous_record is None:
+        return None
+    score = _memory_doctor_distress_score(simplified)
+    if _previous_gateway_turn_looks_like_memory_failure(previous_record):
+        score += 2
+    if score < 3:
+        return None
+    return {
+        "command": "/memory doctor",
+        "topic": None,
+        "request_id": None,
+        "request_selector": "previous_gateway_turn",
+        "repair_requested": False,
+        "contextual_trigger_score": score,
+    }
+
+
+def _memory_doctor_distress_score(simplified_text: str) -> int:
+    return sum(int(signal["weight"]) for signal in _memory_doctor_distress_signals(simplified_text))
+
+
+def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
+    text = str(simplified_text or "").strip().lower()
+    if not text:
+        return []
+    signals: list[dict[str, object]] = []
+    if re.search(
+        (
+            r"\b(?:memory|context|thread|conversation|convo|discussion|previous|last|what i just said|"
+            r"what i just told you|what we were talking about|we were talking about|what we were discussing|"
+            r"we were discussing|what we were working on|we were working on|last message|previous message|"
+            r"right before this|right above|what i said)\b"
+        ),
+        text,
+    ):
+        signals.append({"name": "memory_context_reference", "weight": 2})
+    if re.search(
+        r"\b(?:blank|blanked|forgot|forget|remember|lost|dropped|missed|skipped|ignored|confused|reset|wiped|disappeared|vanished)\b",
+        text,
+    ):
+        signals.append({"name": "memory_distress_verb", "weight": 2})
+    if re.search(
+        (
+            r"\b(?:i just told you|just told you|already told you|i already said|already said that|"
+            r"i said that already|already answered|asked me again|you asked me again|"
+            r"asking me again|you asked me (?:that|this) already|literally just said|"
+            r"literally just told you|we literally just covered this|we just covered this|"
+            r"that'?s what i said|thats what i said|just said that)\b"
+        ),
+        text,
+    ):
+        signals.append({"name": "close_turn_repeat_frustration", "weight": 2})
+    if re.search(
+        (
+            r"\b(?:not responding|stopped responding|stopped answering|are you there|you there|still with me|"
+            r"went silent|go silent|silent|froze|frozen|stuck|unresponsive|hello|wrong|again|seriously|come on)\b"
+        ),
+        text,
+    ):
+        signals.append({"name": "operator_frustration", "weight": 1})
+    if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
+        signals.append({"name": "diagnostic_question", "weight": 1})
+    return signals
+
+
+def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
+    user_preview = str(record.get("user_message_preview") or "").lower()
+    response_preview = str(record.get("response_preview") or "").lower()
+    route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
+    close_turn_markers = (
+        "what did i just",
+        "what phrase did i",
+        "what did you just",
+        "i just told you",
+        "message right before",
+        "last thing i said",
+        "previous message",
+    )
+    blank_response_markers = (
+        "not the message before",
+        "not the prior message",
+        "do not have the previous",
+        "don't have the previous",
+        "not in context",
+        "lost context",
+        "context capsule",
+        "what did you just tell me",
+    )
+    if any(marker in user_preview for marker in close_turn_markers):
+        return True
+    if any(marker in response_preview for marker in blank_response_markers):
+        return True
+    return "researcher_advisory" in route_text and "previous" in user_preview
+
+
+def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
+    suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
+    if not suffix:
+        return {"topic": None, "request_id": None, "request_selector": None}
+    if suffix.lower().startswith("for "):
+        suffix = suffix[4:].strip()
+    return _memory_doctor_target_from_value(suffix)
+
+
+def _memory_doctor_target_from_value(value: str) -> dict[str, str | None]:
+    cleaned = " ".join(str(value or "").strip().strip(".?!`'\"").split())
+    if cleaned.lower() in {
+        "last request",
+        "latest request",
+        "previous request",
+        "last turn",
+        "latest turn",
+        "previous turn",
+        "last message",
+        "previous message",
+        "last telegram turn",
+        "previous telegram turn",
+    }:
+        return {"topic": None, "request_id": None, "request_selector": "previous_gateway_turn"}
+    request_match = re.match(
+        r"^(?:request(?:\s+id)?|request-id|request_id|req(?:uest)?[_-]?id|req)\s*[:=#-]?\s*(.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if request_match:
+        request_id = _clean_memory_doctor_request_id(request_match.group(1))
+        return {"topic": None, "request_id": request_id or None, "request_selector": None}
+    return {"topic": _clean_memory_doctor_topic(cleaned), "request_id": None, "request_selector": None}
+
+
+def _memory_doctor_previous_gateway_request_id(
+    *,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> str | None:
+    record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    return str(record.get("request_id") or "").strip() if record else None
+
+
+def _memory_doctor_previous_gateway_record(
+    *,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object] | None:
+    try:
+        from spark_intelligence.gateway.tracing import read_gateway_traces
+
+        traces = read_gateway_traces(config_manager, limit=80)
+    except Exception:
+        return None
+    normalized_user_id = str(external_user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    normalized_current_request_id = str(current_request_id or "").strip()
+    for record in reversed(traces):
+        if str(record.get("event") or "") != "telegram_update_processed":
+            continue
+        request_id = str(record.get("request_id") or "").strip()
+        if not request_id or request_id == normalized_current_request_id:
+            continue
+        if normalized_user_id and str(record.get("telegram_user_id") or "").strip() != normalized_user_id:
+            continue
+        if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
+            continue
+        preview = str(record.get("user_message_preview") or "").strip()
+        preview_lower = preview.lower()
+        if preview_lower.startswith("/memory doctor") or _match_natural_memory_doctor_command(preview):
+            continue
+        return record
+    return None
+
+
+def _clean_memory_doctor_request_id(value: str) -> str:
+    return " ".join(str(value or "").strip().strip(".?!`'\"").split())
+
+
+def _clean_memory_doctor_topic(value: str) -> str:
+    cleaned = " ".join(str(value or "").strip().strip(".?!`'\"").split())
+    if cleaned.lower() in {"it", "this", "that", "memory", "profile", "active profile"}:
+        return ""
+    return cleaned
 
 
 def _handle_style_command(

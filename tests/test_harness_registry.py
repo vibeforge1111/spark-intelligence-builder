@@ -55,7 +55,7 @@ class HarnessRegistryTests(SparkTestCase):
         )
 
         self.assertEqual(selection.harness_id, "browser.grounded")
-        self.assertEqual(selection.backend_kind, "browser_bridge")
+        self.assertEqual(selection.backend_kind, "browser_use_adapter")
         self.assertIn("web_search", selection.required_capabilities)
 
     def test_swarm_disabled_request_holds_local_on_researcher_harness(self) -> None:

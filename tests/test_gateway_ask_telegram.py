@@ -31,7 +31,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(summary.runtime_allowlist_entry_count, 4)
         self.assertIn("allowed_users=1", summary.to_line())
         self.assertIn("allowlist_source=config.allowed_users", summary.to_line())
-        self.assertIn("raw_runtime_allowlist_entries=4", summary.to_line())
+        self.assertIn("runtime_allowlist_entries=4", summary.to_line())
 
     def test_memory_doctor_contextual_trigger_signal_matrix(self) -> None:
         direct_context_loss_cases = {
@@ -491,6 +491,20 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(metadata["contextual_trigger_threshold"], 4)
         self.assertEqual(metadata["contextual_trigger_signals"], ["memory_context_reference", "memory_distress_verb"])
         self.assertFalse(metadata["previous_failure_signal"])
+
+        frustration_output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="are you there",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        frustration_response_text = frustration_output["result"]["detail"]["response_text"]
+        self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
