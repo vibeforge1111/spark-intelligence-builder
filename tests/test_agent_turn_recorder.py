@@ -12,6 +12,7 @@ class AgentTurnRecorderTests(SparkTestCase):
         trace = record_agent_turn_trace(
             self.state_db,
             request_id="req-turn",
+            trace_ref="trace:req-turn",
             user_message="Any other thing you'd build on top of this?",
             proposed_action="start_mission",
             draft_answer="Spark picked up the build. Mission: mission-1778325245851.",
@@ -43,6 +44,12 @@ class AgentTurnRecorderTests(SparkTestCase):
             any(entry["event_type"] == "source_used" for entry in black_box.to_payload()["entries"])
         )
         self.assertEqual(inbox.counts["pending"], 1)
+        with self.state_db.connect() as conn:
+            matched = conn.execute(
+                "SELECT count(*) FROM builder_events WHERE request_id = ? AND trace_ref = ?",
+                ("req-turn", "trace:req-turn"),
+            ).fetchone()[0]
+        self.assertEqual(matched, 5)
 
     def test_turn_recorder_resolves_option_reference(self) -> None:
         trace = record_agent_turn_trace(

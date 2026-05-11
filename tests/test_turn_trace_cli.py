@@ -38,6 +38,8 @@ class TurnTraceCliTests(SparkTestCase):
             ),
             "--request-id",
             "req-turn-cli",
+            "--trace-ref",
+            "trace:req-turn-cli",
             "--json",
         )
 
@@ -70,3 +72,9 @@ class TurnTraceCliTests(SparkTestCase):
         self.assertIn("source_used", event_types)
         self.assertIn("memory_candidate_created", event_types)
         self.assertEqual(panel_payload["memory_approval_inbox"]["counts"]["pending"], 1)
+        with self.state_db.connect() as conn:
+            matched = conn.execute(
+                "SELECT count(*) FROM builder_events WHERE request_id = ? AND trace_ref = ?",
+                ("req-turn-cli", "trace:req-turn-cli"),
+            ).fetchone()[0]
+        self.assertEqual(matched, 5)

@@ -1432,6 +1432,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_source_used_parser.add_argument("--confidence", default="", help="Route/source confidence label")
     self_source_used_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_source_used_parser.add_argument("--request-id", default="", help="Request id associated with this source")
+    self_source_used_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this source")
     self_source_used_parser.add_argument("--session-id", default="", help="Session id associated with this source")
     self_source_used_parser.add_argument("--human-id", default="", help="Human id associated with this source")
     self_source_used_parser.add_argument("--actor-id", default="source_ledger", help="Actor recording the source")
@@ -1528,6 +1529,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source-used JSON object with source, role, freshness, source_ref, and summary; repeatable",
     )
     self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
+    self_turn_trace_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this turn")
     self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
     self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
     self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
@@ -4603,6 +4605,7 @@ def handle_self_source_used(args: argparse.Namespace) -> int:
         selected_route=str(getattr(args, "selected_route", "") or ""),
         confidence=str(getattr(args, "confidence", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
         actor_id=str(getattr(args, "actor_id", "") or "source_ledger"),
@@ -4752,6 +4755,7 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         state_db,
         user_message=str(getattr(args, "user_message", "") or ""),
         request_id=str(getattr(args, "request_id", "") or "") or None,
+        trace_ref=str(getattr(args, "trace_ref", "") or "") or None,
         session_id=str(getattr(args, "session_id", "") or "") or None,
         human_id=str(getattr(args, "human_id", "") or "") or None,
         agent_id=str(getattr(args, "agent_id", "") or "") or None,
