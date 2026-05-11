@@ -1052,7 +1052,7 @@ def _build_voice_trace_fields(
 ) -> dict[str, Any]:
     transcript = str(transcript_text or "").strip()
     return {
-        "voice_transcript_preview": _preview_text(transcript, limit=120) if transcript else None,
+        "voice_transcript_present": bool(transcript),
         "voice_transcript_length": len(transcript) if transcript else 0,
         "voice_transcribe_provider_id": str((media_input or {}).get("provider_id") or "").strip() or None,
         "voice_transcribe_model": str((media_input or {}).get("provider_model") or "").strip() or None,

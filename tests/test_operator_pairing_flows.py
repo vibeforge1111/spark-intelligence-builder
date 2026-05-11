@@ -7600,7 +7600,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         payload = json.loads(traces_stdout)
         processed = [record for record in payload if record.get("event") == "telegram_update_processed"]
         self.assertEqual(len(processed), 1)
-        self.assertEqual(processed[0]["voice_transcript_preview"], "hello there from voice")
+        self.assertNotIn("voice_transcript_preview", processed[0])
+        self.assertTrue(processed[0]["voice_transcript_present"])
         self.assertEqual(processed[0]["voice_transcript_length"], len("hello there from voice"))
         self.assertEqual(processed[0]["voice_transcribe_provider_id"], "local_faster_whisper")
         self.assertEqual(processed[0]["voice_transcribe_model"], "tiny")
