@@ -166,6 +166,11 @@ from spark_intelligence.self_awareness import (
     build_self_awareness_capsule,
     build_self_improvement_plan,
 )
+from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
+from spark_intelligence.self_awareness.event_producers import record_source_used_agent_event
+from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
+from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1369,6 +1374,89 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_panel_parser = self_subparsers.add_parser(
+        "panel",
+        help="Show shared AOC panel with black box, memory inbox, stale context, and route confidence",
+    )
+    self_panel_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_panel_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
+    self_panel_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_panel_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_panel_parser.add_argument("--request-id", default="", help="Optional current request id for black-box filtering")
+    self_panel_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_panel_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
+    self_panel_parser.add_argument(
+        "--runner-writable",
+        choices=("yes", "no", "unknown"),
+        default="unknown",
+        help="Whether the current runner can edit/write files",
+    )
+    self_panel_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_panel_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
+    self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_black_box_parser = self_subparsers.add_parser(
+        "black-box",
+        help="Show agent black-box event trace for a request",
+    )
+    self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
+    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_source_used_parser = self_subparsers.add_parser(
+        "source-used",
+        help="Record a source used by the current agent turn in the black box",
+    )
+    self_source_used_parser.add_argument("source", help="Source name, for example current_diagnostics, approved_memory, or wiki")
+    self_source_used_parser.add_argument("--role", default="supporting_evidence", help="Role this source played")
+    self_source_used_parser.add_argument(
+        "--freshness",
+        choices=("fresh", "stale", "contradicted", "unknown", "live_probed"),
+        default="unknown",
+        help="Freshness label for the source",
+    )
+    self_source_used_parser.add_argument("--source-ref", default="", help="Trace, memory, wiki, or diagnostic reference")
+    self_source_used_parser.add_argument("--summary", default="", help="Short source summary")
+    self_source_used_parser.add_argument("--user-intent", default="", help="Perceived user intent")
+    self_source_used_parser.add_argument("--selected-route", default="", help="Route using this source")
+    self_source_used_parser.add_argument("--confidence", default="", help="Route/source confidence label")
+    self_source_used_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_source_used_parser.add_argument("--request-id", default="", help="Request id associated with this source")
+    self_source_used_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this source")
+    self_source_used_parser.add_argument("--session-id", default="", help="Session id associated with this source")
+    self_source_used_parser.add_argument("--human-id", default="", help="Human id associated with this source")
+    self_source_used_parser.add_argument("--actor-id", default="source_ledger", help="Actor recording the source")
+    self_source_used_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_turn_trace_parser = self_subparsers.add_parser(
+        "turn-trace",
+        help="Record one agent turn frame, gate, drift check, and memory candidate",
+    )
+    self_turn_trace_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_turn_trace_parser.add_argument("--user-message", required=True, help="Latest user message for intent framing")
+    self_turn_trace_parser.add_argument("--proposed-action", default="", help="Optional route-changing action to gate")
+    self_turn_trace_parser.add_argument("--draft-answer", default=None, help="Optional draft answer to drift-check")
+    self_turn_trace_parser.add_argument(
+        "--active-reference-item",
+        action="append",
+        default=[],
+        help="Visible option/reference item, repeatable for resolving 'option 2' style turns",
+    )
+    self_turn_trace_parser.add_argument("--memory-candidate-json", default="", help="Optional memory candidate JSON object")
+    self_turn_trace_parser.add_argument(
+        "--source-json",
+        action="append",
+        default=[],
+        help="Source-used JSON object with source, role, freshness, source_ref, and summary; repeatable",
+    )
+    self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
+    self_turn_trace_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this turn")
+    self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
+    self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
+    self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
+    self_turn_trace_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
     wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command", required=True)
@@ -4274,6 +4362,149 @@ def handle_self_improve(args: argparse.Namespace) -> int:
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("priority_actions") else 1
+
+
+def _parse_runner_writable(raw: str) -> bool | None:
+    value = str(raw or "").strip().lower()
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    return None
+
+
+def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise SystemExit("JSON argument must be an object")
+    return value
+
+
+def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
+    parsed: list[dict[str, object]] = []
+    for raw in values:
+        value = _parse_optional_json_object(raw)
+        if value is not None:
+            parsed.append(value)
+    return parsed
+
+
+def handle_self_panel(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    panel = build_agent_operating_panel(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
+    )
+    print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
+    return 0
+
+
+def handle_self_black_box(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    request_id = str(getattr(args, "request_id", "") or "") or None
+    limit = int(getattr(args, "limit", 20) or 20)
+    spawner_entries = read_configured_spawner_black_box_entries(
+        config_manager,
+        request_id=request_id,
+        limit=limit,
+    )
+    report = build_agent_black_box_report(
+        state_db,
+        request_id=request_id,
+        limit=limit,
+        external_entries=spawner_entries,
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
+
+
+def handle_self_source_used(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_source_used_agent_event(
+        state_db,
+        source=str(getattr(args, "source", "") or ""),
+        role=str(getattr(args, "role", "") or ""),
+        freshness=str(getattr(args, "freshness", "") or "unknown"),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        summary=str(getattr(args, "summary", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "source_ledger"),
+    )
+    payload = {
+        "event_type": "source_used",
+        "event_id": event_id,
+        "source": str(getattr(args, "source", "") or ""),
+        "freshness": str(getattr(args, "freshness", "") or "unknown"),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Recorded source: {payload['source']} ({payload['freshness']})")
+        print(f"- event: {event_id}")
+    return 0
+
+
+def handle_self_turn_trace(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    trace = record_agent_turn_trace(
+        state_db,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        trace_ref=str(getattr(args, "trace_ref", "") or "") or None,
+        session_id=str(getattr(args, "session_id", "") or "") or None,
+        human_id=str(getattr(args, "human_id", "") or "") or None,
+        agent_id=str(getattr(args, "agent_id", "") or "") or None,
+        active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
+        proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
+        draft_answer=getattr(args, "draft_answer", None),
+        source_refs=_parse_json_object_values(list(getattr(args, "source_json", []) or [])),
+        memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
+    )
+    payload = trace.to_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        gate = payload["action_gate"]["decision"] if payload.get("action_gate") else "not_checked"
+        drift = payload["final_answer_check"]["drift_type"] if payload.get("final_answer_check") else "not_checked"
+        print(
+            "Agent turn trace recorded\n"
+            f"- mode: {payload['frame']['current_mode']}\n"
+            f"- intent: {payload['frame']['user_intent']}\n"
+            f"- action gate: {gate}\n"
+            f"- drift check: {drift}\n"
+            f"- events: {len(payload['event_ids'])}"
+        )
+    return 0
 
 
 def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]:
@@ -8135,6 +8366,14 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
+    if args.command == "self" and args.self_command == "panel":
+        return handle_self_panel(args)
+    if args.command == "self" and args.self_command == "black-box":
+        return handle_self_black_box(args)
+    if args.command == "self" and args.self_command == "source-used":
+        return handle_self_source_used(args)
+    if args.command == "self" and args.self_command == "turn-trace":
+        return handle_self_turn_trace(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":
         return handle_wiki_bootstrap(args)
     if args.command == "wiki" and args.wiki_command == "compile-system":
