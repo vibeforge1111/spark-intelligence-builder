@@ -62,6 +62,7 @@ class AgentEventProducerTests(SparkTestCase):
             to_state="running",
             summary="Writable mission started.",
             request_id="req-flow",
+            trace_ref="trace:req-flow",
             actor_id="operator:test",
         )
         record_user_override_agent_event(
@@ -78,6 +79,12 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertIn("route_selected", event_types)
         self.assertIn("mission_changed_state", event_types)
         self.assertIn("user_override_received", event_types)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref FROM builder_events WHERE event_type = 'mission_changed_state' AND request_id = ?",
+                ("req-flow",),
+            ).fetchone()
+        self.assertEqual(row["trace_ref"], "trace:req-flow")
 
     def test_source_used_event_records_fresh_source_refs(self) -> None:
         record_source_used_agent_event(

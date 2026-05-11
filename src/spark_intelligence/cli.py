@@ -1486,6 +1486,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_route_selection_parser.add_argument("--confidence", default="", help="Route confidence label")
     self_route_selection_parser.add_argument("--reason", default="", help="Short reason for this route choice")
     self_route_selection_parser.add_argument("--request-id", default="", help="Request id associated with this route choice")
+    self_route_selection_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this route choice")
     self_route_selection_parser.add_argument("--session-id", default="", help="Session id associated with this route choice")
     self_route_selection_parser.add_argument("--human-id", default="", help="Human id associated with this route choice")
     self_route_selection_parser.add_argument("--actor-id", default="route_selection", help="Actor recording the route choice")
@@ -1500,6 +1501,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_mission_state_parser.add_argument("--to-state", required=True, help="New mission state")
     self_mission_state_parser.add_argument("--summary", default="", help="Short state-change summary")
     self_mission_state_parser.add_argument("--request-id", default="", help="Request id associated with this state change")
+    self_mission_state_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this state change")
     self_mission_state_parser.add_argument("--session-id", default="", help="Session id associated with this state change")
     self_mission_state_parser.add_argument("--human-id", default="", help="Human id associated with this state change")
     self_mission_state_parser.add_argument("--actor-id", default="mission_control", help="Actor recording the state change")
@@ -4680,6 +4682,7 @@ def handle_self_route_selection(args: argparse.Namespace) -> int:
         user_intent=str(getattr(args, "user_intent", "") or ""),
         confidence=str(getattr(args, "confidence", "") or ""),
         reason=str(getattr(args, "reason", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
@@ -4705,6 +4708,7 @@ def handle_self_mission_state(args: argparse.Namespace) -> int:
         from_state=str(getattr(args, "from_state", "") or ""),
         to_state=str(getattr(args, "to_state", "") or ""),
         summary=str(getattr(args, "summary", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
         request_id=str(getattr(args, "request_id", "") or ""),
         session_id=str(getattr(args, "session_id", "") or ""),
         human_id=str(getattr(args, "human_id", "") or ""),
