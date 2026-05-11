@@ -290,7 +290,7 @@ Effect: Clears all user trait deltas (`loader.py:2932`), deletes persistent memo
 **Triggered by** (`_is_agent_persona_authoring_message` at `loader.py:427-439`):
 - An explicit rename phrase (e.g. `your name is X`, `rename yourself to X`)
 - 2+ extractable behavioral rules in one message
-- Personality markers like `your personality`, `your style`, `agent persona`, `let's define your personality` combined with a trait signal
+- Personality markers like `your personality`, `your style`, `agent persona`, `let's define your personality` combined with a trait signal or at least one extractable behavioral rule
 - Messages starting with `/agent persona `
 
 **Behavioral rules** (`_extract_behavioral_rules` at `loader.py:375-388`):
@@ -299,6 +299,31 @@ Effect: Clears all user trait deltas (`loader.py:2932`), deletes persistent memo
 - Kept to the last 8 rules, deduplicated
 
 **Persistence:** Writes to `agent_persona_profiles` with `mutation_kind="explicit_authoring"` (`loader.py:2169`).
+
+### 1.7.1 Telegram interaction-preference sync
+
+The Telegram gateway also has a launch-safe path for explicit durable interaction preferences, for example:
+
+- `when you talk to me, use short paragraphs with blank lines`
+- `I want my agent to be more conversational`
+- `do not give chatbot-like generic answers`
+
+Telegram first stores the preference in its per-user local hot context so the next reply can adapt immediately. It then sends Builder a canonical authoring message:
+
+```text
+Your style should follow this saved agent interaction preference.
+When you talk to me, use short paragraphs with blank lines.
+```
+
+Builder treats that as explicit agent persona authoring and persists the extracted behavioral rule into `agent_persona_profiles` / `agent_persona_mutations`.
+
+Boundary rules:
+
+- This is agent-style state, not a user fact.
+- It does not write to `domain-chip-memory`.
+- It does not create `personality_trait_profiles` rows.
+- It does not mutate global `spark-character` chip files.
+- If Builder sync is disabled or unavailable, Telegram keeps only the local hot preference and logs the miss.
 
 ---
 
@@ -317,6 +342,28 @@ Seven tables hold personality state (all in the main state SQLite DB, schema in 
 | `runtime_state` | Onboarding state blob (`agent_onboarding:...` keys) + NL delta compatibility mirror | `state_key` PK |
 
 The onboarding state machine writes its JSON blob to `runtime_state` under `agent_onboarding:human:{channel}:{external_user_id}` — see the test fixture at `tests/test_operator_pairing_flows.py` for the exact key pattern.
+
+---
+
+### 1.8.1 Future path
+
+Safe next steps:
+
+- Show users which saved interaction preferences are active, including last updated time and source surface.
+- Add natural-language edit/remove flows for individual behavioral rules.
+- Keep tests in natural language: one user updates spacing, another asks for directness, a third asks for a one-off style that must not persist.
+- Add conflict handling when a new rule contradicts an older one in the same dimension.
+- Add a reply-quality evaluator that checks whether saved rules actually change the next response without making it stiff or generic.
+
+Riskier phases that need a design review:
+
+- Passive personality learning from repeated conversation patterns.
+- Cross-agent inheritance of style preferences.
+- Global evolution back into `spark-character`.
+- Memory-side calibration between user facts, agent style rules, and procedural lessons.
+- Automatic promotion of conversational observations into durable persona doctrine.
+
+Those phases should require provenance, undo, per-user/per-agent scoping, and memory movement traceability before they ship.
 
 ---
 

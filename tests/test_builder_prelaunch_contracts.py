@@ -1711,6 +1711,43 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(checks["watchtower-personality-mirrors"].ok)
         self.assertIn("mirror_drift=1", checks["watchtower-personality-mirrors"].detail)
 
+    def test_personality_mirror_drift_uses_full_typed_human_sets(self) -> None:
+        with self.state_db.connect() as conn:
+            for index in range(120):
+                human_id = f"human:telegram:{index}"
+                conn.execute(
+                    """
+                    INSERT INTO personality_observations(
+                        observation_id, human_id, observed_at, user_state, confidence, traits_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"obs-{index}",
+                        human_id,
+                        f"2026-05-06T12:{index % 60:02d}:00Z",
+                        "neutral",
+                        0.4,
+                        json.dumps({"directness": 0.5}, sort_keys=True),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        f"personality:{human_id}:observations",
+                        json.dumps({"observations": [{"ts": "2026-05-06T12:00:00Z"}]}, sort_keys=True),
+                    ),
+                )
+            conn.commit()
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        personality_panel = snapshot["panels"]["personality"]
+        self.assertEqual(personality_panel["counts"]["observation_rows"], 100)
+        self.assertEqual(personality_panel["counts"]["mirror_drift"], 0)
+
     def test_watchtower_personality_import_check_flags_inactive_personality_hook(self) -> None:
         resolve_canonical_agent_identity(
             state_db=self.state_db,
@@ -2403,6 +2440,41 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
 
+    def test_doctor_treats_background_freshness_degraded_as_advisory(self) -> None:
+        watchtower_snapshot = {
+            "health_dimensions": {
+                "ingress_health": {"state": "unknown", "detail": "No ingress intent has been recorded yet."},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {
+                    "state": "degraded",
+                    "detail": "Background freshness lag is 3600s, above the 900s threshold.",
+                },
+                "environment_parity": {"state": "healthy", "detail": "ok"},
+            },
+            "contradictions": {"counts": {"open": 0, "resolved": 0}},
+            "panels": {
+                "memory_shadow": {"counts": {"read_requests": 0, "read_hits": 0, "shadow_only_reads": 0}},
+                "observer_incidents": {"counts": {"total": 0, "actionable_total": 0, "distinct_classes": 0}},
+                "observer_packets": {"counts": {"total": 0, "distinct_kinds": 0}, "counts_by_kind": {}},
+                "observer_handoffs": {"counts": {"total": 0, "completed": 0, "failed": 0, "blocked": 0, "stalled": 0, "problematic": 0}},
+                "personality": {
+                    "counts": {"mirror_drift": 0, "trait_profiles": 0, "observation_rows": 0, "evolution_rows": 0},
+                    "personality_import": {"ready": False, "available_chip_keys": [], "active_chip_keys": []},
+                },
+                "agent_identity": {
+                    "counts": {"canonical_agents": 0, "builder_local": 0, "spark_swarm": 0, "aliases": 0, "identity_conflicts": 0},
+                    "identity_import": {"ready": False, "available_chip_keys": [], "active_chip_keys": []},
+                },
+            },
+        }
+        with patch("spark_intelligence.doctor.checks.build_watchtower_snapshot", return_value=watchtower_snapshot):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertTrue(checks["watchtower-freshness"].ok)
+        self.assertIn("state=degraded", checks["watchtower-freshness"].detail)
+
     def test_doctor_repairs_missing_chip_hook_promotion_disposition_before_stop_ship(self) -> None:
         record_event(
             self.state_db,
@@ -2481,6 +2553,26 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["watchtower-observer-packets"].ok)
         self.assertIn("watchtower-observer-packet-kinds", checks)
         self.assertTrue(checks["watchtower-observer-packet-kinds"].ok)
+
+    def test_doctor_treats_repair_planned_medium_promotion_blocks_as_managed(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="promotion candidate",
+            request_id="req-managed-promotion-block",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "durable_candidate",
+            },
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertTrue(checks["watchtower-observer-incidents"].ok)
+        self.assertIn("managed_by_repair_plans=yes", checks["watchtower-observer-incidents"].detail)
 
     def test_doctor_ignores_info_only_observer_incidents(self) -> None:
         record_pairing_context(

@@ -43,6 +43,7 @@ from spark_intelligence.build_quality_review import (
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -75,9 +76,9 @@ from spark_intelligence.memory.episodic_events import (
 from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
-    build_telegram_generic_deletion_answer,
+    build_telegram_generic_deletions_answer,
     build_telegram_generic_observation_answer,
-    detect_telegram_generic_deletion,
+    detect_telegram_generic_deletions,
     detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary, build_session_summary
@@ -5263,6 +5264,77 @@ def _maybe_apply_swarm_recommendation(
     return reply_text, evidence_summary, escalation_hint, routing_decision
 
 
+def _maybe_answer_close_turn_recall_from_recent_context(
+    *,
+    user_message: str,
+    recent_conversation_context: str,
+) -> str | None:
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered or not str(recent_conversation_context or "").strip():
+        return None
+    close_turn_markers = (
+        "what did i just",
+        "what phrase did i",
+        "what did you just",
+        "i just told you",
+        "last thing i said",
+        "previous message",
+        "message right before",
+    )
+    if not any(marker in lowered for marker in close_turn_markers):
+        return None
+
+    previous_user_message = _recent_context_value(recent_conversation_context, "latest_user_message")
+    if not previous_user_message:
+        previous_user_message = _recent_context_value(recent_conversation_context, "previous_visible_turn.text")
+    if not previous_user_message:
+        return None
+
+    if "phrase" in lowered:
+        phrase = _extract_phrase_from_recent_message(previous_user_message)
+        if phrase:
+            return phrase
+
+    recalled = _truncate_recent_recall(previous_user_message)
+    if "answer only" in lowered or "answer with only" in lowered:
+        return recalled
+    return f"You just told me: {recalled}"
+
+
+def _recent_context_value(recent_conversation_context: str, key: str) -> str:
+    prefix = f"{key}="
+    for raw_line in str(recent_conversation_context or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return ""
+
+
+def _extract_phrase_from_recent_message(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    patterns = (
+        r"\b(?:the\s+)?phrase\s+(?:is|was|=|:)\s+(.+?)(?:[.!?](?:\s|$)|$)",
+        r"\b(?:probe\s+)?phrase\s+(?:is|was|=|:)\s+(.+?)(?:[.!?](?:\s|$)|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        phrase = match.group(1).strip().strip("\"'` ")
+        if 0 < len(phrase) <= 120:
+            return phrase
+    return ""
+
+
+def _truncate_recent_recall(text: str, *, limit: int = 360) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3].rstrip()}..."
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -5619,58 +5691,29 @@ def _load_recent_active_chip_keys(
 
 def _load_recent_conversation_context(
     *,
+    config_manager: ConfigManager | None = None,
     state_db: StateDB,
     session_id: str,
     channel_kind: str,
     request_id: str | None,
+    user_message: str = "",
     turn_limit: int = _RECENT_CONVERSATION_TURN_LIMIT,
 ) -> str:
-    if not session_id or not channel_kind or turn_limit <= 0:
+    recent_turns = load_recent_conversation_turns(
+        config_manager=config_manager,
+        state_db=state_db,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        current_user_message=user_message,
+        turn_limit=turn_limit,
+    )
+    if not recent_turns:
         return ""
 
-    transcript: list[tuple[str, str]] = []
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT event_type, request_id, facts_json
-            FROM builder_events
-            WHERE component = 'telegram_runtime'
-              AND channel_id = ?
-              AND session_id = ?
-              AND (
-                    event_type = 'intent_committed'
-                 OR (event_type = 'delivery_succeeded' AND reason_code = 'telegram_bridge_outbound')
-              )
-            ORDER BY created_at DESC, rowid DESC
-            LIMIT ?
-            """,
-            (channel_kind, session_id, max(turn_limit * 4, 12)),
-        ).fetchall()
-
-    for row in reversed(rows):
-        if request_id and str(row["request_id"] or "") == request_id:
-            continue
-        try:
-            facts = json.loads(row["facts_json"] or "{}")
-        except json.JSONDecodeError:
-            facts = {}
-        event_type = str(row["event_type"] or "")
-        if event_type == "intent_committed":
-            message_text = str(facts.get("message_text") or "").strip()
-            if message_text:
-                transcript.append(("user", message_text))
-        elif event_type == "delivery_succeeded":
-            delivered_text = str(facts.get("delivered_text") or "").strip()
-            if delivered_text:
-                transcript.append(("assistant", delivered_text))
-
-    if not transcript:
-        return ""
-
-    recent_turns = transcript[-(turn_limit * 2) :]
     lines = ["[Recent conversation]"]
-    for role, text in recent_turns:
-        lines.append(f"{role}: {text}")
+    for turn in recent_turns:
+        lines.append(f"{turn.role}: {turn.text}")
     visible_turn_labels = (
         "latest_visible_turn",
         "previous_visible_turn",
@@ -5678,10 +5721,10 @@ def _load_recent_conversation_context(
     )
     for index, label in enumerate(visible_turn_labels, start=1):
         if len(recent_turns) >= index:
-            role, text = recent_turns[-index]
-            lines.append(f"{label}.role={role}")
-            lines.append(f"{label}.text={text}")
-    user_turns = [text for role, text in recent_turns if role == "user"]
+            turn = recent_turns[-index]
+            lines.append(f"{label}.role={turn.role}")
+            lines.append(f"{label}.text={turn.text}")
+    user_turns = [turn.text for turn in recent_turns if turn.role == "user"]
     user_turn_labels = (
         "latest_user_message",
         "previous_user_message",
@@ -8561,6 +8604,7 @@ def build_researcher_reply(
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
+    detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
     try:
         personality_profile = load_personality_profile(
@@ -10083,23 +10127,37 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletion = detect_telegram_generic_deletion(memory_user_message)
-                            if detected_generic_memory_deletion is not None:
+                            detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
+                            accepted_generic_memory_deletions = []
+                            for deletion_index, generic_memory_deletion in enumerate(
+                                detected_generic_memory_deletions,
+                                start=1,
+                            ):
+                                deletion_turn_id = request_id
+                                if len(detected_generic_memory_deletions) > 1:
+                                    deletion_turn_id = f"{request_id}:delete-{deletion_index}"
                                 generic_delete_result = delete_profile_fact_from_memory(
                                     config_manager=config_manager,
                                     state_db=state_db,
                                     human_id=human_id,
-                                    predicate=detected_generic_memory_deletion.predicate,
-                                    evidence_text=detected_generic_memory_deletion.evidence_text,
-                                    fact_name=detected_generic_memory_deletion.fact_name,
+                                    predicate=generic_memory_deletion.predicate,
+                                    evidence_text=generic_memory_deletion.evidence_text,
+                                    fact_name=generic_memory_deletion.fact_name,
                                     session_id=session_id,
-                                    turn_id=request_id,
+                                    turn_id=deletion_turn_id,
                                     channel_kind=channel_kind,
                                     actor_id="telegram_generic_observation_loader",
                                 )
-                                if generic_delete_result.accepted_count <= 0:
-                                    detected_generic_memory_candidate = None
-                                    detected_generic_memory_deletion = None
+                                if generic_delete_result.accepted_count > 0:
+                                    accepted_generic_memory_deletions.append(generic_memory_deletion)
+                            detected_generic_memory_deletions = accepted_generic_memory_deletions
+                            detected_generic_memory_deletion = (
+                                detected_generic_memory_deletions[0]
+                                if detected_generic_memory_deletions
+                                else None
+                            )
+                            if detected_generic_memory_deletion is None:
+                                detected_generic_memory_candidate = None
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
@@ -10404,6 +10462,7 @@ def build_researcher_reply(
             summary="Personality influence was recorded before bridge execution.",
             run_id=run_id,
             request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
             channel_id=channel_kind,
             session_id=session_id,
             human_id=human_id,
@@ -10806,12 +10865,13 @@ def build_researcher_reply(
             routing_decision="memory_generic_observation_delete",
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text = build_telegram_generic_deletion_answer(
-            deletion=detected_generic_memory_deletion
+        reply_text = build_telegram_generic_deletions_answer(
+            deletions=detected_generic_memory_deletions or [detected_generic_memory_deletion]
         )
         evidence_summary = (
             "status=memory_generic_observation_delete "
-            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'}"
+            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'} "
+            f"delete_count={len(detected_generic_memory_deletions) or 1}"
         )
         record_event(
             state_db,
@@ -10840,6 +10900,15 @@ def build_researcher_reply(
                     "fact_name": detected_generic_memory_deletion.fact_name,
                     "predicate": detected_generic_memory_deletion.predicate,
                     "label": detected_generic_memory_deletion.label,
+                    "deletions": [
+                        {
+                            "fact_name": deletion.fact_name,
+                            "predicate": deletion.predicate,
+                            "label": deletion.label,
+                            "evidence_text": deletion.evidence_text,
+                        }
+                        for deletion in (detected_generic_memory_deletions or [detected_generic_memory_deletion])
+                    ],
                     "memory_role": (
                         detected_generic_memory_candidate.memory_role
                         if detected_generic_memory_candidate is not None
@@ -13213,10 +13282,12 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
     recent_conversation_context = _load_recent_conversation_context(
+        config_manager=config_manager,
         state_db=state_db,
         session_id=session_id,
         channel_kind=channel_kind,
         request_id=request_id,
+        user_message=user_message,
     )
 
     active_chip_evaluate = _run_active_chip_evaluate(
@@ -13307,6 +13378,10 @@ def build_researcher_reply(
         channel_kind=channel_kind,
         user_message=user_message,
     )
+    active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
+    active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
+    active_chip_evaluate_used = active_chip_evaluate is not None
+    raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
     context_capsule_obj = build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
@@ -13344,6 +13419,62 @@ def build_researcher_reply(
                 "source_ref": "spark_context_capsule.v1",
             },
         )
+    close_turn_recall_reply = _maybe_answer_close_turn_recall_from_recent_context(
+        user_message=user_message,
+        recent_conversation_context=recent_conversation_context,
+    )
+    if close_turn_recall_reply is not None:
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        routing_decision = "recent_conversation_recall"
+        evidence_summary = "status=recent_conversation recall=direct"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="recent_conversation_recall",
+            routing_decision=routing_decision,
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered close-turn recall from recent conversation.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=routing_decision,
+            facts=_bridge_event_facts(
+                routing_decision=routing_decision,
+                bridge_mode="recent_conversation_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                raw_chip_metrics=raw_chip_metrics,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=close_turn_recall_reply,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="recent_conversation_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision=routing_decision,
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -13361,10 +13492,6 @@ def build_researcher_reply(
         user_instructions_context=user_instructions_context,
         iteration_draft_context=iteration_draft_context,
     )
-    active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
-    active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
-    active_chip_evaluate_used = active_chip_evaluate is not None
-    raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
     screened_context = screen_model_visible_text(
         state_db=state_db,
         source_kind="contextual_task",

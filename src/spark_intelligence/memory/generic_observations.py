@@ -866,15 +866,63 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
 
 
 def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeletion | None:
-    candidate = classify_telegram_generic_memory_candidate(user_message)
-    if candidate is None or candidate.operation != "delete":
+    deletions = detect_telegram_generic_deletions(user_message)
+    if not deletions:
         return None
-    return TelegramGenericDeletion(
-        predicate=candidate.predicate,
-        evidence_text=candidate.evidence_text,
-        fact_name=candidate.fact_name,
-        label=candidate.label,
-    )
+    return deletions[0]
+
+
+def detect_telegram_generic_deletions(user_message: str) -> list[TelegramGenericDeletion]:
+    normalized = _clean_text(user_message)
+    variants = _candidate_text_variants(normalized)
+    chunks = [variant for variant in variants if variant != normalized] or variants
+    deletions: list[TelegramGenericDeletion] = []
+    seen: set[tuple[str, str, str]] = set()
+    for chunk in chunks:
+        candidate = classify_telegram_generic_memory_candidate(chunk)
+        if candidate is None or candidate.operation != "delete":
+            continue
+        key = (candidate.predicate, candidate.fact_name, candidate.label)
+        if key in seen:
+            continue
+        seen.add(key)
+        deletions.append(
+            TelegramGenericDeletion(
+                predicate=candidate.predicate,
+                evidence_text=chunk,
+                fact_name=candidate.fact_name,
+                label=candidate.label,
+            )
+        )
+    return deletions
+
+
+def build_telegram_generic_deletions_answer(*, deletions: list[TelegramGenericDeletion]) -> str:
+    if not deletions:
+        return "I don't currently have that saved."
+    if len(deletions) == 1:
+        return build_telegram_generic_deletion_answer(deletion=deletions[0])
+    targets = [_telegram_generic_deletion_target(deletion) for deletion in deletions]
+    return f"I'll forget {_join_natural_list(targets)}."
+
+
+def _telegram_generic_deletion_target(deletion: TelegramGenericDeletion) -> str:
+    if deletion.predicate.startswith("entity."):
+        entity_state_deletion = parse_entity_state_deletion(deletion.evidence_text)
+        if entity_state_deletion is not None:
+            return f"the {entity_state_deletion.entity_label} {entity_state_deletion.attribute}"
+    return f"your {deletion.label}"
+
+
+def _join_natural_list(values: list[str]) -> str:
+    cleaned = [value for value in values if value]
+    if not cleaned:
+        return "that"
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
 
 
 def build_telegram_generic_observation_answer(*, observation: TelegramGenericObservation) -> str:

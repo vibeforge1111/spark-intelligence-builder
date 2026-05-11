@@ -366,6 +366,7 @@ Current Builder-first authoring support already exists through the bridge for:
 - explicit agent persona updates
 - human-scoped style overlays
 - multi-turn Telegram onboarding for first-time Builder-local users
+- explicit durable Telegram interaction preferences synced into the paired agent persona profile
 
 ## 11. Lifecycle States
 
@@ -385,6 +386,7 @@ This spec does not currently authorize:
 - one human owning multiple active agents in the same workspace
 - automatic merge by name alone
 - session-scoped style residue silently becoming canonical persona
+- passive conversation residue becoming durable persona doctrine without explicit user intent
 
 ## 13. Current Builder Status
 
@@ -404,6 +406,26 @@ Completed locally:
 - doctor and Watchtower identity visibility
 - persisted import-readiness visibility for the external `identity` hook
 - explicit conflict-repair harness coverage
+
+## 14. Safe Personality Evolution Path
+
+The launch-safe preference path is intentionally explicit:
+
+- Telegram may capture clear durable interaction preferences from the user.
+- Telegram may keep a per-user hot preference for immediate conversational continuity.
+- Builder may persist the corresponding behavioral rule in `agent_persona_profiles`.
+- Builder records the change in `agent_persona_mutations`.
+- The flow must not write to `domain-chip-memory`, mutate global `spark-character`, or treat one-off style requests as durable persona.
+
+Future evolution should proceed in layers:
+
+1. User-visible preference status, edit, and remove flows.
+2. Provenance display for persona changes.
+3. Natural-language regression tests for per-user/per-agent isolation.
+4. Shadow evaluation of reply quality before automatic learning.
+5. Carefully gated passive learning, only after undo, provenance, and memory movement traces exist.
+
+Global personality evolution through `spark-character` is a separate, higher-risk lane. It should learn from aggregated, reviewed evidence and promotion gates, not from a single user's Telegram preference.
 
 Remaining external dependency:
 

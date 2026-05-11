@@ -447,7 +447,7 @@ def _artifact_title_from_text(text: str) -> str:
 def _extract_access_value(text: str) -> str | None:
     lowered = text.lower()
     if "full access" in lowered:
-        return "4"
+        return "5"
     match = _ACCESS_VALUE_RE.search(text)
     if not match:
         return None
@@ -517,7 +517,7 @@ def _resolve_reference(
     if access_focus:
         access_value = _extract_access_value(current_message)
         has_change_shape = re.search(r"\b(?:change|set|switch|make|do|go\s+to|go\s+with|actually|instead)\b", current_message, re.I)
-        if access_value and (has_change_shape or re.fullmatch(r"\s*(?:level\s*)?(?:[1-4]|one|two|three|four)\s*[.!?]?\s*", current_message, re.I)):
+        if access_value and (has_change_shape or re.fullmatch(r"\s*(?:level\s*)?(?:[1-5]|one|two|three|four|five)\s*[.!?]?\s*", current_message, re.I)):
             return ReferenceResolution(
                 kind="access_level",
                 value=access_value,

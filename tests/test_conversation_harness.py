@@ -76,7 +76,7 @@ def test_list_reference_beats_older_access_focus() -> None:
             ConversationTurn(role="user", text="Change my access level to three please", turn_id="u1"),
             ConversationTurn(role="assistant", text="Done - I changed this chat to Level 3 - Research + Build.", turn_id="a1"),
             ConversationTurn(role="user", text="Change it to 4", turn_id="u2"),
-            ConversationTurn(role="assistant", text="Done - I changed this chat to Level 4 - Full Access.", turn_id="a2"),
+            ConversationTurn(role="assistant", text="Done - I changed this chat to Level 4 - Sandboxed workspace.", turn_id="a2"),
             ConversationTurn(role="user", text="Give me three build ideas for a memory dashboard", turn_id="u3"),
             ConversationTurn(
                 role="assistant",
@@ -96,6 +96,20 @@ def test_list_reference_beats_older_access_focus() -> None:
     assert frame.reference_resolution.resolved is True
     assert frame.reference_resolution.kind == "list_item"
     assert frame.reference_resolution.value == "Memory Timeline Explorer"
+
+
+def test_conversation_frame_resolves_full_access_as_level_five() -> None:
+    frame = build_conversation_frame(
+        current_message="Actually make it full access",
+        turns=[
+            ConversationTurn(role="user", text="Can you explain Spark access levels?", turn_id="u1"),
+            ConversationTurn(role="assistant", text="Level 4 is sandboxed workspace. Level 5 is whole-computer operator mode.", turn_id="a1"),
+        ],
+    )
+
+    assert frame.reference_resolution.resolved is True
+    assert frame.reference_resolution.kind == "access_level"
+    assert frame.reference_resolution.value == "5"
 
 
 def test_short_action_option_reference_uses_newer_list_context() -> None:

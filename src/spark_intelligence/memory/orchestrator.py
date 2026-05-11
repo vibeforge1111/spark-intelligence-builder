@@ -83,6 +83,21 @@ MEMORY_DASHBOARD_MOVEMENT_STATES: tuple[str, ...] = (
     "summarized",
     "retrieved",
 )
+MEMORY_MOVEMENT_STATUS_EXPORT_SCHEMA = "spark.memory_movement_status_export.v1"
+MEMORY_MOVEMENT_STATUS_EXPORT_KEYS: tuple[str, ...] = (
+    "status",
+    "reason",
+    "configured_module",
+    "contract_name",
+    "authority",
+    "movement_states",
+    "movement_counts",
+    "row_count",
+    "record_counts",
+    "source_family_counts",
+    "authority_counts",
+    "non_override_rules",
+)
 
 
 def _apply_runtime_architecture_pin() -> None:
@@ -1563,6 +1578,47 @@ def inspect_memory_movement_status(
         }
     )
     return payload
+
+
+def build_memory_movement_status_export_payload(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+) -> dict[str, Any]:
+    status = inspect_memory_movement_status(config_manager=config_manager, sdk_module=sdk_module)
+    payload: dict[str, Any] = {
+        "schema_version": MEMORY_MOVEMENT_STATUS_EXPORT_SCHEMA,
+        "generated_at": _now_iso(),
+        "source": "spark_intelligence.memory.inspect_memory_movement_status",
+        "redaction": "allowlisted movement status only; dashboard rows and memory bodies are not exported",
+        "claim_boundary": (
+            "This export is observability evidence for Spark OS compilation. It cannot override current-state memory, "
+            "profile facts, or human instructions."
+        ),
+    }
+    for key in MEMORY_MOVEMENT_STATUS_EXPORT_KEYS:
+        if key in status:
+            payload[key] = status[key]
+    return payload
+
+
+def write_memory_movement_status_export(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+    write_path: str | Path | None = None,
+) -> dict[str, Any]:
+    path = (
+        Path(write_path)
+        if write_path is not None
+        else config_manager.paths.home / "artifacts" / "memory-movement-index" / "memory-movement-status.json"
+    )
+    payload = build_memory_movement_status_export_payload(config_manager=config_manager, sdk_module=sdk_module)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    tmp_path.replace(path)
+    return {"status": "written", "path": str(path), "payload": payload}
 
 
 def inspect_wiki_packet_metadata(
@@ -7459,6 +7515,19 @@ def _retrieve_memory_query_in_memory(
     )
 
 
+def _memory_trace_ref(*, session_id: str | None, turn_id: str | None) -> str | None:
+    normalized_turn = _optional_string(turn_id)
+    normalized_session = _optional_string(session_id)
+    if normalized_turn and normalized_turn.startswith("trace:"):
+        return normalized_turn
+    if not normalized_turn and not normalized_session:
+        return None
+    surface = "memory"
+    if normalized_session:
+        surface = normalized_session.split(":", 1)[0].strip() or surface
+    return f"trace:{surface}:{normalized_turn or normalized_session}"
+
+
 def _record_memory_write_requested(
     *,
     state_db: StateDB,
@@ -7486,6 +7555,7 @@ def _record_memory_write_requested(
         component="memory_orchestrator",
         summary="Spark memory write requested for durable personality preferences.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -7633,6 +7703,7 @@ def _record_memory_write_requested_observations(
         component="memory_orchestrator",
         summary=summary,
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -7728,6 +7799,7 @@ def _record_memory_lifecycle_transition(
         component="memory_orchestrator",
         summary=f"Spark memory lifecycle transition: {memory_role} {lifecycle_action}.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         channel_id=channel_kind,
@@ -7882,6 +7954,7 @@ def _record_memory_salience_policy_block(
         input_ref=turn_id,
         severity="high" if decision.reason_code == "salience_secret_like_material" else "medium",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         actor_id=actor_id,
         provenance={"memory_role": "current_state", "human_id": human_id},
@@ -7934,6 +8007,7 @@ def _record_memory_write_requested_events(
         component="memory_orchestrator",
         summary="Spark memory event write requested for durable Telegram events.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -7977,6 +8051,7 @@ def _record_memory_write_event(
         component="memory_orchestrator",
         summary="Spark memory write completed." if result.accepted_count > 0 else "Spark memory write abstained.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -8011,6 +8086,7 @@ def _record_memory_read_requested(
         component="memory_orchestrator",
         summary="Spark memory current-state lookup requested.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
@@ -8047,6 +8123,7 @@ def _record_memory_read_requested_subject(
         component="memory_orchestrator",
         summary="Spark memory read requested.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=_human_id_from_subject(subject),
         actor_id=actor_id,
@@ -8070,6 +8147,7 @@ def _record_memory_read_event(
         component="memory_orchestrator",
         summary="Spark memory read completed." if not result.abstained else "Spark memory read abstained.",
         request_id=turn_id,
+        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,

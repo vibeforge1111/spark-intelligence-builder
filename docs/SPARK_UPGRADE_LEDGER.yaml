@@ -1,0 +1,367 @@
+# Spark upgrade ledger.
+#
+# Purpose: keep docs, code, wiring, activation, and verification from blurring
+# together during fast subsystem upgrades. Status values are intentionally
+# separate: documented, coded, wired, active, verified, broken, deprecated.
+
+schema_version: spark.upgrade_ledger.v1
+updated_at: "2026-05-10"
+status_values:
+  - documented
+  - coded
+  - wired
+  - active
+  - verified
+  - broken
+  - deprecated
+
+entries:
+  - id: aoc-shared-panel-v1
+    module: spark-intelligence-builder
+    feature: Agent Operating Context shared panel
+    status: wired
+    routes_affected:
+      - builder:self-panel
+      - telegram:/aoc
+      - telegram:/context
+      - telegram:/operating_context
+      - telegram:/agent_context
+    evidence:
+      - docs/AGENT_OPERATING_CONTEXT_AND_DRIFT_CONTROL.md
+      - src/spark_intelligence/self_awareness/operating_panel.py
+      - tests/test_agent_operating_panel.py
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+    known_gaps:
+      - Mission Control drilldown still needs to consume the shared panel payload directly.
+      - AOC should show mission completion evidence state once Spawner evidence gates are fully wired.
+    rollback:
+      - Route Telegram AOC commands back to Builder self context if panel rendering breaks.
+
+  - id: builder-aoc-task-fit-execution-lane-v1
+    module: spark-intelligence-builder
+    feature: AOC task-fit keyword hardening and execution lane state
+    status: verified
+    routes_affected:
+      - builder:self-context
+      - builder:self-panel
+      - aoc:task-fit
+      - aoc:execution-lane
+    evidence:
+      - src/spark_intelligence/self_awareness/operating_context.py
+      - src/spark_intelligence/self_awareness/operating_panel.py
+      - src/spark_intelligence/self_awareness/drift_evals.py
+      - src/spark_intelligence/cli.py
+      - tests/test_self_awareness.py
+      - tests/test_agent_operating_panel_cli.py
+      - tests/test_agent_drift_evals.py
+      - test:python -m pytest tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_concept_chat_keywords_do_not_hijack_writable_route tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_concept_chat_explicit_action_can_route_local_work tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_agent_operating_context_exposes_execution_lane_without_level5_overclaim -q
+      - test:python -m pytest tests/test_agent_operating_panel_cli.py tests/test_agent_drift_evals.py -q
+    known_gaps:
+      - AOC now suppresses writable route recommendations for concept-chat keyword mentions unless the turn has explicit action intent.
+      - The panel accepts optional execution lane JSON for Docker availability, selection, probe state, and workspace sandbox state.
+      - Level 5 whole-computer claims remain false unless the supplied current access resolves to Level 5.
+    rollback:
+      - Remove execution lane JSON ingestion and route concept-chat task-fit back to chat-only behavior if the panel payload contract becomes noisy.
+
+  - id: telegram-degraded-chat-fallback-v1
+    module: spark-telegram-bot
+    feature: Conversational degraded mode for Builder or memory failure
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - telegram:memory-directive
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/errorExplain.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/errorExplain.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+    known_gaps:
+      - Final answer gate still needs explicit latest-intent verdict fields.
+      - Fallback should eventually answer from current chat in the same turn when local chat fallback is available.
+    rollback:
+      - Re-enable the generic diagnostic renderer for chat-context Builder failures.
+
+  - id: telegram-failure-mode-reply-suppression-v1
+    module: spark-telegram-bot
+    feature: Suppress stale failure-mode replies before final chat delivery
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - builder:plain-chat-reply
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+    known_gaps:
+      - This catches known hijack shapes; a fuller final-answer gate should produce explicit answered_latest_intent verdicts.
+      - The fallback answer should eventually be generated in the same turn when safe local chat is available.
+    rollback:
+      - Remove the diagnostic-wall and self-critic menu patterns from low-information reply suppression.
+
+  - id: telegram-memory-source-labels-v1
+    module: spark-telegram-bot
+    feature: Source-labeled retrieved memory for plain chat context
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - builder:cold-memory-context
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/builderBridge.test.ts
+    known_gaps:
+      - User-facing "memory in play" display still needs UI or AOC exposure.
+      - Confidence and current-chat override are prompt-visible but not yet stored as first-class telemetry.
+    rollback:
+      - Render retrieved memory lines without metadata brackets.
+
+  - id: telegram-final-answer-suppression-evidence-v1
+    module: spark-telegram-bot
+    feature: Final-answer gate audit for suppressed Builder replies
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - builder:plain-chat-reply
+      - telemetry:final-answer-gate
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+      - commit:fdb6fda
+    known_gaps:
+      - Audit is Telegram-local JSONL; Spawner trace still needs to ingest these as shared agent black-box events.
+      - The record classifies suppression reason and fallback route, but does not yet score answered_latest_intent with a model/eval verdict.
+    rollback:
+      - Disable `SPARK_FINAL_ANSWER_GATE_AUDIT_PATH` consumption and remove suppression audit writes if the ledger grows too noisy.
+
+  - id: mission-provider-evidence-v1
+    module: spawner-ui
+    feature: Mission completion display respects live provider state
+    status: wired
+    routes_affected:
+      - spawner:mission-control-board
+      - spawner:mission-control-trace
+      - telegram:mission-status
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.test.ts
+    known_gaps:
+      - Stale running timeout still defaults to 24 hours and needs a product decision before shortening.
+      - Completion evidence bundle should include artifact/log/final-provider-event requirements.
+    rollback:
+      - Restore lifecycle completion as the source of truth for provider summaries.
+
+  - id: mission-completion-evidence-bundle-v1
+    module: spawner-ui
+    feature: Mission completion evidence bundle on enriched board cards
+    status: wired
+    routes_affected:
+      - spawner:mission-control-board
+      - spawner:mission-control-api
+      - telegram:mission-status
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/types/mission-control.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-results.test.ts
+      - commit:9e4b4fe
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/components/MissionBoard.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/services/mission-board-cards.ts
+      - commit:4923b5c
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/missions/[id]/+page.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/trace/+page.svelte
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/mission-control-trace.ts
+      - commit:87ec88c
+      - commit:29a9989
+    known_gaps:
+      - The evidence bundle renders on Mission Board cards, mission detail, and trace drilldown; Telegram mission-status replies still need the same proof summary.
+      - Artifact/log presence is summarized from provider metadata; dedicated log/artifact proof fields should be added when provider runtime emits them uniformly.
+      - Stalled missions now fail closed after `MISSION_CONTROL_STALLED_RUNNING_MS`, default 30 minutes; product tuning may still adjust the timeout.
+    rollback:
+      - Keep provider summaries but hide `completionEvidence` from UI/API consumers until runtime proof fields stabilize.
+
+  - id: spawner-final-answer-audit-ingest-v1
+    module: spawner-ui
+    feature: Ingest Telegram final-answer gate audits into Agent Black Box
+    status: wired
+    routes_affected:
+      - spawner:agent-black-box
+      - spawner:mission-control-trace
+      - telegram:plain-chat
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/agent-event-ledger.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/agent-event-ledger.test.ts
+      - commit:5ba03e0
+    known_gaps:
+      - Final-answer audit events are scoped as `telegram:<chat_id>` sessions, not mission sessions, because suppressed plain-chat replies do not always belong to a mission.
+      - A model/eval-backed `answered_latest_intent` verdict still needs a second pass.
+    rollback:
+      - Stop reading `SPARK_FINAL_ANSWER_GATE_AUDIT_PATH` from Spawner black-box reports.
+
+  - id: telegram-aoc-memory-in-play-v1
+    module: spark-telegram-bot
+    feature: Memory-in-play metadata in AOC/context replies
+    status: wired
+    routes_affected:
+      - telegram:/aoc
+      - telegram:/context
+      - builder:cold-memory-context
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/builderBridge.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/builderBridge.test.ts
+      - commit:d1122c3
+    known_gaps:
+      - Memory-in-play is visible for explicit AOC/context queries; regular chat answers do not yet show a user-facing memory strip by default.
+      - Confidence remains freshness/source-class based, not a calibrated memory reliability score.
+    rollback:
+      - Keep memory metadata prompt-only and remove the appended AOC memory summary.
+
+  - id: telegram-access-capability-hijack-v1
+    module: spark-telegram-bot
+    feature: Access keyword hijack prevention and runner capability truth
+    status: wired
+    routes_affected:
+      - telegram:plain-chat
+      - telegram:/access
+      - telegram:natural-access-change
+      - aoc:runner-capability
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationFrame.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationFrame.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/buildE2E.test.ts
+      - commit:2b40c82
+      - commit:c6c4c60
+      - commit:12d3759
+      - test:npm test -- --runInBand
+    known_gaps:
+      - Bare `build`, `workspace`, and `full` no longer mutate access; explicit phrases such as `build when asked`, `workspace access`, and `full access` still work.
+      - Generic game/product `level 3/4/5` language no longer becomes access focus unless recent context was explicitly access-focused.
+      - Access level 4 is now described as authorization plus runner preflight; read-only local-build enqueue is blocked before PRD bridge dispatch.
+      - A future AOC strip should show configured access, current runner, writable route, and proof requirement on every action proposal, not only access queries.
+    rollback:
+      - Remove the access capability mismatch detector and revert `/access` replies to profile-only confirmations if preflight checks become noisy.
+
+  - id: telegram-access-level-4-5-split-v1
+    module: spark-telegram-bot
+    feature: Split sandboxed local access from whole-computer operator access
+    status: wired
+    routes_affected:
+      - telegram:/access
+      - telegram:natural-access-change
+      - spawner:sandboxed-workspaces
+      - spawner:high-agency-workers
+    evidence:
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/conversationIntent.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/index.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationIntent.test.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/conversationFrame.test.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/spark-run-workspace.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.ts
+      - commit:8e5e3d2
+      - commit:12d3759
+      - commit:3deafac
+    known_gaps:
+      - Telegram now treats Level 4 as sandboxed local access and Level 5 as whole-computer operator mode, matching Spawner workspace and high-agency worker guards.
+      - Builder AOC now labels Level 4 as `sandboxed workspace allowed`, resolves `full access` to effective Level 5, and exposes `whole_computer_allowed` plus the active access boundary.
+      - Docker/SSH/model execution lanes are still recommendation backends to plug into Level 4 setup, not yet a finalized automatic installer path.
+    rollback:
+      - Map `full access` back to Level 4 only if Level 5 onboarding proves too disruptive; keep high-agency worker guards enabled regardless.
+
+  - id: spawner-access-execution-lanes-v1
+    module: spawner-ui
+    feature: OS-aware Access Level 4/5 execution lane recommender
+    status: wired
+    routes_affected:
+      - spawner:access-preflight
+      - spawner:sandboxed-workspaces
+      - spawner:high-agency-workers
+      - future-cli:spark-access-setup
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/access-execution-lanes.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/access-execution-lanes.test.ts
+      - commit:d45e507
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/api/access/execution-lanes/+server.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
+      - commit:63d44c5
+      - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/access.py
+      - C:/Users/USER/Desktop/spark-cli/src/spark_cli/security/approval.py
+      - C:/Users/USER/Desktop/spark-cli/src/spark_cli/sandbox/docker.py
+      - C:/Users/USER/Desktop/spark-cli/tests/test_access.py
+      - C:/Users/USER/Desktop/spark-cli/tests/test_cli.py
+      - commit:294cb19
+      - commit:1eb6efb
+      - commit:5f56dac
+      - commit:6a62a15
+      - C:/Users/USER/Desktop/spark-telegram-bot/src/accessPolicy.ts
+      - C:/Users/USER/Desktop/spark-telegram-bot/tests/accessPolicy.test.ts
+      - commit:5fb12cc
+      - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts
+      - test:npm run test:run -- src/lib/server/access-execution-lanes.test.ts src/routes/api/access/execution-lanes/access-execution-lanes.integration.test.ts
+      - test:python -m pytest tests/test_access.py -q
+      - test:python -m pytest tests/test_access.py tests/test_cli.py -q
+      - "test:python -m pytest tests/test_access.py tests/test_cli.py -q -> 510 passed, 1 skipped, 34 subtests"
+      - test:npm test -- --runTestsByPath tests/accessPolicy.test.ts
+    known_gaps:
+      - The recommender is coded, tested, exposed as a Spawner API, mirrored by `spark access setup/status`, and referenced by Telegram Level 4 guidance; it is not yet wired into Mission Control UI.
+      - Level 4 now creates and probes the Spark workspace sandbox during setup before claiming writability on macOS, Windows, and Linux.
+      - "`spark setup`, generated module envs, onboarding guide JSON, and `spark access guide` now default users into Level 4 workspace-write without whole-computer access."
+      - Level 5 whole-computer operator mode remains blocked unless `spark access setup --level 5 --enable-high-agency` writes auditable guardrails, followed by restart.
+      - Docker now has a non-mutating CLI doctor; SSH and Modal already have doctor/smoke surfaces. Full one-click dependency installers still need OS-specific implementation and onboarding copy.
+    rollback:
+      - Keep the existing Spark workspace and high-agency worker guards; stop consuming the lane recommender until CLI/onboarding integration is ready.
+
+  - id: spawner-execution-boundary-hardening-v1
+    module: spawner-ui
+    feature: Spawner execution sandbox and verification path hardening
+    status: verified
+    routes_affected:
+      - spawner:spark-harness-codex
+      - spawner:/api/verify
+      - spawner:/api/scan
+      - spawner:high-agency-workers
+    evidence:
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/provider-clients/spark-harness-client.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/provider-clients/spark-harness-client.test.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/high-agency-workers.test.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.ts
+      - C:/Users/USER/Desktop/spawner-ui/src/lib/server/command-runner.test.ts
+      - commit:8087840
+      - commit:3834ea8
+      - test:npx vitest run src/lib/server/command-runner.test.ts src/lib/server/high-agency-workers.test.ts src/lib/server/provider-clients/spark-harness-client.test.ts
+      - "test:npm test -- --run src/lib/server/spark-run-workspace.test.ts src/lib/server/high-agency-workers.test.ts src/lib/services/spark-agent-bridge.test.ts src/lib/server/provider-clients/spark-harness-client.test.ts -> 4 files, 18 tests"
+    known_gaps:
+      - "`workspace-write` is now the default Codex sandbox sent to the Spark harness; `danger-full-access` requires `SPARK_ALLOW_HIGH_AGENCY_WORKERS=1`."
+      - "`/api/verify`, `/api/scan`, provider working directories, harness prompt-extracted workspaces, and high-agency cwd checks now use canonical workspace containment instead of lexical path checks."
+      - "Symlink/junction escapes from the Spark workspace root are rejected before creating or using a working directory."
+      - "External project paths still require explicit trusted-local `SPARK_ALLOW_EXTERNAL_PROJECT_PATHS=1`; UI onboarding should surface this as an operator choice, not a terminal puzzle."
+    rollback:
+      - Revert the Spark harness sandbox resolver and command-runner path validation if existing local dev flows need a temporary compatibility window.
+
+  - id: voice-runtime-activation-v1
+    module: spark-intelligence-builder
+    feature: Voice runtime and ElevenLabs activation path
+    status: active
+    routes_affected:
+      - telegram:/voice
+      - builder:voice-runtime
+      - chip:spark-voice-comms
+    evidence:
+      - src/spark_intelligence/adapters/telegram/runtime.py
+      - src/spark_intelligence/attachments/snapshot.py
+      - tests/test_attachment_voice_aliases.py
+      - tests/test_operator_pairing_flows.py
+      - C:/Users/USER/Desktop/spark-voice-comms/spark-chip.json
+      - attachments snapshot shows `spark-voice-comms` active
+      - attachments run-hook voice.status reports faster-whisper local STT and Kokoro local TTS ready
+    known_gaps:
+      - ElevenLabs requires a local secret and selected voice id before live TTS can be claimed.
+      - Telegram delivery is not proven yet; `voice.status` reports delivery_ready=false and conversation_ready=false.
+      - Dashboard should distinguish chip attached, provider selected, key present, voice selected, last synthesis test, and last Telegram delivery.
+    rollback:
+      - Keep `/voice` in text-only setup guidance mode until chip attachment and provider checks pass.

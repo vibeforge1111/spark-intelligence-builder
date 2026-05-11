@@ -74,8 +74,11 @@ from spark_intelligence.researcher_bridge.advisory import (
 from spark_intelligence.self_awareness import (
     build_agent_operating_context,
     build_self_awareness_capsule,
+    load_capability_ledger,
     run_route_probe_and_record,
 )
+from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
+from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -911,6 +914,14 @@ def _transcribe_telegram_audio_bytes(
     transcript_text = str((result or {}).get("transcript_text") or "").strip()
     if not transcript_text:
         raise RuntimeError("The voice chip returned no transcript text.")
+    runtime_state = (result or {}).get("runtime_state") if isinstance((result or {}).get("runtime_state"), dict) else None
+    if runtime_state:
+        runtime_state = _mark_telegram_inbound_voice_runtime_state(
+            runtime_state=runtime_state,
+            normalized=normalized,
+            audio_bytes=len(audio_bytes),
+            transcribe_hook_ms=transcribe_ms,
+        )
     effective_text = transcript_text
     if normalized.caption_text:
         effective_text = f"{normalized.caption_text}\n\nVoice transcript: {transcript_text}"
@@ -922,12 +933,36 @@ def _transcribe_telegram_audio_bytes(
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "provider_model": str((result or {}).get("model") or "").strip() or None,
         "provider_mode": str((result or {}).get("mode") or "").strip() or None,
+        "runtime_state": runtime_state,
         "voice_timing": {
             "transcribe_hook_ms": transcribe_ms,
             "audio_bytes": len(audio_bytes),
             "audio_source": str(getattr(normalized, "media_source", "") or "telegram_client"),
         },
     }
+
+
+def _mark_telegram_inbound_voice_runtime_state(
+    *,
+    runtime_state: dict[str, Any],
+    normalized: Any,
+    audio_bytes: int,
+    transcribe_hook_ms: int,
+) -> dict[str, Any]:
+    state = json.loads(json.dumps(runtime_state))
+    source_ledger = state.get("source_ledger") if isinstance(state.get("source_ledger"), list) else []
+    for source in ("telegram-inbound-voice-trace", "voice.transcribe"):
+        if source not in source_ledger:
+            source_ledger.append(source)
+    state["source_ledger"] = source_ledger
+    transcript = state.get("transcript") if isinstance(state.get("transcript"), dict) else {}
+    transcript["telegram_message_kind"] = str(getattr(normalized, "message_kind", "") or "voice")
+    transcript["audio_bytes"] = max(0, int(audio_bytes))
+    state["transcript"] = transcript
+    latency = state.get("latency") if isinstance(state.get("latency"), dict) else {}
+    latency["transcribe_hook_ms"] = max(0, int(transcribe_hook_ms))
+    state["latency"] = latency
+    return state
 
 
 def _prepare_telegram_media_input(
@@ -1157,6 +1192,7 @@ def simulate_telegram_update(
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
                         tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
+                        voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -1623,6 +1659,7 @@ def simulate_telegram_update(
                         agent_id=resolution.agent_id,
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
+                        voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -2066,6 +2103,7 @@ def poll_telegram_updates_once(
             continue
         effective_text = str(media_input.get("effective_text") or normalized.text)
         transcript_text = media_input.get("transcript_text")
+        voice_input_runtime_state = media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
         voice_answer_requested_for_bridge = False
         voice_answer_request = _extract_voice_answer_request(effective_text)
@@ -2131,16 +2169,17 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
-            human_id=resolution.human_id,
-            agent_id=resolution.agent_id,
-            force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
-            voice_text=(
-                str(command_result.get("voice_text")).strip()
-                if command_result.get("voice_text") is not None
-                else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
-            ),
-            respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
-            user_message=effective_text,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
+                voice_text=(
+                    str(command_result.get("voice_text")).strip()
+                    if command_result.get("voice_text") is not None
+                    else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
+                ),
+                voice_input_runtime_state=voice_input_runtime_state,
+                respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
+                user_message=effective_text,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -2258,6 +2297,7 @@ def poll_telegram_updates_once(
                 agent_id=resolution.agent_id,
                 force_voice=voice_origin_reply,
                 voice_text=outbound_text if voice_origin_reply else None,
+                voice_input_runtime_state=voice_input_runtime_state,
                 user_message=effective_text,
             )
             processed_count += 1
@@ -2408,6 +2448,7 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
             force_voice=voice_origin_reply or voice_answer_requested_for_bridge,
             voice_text=outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None,
+            voice_input_runtime_state=voice_input_runtime_state,
             user_message=effective_text,
         )
         processed_count += 1
@@ -2520,6 +2561,7 @@ def _synthesize_telegram_voice_reply(
     tts: dict[str, Any] | None = None,
     caption_text: str | None = None,
     coherence_mode: str | None = None,
+    voice_input_runtime_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         **_build_voice_chip_payload(
@@ -2598,12 +2640,41 @@ def _synthesize_telegram_voice_reply(
         value = (result or {}).get(key)
         if isinstance(value, dict):
             payload[key] = value
+    if voice_input_runtime_state and isinstance(payload.get("runtime_state"), dict):
+        payload["runtime_state"] = _merge_voice_input_runtime_state(
+            speak_state=payload["runtime_state"],
+            input_state=voice_input_runtime_state,
+        )
     if isinstance(voice_profile_status, dict):
         payload["voice_profile_fingerprint"] = voice_profile_status.get("fingerprint")
         payload["voice_profile_fingerprint_status"] = voice_profile_status.get("status")
         payload["voice_profile_fingerprint_fields"] = voice_profile_status.get("fields")
     payload = _apply_telegram_voice_effect_from_env(payload)
     return _convert_voice_payload_for_telegram_if_available(payload)
+
+
+def _merge_voice_input_runtime_state(*, speak_state: dict[str, Any], input_state: dict[str, Any]) -> dict[str, Any]:
+    merged = json.loads(json.dumps(speak_state))
+    input_stt = input_state.get("stt") if isinstance(input_state.get("stt"), dict) else {}
+    if input_stt.get("ready"):
+        merged["stt"] = dict(input_stt)
+    input_transcript = input_state.get("transcript") if isinstance(input_state.get("transcript"), dict) else None
+    if input_transcript:
+        merged["transcript"] = dict(input_transcript)
+    input_latency = input_state.get("latency") if isinstance(input_state.get("latency"), dict) else {}
+    speak_latency = merged.get("latency") if isinstance(merged.get("latency"), dict) else {}
+    merged["latency"] = {**input_latency, **speak_latency}
+    input_sources = input_state.get("source_ledger") if isinstance(input_state.get("source_ledger"), list) else []
+    speak_sources = merged.get("source_ledger") if isinstance(merged.get("source_ledger"), list) else []
+    merged["source_ledger"] = list(dict.fromkeys([*input_sources, *speak_sources]))
+    claim_levels = merged.get("claim_levels") if isinstance(merged.get("claim_levels"), dict) else {}
+    merged_tts = merged.get("tts") if isinstance(merged.get("tts"), dict) else {}
+    claim_levels["configured"] = bool(claim_levels.get("configured") or merged.get("tts"))
+    claim_levels["synthesis_ready"] = bool(claim_levels.get("synthesis_ready") or merged_tts.get("ready"))
+    claim_levels["delivery_ready"] = bool(claim_levels.get("delivery_ready"))
+    claim_levels["conversation_ready"] = bool(input_stt.get("ready") and claim_levels["synthesis_ready"] and claim_levels["delivery_ready"])
+    merged["claim_levels"] = claim_levels
+    return merged
 
 
 def _merge_telegram_tts_overrides(
@@ -3150,6 +3221,7 @@ def _send_telegram_reply(
     agent_id: str | None = None,
     force_voice: bool = False,
     voice_text: str | None = None,
+    voice_input_runtime_state: dict[str, Any] | None = None,
     respect_voice_reply_state: bool = True,
     user_message: str | None = None,
 ) -> dict[str, Any]:
@@ -3225,6 +3297,7 @@ def _send_telegram_reply(
                     external_user_id=telegram_user_id,
                     caption_text=voice_caption_text,
                     coherence_mode="caption_preview" if voice_text is not None else "exact",
+                    voice_input_runtime_state=voice_input_runtime_state,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
@@ -3685,6 +3758,76 @@ def _render_telegram_route_probe_reply(probe: Any) -> str:
     return "\n".join(lines)
 
 
+_TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
+
+
+def _is_ledger_runtime_command(lowered: str) -> bool:
+    return lowered in {"/ledger", "/capabilities"} or any(
+        lowered.startswith(f"{prefix} ") for prefix in ("/ledger", "/capabilities")
+    )
+
+
+def _telegram_short_text(value: Any, *, limit: int = 120) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+
+def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, requested_command: str) -> str:
+    ledger = load_capability_ledger(config_manager).payload
+    entries = ledger.get("entries") if isinstance(ledger.get("entries"), dict) else {}
+    review_entries = [
+        entry
+        for entry in entries.values()
+        if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
+    ]
+    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    command_args = str(requested_command or "").strip().split(maxsplit=1)
+    read_only_note = ""
+    if len(command_args) > 1:
+        read_only_note = "Read-only: Telegram ledger review cannot activate, approve, connect credentials, or change capability state.\n"
+    if not review_entries:
+        return (
+            f"{read_only_note}"
+            "Capability ledger review (read-only)\n"
+            "No proposed, scaffolded, or probed capabilities are waiting for review.\n"
+            "Boundary: activation requires separate CLI ledger evidence with approval plus probe/eval refs."
+        )
+
+    lines = [f"{read_only_note}Capability ledger review (read-only)"]
+    for entry in review_entries[:5]:
+        packet = entry.get("proposal_packet") if isinstance(entry.get("proposal_packet"), dict) else {}
+        harness = packet.get("connector_harness") if isinstance(packet.get("connector_harness"), dict) else {}
+        key = str(entry.get("capability_ledger_key") or packet.get("capability_ledger_key") or "unknown")
+        status = str(entry.get("status") or "unknown")
+        permissions = packet.get("permissions_required") if isinstance(packet.get("permissions_required"), list) else []
+        permission_text = ", ".join(str(item) for item in permissions[:3] if str(item or "").strip())
+        if len(permissions) > 3:
+            permission_text = f"{permission_text}, +{len(permissions) - 3} more"
+        connector = str(harness.get("connector_key") or "").strip()
+        authority_stage = str(harness.get("authority_stage") or "").strip()
+        connector_text = f"{connector} ({authority_stage})" if connector else "none"
+        evidence_count = len(entry.get("activation_evidence") or [])
+        lines.extend(
+            [
+                f"- {key} [{status}]",
+                f"  route: {_telegram_short_text(packet.get('implementation_route') or entry.get('implementation_route') or 'unknown', limit=80)}",
+                f"  connector: {connector_text}",
+                f"  permissions: {_telegram_short_text(permission_text or 'none', limit=140)}",
+                f"  safe_probe: {_telegram_short_text(packet.get('safe_probe'), limit=140)}",
+                f"  approval_boundary: {_telegram_short_text(packet.get('human_approval_boundary'), limit=140)}",
+                f"  eval_or_smoke_test: {_telegram_short_text(packet.get('eval_or_smoke_test'), limit=140)}",
+                f"  rollback_path: {_telegram_short_text(packet.get('rollback_path'), limit=140)}",
+                f"  activation_evidence: {evidence_count}",
+            ]
+        )
+    if len(review_entries) > 5:
+        lines.append(f"...and {len(review_entries) - 5} more review entries.")
+    lines.append("Boundary: review only. Telegram cannot activate capabilities; activation requires separate approval plus probe/eval evidence.")
+    return "\n".join(lines)
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -3739,9 +3882,20 @@ def _handle_runtime_command(
             runner_writable=None,
             runner_label="telegram runtime unknown",
         )
+        reply_text = f"{build_agent_operating_strip(context.to_payload()).to_text()}\n\n{context.to_text()}"
+        record_agent_turn_trace(
+            state_db,
+            user_message=normalized,
+            request_id=request_id,
+            session_id=session_id or f"session:telegram:{external_user_id}",
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            agent_id=agent_id,
+            proposed_action="answer_in_chat",
+            draft_answer=reply_text,
+        )
         return {
             "command": "/aoc" if lowered.startswith("/aoc") else "/context",
-            "reply_text": context.to_text(),
+            "reply_text": reply_text,
             "respect_voice_reply_state": True,
         }
     if lowered == "/probe" or lowered.startswith("/probe "):
@@ -3765,6 +3919,15 @@ def _handle_runtime_command(
         return {
             "command": "/probe",
             "reply_text": _render_telegram_route_probe_reply(probe),
+            "respect_voice_reply_state": True,
+        }
+    if _is_ledger_runtime_command(lowered):
+        return {
+            "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
+            "reply_text": _render_telegram_capability_ledger_review(
+                config_manager=config_manager,
+                requested_command=normalized,
+            ),
             "respect_voice_reply_state": True,
         }
     if lowered in {"/wiki", "/wiki status"}:
@@ -3872,6 +4035,25 @@ def _handle_runtime_command(
             ),
             "respect_voice_reply_state": False,
         }
+    if lowered in {"/voice doctor", "/voice diagnose", "/voice check"} or natural_voice_command == ("/voice doctor", None):
+        return _run_voice_doctor_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+            external_user_id=external_user_id,
+        )
+    if lowered in {"/voice self-test", "/voice selftest", "/voice test", "/voice verify"} or natural_voice_command == (
+        "/voice self-test",
+        None,
+    ):
+        return _run_voice_self_test_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+            external_user_id=external_user_id,
+        )
     if (
         lowered in {"/voice provider", "/voice providers", "/voice tts"}
         or natural_voice_command == ("/voice provider", None)
@@ -4051,10 +4233,21 @@ def _handle_runtime_command(
         if not target:
             return {
                 "command": "/voice install",
-                "reply_text": "Voice install needs a target. Use `/voice install kokoro` for local neural TTS.",
+                "reply_text": "Voice install needs a target. Use `/voice install faster-whisper` for listening, `/voice install kokoro` for local neural TTS, or `/voice install local` for both.",
                 "respect_voice_reply_state": False,
             }
-        if target in {"local", "local voice", "local tts", "kokoro voice", "kokoro tts", "kokoro locally"}:
+        provider_target = _normalize_telegram_voice_provider_id(target)
+        if provider_target in {"elevenlabs", "openai-realtime"}:
+            return {
+                "command": "/voice guide",
+                "reply_text": _render_telegram_voice_provider_guide(provider_id=provider_target),
+                "respect_voice_reply_state": False,
+            }
+        if target in {"local", "local voice", "local stack", "local voice stack", "local speech", "local speech stack"}:
+            target = "local"
+        elif target in {"local stt", "local transcription", "local transcribe", "transcription", "transcribe", "whisper", "faster whisper", "faster-whisper"}:
+            target = "faster-whisper"
+        elif target in {"local tts", "kokoro voice", "kokoro tts", "kokoro locally"}:
             target = "kokoro"
         return _run_voice_runtime_command(
             config_manager=config_manager,
@@ -5014,6 +5207,33 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
     }:
         return ("/voice", None)
     if simplified in {
+        "voice doctor",
+        "voice diagnose",
+        "diagnose voice",
+        "check voice",
+        "check voice system",
+        "check the voice system",
+        "what voice gaps remain",
+        "what gaps remain in voice",
+        "is voice fully ready",
+        "is voice fully hardened",
+    }:
+        return ("/voice doctor", None)
+    if simplified in {
+        "voice self test",
+        "voice selftest",
+        "voice test",
+        "test voice",
+        "test voice system",
+        "run voice self test",
+        "run voice selftest",
+        "verify voice",
+        "verify voice system",
+        "self test voice",
+        "selftest voice",
+    }:
+        return ("/voice self-test", None)
+    if simplified in {
         "voice reply status",
         "show voice reply status",
         "show me voice reply status",
@@ -5055,7 +5275,9 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
             if any(token in simplified for token in ("eleven", "girl", "female", "woman", "geek", "qa", "tester", "natural", "warm")):
                 return ("/voice voices", payload)
     for pattern in (
-        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick|set|switch\s+to)\s+(?:the\s+)?(?:voice\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})(?:\s+(?:for|as)\s+(?:voice|tts))?$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick|switch\s+to)\s+(?:the\s+)?voice\s+(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick)\s+(?:the\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})\s+(?:for|as)\s+(?:the\s+)?(?:voice|tts)$",
+        r"^(?:please\s+|can you\s+)?(?:use|choose|select|pick)\s+(?:the\s+)?(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})\s+voice$",
         r"^(?:please\s+|can you\s+)?(?:set|switch|change)\s+(?:my\s+)?voice\s+(?:to|as)\s+(?P<payload>[a-z0-9][a-z0-9\s.-]{1,80})$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
@@ -5095,17 +5317,18 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
     ):
         return ("/voice mutate", simplified)
     for pattern in (
-        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+(?:for|as|with)\s+(?:voice|tts|voice\s+provider))?(?:\s+.+)?$",
-        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|as|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
-        r"^(?:i\s+want|i\s+d\s+like|i\s+would\s+like)\s+(?:to\s+)?(?:switch|change|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
-        r"^(?:can you\s+)?(?:help me\s+)?(?:switch|change|set up|setup)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)\s+(?:to|for|using)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+(?:for|as|with)\s+(?:voice|tts|voice\s+provider))?(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:switch|change|set|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|as|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+        r"^(?:i\s+want|i\s+d\s+like|i\s+would\s+like)\s+(?:to\s+)?(?:switch|change|use)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)?\s*(?:to|for|using)?\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
+        r"^(?:can you\s+)?(?:help me\s+)?(?:switch|change|set up|setup)\s+(?:my\s+)?(?:voice|tts|voice\s+provider)\s+(?:to|for|using)\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2|pyttsx3)(?:\s+.+)?$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
             return ("/voice provider", str(match.group("payload") or "").strip())
     for pattern in (
-        r"^(?:please\s+|can you\s+)?(?:guide|walk)\s+(?:me\s+)?(?:through|on|for)?\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts|setup|onboarding))?(?:\s+.+)?$",
-        r"^(?:how\s+do\s+i|can you help me)\s+(?:set\s+up|setup|configure)\s+(?P<payload>eleven\s*labs|elevenlabs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts))?(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:guide|walk)\s+(?:me\s+)?(?:through|on|for)?\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts|setup|onboarding))?(?:\s+.+)?$",
+        r"^(?:how\s+do\s+i|can you help me)\s+(?:set\s+up|setup|configure)\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|kokoro|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts))?(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup|configure)\s+(?P<payload>eleven\s*labs|elevenlabs|11\s*labs|11labs|openai|gpt\s+realtime\s+2|realtime\s+2)(?:\s+(?:voice|tts|provider))?(?:\s+.+)?$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
@@ -5115,30 +5338,61 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "install kokoro voice",
         "install kokoro tts",
         "install kokoro voice locally",
-        "install local voice",
-        "install local tts",
         "add kokoro",
         "add kokoro voice",
-        "add local tts",
         "can you install kokoro",
         "can you install kokoro voice",
         "can you install kokoro voice locally",
-        "can you install local voice",
-        "can you install local tts",
     }:
         return ("/voice install", "kokoro")
+    if simplified in {
+        "install faster whisper",
+        "install faster-whisper",
+        "install local stt",
+        "install local transcription",
+        "install transcription",
+        "add faster whisper",
+        "add faster-whisper",
+        "add local stt",
+        "can you install faster whisper",
+        "can you install faster-whisper",
+        "can you install local stt",
+        "can you install local transcription",
+    }:
+        return ("/voice install", "faster-whisper")
+    if simplified in {
+        "install local voice",
+        "install local voice stack",
+        "install local speech stack",
+        "install local tts",
+        "add local voice",
+        "add local voice stack",
+        "add local tts",
+        "can you install local voice",
+        "can you install local voice stack",
+        "can you install local tts",
+    }:
+        return ("/voice install", "local")
     for pattern in (
-        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>kokoro|kokoro\s+voice|kokoro\s+tts|local\s+voice|local\s+tts)(?:\s+.+)?$",
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>kokoro|kokoro\s+voice|kokoro\s+tts)(?:\s+.+)?$",
         r"^(?:please\s+|can you\s+)?(?:install|add)\s+(?P<payload>kokoro)(?:\s+voice)?\s+(?:locally|local)(?:\s+.+)?$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
             return ("/voice install", "kokoro")
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>faster\s*whisper|faster-whisper|local\s+stt|local\s+transcription|transcription|whisper)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice install", "faster-whisper")
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:install|add|set up|setup)\s+(?P<payload>local\s+voice|local\s+voice\s+stack|local\s+speech\s+stack|local\s+tts)(?:\s+.+)?$",
+    ):
+        match = re.match(pattern, simplified, flags=re.IGNORECASE)
+        if match:
+            return ("/voice install", "local")
     if simplified in {
-        "turn voice replies on",
-        "enable voice replies",
-        "reply with voice",
-        "reply in voice",
         "install voice",
         "install a voice",
         "install voice to yourself",
@@ -5156,6 +5410,13 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "add a voice to yourself",
         "add voice to youself",
         "add a voice to youself",
+    }:
+        return ("/voice onboard", None)
+    if simplified in {
+        "turn voice replies on",
+        "enable voice replies",
+        "reply with voice",
+        "reply in voice",
     }:
         return ("/voice reply on", None)
     if simplified in {
@@ -5214,18 +5475,38 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
     }:
         route = "local" if simplified == "can i use free local tts" else None
         return ("/voice onboard", route)
+    if simplified in {
+        "local/private",
+        "local private",
+        "i care more about local/private",
+        "i care more about local private",
+        "i want local/private",
+        "i want local private",
+    }:
+        return ("/voice onboard", "local")
+    if simplified in {
+        "hosted/premium",
+        "hosted premium",
+        "highest quality voice",
+        "i care more about hosted/premium",
+        "i care more about hosted premium",
+        "i care more about highest quality voice",
+    }:
+        return ("/voice onboard", "paid")
     for pattern in (
         r"^(?:voice\s+)?(?:onboard|onboarding|setup)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
         r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?:with|using|for)\s+(?P<payload>local|free|offline|paid|provider|providers|production|hosted)$",
         r"^(?:can you\s+)?(?:help me\s+)?set\s+up\s+voice\s+(?P<payload>locally|local|free|offline|paid|provider|providers|production|hosted)(?:\s+for\s+.+)?$",
+        r"^(?:i\s+care\s+more\s+about|i\s+want|i\s+would\s+prefer)\s+(?P<payload>local/private|local|local\s+private|privacy|private|offline|free)(?:\s+voice)?$",
+        r"^(?:i\s+care\s+more\s+about|i\s+want|i\s+would\s+prefer)\s+(?P<payload>highest\s+quality|high\s+quality|premium|paid|hosted)(?:\s+voice)?$",
         r"^(?:i\s+want|i\s+would\s+like|i\s+d\s+like)\s+(?:paid|premium|high\s+quality)(?:\s+\w+){0,8}\s+voice(?:\s+.+)?$",
     ):
         match = re.match(pattern, simplified, flags=re.IGNORECASE)
         if match:
             payload = str(match.groupdict().get("payload") or "paid").strip()
-            if payload in {"locally", "free", "offline"}:
+            if payload in {"locally", "free", "offline", "privacy", "private", "local private", "local/private"}:
                 payload = "local"
-            if payload in {"provider", "providers", "production", "hosted"}:
+            if payload in {"provider", "providers", "production", "hosted", "highest quality", "high quality", "premium"}:
                 payload = "paid"
             return ("/voice onboard", payload)
     for pattern in (
@@ -6526,6 +6807,427 @@ def _run_voice_runtime_command(
     }
 
 
+def _run_voice_doctor_command(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    external_user_id: str,
+) -> dict[str, Any]:
+    payload = _build_voice_chip_payload(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.status",
+        payload=payload,
+    )
+    if execution is None:
+        return {
+            "command": "/voice doctor",
+            "reply_text": _render_telegram_voice_doctor_missing_chip_reply(),
+            "respect_voice_reply_state": False,
+        }
+    result = execution.output.get("result") if isinstance(execution.output, dict) else None
+    if not isinstance(result, dict):
+        result = {}
+    return {
+        "command": "/voice doctor",
+        "reply_text": _render_telegram_voice_doctor_reply(
+            result=result,
+            chip_key=str(execution.chip_key or ""),
+            state_db=state_db,
+            external_user_id=external_user_id,
+            agent_id=agent_id,
+            config_manager=config_manager,
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
+def _render_telegram_voice_doctor_missing_chip_reply() -> str:
+    return (
+        "Voice doctor:\n"
+        "- Chip: missing. Builder could not find an active chip that supports `voice.status`.\n"
+        "- Listening: blocked.\n"
+        "- Speaking: blocked.\n"
+        "- Telegram delivery: blocked.\n\n"
+        "Next: attach and activate `spark-voice-comms`, then rerun `/voice doctor`."
+    )
+
+
+def _render_telegram_voice_doctor_reply(
+    *,
+    result: dict[str, Any],
+    chip_key: str,
+    state_db: StateDB,
+    external_user_id: str,
+    agent_id: str | None = None,
+    config_manager: ConfigManager | None = None,
+) -> str:
+    runtime_state = result.get("runtime_state") if isinstance(result.get("runtime_state"), dict) else {}
+    stt = runtime_state.get("stt") if isinstance(runtime_state.get("stt"), dict) else {}
+    tts = runtime_state.get("tts") if isinstance(runtime_state.get("tts"), dict) else {}
+    delivery = runtime_state.get("telegram_delivery") if isinstance(runtime_state.get("telegram_delivery"), dict) else {}
+    claim_levels = runtime_state.get("claim_levels") if isinstance(runtime_state.get("claim_levels"), dict) else {}
+    persisted_runtime_state = _load_runtime_json_object(state_db, f"telegram:voice:last_runtime_state:{external_user_id}") or _load_runtime_json_object(
+        state_db,
+        "telegram:voice:last_runtime_state",
+    )
+    persisted_delivery = (
+        persisted_runtime_state.get("telegram_delivery")
+        if isinstance(persisted_runtime_state.get("telegram_delivery"), dict)
+        else {}
+    )
+    persisted_claim_levels = (
+        persisted_runtime_state.get("claim_levels")
+        if isinstance(persisted_runtime_state.get("claim_levels"), dict)
+        else {}
+    )
+    persisted_tts = persisted_runtime_state.get("tts") if isinstance(persisted_runtime_state.get("tts"), dict) else {}
+    if persisted_delivery and not delivery.get("ready"):
+        delivery = persisted_delivery
+    saved_profile = _voice_tts_profile_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
+    saved_profile_provider_id = _normalize_telegram_voice_provider_id(str(saved_profile.get("provider_id") or ""))
+    saved_profile_tts_ready = False
+    if saved_profile_provider_id == "elevenlabs":
+        secret_env_ref = str(saved_profile.get("secret_env_ref") or "ELEVENLABS_API_KEY").strip() or "ELEVENLABS_API_KEY"
+        saved_profile_tts_ready = bool(
+            str(saved_profile.get("voice_id") or "").strip()
+            and _telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager)
+        )
+    elif saved_profile_provider_id == "kokoro":
+        saved_profile_tts_ready = bool(result.get("local_tts_ready") or tts.get("ready"))
+    elif saved_profile_provider_id == "openai-realtime":
+        secret_env_ref = str(saved_profile.get("secret_env_ref") or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+        saved_profile_tts_ready = bool(_telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager))
+    active_provider_id = _active_telegram_voice_provider_id(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
+    stt_ready = bool(stt.get("ready") or result.get("local_ready") or result.get("ready"))
+    synthesis_ready = bool(
+        claim_levels.get("synthesis_ready")
+        or tts.get("ready")
+        or result.get("tts_ready")
+        or result.get("local_tts_ready")
+        or saved_profile_tts_ready
+    )
+    delivery_ready = bool(claim_levels.get("delivery_ready") or persisted_claim_levels.get("delivery_ready") or delivery.get("ready"))
+    conversation_ready = bool(
+        stt_ready
+        and synthesis_ready
+        and delivery_ready
+        and (claim_levels.get("conversation_ready") or persisted_claim_levels.get("conversation_ready") or delivery.get("ready"))
+    )
+    stt_provider = str(stt.get("provider_id") or result.get("provider_id") or "unknown").strip() or "unknown"
+    tts_provider = str(saved_profile_provider_id or tts.get("provider_id") or result.get("tts_provider_id") or active_provider_id or "unknown").strip() or "unknown"
+    last_tts_provider = str(persisted_tts.get("provider_id") or "").strip()
+    delivery_status = str(delivery.get("last_send_voice_status") or "not recorded").strip() or "not recorded"
+    delivery_detail = (
+        f"; last voice provider `{last_tts_provider}`"
+        if delivery_ready and last_tts_provider and last_tts_provider != tts_provider
+        else ""
+    )
+    chip_line = f"ready via `{chip_key or 'unknown'}`"
+    if chip_key == "domain-chip-voice-comms":
+        chip_line += " (legacy alias; prefer `spark-voice-comms` for new setup)"
+    next_step = _telegram_voice_doctor_next_step(
+        stt_ready=stt_ready,
+        synthesis_ready=synthesis_ready,
+        delivery_ready=delivery_ready,
+        conversation_ready=conversation_ready,
+        active_provider_id=active_provider_id,
+    )
+    lines = [
+        "Voice doctor:",
+        f"- Chip: {chip_line}.",
+        f"- Listening: {'ready' if stt_ready else 'not ready'} via `{stt_provider}`.",
+        f"- Speaking: {'ready' if synthesis_ready else 'not ready'} via `{tts_provider}`.",
+        f"- Telegram delivery: {'proven' if delivery_ready else 'needs live proof'}; last status `{delivery_status}`{delivery_detail}.",
+        f"- Conversation ready: {'yes' if conversation_ready else 'not yet'}.",
+        "",
+        "Claim boundary: provider readiness is not the same as Telegram `sendVoice` delivery proof.",
+        "",
+        f"Next: {next_step}",
+    ]
+    provider_note = str(result.get("provider_note") or "").strip()
+    if provider_note:
+        lines.extend(["", f"Provider note: {provider_note}"])
+    return "\n".join(lines)
+
+
+def _telegram_voice_doctor_next_step(
+    *,
+    stt_ready: bool,
+    synthesis_ready: bool,
+    delivery_ready: bool,
+    conversation_ready: bool,
+    active_provider_id: str,
+) -> str:
+    if not stt_ready:
+        return "run `/voice install faster-whisper`, or configure hosted STT and rerun `/voice doctor`."
+    if not synthesis_ready:
+        if active_provider_id == "kokoro":
+            return "run `/voice install kokoro`, then `/voice speak Clean reset, Cem. Latest message wins.`"
+        if active_provider_id == "elevenlabs":
+            return "run `/voice guide ElevenLabs`, choose a voice, then test `/voice ask say one warm sentence`."
+        if active_provider_id == "openai-realtime":
+            return "run `/voice guide OpenAI`, then test `/voice ask say one warm sentence`."
+        return "run `/voice provider`, choose a TTS path, then test `/voice speak hello`."
+    if not delivery_ready:
+        return "send `/voice speak Clean reset, Cem. Latest message wins.` from Telegram and confirm it arrives as a voice note."
+    if not conversation_ready:
+        return "send one short Telegram voice note, then one normal text reply with `/voice reply on`."
+    return "voice is proven end to end; keep `/voice doctor` as the regression check after provider or bot changes."
+
+
+def _run_voice_self_test_command(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    external_user_id: str,
+) -> dict[str, Any]:
+    payload = _build_voice_chip_payload(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.status",
+        payload=payload,
+    )
+    result = execution.output.get("result") if execution and isinstance(execution.output, dict) else {}
+    if not isinstance(result, dict):
+        result = {}
+    return {
+        "command": "/voice self-test",
+        "reply_text": _render_telegram_voice_self_test_reply(
+            result=result,
+            chip_key=str(execution.chip_key or "") if execution else "",
+            chip_ready=bool(execution),
+            bot_probe=_telegram_voice_bot_update_probe(config_manager),
+            state_db=state_db,
+            external_user_id=external_user_id,
+            agent_id=agent_id,
+            config_manager=config_manager,
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
+def _telegram_voice_bot_update_probe(config_manager: ConfigManager) -> dict[str, Any]:
+    client = _resolve_telegram_client(config_manager)
+    if client is None:
+        return {"ready": False, "status": "bot token missing"}
+    try:
+        payload = client._call("getWebhookInfo", {})
+    except Exception as exc:
+        return {"ready": False, "status": f"Bot API check failed: {_safe_voice_error_message(exc)}"}
+    info = payload.get("result") if isinstance(payload, dict) else {}
+    if not isinstance(info, dict):
+        return {"ready": False, "status": "Bot API returned unexpected webhook state"}
+    return {
+        "ready": True,
+        "webhook_url_set": bool(info.get("url")),
+        "pending_update_count": _read_optional_int(info.get("pending_update_count")),
+        "last_error_present": bool(info.get("last_error_date") or info.get("last_error_message")),
+    }
+
+
+def _render_telegram_voice_self_test_reply(
+    *,
+    result: dict[str, Any],
+    chip_key: str,
+    chip_ready: bool,
+    bot_probe: dict[str, Any],
+    state_db: StateDB,
+    external_user_id: str,
+    agent_id: str | None = None,
+    config_manager: ConfigManager | None = None,
+) -> str:
+    runtime_state = result.get("runtime_state") if isinstance(result.get("runtime_state"), dict) else {}
+    status_stt = runtime_state.get("stt") if isinstance(runtime_state.get("stt"), dict) else {}
+    status_tts = runtime_state.get("tts") if isinstance(runtime_state.get("tts"), dict) else {}
+    status_claims = runtime_state.get("claim_levels") if isinstance(runtime_state.get("claim_levels"), dict) else {}
+    persisted_runtime_state = _load_runtime_json_object(state_db, f"telegram:voice:last_runtime_state:{external_user_id}") or _load_runtime_json_object(
+        state_db,
+        "telegram:voice:last_runtime_state",
+    )
+    persisted_claims = (
+        persisted_runtime_state.get("claim_levels")
+        if isinstance(persisted_runtime_state.get("claim_levels"), dict)
+        else {}
+    )
+    persisted_delivery = (
+        persisted_runtime_state.get("telegram_delivery")
+        if isinstance(persisted_runtime_state.get("telegram_delivery"), dict)
+        else {}
+    )
+    persisted_stt = persisted_runtime_state.get("stt") if isinstance(persisted_runtime_state.get("stt"), dict) else {}
+    persisted_tts = persisted_runtime_state.get("tts") if isinstance(persisted_runtime_state.get("tts"), dict) else {}
+    transcript = persisted_runtime_state.get("transcript") if isinstance(persisted_runtime_state.get("transcript"), dict) else {}
+    source_ledger = persisted_runtime_state.get("source_ledger") if isinstance(persisted_runtime_state.get("source_ledger"), list) else []
+    active_provider_id = _active_telegram_voice_provider_id(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
+    saved_profile = _voice_tts_profile_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        agent_id=agent_id,
+    )
+    saved_profile_tts_ready = False
+    saved_profile_provider_id = _normalize_telegram_voice_provider_id(str(saved_profile.get("provider_id") or ""))
+    if saved_profile_provider_id == "elevenlabs":
+        secret_env_ref = str(saved_profile.get("secret_env_ref") or "ELEVENLABS_API_KEY").strip() or "ELEVENLABS_API_KEY"
+        saved_profile_tts_ready = bool(
+            str(saved_profile.get("voice_id") or "").strip()
+            and _telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager)
+        )
+    elif saved_profile_provider_id == "kokoro":
+        saved_profile_tts_ready = bool(result.get("local_tts_ready") or status_tts.get("ready"))
+    elif saved_profile_provider_id == "openai-realtime":
+        secret_env_ref = str(saved_profile.get("secret_env_ref") or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+        saved_profile_tts_ready = bool(_telegram_voice_secret_is_available(secret_env_ref, config_manager=config_manager))
+
+    stt_ready = bool(status_stt.get("ready") or persisted_stt.get("ready") or result.get("local_ready") or result.get("ready"))
+    synthesis_ready = bool(
+        status_claims.get("synthesis_ready")
+        or status_tts.get("ready")
+        or persisted_claims.get("synthesis_ready")
+        or persisted_tts.get("ready")
+        or result.get("tts_ready")
+        or result.get("local_tts_ready")
+        or saved_profile_tts_ready
+    )
+    delivery_ready = bool(persisted_claims.get("delivery_ready") or persisted_delivery.get("ready"))
+    inbound_transcribe_ready = bool(
+        persisted_stt.get("ready")
+        and "voice.transcribe" in source_ledger
+        and _read_optional_int(transcript.get("audio_bytes")) > 0
+    )
+    real_inbound_ready = bool(inbound_transcribe_ready and "telegram-inbound-voice-trace" in source_ledger)
+    conversation_ready = bool(
+        persisted_claims.get("conversation_ready")
+        and stt_ready
+        and synthesis_ready
+        and delivery_ready
+        and real_inbound_ready
+    )
+
+    stt_provider = str(status_stt.get("provider_id") or persisted_stt.get("provider_id") or result.get("provider_id") or "unknown").strip() or "unknown"
+    tts_provider = str(saved_profile_provider_id or status_tts.get("provider_id") or persisted_tts.get("provider_id") or active_provider_id or "unknown").strip() or "unknown"
+    bot_line = _telegram_voice_self_test_bot_line(bot_probe)
+    inbound_line = _telegram_voice_self_test_inbound_line(
+        real_inbound_ready=real_inbound_ready,
+        inbound_transcribe_ready=inbound_transcribe_ready,
+        transcript=transcript,
+    )
+    delivery_line = _telegram_voice_self_test_delivery_line(delivery_ready=delivery_ready, delivery=persisted_delivery)
+    next_step = _telegram_voice_self_test_next_step(
+        chip_ready=chip_ready,
+        stt_ready=stt_ready,
+        synthesis_ready=synthesis_ready,
+        real_inbound_ready=real_inbound_ready,
+        delivery_ready=delivery_ready,
+        conversation_ready=conversation_ready,
+        active_provider_id=active_provider_id,
+    )
+    lines = [
+        "Voice self-test:",
+        f"- Bot updates: {bot_line}.",
+        f"- Chip: {'ready' if chip_ready else 'missing'} via `{chip_key or 'none'}`.",
+        f"- Listening: {'ready' if stt_ready else 'not ready'} via `{stt_provider}`.",
+        f"- Speaking: {'ready' if synthesis_ready else 'not ready'} via `{tts_provider}`.",
+        f"- Last inbound voice: {inbound_line}.",
+        f"- Last Telegram delivery: {delivery_line}.",
+        f"- Conversation proof: {'yes' if conversation_ready else 'not yet'}.",
+        "",
+        "Claim boundary: self-test reads current config plus last runtime proof; it does not spend TTS or send a new voice note.",
+        "",
+        f"Next: {next_step}",
+    ]
+    return "\n".join(lines)
+
+
+def _telegram_voice_self_test_bot_line(bot_probe: dict[str, Any]) -> str:
+    if not bot_probe.get("ready"):
+        return str(bot_probe.get("status") or "not configured").strip() or "not configured"
+    webhook = "webhook on" if bot_probe.get("webhook_url_set") else "webhook off"
+    pending = _read_optional_int(bot_probe.get("pending_update_count"))
+    suffix = "; last webhook error present" if bot_probe.get("last_error_present") else ""
+    return f"ready; {webhook}; pending updates {pending}{suffix}"
+
+
+def _telegram_voice_self_test_inbound_line(
+    *,
+    real_inbound_ready: bool,
+    inbound_transcribe_ready: bool,
+    transcript: dict[str, Any],
+) -> str:
+    audio_bytes = _read_optional_int(transcript.get("audio_bytes"))
+    characters = _read_optional_int(transcript.get("characters") or transcript.get("chars") or transcript.get("text_chars"))
+    detail = f"{characters} chars, {audio_bytes} audio bytes" if characters or audio_bytes else "trace recorded"
+    if real_inbound_ready:
+        return f"proven from Telegram voice note ({detail})"
+    if inbound_transcribe_ready:
+        return f"transcription proof recorded ({detail}); send a fresh voice note for source-tagged proof"
+    return "needs a Telegram voice note"
+
+
+def _telegram_voice_self_test_delivery_line(*, delivery_ready: bool, delivery: dict[str, Any]) -> str:
+    status = str(delivery.get("last_send_voice_status") or "not recorded").strip() or "not recorded"
+    method = str(delivery.get("send_method") or "not recorded").strip() or "not recorded"
+    if not delivery_ready:
+        return f"needs proof; last status `{status}`"
+    message_ref = "message id present" if delivery.get("telegram_message_id_present") else "message id not recorded"
+    return f"proven via `{method}`; last status `{status}`; {message_ref}"
+
+
+def _telegram_voice_self_test_next_step(
+    *,
+    chip_ready: bool,
+    stt_ready: bool,
+    synthesis_ready: bool,
+    real_inbound_ready: bool,
+    delivery_ready: bool,
+    conversation_ready: bool,
+    active_provider_id: str,
+) -> str:
+    if not chip_ready:
+        return "attach and activate `spark-voice-comms`, then rerun `/voice self-test`."
+    if not stt_ready:
+        return "run `/voice install faster-whisper`, then send one short Telegram voice note."
+    if not synthesis_ready:
+        if active_provider_id == "elevenlabs":
+            return "run `/voice guide ElevenLabs`, choose a voice, then test `/voice ask say one warm sentence`."
+        if active_provider_id == "kokoro":
+            return "run `/voice install kokoro`, then test `/voice speak hello from Kokoro`."
+        return "choose a TTS provider with `/voice provider`, then test `/voice speak hello`."
+    if not real_inbound_ready:
+        return "send one fresh Telegram voice note so the inbound proof is source-tagged."
+    if not delivery_ready:
+        return "run `/voice speak Clean reset, Cem. Latest message wins.` and confirm it arrives as a voice note."
+    if not conversation_ready:
+        return "send one Telegram voice note and let Spark answer with audio in the same turn."
+    return "voice is proven end to end; rerun this after provider, bot, or voice-profile changes."
+
+
 def _render_telegram_voice_status_reply() -> str:
     return (
         "I can see Telegram voice messages, but the voice chip is not attached to this Spark yet.\n"
@@ -7027,7 +7729,7 @@ def _build_telegram_voice_dashboard_snapshot(
             "/voice reply on sends matching text and audio",
             "switching one agent voice does not change another profile",
         ],
-        "telegramCommands": ["/voice", "/voice provider", "/voice map", "/voice dashboard", "/voice ask <question>", "/voice reply on"],
+        "telegramCommands": ["/voice", "/voice self-test", "/voice provider", "/voice map", "/voice dashboard", "/voice ask <question>", "/voice reply on"],
         "lastDelivery": {
             "status": delivery_status,
             "method": str(telegram_delivery.get("send_method") or "not recorded"),
@@ -7422,6 +8124,26 @@ def _score_elevenlabs_voice(voice: dict[str, Any], *, prompt: str) -> int:
             score += 5
     if any(token in prompt_text for token in ("girl", "female", "woman", "lady")):
         score += 12 if "female" in haystack or "woman" in haystack else -12
+    if any(token in prompt_text for token in ("male", "man", "masculine", "older brother")):
+        score += 14 if "male" in haystack or " man " in f" {haystack} " else -14
+        for token in ("female", "woman", "girl", "feminine"):
+            if token in haystack:
+                score -= 12
+    if any(token in prompt_text for token in ("late 30", "late thirties", "mid 40", "forties", "middle", "older brother")):
+        for token in ("middle_aged", "middle aged", "adult", "mature"):
+            if token in haystack:
+                score += 7
+        for token in ("young", "child", "teen", "old", "grandpa", "elderly"):
+            if token in haystack:
+                score -= 7
+    if any(token in prompt_text for token in ("low", "low-mid", "deep", "worn")):
+        for token in ("low", "deep", "baritone", "resonant"):
+            if token in haystack:
+                score += 4
+    if any(token in prompt_text for token in ("direct", "dry", "operator", "engineer", "no dramatic")):
+        for token in ("narrator", "audiobook", "story", "tales", "dramatic", "cinematic", "character", "cartoon", "parrot"):
+            if token in haystack:
+                score -= 5
     if any(token in prompt_text for token in ("qa", "tester", "geek", "technical", "developer", "dev")):
         for token in ("educational", "informative", "professional", "clear", "conversational", "young"):
             if token in haystack:
@@ -7534,7 +8256,7 @@ def _normalize_telegram_voice_provider_id(value: str) -> str | None:
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
     if not normalized:
         return None
-    if "eleven" in normalized or "11labs" in normalized:
+    if "eleven" in normalized or "11labs" in normalized or "11 labs" in normalized:
         return "elevenlabs"
     if "kokoro" in normalized or "local neural" in normalized:
         return "kokoro"

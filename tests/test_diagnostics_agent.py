@@ -7,9 +7,11 @@ from spark_intelligence.diagnostics import (
     classify_log_entry,
     discover_log_sources,
     discover_service_checks,
+    record_diagnostic_capability_events,
     render_diagnostic_markdown,
 )
 from spark_intelligence.diagnostics.agent import LogSource, parse_log_line
+from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
 
 from tests.test_support import SparkTestCase
 
@@ -188,3 +190,63 @@ class DiagnosticsAgentTests(SparkTestCase):
         self.assertIn("Spark diagnostics", stdout)
         self.assertIn("- findings: 1", stdout)
         self.assertTrue((self.home / "diagnostics" / "Spark Diagnostics.md").exists())
+
+    def test_diagnostic_report_can_record_aoc_capability_events(self) -> None:
+        memory_root = self.home / "modules" / "domain-chip-memory" / "source"
+        memory_root.mkdir(parents=True)
+        (memory_root / "pyproject.toml").write_text("[project]\nname='domain-chip-memory'\n", encoding="utf-8")
+        self.config_manager.set_path("spark.diagnostics.module_search_roots", [str(self.home / "modules")])
+
+        report = build_diagnostic_report(
+            self.config_manager,
+            max_lines_per_file=10,
+            write_markdown=False,
+        )
+        event_ids = record_diagnostic_capability_events(
+            self.state_db,
+            report,
+            request_id="req-diagnostics-aoc",
+            actor_id="diagnostics_test",
+        )
+
+        black_box = build_agent_black_box_report(self.state_db, request_id="req-diagnostics-aoc").to_payload()
+        by_route = {entry["route_chosen"]: entry for entry in black_box["entries"]}
+
+        self.assertTrue(event_ids)
+        self.assertIn("spark_intelligence_builder", by_route)
+        self.assertIn("spark_memory", by_route)
+        self.assertEqual(by_route["spark_memory"]["event_type"], "capability_probed")
+        self.assertEqual(by_route["spark_memory"]["sources_used"][0]["source"], "current_diagnostics")
+        self.assertEqual(by_route["spark_memory"]["sources_used"][0]["freshness"], "live_probed")
+
+    def test_diagnostics_scan_cli_can_feed_aoc_black_box(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "diagnostics",
+            "scan",
+            "--home",
+            str(self.home),
+            "--no-write",
+            "--record-aoc-events",
+            "--request-id",
+            "req-diagnostics-cli",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["agent_event_ids"])
+
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "black-box",
+            "--home",
+            str(self.home),
+            "--request-id",
+            "req-diagnostics-cli",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        black_box = json.loads(stdout)
+        self.assertGreaterEqual(black_box["counts"]["entries"], 1)
+        self.assertTrue(any(entry["event_type"] == "capability_probed" for entry in black_box["entries"]))

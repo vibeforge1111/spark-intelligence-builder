@@ -15,11 +15,18 @@ from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
     build_agent_operating_context,
     build_capability_drift_heartbeat,
+    build_capability_proposal_packet,
+    build_connector_harness_envelope,
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    capability_is_active,
+    load_capability_ledger,
+    record_capability_ledger_event,
+    record_capability_proposal,
     record_route_probe_evidence,
     run_route_probe_and_record,
+    redact_connector_probe_sample,
 )
 from spark_intelligence.state.db import StateDB
 
@@ -219,9 +226,38 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("current_runner_read_only", payload["task_fit"]["blocked_here_by"])
         self.assertIn("Permission is not proof of runner writability", payload["truth_boundary"])
         rendered = result.to_text()
-        self.assertIn("Access: Level 4 - local workspace allowed", rendered)
+        self.assertIn("Access: Level 4 - sandboxed workspace allowed", rendered)
         self.assertIn("Runner: read-only Codex sandbox", rendered)
         self.assertIn("writable Spawner/Codex mission", rendered)
+
+    def test_agent_operating_context_splits_level4_workspace_from_level5_operator_mode(self) -> None:
+        level4 = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="workspace-write runner",
+        ).to_payload()
+        level5 = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="full access",
+            runner_writable=True,
+            runner_label="operator runner",
+        ).to_payload()
+
+        self.assertEqual(level4["access"]["label"], "Level 4 - sandboxed workspace allowed")
+        self.assertEqual(level4["access"]["effective_level"], "4")
+        self.assertEqual(level4["access"]["boundary"], "spark_workspace_sandbox")
+        self.assertTrue(level4["access"]["local_workspace_allowed"])
+        self.assertFalse(level4["access"]["whole_computer_allowed"])
+        self.assertEqual(level5["access"]["label"], "Level 5 - whole-computer operator mode")
+        self.assertEqual(level5["access"]["effective_level"], "5")
+        self.assertEqual(level5["access"]["boundary"], "whole_computer_operator")
+        self.assertTrue(level5["access"]["local_workspace_allowed"])
+        self.assertTrue(level5["access"]["whole_computer_allowed"])
 
     def test_agent_operating_context_exposes_route_health_with_claim_boundaries(self) -> None:
         result = build_agent_operating_context(
@@ -265,6 +301,148 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("current_runner_unknown", payload["task_fit"]["blocked_here_by"])
         self.assertTrue(payload["task_fit"]["needs_local_workspace"])
         self.assertIn("probe runner or Spawner/Codex mission", result.to_text())
+
+    def test_agent_operating_context_concept_chat_keywords_do_not_hijack_writable_route(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="How should local workspace access, Docker build, and tests fit into the AOC design?",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only chat runner",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["conversation_frame"]["current_mode"], "concept_chat")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "chat")
+        self.assertFalse(payload["task_fit"]["needs_local_workspace"])
+        self.assertFalse(payload["task_fit"]["needs_write"])
+
+    def test_agent_operating_context_concept_chat_explicit_action_can_route_local_work(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="run tests in the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="workspace-write runner",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["conversation_frame"]["current_mode"], "concept_chat")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "current_writable_runner")
+        self.assertTrue(payload["task_fit"]["needs_local_workspace"])
+        self.assertTrue(payload["task_fit"]["needs_write"])
+
+    def test_agent_operating_context_exposes_execution_lane_without_level5_overclaim(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=True,
+            execution_lane_state={
+                "docker": {"available": True, "selected": False, "probed": True},
+                "workspace_sandbox": True,
+                "level5_whole_computer_claim": True,
+            },
+        )
+
+        lane = result.to_payload()["execution_lane"]
+        self.assertEqual(lane["docker"]["available"], True)
+        self.assertEqual(lane["docker"]["selected"], False)
+        self.assertEqual(lane["docker"]["probed"], True)
+        self.assertTrue(lane["workspace_sandbox"])
+        self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+        self.assertIn("level5_whole_computer_claim_allowed=False", result.to_text())
+
+    def test_agent_operating_context_surfaces_cli_access_automation_contract(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="patch the local workspace",
+            spark_access_level="4",
+            runner_writable=False,
+            execution_lane_state={
+                "automation": {
+                    "no_terminal_required": True,
+                    "recommended_action": "spark access setup",
+                    "recommended_lane": "spark_workspace",
+                    "actions": [
+                        {
+                            "id": "workspace_setup",
+                            "command": "spark access setup",
+                            "run_policy": "auto_safe",
+                            "confirmation": "none",
+                            "user_message": "Spark can create or repair the safe workspace automatically.",
+                        },
+                        {
+                            "id": "level5_enable",
+                            "command": "spark access setup --level 5 --enable-high-agency",
+                            "run_policy": "explicit_opt_in",
+                            "confirmation": "Enable whole-computer operator mode",
+                        },
+                    ],
+                    "deletion_safety": {"default": "do_not_delete"},
+                }
+            },
+        )
+
+        automation = result.to_payload()["access_automation"]
+        self.assertEqual(automation["source"], "spark_cli_access_payload")
+        self.assertTrue(automation["no_terminal_required"])
+        self.assertEqual(automation["next_safe_access_action"], "spark access setup")
+        self.assertEqual(automation["recommended_lane"], "spark_workspace")
+        self.assertEqual(automation["recommended_run_policy"], "auto_safe")
+        self.assertFalse(automation["requires_confirmation"])
+        self.assertTrue(automation["allowed_to_auto_run"])
+        self.assertEqual(automation["deletion_safety"]["default"], "do_not_delete")
+        self.assertIn("does not run setup", automation["claim_boundary"])
+        self.assertIn("Access automation: next=spark access setup", result.to_text())
+        ledger = {item["source"]: item for item in result.to_payload()["source_ledger"]}
+        self.assertTrue(ledger["spark_cli_access_automation"]["present"])
+
+    def test_agent_operating_context_keeps_level5_access_action_explicit_opt_in(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="enable whole-computer operator mode",
+            spark_access_level="5",
+            runner_writable=True,
+            execution_lane_state={
+                "level5_whole_computer_claim": False,
+                "automation": {
+                    "recommended_action": "spark access setup --level 5 --enable-high-agency",
+                    "recommended_lane": "level5_operator",
+                    "actions": [
+                        {
+                            "id": "level5_enable",
+                            "command": "spark access setup --level 5 --enable-high-agency",
+                            "run_policy": "explicit_opt_in",
+                            "confirmation": "Enable whole-computer operator mode",
+                        }
+                    ],
+                    "level5_runtime_policy": {
+                        "destructive_actions_after_activation": "still_approval_required",
+                        "secret_reveal_or_export": "still_approval_required",
+                    },
+                },
+            },
+        )
+
+        payload = result.to_payload()
+        lane = payload["execution_lane"]
+        automation = payload["access_automation"]
+        self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+        self.assertEqual(automation["recommended_run_policy"], "explicit_opt_in")
+        self.assertTrue(automation["requires_confirmation"])
+        self.assertFalse(automation["allowed_to_auto_run"])
+        self.assertEqual(automation["confirmation"], "Enable whole-computer operator mode")
+        self.assertEqual(
+            automation["level5_runtime_policy"]["destructive_actions_after_activation"],
+            "still_approval_required",
+        )
+        self.assertIn("confirmation_required=yes", result.to_text())
 
     def test_agent_operating_context_labels_builder_command_path_available_with_warnings(self) -> None:
         registry_payload = {
@@ -1429,6 +1607,12 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("surprise_score", action_text)
         self.assertTrue(payload["live_self_awareness"]["weak_spot_priorities"])
         self.assertIn("Natural-language invocability", action_text)
+        proposal = payload["capability_proposal_packet"]
+        self.assertEqual(proposal["schema_version"], "spark.capability_proposal.v1")
+        self.assertEqual(proposal["status"], "proposal_plan_only")
+        self.assertIn("capability_ledger_key", proposal)
+        self.assertIn("safe_probe", proposal)
+        self.assertIn("claim_boundary", proposal)
 
     def test_self_improve_cli_emits_machine_readable_plan(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -1447,6 +1631,228 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["priority_actions"])
         self.assertTrue(payload["natural_language_invocations"])
         self.assertEqual(payload["mode"], "plan_only_probe_first")
+        self.assertEqual(payload["capability_proposal_packet"]["schema_version"], "spark.capability_proposal.v1")
+
+    def test_self_improvement_text_leads_with_requested_capability_proposal(self) -> None:
+        result = build_self_improvement_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            goal="can you actually install a voice to yourself?",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+        )
+
+        text = result.to_text()
+        capability_index = text.index("Capability proposal")
+        hardening_index = text.index("Related hardening probes")
+        self.assertLess(capability_index, hardening_index)
+        first_block = text[:hardening_index]
+        self.assertIn("requested capability: can you actually install a voice to yourself", first_block)
+        self.assertIn("status: proposal_plan_only (not installed yet)", first_block)
+        self.assertIn("connector: voice", first_block)
+        self.assertIn("safe probe: Run voice.status", first_block)
+        self.assertIn("not proof of a live capability", first_block)
+        self.assertNotIn("swarm_decision_unavailable", first_block)
+
+    def test_capability_proposal_packet_classifies_connector_and_workflow_routes(self) -> None:
+        email_packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+        self.assertEqual(email_packet["implementation_route"], "capability_connector")
+        self.assertIn("email_account_access", email_packet["permissions_required"])
+        self.assertIn("redacted", email_packet["safe_probe"])
+        self.assertIn("capability_connector:", email_packet["capability_ledger_key"])
+        self.assertEqual(email_packet["connector_harness"]["schema_version"], "spark.connector_harness.v1")
+        self.assertEqual(email_packet["connector_harness"]["connector_key"], "email")
+        self.assertEqual(email_packet["connector_harness"]["authority_stage"], "proposal_only")
+        self.assertIn("read_message_body", email_packet["connector_harness"]["blocked_live_actions"])
+        self.assertIn("human_approval_recorded", email_packet["connector_harness"]["live_access_blocked_until"])
+
+        report_packet = build_capability_proposal_packet(
+            goal="Set up daily reports of my memories so I know what changed.",
+            user_message="Set up daily reports of my memories so I know what changed.",
+        ).to_payload()
+        self.assertEqual(report_packet["implementation_route"], "workflow_automation")
+        self.assertIn("scheduler_write_scope", report_packet["permissions_required"])
+        self.assertIn("dry-run", report_packet["safe_probe"])
+        self.assertEqual(report_packet["connector_harness"]["connector_key"], "workflow")
+        self.assertIn("enable_delivery", report_packet["connector_harness"]["blocked_live_actions"])
+
+    def test_capability_proposal_packet_keeps_mission_artifacts_distinct(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build a Spark memory dashboard.",
+            user_message="Build a Spark memory dashboard.",
+        ).to_payload()
+
+        self.assertEqual(packet["implementation_route"], "mission_artifact")
+        self.assertEqual(packet["owner_system"], "Spark Spawner / Mission Control")
+        self.assertIn("not proof of a live capability", packet["claim_boundary"])
+        self.assertNotIn("connector_harness", packet)
+
+    def test_connector_harness_envelope_blocks_live_access_until_approval(self) -> None:
+        harness = build_connector_harness_envelope(
+            goal="Let Spark read my calendar and summarize upcoming events.",
+            implementation_route="capability_connector",
+            permissions_required=["calendar_account_access", "event_read_scope"],
+        )
+
+        self.assertIsNotNone(harness)
+        payload = harness.to_payload()
+        self.assertEqual(payload["connector_key"], "calendar")
+        self.assertEqual(payload["authority_stage"], "proposal_only")
+        self.assertIn("calendar_account_access", payload["permissions_required"])
+        self.assertIn("metadata sample", payload["dry_run_probe"])
+        self.assertIn("create_event", payload["blocked_live_actions"])
+        self.assertIn("approval", payload["approval_prompt"].lower())
+        self.assertIn("capability_ledger_key", payload["trace_fields"])
+
+    def test_connector_probe_redaction_removes_private_content_and_secrets(self) -> None:
+        redacted = redact_connector_probe_sample(
+            connector_key="email",
+            sample={
+                "id": "msg_123",
+                "from": "alice@example.com",
+                "subject": "Private launch details",
+                "snippet": "Revenue and medical info",
+                "headers": {"authorization": "Bearer sk-test-abcdefghijklmnopqrstuvwxyz"},
+                "metadata_count": 1,
+            },
+        )
+
+        self.assertEqual(redacted["id"], "msg_123")
+        self.assertEqual(redacted["metadata_count"], 1)
+        self.assertIn("<redacted email from>", redacted["from"])
+        self.assertIn("<redacted email subject>", redacted["subject"])
+        self.assertIn("<redacted email snippet>", redacted["snippet"])
+        self.assertIn("<redacted email authorization>", redacted["headers"]["authorization"])
+
+    def test_capability_ledger_records_proposal_without_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:proposal-only",
+        )
+        entry = result.payload
+
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertEqual(entry["activation_evidence"], [])
+        self.assertFalse(capability_is_active(entry))
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(packet["capability_ledger_key"], ledger["entries"])
+
+    def test_capability_ledger_rejects_packet_status_as_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        packet["status"] = "activated"
+
+        with self.assertRaises(ValueError):
+            record_capability_proposal(
+                config_manager=self.config_manager,
+                proposal_packet=packet,
+                actor_id="human:test-ledger",
+                source_ref="pytest:tampered-status",
+            )
+
+    def test_capability_ledger_requires_separate_activation_evidence(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:activation-evidence",
+        )
+        key = packet["capability_ledger_key"]
+
+        with self.assertRaises(ValueError):
+            record_capability_ledger_event(
+                config_manager=self.config_manager,
+                capability_ledger_key=key,
+                lifecycle_state="activated",
+                actor_id="human:test-ledger",
+            )
+
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="probed",
+            actor_id="human:test-ledger",
+            source_ref="pytest:probe",
+            evidence={"probe_ref": "voice.status:ok"},
+        )
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="approved",
+            actor_id="human:test-ledger",
+            source_ref="pytest:approval",
+            evidence={"approval_ref": "operator:approved"},
+        )
+        activated = record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="activated",
+            actor_id="human:test-ledger",
+            source_ref="pytest:voice-smoke",
+            evidence={"approval_ref": "operator:approved", "eval_ref": "voice-smoke:passed"},
+        ).payload
+
+        self.assertTrue(capability_is_active(activated))
+        self.assertEqual(activated["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertNotIn("eval_ref", activated["proposal_packet"])
+        self.assertEqual(activated["current_activation"]["evidence"]["eval_ref"], "voice-smoke:passed")
+
+    def test_capability_ledger_preserves_unknown_future_packet_fields(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Create a daily memory report for Spark.",
+            user_message="Create a daily memory report for Spark.",
+        ).to_payload()
+        packet["future_upgrade_field"] = {"kept": True, "ignored_by_v1": True}
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:future-field",
+        )
+
+        self.assertEqual(result.payload["proposal_packet"]["future_upgrade_field"]["kept"], True)
+        ledger = load_capability_ledger(self.config_manager).payload
+        saved = ledger["entries"][packet["capability_ledger_key"]]
+        self.assertEqual(saved["proposal_packet"]["future_upgrade_field"]["ignored_by_v1"], True)
+        self.assertEqual(saved["status"], "proposed")
+
+    def test_self_improve_cli_can_record_capability_ledger_entry(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "improve",
+            "Give Spark a voice so it can reply with audio.",
+            "--home",
+            str(self.home),
+            "--record-ledger",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        entry = payload["capability_ledger_entry"]
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(entry["capability_ledger_key"], ledger["entries"])
 
     def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
         capsule = build_self_awareness_capsule(

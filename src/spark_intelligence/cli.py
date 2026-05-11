@@ -52,7 +52,7 @@ from spark_intelligence.channel.service import (
     test_configured_telegram_channel,
 )
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.diagnostics import build_diagnostic_report
+from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
     gateway_ask_telegram,
@@ -124,6 +124,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
 )
+from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.personality import (
     build_personality_import_payload,
     load_personality_profile,
@@ -166,9 +167,21 @@ from spark_intelligence.self_awareness import (
     build_live_telegram_regression_cadence,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    load_capability_ledger,
+    record_capability_ledger_event,
     record_route_probe_evidence,
     run_route_probe_and_record,
 )
+from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
+from spark_intelligence.self_awareness.event_producers import (
+    record_mission_state_agent_event,
+    record_route_selection_agent_event,
+    record_source_used_agent_event,
+)
+from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
+from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
+from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1301,6 +1314,11 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
     diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
     diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
+    diagnostics_scan_parser.add_argument("--record-aoc-events", action="store_true", help="Record diagnostic capability evidence in the AOC black box")
+    diagnostics_scan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--session-id", default="", help="Session id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--human-id", default="", help="Human id for recorded AOC events")
+    diagnostics_scan_parser.add_argument("--actor-id", default="diagnostics_scan", help="Actor id for recorded AOC events")
     diagnostics_scan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
@@ -1323,23 +1341,218 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_context_parser = self_subparsers.add_parser(
         "context",
-        help="Show the agent operating context preflight: access, runner, route health, and source ledger",
+        help="Show agent operating context for route, access, runner, and probe preflight",
     )
     self_context_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    self_context_parser.add_argument("--human-id", default="", help="Optional human id for memory-in-play context")
+    self_context_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
     self_context_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
     self_context_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
     self_context_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
-    self_context_parser.add_argument("--user-message", default="", help="Optional user message for task-fit routing")
-    self_context_parser.add_argument("--spark-access-level", default="", help="Operator-supplied Spark access level, for example 4")
+    self_context_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_context_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
     self_context_parser.add_argument(
         "--runner-writable",
-        choices=["yes", "no", "unknown"],
+        choices=("yes", "no", "unknown"),
         default="unknown",
-        help="Current execution runner write capability, independent from Spark access level",
+        help="Whether the current runner can edit/write files",
     )
-    self_context_parser.add_argument("--runner-label", default="", help="Optional display label for the current runner")
+    self_context_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_context_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_panel_parser = self_subparsers.add_parser(
+        "panel",
+        help="Show shared AOC panel with black box, memory inbox, stale context, and route confidence",
+    )
+    self_panel_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_panel_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
+    self_panel_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_panel_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_panel_parser.add_argument("--request-id", default="", help="Optional current request id for black-box filtering")
+    self_panel_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_panel_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
+    self_panel_parser.add_argument(
+        "--runner-writable",
+        choices=("yes", "no", "unknown"),
+        default="unknown",
+        help="Whether the current runner can edit/write files",
+    )
+    self_panel_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_panel_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
+    self_panel_parser.add_argument(
+        "--memory-inbox-status",
+        choices=("pending", "decided", "all"),
+        default="pending",
+        help="Memory approval inbox filter",
+    )
+    self_panel_parser.add_argument(
+        "--live-claim-json",
+        action="append",
+        default=[],
+        help="Live/current source claim JSON object, repeatable",
+    )
+    self_panel_parser.add_argument(
+        "--context-claim-json",
+        action="append",
+        default=[],
+        help="Retrieved/context source claim JSON object, repeatable",
+    )
+    self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_black_box_parser = self_subparsers.add_parser(
+        "black-box",
+        help="Show agent black-box event trace for a request",
+    )
+    self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
+    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_source_used_parser = self_subparsers.add_parser(
+        "source-used",
+        help="Record a source used by the current agent turn in the black box",
+    )
+    self_source_used_parser.add_argument("source", help="Source name, for example current_diagnostics, approved_memory, or wiki")
+    self_source_used_parser.add_argument("--role", default="supporting_evidence", help="Role this source played")
+    self_source_used_parser.add_argument(
+        "--freshness",
+        choices=("fresh", "stale", "contradicted", "unknown", "live_probed"),
+        default="unknown",
+        help="Freshness label for the source",
+    )
+    self_source_used_parser.add_argument("--source-ref", default="", help="Trace, memory, wiki, or diagnostic reference")
+    self_source_used_parser.add_argument("--summary", default="", help="Short source summary")
+    self_source_used_parser.add_argument("--user-intent", default="", help="Perceived user intent")
+    self_source_used_parser.add_argument("--selected-route", default="", help="Route using this source")
+    self_source_used_parser.add_argument("--confidence", default="", help="Route/source confidence label")
+    self_source_used_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_source_used_parser.add_argument("--request-id", default="", help="Request id associated with this source")
+    self_source_used_parser.add_argument("--session-id", default="", help="Session id associated with this source")
+    self_source_used_parser.add_argument("--human-id", default="", help="Human id associated with this source")
+    self_source_used_parser.add_argument("--actor-id", default="source_ledger", help="Actor recording the source")
+    self_source_used_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_memory_inbox_parser = self_subparsers.add_parser(
+        "memory-inbox",
+        help="Show approval-gated memory candidates waiting for human review",
+    )
+    self_memory_inbox_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_memory_inbox_parser.add_argument(
+        "--status",
+        choices=("pending", "decided", "all"),
+        default="pending",
+        help="Memory approval inbox filter",
+    )
+    self_memory_inbox_parser.add_argument("--limit", type=int, default=20, help="Maximum inbox items to show")
+    self_memory_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_memory_decision_parser = self_subparsers.add_parser(
+        "memory-decision",
+        help="Record a human decision for one memory approval inbox candidate",
+    )
+    self_memory_decision_parser.add_argument("candidate_event_id", help="Candidate event id from self memory-inbox")
+    self_memory_decision_parser.add_argument(
+        "--decision",
+        choices=(
+            "approve",
+            "edit",
+            "reject",
+            "save_as_project_fact",
+            "save_as_personal_preference",
+            "save_as_spark_doctrine",
+        ),
+        required=True,
+        help="Human review decision",
+    )
+    self_memory_decision_parser.add_argument("--reason", required=True, help="Short reason for the decision")
+    self_memory_decision_parser.add_argument("--edited-text", default="", help="Edited memory text when decision=edit")
+    self_memory_decision_parser.add_argument("--target-scope", default="", help="Optional target scope override")
+    self_memory_decision_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_memory_decision_parser.add_argument("--request-id", default="", help="Request id associated with this decision")
+    self_memory_decision_parser.add_argument("--session-id", default="", help="Session id associated with this decision")
+    self_memory_decision_parser.add_argument("--human-id", default="", help="Human id associated with this decision")
+    self_memory_decision_parser.add_argument("--actor-id", default="memory_approval_inbox", help="Actor recording the decision")
+    self_memory_decision_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_selection_parser = self_subparsers.add_parser(
+        "route-selection",
+        help="Record a route selection in the agent black box",
+    )
+    self_route_selection_parser.add_argument("selected_route", help="Selected route, for example writable_spawner_codex_mission")
+    self_route_selection_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_selection_parser.add_argument("--user-intent", default="", help="Perceived user intent, for example edit")
+    self_route_selection_parser.add_argument("--confidence", default="", help="Route confidence label")
+    self_route_selection_parser.add_argument("--reason", default="", help="Short reason for this route choice")
+    self_route_selection_parser.add_argument("--request-id", default="", help="Request id associated with this route choice")
+    self_route_selection_parser.add_argument("--session-id", default="", help="Session id associated with this route choice")
+    self_route_selection_parser.add_argument("--human-id", default="", help="Human id associated with this route choice")
+    self_route_selection_parser.add_argument("--actor-id", default="route_selection", help="Actor recording the route choice")
+    self_route_selection_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_mission_state_parser = self_subparsers.add_parser(
+        "mission-state",
+        help="Record a mission state change in the agent black box",
+    )
+    self_mission_state_parser.add_argument("mission_id", help="Mission id, for example mission-123")
+    self_mission_state_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_mission_state_parser.add_argument("--from-state", default="", help="Previous mission state")
+    self_mission_state_parser.add_argument("--to-state", required=True, help="New mission state")
+    self_mission_state_parser.add_argument("--summary", default="", help="Short state-change summary")
+    self_mission_state_parser.add_argument("--request-id", default="", help="Request id associated with this state change")
+    self_mission_state_parser.add_argument("--session-id", default="", help="Session id associated with this state change")
+    self_mission_state_parser.add_argument("--human-id", default="", help="Human id associated with this state change")
+    self_mission_state_parser.add_argument("--actor-id", default="mission_control", help="Actor recording the state change")
+    self_mission_state_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_turn_trace_parser = self_subparsers.add_parser(
+        "turn-trace",
+        help="Record one agent turn frame, gate, drift check, and memory candidate",
+    )
+    self_turn_trace_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_turn_trace_parser.add_argument("--user-message", required=True, help="Latest user message for intent framing")
+    self_turn_trace_parser.add_argument("--proposed-action", default="", help="Optional route-changing action to gate")
+    self_turn_trace_parser.add_argument("--draft-answer", default=None, help="Optional draft answer to drift-check")
+    self_turn_trace_parser.add_argument(
+        "--active-reference-item",
+        action="append",
+        default=[],
+        help="Visible option/reference item, repeatable for resolving 'option 2' style turns",
+    )
+    self_turn_trace_parser.add_argument("--memory-candidate-json", default="", help="Optional memory candidate JSON object")
+    self_turn_trace_parser.add_argument(
+        "--source-json",
+        action="append",
+        default=[],
+        help="Source-used JSON object with source, role, freshness, source_ref, and summary; repeatable",
+    )
+    self_turn_trace_parser.add_argument("--request-id", default="", help="Request id associated with this turn")
+    self_turn_trace_parser.add_argument("--session-id", default="", help="Session id associated with this turn")
+    self_turn_trace_parser.add_argument("--human-id", default="", help="Human id associated with this turn")
+    self_turn_trace_parser.add_argument("--agent-id", default="", help="Agent id associated with this turn")
+    self_turn_trace_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_stale_sweep_parser = self_subparsers.add_parser(
+        "stale-sweep",
+        help="Compare live and context claims and record stale/contradicted source evidence",
+    )
+    self_stale_sweep_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_stale_sweep_parser.add_argument(
+        "--live-claim-json",
+        action="append",
+        default=[],
+        help="Live/current source claim JSON object, repeatable",
+    )
+    self_stale_sweep_parser.add_argument(
+        "--context-claim-json",
+        action="append",
+        default=[],
+        help="Retrieved/context source claim JSON object, repeatable",
+    )
+    self_stale_sweep_parser.add_argument("--record-contradictions", action="store_true", help="Write contradiction and black-box events")
+    self_stale_sweep_parser.add_argument("--request-id", default="", help="Request id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--session-id", default="", help="Session id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--human-id", default="", help="Human id associated with this sweep")
+    self_stale_sweep_parser.add_argument("--actor-id", default="stale_context_sweeper", help="Actor recording the sweep")
+    self_stale_sweep_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_probe_parser = self_subparsers.add_parser(
         "route-probe",
         help="Record a route-specific probe result for Agent Operating Context evidence",
@@ -1411,7 +1624,29 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--record-ledger", action="store_true", help="Record the capability proposal in the durable proposal/activation ledger")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_ledger_parser = self_subparsers.add_parser(
+        "ledger",
+        help="Show durable capability proposal and activation records",
+    )
+    self_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_ledger_event_parser = self_subparsers.add_parser(
+        "ledger-event",
+        help="Record a capability lifecycle state with optional separate evidence",
+    )
+    self_ledger_event_parser.add_argument("capability_ledger_key", help="Stable capability ledger key")
+    self_ledger_event_parser.add_argument(
+        "lifecycle_state",
+        choices=["proposed", "scaffolded", "probed", "approved", "activated", "disabled", "rolled_back"],
+        help="Lifecycle state to record",
+    )
+    self_ledger_event_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_ledger_event_parser.add_argument("--actor-id", default="operator", help="Actor recording the lifecycle event")
+    self_ledger_event_parser.add_argument("--source-ref", default="", help="Trace, PR, probe, or approval reference")
+    self_ledger_event_parser.add_argument("--evidence-json", default="", help="JSON object with probe/eval/approval evidence")
+    self_ledger_event_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
     wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command", required=True)
@@ -1626,6 +1861,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the current mission-control snapshot",
     )
     mission_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_status_parser.add_argument("--include-aoc-panel", action="store_true", help="Include the shared AOC panel drilldown payload")
     mission_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     mission_plan_parser = mission_subparsers.add_parser(
         "plan",
@@ -1636,6 +1872,11 @@ def build_parser() -> argparse.ArgumentParser:
     mission_plan_parser.add_argument("--harness-id", help="Force a specific harness id")
     mission_plan_parser.add_argument("--recipe", help="Force a named harness recipe")
     mission_plan_parser.add_argument("--target-repo", help="Confirm the target local repo for build/file-writing work")
+    mission_plan_parser.add_argument("--record-aoc-events", action="store_true", help="Record the selected route in the AOC black box")
+    mission_plan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
+    mission_plan_parser.add_argument("--session-id", default="", help="Session id for recorded AOC events")
+    mission_plan_parser.add_argument("--human-id", default="", help="Human id for recorded AOC events")
+    mission_plan_parser.add_argument("--actor-id", default="mission_control_plan", help="Actor id for recorded AOC events")
     mission_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
@@ -3388,10 +3629,26 @@ def handle_diagnostics_scan(args: argparse.Namespace) -> int:
         write_markdown=not bool(args.no_write),
         output_dir=Path(args.output_dir).expanduser() if args.output_dir else None,
     )
+    agent_event_ids: list[str] = []
+    if args.record_aoc_events:
+        agent_event_ids = record_diagnostic_capability_events(
+            state_db,
+            report,
+            request_id=args.request_id,
+            session_id=args.session_id,
+            human_id=args.human_id,
+            actor_id=args.actor_id,
+        )
     if args.json:
-        print(report.to_json())
+        payload = report.to_dict()
+        if args.record_aoc_events:
+            payload["agent_event_ids"] = agent_event_ids
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(report.to_text())
+        lines = [report.to_text()]
+        if args.record_aoc_events:
+            lines.append(f"- aoc_events: {len(agent_event_ids)}")
+        print("\n".join(lines))
     return 0
 
 
@@ -4273,10 +4530,266 @@ def handle_self_context(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
-        runner_writable=runner_writable,
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
     )
     print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_self_panel(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    panel = build_agent_operating_panel(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
+        memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
+        stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
+        stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+    )
+    print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
+    return 0
+
+
+def handle_self_black_box(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    request_id = str(getattr(args, "request_id", "") or "") or None
+    limit = int(getattr(args, "limit", 20) or 20)
+    spawner_entries = read_configured_spawner_black_box_entries(
+        config_manager,
+        request_id=request_id,
+        limit=limit,
+    )
+    report = build_agent_black_box_report(
+        state_db,
+        request_id=request_id,
+        limit=limit,
+        external_entries=spawner_entries,
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
+
+
+def handle_self_source_used(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_source_used_agent_event(
+        state_db,
+        source=str(getattr(args, "source", "") or ""),
+        role=str(getattr(args, "role", "") or ""),
+        freshness=str(getattr(args, "freshness", "") or "unknown"),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        summary=str(getattr(args, "summary", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "source_ledger"),
+    )
+    payload = {
+        "event_type": "source_used",
+        "event_id": event_id,
+        "source": str(getattr(args, "source", "") or ""),
+        "freshness": str(getattr(args, "freshness", "") or "unknown"),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Recorded source: {payload['source']} ({payload['freshness']})")
+        print(f"- event: {event_id}")
+    return 0
+
+
+def handle_self_memory_inbox(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_memory_approval_inbox(
+        state_db,
+        status=str(getattr(args, "status", "pending") or "pending"),
+        limit=int(getattr(args, "limit", 20) or 20),
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
+    return 0
+
+
+def handle_self_memory_decision(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_memory_approval_decision(
+        state_db,
+        candidate_event_id=str(getattr(args, "candidate_event_id", "") or ""),
+        decision=str(getattr(args, "decision", "") or ""),  # type: ignore[arg-type]
+        reason=str(getattr(args, "reason", "") or ""),
+        edited_text=str(getattr(args, "edited_text", "") or "") or None,
+        target_scope=str(getattr(args, "target_scope", "") or "") or None,
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        session_id=str(getattr(args, "session_id", "") or "") or None,
+        human_id=str(getattr(args, "human_id", "") or "") or None,
+        actor_id=str(getattr(args, "actor_id", "") or "memory_approval_inbox"),
+    )
+    payload = {
+        "event_id": event_id,
+        "candidate_event_id": str(getattr(args, "candidate_event_id", "") or ""),
+        "decision": str(getattr(args, "decision", "") or ""),
+        "does_not_write_memory": True,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "Memory approval decision recorded\n"
+            f"- decision: {payload['decision']}\n"
+            f"- candidate: {payload['candidate_event_id']}\n"
+            f"- event: {payload['event_id']}\n"
+            "- memory write: not performed"
+        )
+    return 0
+
+
+def handle_self_route_selection(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_route_selection_agent_event(
+        state_db,
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        reason=str(getattr(args, "reason", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "route_selection"),
+    )
+    payload = {
+        "event_id": event_id,
+        "event_type": "route_selected",
+        "selected_route": str(getattr(args, "selected_route", "") or ""),
+    }
+    print(json.dumps(payload, indent=2) if args.json else f"Route selection recorded: {payload['selected_route']}\n- event: {event_id}")
+    return 0
+
+
+def handle_self_mission_state(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_mission_state_agent_event(
+        state_db,
+        mission_id=str(getattr(args, "mission_id", "") or ""),
+        from_state=str(getattr(args, "from_state", "") or ""),
+        to_state=str(getattr(args, "to_state", "") or ""),
+        summary=str(getattr(args, "summary", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "mission_control"),
+    )
+    payload = {
+        "event_id": event_id,
+        "event_type": "mission_changed_state",
+        "mission_id": str(getattr(args, "mission_id", "") or ""),
+        "to_state": str(getattr(args, "to_state", "") or ""),
+    }
+    print(json.dumps(payload, indent=2) if args.json else f"Mission state recorded: {payload['mission_id']} -> {payload['to_state']}\n- event: {event_id}")
+    return 0
+
+
+def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise SystemExit("--memory-candidate-json must be a JSON object")
+    return value
+
+
+def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
+    parsed: list[dict[str, object]] = []
+    for raw in values:
+        value = _parse_optional_json_object(raw)
+        if value is not None:
+            parsed.append(value)
+    return parsed
+
+
+def handle_self_turn_trace(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    trace = record_agent_turn_trace(
+        state_db,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        session_id=str(getattr(args, "session_id", "") or "") or None,
+        human_id=str(getattr(args, "human_id", "") or "") or None,
+        agent_id=str(getattr(args, "agent_id", "") or "") or None,
+        active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
+        proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
+        draft_answer=getattr(args, "draft_answer", None),
+        source_refs=_parse_json_object_values(list(getattr(args, "source_json", []) or [])),
+        memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
+    )
+    payload = trace.to_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        gate = payload["action_gate"]["decision"] if payload.get("action_gate") else "not_checked"
+        drift = payload["final_answer_check"]["drift_type"] if payload.get("final_answer_check") else "not_checked"
+        print(
+            "Agent turn trace recorded\n"
+            f"- mode: {payload['frame']['current_mode']}\n"
+            f"- intent: {payload['frame']['user_intent']}\n"
+            f"- action gate: {gate}\n"
+            f"- drift check: {drift}\n"
+            f"- events: {len(payload['event_ids'])}"
+        )
+    return 0
+
+
+def handle_self_stale_sweep(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_stale_context_sweep(
+        live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
+        context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        state_db=state_db if bool(getattr(args, "record_contradictions", False)) else None,
+        record_contradictions=bool(getattr(args, "record_contradictions", False)),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "stale_context_sweeper"),
+    )
+    print(json.dumps(report.to_payload(), indent=2) if args.json else report.to_text())
     return 0
 
 
@@ -4381,9 +4894,45 @@ def handle_self_improve(args: argparse.Namespace) -> int:
         user_message=str(getattr(args, "user_message", "") or ""),
         refresh_wiki=bool(getattr(args, "refresh_wiki", False)),
         limit=int(getattr(args, "limit", 5) or 5),
+        record_ledger=bool(getattr(args, "record_ledger", False)),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("priority_actions") else 1
+
+
+def handle_self_ledger(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = load_capability_ledger(config_manager)
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_self_ledger_event(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = record_capability_ledger_event(
+        config_manager=config_manager,
+        capability_ledger_key=str(getattr(args, "capability_ledger_key", "") or ""),
+        lifecycle_state=str(getattr(args, "lifecycle_state", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "operator"),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        evidence=_json_object_arg(str(getattr(args, "evidence_json", "") or ""), "--evidence-json"),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def _json_object_arg(raw: str, arg_name: str) -> dict[str, object]:
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{arg_name} must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{arg_name} must be a JSON object")
+    return payload
 
 
 def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]:
@@ -7248,7 +7797,11 @@ def handle_mission_status(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    snapshot = build_mission_control_snapshot(config_manager, state_db)
+    snapshot = build_mission_control_snapshot(
+        config_manager,
+        state_db,
+        include_agent_operating_panel=bool(getattr(args, "include_aoc_panel", False)),
+    )
     if args.json:
         print(snapshot.to_json())
     else:
@@ -7283,11 +7836,38 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         forced_recipe_id=args.recipe,
         forced_target_repo=args.target_repo,
     )
+    payload = plan.to_payload()
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    agent_event_id = ""
+    if args.record_aoc_events:
+        selected_route = str(summary.get("selected_harness") or summary.get("route_target_system") or "mission_control_plan")
+        blockers = [str(item) for item in (summary.get("blockers") or []) if str(item)]
+        next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
+        agent_event_id = record_route_selection_agent_event(
+            state_db,
+            selected_route=selected_route,
+            user_intent="plan",
+            confidence="selected" if not blockers else "blocked",
+            reason=str(summary.get("selection_mode") or "mission_control_plan"),
+            sources=[
+                {
+                    "source": "mission_control_plan",
+                    "role": "route_selection",
+                    "freshness": "live_probed",
+                    "source_ref": str(summary.get("selected_system") or ""),
+                    "summary": "; ".join([*blockers[:2], *next_actions[:2]]) or str(summary.get("top_level_state") or ""),
+                }
+            ],
+            request_id=args.request_id,
+            session_id=args.session_id,
+            human_id=args.human_id,
+            actor_id=args.actor_id,
+        )
     if args.json:
-        print(plan.to_json())
+        if args.record_aoc_events:
+            payload["agent_event_id"] = agent_event_id
+        print(json.dumps(payload, indent=2))
     else:
-        payload = plan.to_payload()
-        summary = payload.get("summary") or {}
         lines = ["Spark mission plan"]
         lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
         lines.append(f"- system: {summary.get('selected_system') or 'unknown'}")
@@ -7305,8 +7885,12 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         lines.extend(f"- blocker: {item}" for item in blockers[:4])
         next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
         lines.extend(f"- next action: {item}" for item in next_actions[:4])
+        if args.record_aoc_events:
+            lines.append(f"- aoc_event: {agent_event_id}")
         print("\n".join(lines))
     return 0
+
+
 def handle_agent_inspect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8239,6 +8823,24 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_status(args)
     if args.command == "self" and args.self_command == "context":
         return handle_self_context(args)
+    if args.command == "self" and args.self_command == "panel":
+        return handle_self_panel(args)
+    if args.command == "self" and args.self_command == "black-box":
+        return handle_self_black_box(args)
+    if args.command == "self" and args.self_command == "source-used":
+        return handle_self_source_used(args)
+    if args.command == "self" and args.self_command == "memory-inbox":
+        return handle_self_memory_inbox(args)
+    if args.command == "self" and args.self_command == "memory-decision":
+        return handle_self_memory_decision(args)
+    if args.command == "self" and args.self_command == "route-selection":
+        return handle_self_route_selection(args)
+    if args.command == "self" and args.self_command == "mission-state":
+        return handle_self_mission_state(args)
+    if args.command == "self" and args.self_command == "turn-trace":
+        return handle_self_turn_trace(args)
+    if args.command == "self" and args.self_command == "stale-sweep":
+        return handle_self_stale_sweep(args)
     if args.command == "self" and args.self_command == "route-probe":
         return handle_self_route_probe(args)
     if args.command == "self" and args.self_command == "heartbeat":
@@ -8249,6 +8851,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
+    if args.command == "self" and args.self_command == "ledger":
+        return handle_self_ledger(args)
+    if args.command == "self" and args.self_command == "ledger-event":
+        return handle_self_ledger_event(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":
         return handle_wiki_bootstrap(args)
     if args.command == "wiki" and args.wiki_command == "compile-system":
