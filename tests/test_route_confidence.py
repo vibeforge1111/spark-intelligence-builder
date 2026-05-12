@@ -169,3 +169,68 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertEqual(gate["confidence"], "blocked")
         self.assertEqual(gate["safe_reply_policy"], "refuse_privacy_violation")
         self.assertIn("privacy_violation:provider_output_exported", gate["missing_evidence"])
+
+    def test_route_confidence_gate_allows_explicit_build_dispatch(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "spawner_build",
+                "authority_verdict": "allowed",
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+                "joined_sources": ["telegram_access_policy", "spawner_health"],
+                "data_boundary": {"exports_raw_prompt": False, "exports_chat_id": False},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "act")
+        self.assertEqual(gate["confidence"], "high")
+        self.assertEqual(gate["safe_reply_policy"], "execute_with_trace")
+        self.assertEqual(gate["permission_required"], "spawner_build")
+        self.assertTrue(gate["authority_required"])
+
+    def test_route_confidence_gate_explains_no_execution_build_boundary(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={
+                "latest_instruction": "no_execution",
+                "explicit_no_execution": True,
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "authority_verdict": "allowed",
+                "capability_state": "available",
+                "runner_state": "available",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "explain")
+        self.assertEqual(gate["confidence"], "high")
+        self.assertEqual(gate["safe_reply_policy"], "explain_no_execution_boundary")
+
+    def test_route_confidence_gate_asks_for_confirmation_on_external_action(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "external",
+                "confirmation_state": "missing",
+                "authority_verdict": "allowed",
+                "capability_state": "available",
+                "runner_state": "available",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_confirmation")
+        self.assertIn("confirmation_required", gate["missing_evidence"])

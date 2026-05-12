@@ -1434,6 +1434,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional LatestSpawnerJobEvidenceV1 JSON object; defaults to compiled Spark OS evidence",
     )
+    self_route_confidence_gate_parser.add_argument(
+        "--route-context-json",
+        default="",
+        help="Optional metadata-only action route context JSON object",
+    )
     self_route_confidence_gate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_route_confidence_doctrine_parser = self_subparsers.add_parser(
         "route-confidence-doctrine",
@@ -4610,6 +4615,7 @@ def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     latest_spawner_job = _parse_optional_json_object(str(getattr(args, "latest_spawner_job_json", "") or ""))
+    route_context = _parse_optional_json_object(str(getattr(args, "route_context_json", "") or ""))
     if not latest_spawner_job:
         context = build_agent_operating_context(
             config_manager=config_manager,
@@ -4626,6 +4632,7 @@ def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
         intent=str(getattr(args, "intent", "") or "status"),
         candidate_route=str(getattr(args, "candidate_route", "") or "spawner.latest_job_provider"),
         latest_spawner_job=latest_spawner_job,
+        route_context=route_context,
     )
     if args.json:
         print(json.dumps(gate, indent=2))
