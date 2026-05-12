@@ -25,6 +25,7 @@ from spark_intelligence.memory.profile_facts import (
     active_state_revalidation_days,
     parse_named_object_fact,
 )
+from spark_intelligence.memory.constitution import build_memory_result_proof_card
 from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_memory_salience
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
@@ -8045,17 +8046,21 @@ def _record_memory_write_event(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    status = "abstained" if result.abstained else "recorded"
+    keepability = _memory_write_result_keepability(result)
+    promotion_disposition = _memory_write_result_promotion_disposition(result, keepability)
+    trace_ref = _memory_trace_ref(session_id=session_id, turn_id=turn_id)
     record_event(
         state_db,
         event_type="memory_write_succeeded" if result.accepted_count > 0 else "memory_write_abstained",
         component="memory_orchestrator",
         summary="Spark memory write completed." if result.accepted_count > 0 else "Spark memory write abstained.",
         request_id=turn_id,
-        trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
+        trace_ref=trace_ref,
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
-        status="abstained" if result.abstained else "recorded",
+        status=status,
         facts={
             "operation": result.operation,
             "method": result.method,
@@ -8065,9 +8070,50 @@ def _record_memory_write_event(
             "skipped_count": result.skipped_count,
             "reason": result.reason,
             "retrieval_trace": result.retrieval_trace,
+            "keepability": keepability,
+            "promotion_disposition": promotion_disposition,
+            "memory_proof_card": build_memory_result_proof_card(
+                operation=result.operation,
+                memory_role=result.memory_role,
+                status=status,
+                accepted_count=result.accepted_count,
+                rejected_count=result.rejected_count,
+                skipped_count=result.skipped_count,
+                reason=result.reason,
+                keepability=keepability,
+                promotion_disposition=promotion_disposition,
+                request_id=turn_id or "",
+                trace_ref=trace_ref or "",
+            ),
         },
         provenance={"memory_role": result.memory_role, "sdk_provenance": result.provenance},
     )
+
+
+def _memory_write_result_keepability(result: MemoryWriteResult) -> str:
+    if result.accepted_count <= 0:
+        return "not_keepable"
+    role = str(result.memory_role or "").strip()
+    if role in {"current_state", "entity_state", "profile", "profile_fact"}:
+        return "durable_user_memory"
+    if role in {"event", "episodic"}:
+        return "episodic_trace"
+    if role in {"structured_evidence", "belief", "intelligence"}:
+        return "durable_intelligence_memory"
+    return "supporting_memory"
+
+
+def _memory_write_result_promotion_disposition(result: MemoryWriteResult, keepability: str) -> str:
+    if result.accepted_count <= 0:
+        return "not_promotable"
+    role = str(result.memory_role or "").strip()
+    if keepability == "durable_user_memory" or role in {"current_state", "entity_state", "profile", "profile_fact"}:
+        return "promote_current_state"
+    if keepability == "episodic_trace" or role in {"event", "episodic"}:
+        return "capture_raw_episode"
+    if keepability == "durable_intelligence_memory":
+        return "promote_structured_evidence"
+    return "not_promotable"
 
 
 def _record_memory_read_requested(

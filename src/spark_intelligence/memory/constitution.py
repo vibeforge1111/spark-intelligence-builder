@@ -120,6 +120,75 @@ def build_memory_preflight_proof_card(
     }
 
 
+def build_memory_result_proof_card(
+    *,
+    operation: str,
+    memory_role: str,
+    status: str,
+    accepted_count: int,
+    rejected_count: int,
+    skipped_count: int,
+    reason: str | None = "",
+    keepability: str = "",
+    promotion_disposition: str = "",
+    request_id: str = "",
+    trace_ref: str = "",
+) -> dict[str, Any]:
+    safe_operation = _safe_label(operation, "write")
+    safe_role = _safe_label(memory_role, "memory")
+    safe_status = _safe_label(status, "unknown")
+    safe_reason = _safe_label(reason, "")
+    safe_keepability = _safe_durability_tier(keepability)
+    safe_disposition = _safe_label(promotion_disposition, "")
+    accepted = max(0, int(accepted_count or 0))
+    rejected = max(0, int(rejected_count or 0))
+    skipped = max(0, int(skipped_count or 0))
+    blocked_reasons: list[str] = []
+    if accepted <= 0:
+        blocked_reasons.append(safe_reason or safe_status or "memory_write_not_confirmed")
+    card_seed = "|".join(
+        [
+            trace_ref,
+            request_id,
+            safe_operation,
+            safe_role,
+            safe_status,
+            str(accepted),
+            str(rejected),
+            str(skipped),
+        ]
+    )
+    return {
+        "schema_version": MEMORY_PROOF_CARD_SCHEMA_VERSION,
+        "card_id": f"memory-proof:{_short_hash(card_seed)}",
+        "trace_ref": _safe_trace_ref(trace_ref),
+        "owner_system": "spark-intelligence-builder",
+        "surface": "builder",
+        "operation": "save_result",
+        "decision": _memory_result_decision(
+            accepted_count=accepted,
+            keepability=safe_keepability,
+            promotion_disposition=safe_disposition,
+        ),
+        "memory_type": _memory_type_for_role(safe_role),
+        "durability_tier": safe_keepability,
+        "freshness": "current" if accepted > 0 else "blocked",
+        "confidence": 0.9 if accepted > 0 else 0.2,
+        "source_refs": [_safe_source_ref(request_id or trace_ref or safe_role)],
+        "relations": _relations_for_memory_result(
+            operation=safe_operation,
+            memory_role=safe_role,
+            promotion_disposition=safe_disposition,
+        ),
+        "blocked_reasons": blocked_reasons,
+        "human_next_action": _memory_result_next_action(accepted > 0),
+        "correction_path": "Use an explicit corrected memory request or Builder memory review if this result is wrong.",
+        "data_boundary": (
+            "No raw memory body, chat id, provider output, transcript, audio, env value, or secret is exported."
+        ),
+    }
+
+
 def build_memory_review_card_from_resolution(
     resolution: Any,
     *,
@@ -258,6 +327,51 @@ def _infer_memory_type(*, selected_route: str, summary: str) -> str:
     if any(token in text for token in ("doctrine", "rule", "principle")):
         return "doctrine"
     return "fact"
+
+
+def _safe_durability_tier(value: str | None) -> str:
+    label = _safe_label(value, "")
+    return label if label in DURABILITY_TIERS else "supporting_memory"
+
+
+def _memory_result_decision(
+    *,
+    accepted_count: int,
+    keepability: str,
+    promotion_disposition: str,
+) -> str:
+    if accepted_count <= 0:
+        return "blocked"
+    if keepability in {"durable_user_memory", "durable_intelligence_memory"}:
+        return "accept_durable"
+    if promotion_disposition and promotion_disposition != "not_promotable":
+        return "accept_candidate"
+    return "support_only"
+
+
+def _memory_type_for_role(memory_role: str) -> str:
+    if memory_role in {"current_state", "entity_state", "profile", "profile_fact"}:
+        return "fact"
+    if memory_role in {"preference", "preferences", "style"}:
+        return "preference"
+    if memory_role in {"structured_evidence", "belief", "intelligence"}:
+        return "doctrine"
+    if memory_role in {"event", "episodic"}:
+        return "open_loop"
+    return "fact"
+
+
+def _relations_for_memory_result(*, operation: str, memory_role: str, promotion_disposition: str) -> list[str]:
+    relations = ["memory_result", operation, memory_role]
+    if promotion_disposition:
+        relations.append(promotion_disposition)
+    return [relation for relation in relations if relation][:6]
+
+
+def _memory_result_next_action(accepted: bool) -> str:
+    if accepted:
+        return "Use Builder or Cockpit memory lanes to inspect provenance before relying on this later."
+    return "Review the Builder memory route and blocked reason before claiming a save succeeded."
 
 
 def _relations_for_preflight(*, selected_route: str, role: str) -> list[str]:

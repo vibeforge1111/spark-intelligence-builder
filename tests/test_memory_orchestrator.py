@@ -45,6 +45,7 @@ from spark_intelligence.memory.generic_observations import (
     build_telegram_generic_observation_answer,
     detect_telegram_generic_observation,
 )
+from spark_intelligence.memory.constitution import validate_memory_proof_card_export
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
     build_profile_fact_explanation_answer,
@@ -1393,8 +1394,30 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(facts["promotion_stage"], "current_state_confirmed")
         self.assertEqual(facts["promotion_disposition"], "promote_current_state")
 
+        result_events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=5)
+        self.assertTrue(result_events)
+        result_facts = result_events[0]["facts_json"] or {}
+        proof_card = result_facts["memory_proof_card"]
+        self.assertEqual(proof_card["schema_version"], "spark.memory_proof_card.v1")
+        self.assertEqual(proof_card["owner_system"], "spark-intelligence-builder")
+        self.assertEqual(proof_card["operation"], "save_result")
+        self.assertEqual(proof_card["decision"], "accept_durable")
+        self.assertEqual(proof_card["durability_tier"], "durable_user_memory")
+        self.assertEqual(proof_card["freshness"], "current")
+        self.assertEqual(validate_memory_proof_card_export(proof_card), [])
+        serialized_card = json.dumps(proof_card)
+        self.assertNotIn("Cem", serialized_card)
+        self.assertNotIn("Maya", serialized_card)
+        self.assertNotIn("evidence_text", serialized_card)
+
         lane_records = recent_memory_lane_records(self.state_db, limit=10)
         self.assertTrue(lane_records)
+        result_lane_records = [
+            record for record in lane_records if record.get("event_id") == result_events[0]["event_id"]
+        ]
+        self.assertTrue(result_lane_records)
+        result_lane_evidence = result_lane_records[0]["evidence_json"]
+        self.assertEqual(result_lane_evidence["facts"]["memory_proof_card"]["decision"], "accept_durable")
         self.assertEqual(lane_records[0]["promotion_disposition"], "promote_current_state")
         self.assertEqual(lane_records[0]["status"], "candidate")
 
