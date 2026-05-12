@@ -334,6 +334,47 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertEqual(gate["repair_target"], "telegram_runtime")
         self.assertEqual(gate["repair_scope"], "local_supervised_restart")
 
+    def test_route_confidence_gate_explains_no_repair_needed_with_false_boundary_flags(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="repair",
+            candidate_route="spark.repair",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "blocked",
+                "consequence_risk": "medium",
+                "permission_required": "none",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "not_required",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.repair",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+                "repair_target": "none_needed",
+                "repair_scope": "no_repair_after_fresh_health_check",
+                "health_evidence": "fresh_healthy",
+                "data_boundary": {
+                    "exports_raw_prompt": False,
+                    "exports_chat_id": False,
+                    "exports_provider_output": False,
+                    "exports_memory_body": False,
+                    "exports_transcript_body": False,
+                    "exports_audio": False,
+                    "exports_env_value": False,
+                    "exports_secret": False,
+                },
+            },
+        )
+
+        self.assertEqual(gate["decision"], "explain")
+        self.assertEqual(gate["confidence"], "high")
+        self.assertEqual(gate["safe_reply_policy"], "explain_no_repair_needed")
+        self.assertNotIn("privacy_violation:forbidden_payload_key:data_boundary.exports_secret", gate["missing_evidence"])
+
     def test_route_confidence_gate_fails_repair_closed_without_repair_evidence(self) -> None:
         gate = build_route_confidence_gate(
             intent="repair",

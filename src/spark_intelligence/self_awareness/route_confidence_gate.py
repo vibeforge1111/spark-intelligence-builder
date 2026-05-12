@@ -33,6 +33,18 @@ FORBIDDEN_DATA_FLAGS = (
     "transcript_or_audio_exported",
     "env_or_secret_exported",
 )
+DATA_BOUNDARY_EXPORT_FLAGS = frozenset(
+    {
+        "exports_raw_prompt",
+        "exports_provider_output",
+        "exports_chat_id",
+        "exports_memory_body",
+        "exports_transcript_body",
+        "exports_audio",
+        "exports_env_value",
+        "exports_secret",
+    }
+)
 
 
 def build_route_confidence_gate(
@@ -252,6 +264,14 @@ def _build_action_route_gate(
         confidence = "medium"
         safe_reply_policy = "ask_for_confirmation"
         missing_evidence.append("memory_action_confirmation_required")
+    elif (
+        candidate_route in REPAIR_ACTION_ROUTES
+        and repair_target == "none_needed"
+        and health_evidence == "fresh_healthy"
+    ):
+        decision = "explain"
+        confidence = "high"
+        safe_reply_policy = "explain_no_repair_needed"
     elif consequence_risk in CONFIRMATION_REQUIRED_RISKS and confirmation_state != "confirmed":
         decision = "ask"
         confidence = "medium"
@@ -373,6 +393,8 @@ def _action_human_next_action(policy: str, missing_evidence: list[str]) -> str:
         return "Ask one clarifying question before dispatch."
     if policy == "ask_for_route_evidence":
         return "Ask for or refresh source-owned route evidence before dispatch."
+    if policy == "explain_no_repair_needed":
+        return "Explain that fresh health evidence shows no repair is needed; do not restart or mutate anything."
     if missing_evidence:
         return "Inspect missing route evidence before acting: " + ", ".join(_dedupe(missing_evidence)[:4])
     return "Pause and explain the route boundary."
@@ -481,6 +503,8 @@ def _forbidden_payload_keys(value: Any, *, prefix: str = "") -> list[str]:
         for raw_key, raw_value in value.items():
             key = str(raw_key).strip().lower()
             normalized = key.replace("-", "_")
+            if prefix == "data_boundary." and normalized in DATA_BOUNDARY_EXPORT_FLAGS:
+                continue
             if normalized in forbidden or normalized.endswith("_secret") or normalized.endswith("_token"):
                 found.append(f"{prefix}{raw_key}"[:120])
             found.extend(_forbidden_payload_keys(raw_value, prefix=f"{prefix}{raw_key}."))
