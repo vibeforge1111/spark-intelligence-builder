@@ -64,6 +64,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
     trace_health = _trace_health_context(trace_index)
     trace_topology = _trace_topology_context(trace_index)
     cross_system_trace = _cross_system_trace_context(trace_index)
+    latest_spawner_job = _latest_spawner_job_context(trace_index)
     authority_status = _authority_status_context(authority_view)
     authority_status.update(_authority_verdict_context(trace_index))
     capability_garden = _capability_garden_context(capability_catalog)
@@ -106,6 +107,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "trace_health": trace_health,
         "trace_topology": trace_topology,
         "cross_system_trace": cross_system_trace,
+        "latest_spawner_job": latest_spawner_job,
         "authority_status": authority_status,
         "capability_garden": capability_garden,
         "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
@@ -372,6 +374,34 @@ def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "claim_boundary": (
             "Cross-system trace context is metadata-only join shape. It shows whether traces can be stitched; "
             "it is not action success, permission evidence, or user-message content."
+        ),
+    }
+
+
+def _latest_spawner_job_context(trace_index: dict[str, Any]) -> dict[str, Any]:
+    latest = _dict(trace_index.get("latest_spawner_job"))
+    if not latest:
+        return {
+            "present": False,
+            "status": "missing",
+            "claim_boundary": "Latest Spawner job evidence missing; run spark os compile.",
+        }
+    return {
+        "present": True,
+        "schema_version": _short(latest.get("schema_version")),
+        "status": _short(latest.get("status") or "unknown"),
+        "provider": _short(latest.get("provider")),
+        "model": _short(latest.get("model")),
+        "provider_source": _short(latest.get("provider_source")),
+        "freshness": _short(latest.get("freshness") or "unknown"),
+        "confidence": _short(latest.get("confidence") or "unknown"),
+        "joined_sources": [_short(item) for item in _list(latest.get("joined_sources"))[:8]],
+        "missing_sources": [_short(item) for item in _list(latest.get("missing_sources"))[:8]],
+        "blockers": [_short(item) for item in _list(latest.get("blockers"))[:8]],
+        "verification_command": _short(latest.get("verification_command") or "spark os trace --json"),
+        "claim_boundary": (
+            "Latest Spawner job evidence is metadata-only compiled trace context. It can answer provider/model "
+            "only when source-owned execution evidence is present; memory and wiki cannot fill missing live proof."
         ),
     }
 

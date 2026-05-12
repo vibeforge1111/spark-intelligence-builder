@@ -180,6 +180,7 @@ from spark_intelligence.self_awareness.event_producers import (
     record_source_used_agent_event,
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.route_confidence_gate import build_route_confidence_gate
 from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
 from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
@@ -1416,6 +1417,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retrieved/context source claim JSON object, repeatable",
     )
     self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_confidence_gate_parser = self_subparsers.add_parser(
+        "route-confidence-gate",
+        help="Evaluate a source-owned act/ask/explain/refuse route confidence gate",
+    )
+    self_route_confidence_gate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_confidence_gate_parser.add_argument("--intent", default="status", help="Current intent label")
+    self_route_confidence_gate_parser.add_argument(
+        "--candidate-route",
+        default="spawner.latest_job_provider",
+        help="Candidate route to evaluate",
+    )
+    self_route_confidence_gate_parser.add_argument(
+        "--latest-spawner-job-json",
+        default="",
+        help="Optional LatestSpawnerJobEvidenceV1 JSON object; defaults to compiled Spark OS evidence",
+    )
+    self_route_confidence_gate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_black_box_parser = self_subparsers.add_parser(
         "black-box",
         help="Show agent black-box event trace for a request",
@@ -4577,6 +4595,46 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
     )
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
+    return 0
+
+
+def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    latest_spawner_job = _parse_optional_json_object(str(getattr(args, "latest_spawner_job_json", "") or ""))
+    if not latest_spawner_job:
+        context = build_agent_operating_context(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message="route confidence gate",
+        ).to_payload()
+        spark_system_map = context.get("spark_system_map") if isinstance(context.get("spark_system_map"), dict) else {}
+        latest_spawner_job = (
+            spark_system_map.get("latest_spawner_job")
+            if isinstance(spark_system_map.get("latest_spawner_job"), dict)
+            else {}
+        )
+    gate = build_route_confidence_gate(
+        intent=str(getattr(args, "intent", "") or "status"),
+        candidate_route=str(getattr(args, "candidate_route", "") or "spawner.latest_job_provider"),
+        latest_spawner_job=latest_spawner_job,
+    )
+    if args.json:
+        print(json.dumps(gate, indent=2))
+        return 0
+    provider = gate.get("provider") or "unproven"
+    model = gate.get("model")
+    model_suffix = f" / {model}" if model else ""
+    print("Route confidence gate")
+    print(f"- decision: {gate.get('decision')} ({gate.get('confidence')})")
+    print(f"- route: {gate.get('candidate_route')}")
+    print(f"- latest Spawner provider: {provider}{model_suffix}")
+    missing = gate.get("missing_evidence") if isinstance(gate.get("missing_evidence"), list) else []
+    if missing:
+        print(f"- missing: {', '.join(str(item) for item in missing[:5])}")
+    print(f"- next: {gate.get('human_next_action')}")
     return 0
 
 
@@ -8860,6 +8918,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_context(args)
     if args.command == "self" and args.self_command == "panel":
         return handle_self_panel(args)
+    if args.command == "self" and args.self_command == "route-confidence-gate":
+        return handle_self_route_confidence_gate(args)
     if args.command == "self" and args.self_command == "black-box":
         return handle_self_black_box(args)
     if args.command == "self" and args.self_command == "source-used":

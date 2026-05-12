@@ -41,6 +41,9 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["counts"]["spawner_builder_trace_ref_overlaps"], 1)
         self.assertEqual(context["cross_system_trace"]["spawner_trace_contract_status"], "derived_available")
         self.assertEqual(context["cross_system_trace"]["telegram_final_answer_trace_join_status"], "join_key_present")
+        self.assertEqual(context["latest_spawner_job"]["status"], "present")
+        self.assertEqual(context["latest_spawner_job"]["provider"], "codex")
+        self.assertEqual(context["latest_spawner_job"]["model"], "gpt-test")
         self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
         self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
         self.assertEqual(context["trace_health"]["orphan_parent_event_id_count"], 1)
@@ -446,6 +449,19 @@ class SystemMapReadModelTests(SparkTestCase):
                             "trace_ref_field_present": True,
                             "status": "join_key_present",
                         }
+                    },
+                    "latest_spawner_job": {
+                        "schema_version": "spark.latest_spawner_job_evidence.v1",
+                        "status": "present",
+                        "provider": "codex",
+                        "model": "gpt-test",
+                        "provider_source": "agent-events:provider_result_received",
+                        "freshness": "current",
+                        "confidence": "high",
+                        "joined_sources": ["mission-control", "spawner-prd-trace", "agent-events"],
+                        "missing_sources": [],
+                        "blockers": [],
+                        "verification_command": "spark os trace --json",
                     },
                 }
             ),

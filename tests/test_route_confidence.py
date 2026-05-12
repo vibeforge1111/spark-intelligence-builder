@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from spark_intelligence.self_awareness import build_agent_operating_context
 from spark_intelligence.self_awareness.route_confidence import build_route_confidence
+from spark_intelligence.self_awareness.route_confidence_gate import build_route_confidence_gate
 
 from tests.test_support import SparkTestCase
 
@@ -64,3 +65,82 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertIn("Route confidence:", context.to_text())
         ledger_sources = {item["source"] for item in payload["source_ledger"]}
         self.assertIn("route_confidence", ledger_sources)
+
+    def test_route_confidence_gate_answers_only_from_source_owned_provider_evidence(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="status",
+            candidate_route="spawner.latest_job_provider",
+            latest_spawner_job={
+                "schema_version": "spark.latest_spawner_job_evidence.v1",
+                "status": "present",
+                "provider": "codex",
+                "model": "gpt-test",
+                "provider_source": "agent-events:provider_result_received",
+                "freshness": "current",
+                "confidence": "high",
+                "joined_sources": ["mission-control", "spawner-prd-trace", "agent-events"],
+                "missing_sources": [],
+                "blockers": [],
+                "request_ref_redacted": "request_id:redacted:abc",
+                "trace_ref_redacted": "trace_ref:redacted:def",
+                "data_boundary": {
+                    "metadata_only": True,
+                    "raw_prompt_exported": False,
+                    "provider_output_exported": False,
+                    "chat_or_user_id_exported": False,
+                    "memory_body_exported": False,
+                    "artifact_body_exported": False,
+                    "transcript_or_audio_exported": False,
+                    "env_or_secret_exported": False,
+                },
+            },
+        )
+
+        self.assertEqual(gate["schema_version"], "spark.route_confidence_gate.v1")
+        self.assertEqual(gate["decision"], "explain")
+        self.assertEqual(gate["confidence"], "high")
+        self.assertEqual(gate["provider"], "codex")
+        self.assertEqual(gate["model"], "gpt-test")
+        self.assertEqual(gate["safe_reply_policy"], "answer_live")
+        self.assertFalse(gate["authority_required"])
+
+    def test_route_confidence_gate_refuses_to_invent_missing_provider(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="status",
+            candidate_route="spawner.latest_job_provider",
+            latest_spawner_job={
+                "schema_version": "spark.latest_spawner_job_evidence.v1",
+                "status": "partial",
+                "freshness": "current",
+                "confidence": "low",
+                "joined_sources": ["spawner-prd-trace"],
+                "missing_sources": ["agent_events", "mission_control"],
+                "blockers": ["missing_executed_provider"],
+                "data_boundary": {"metadata_only": True},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "explain")
+        self.assertEqual(gate["confidence"], "low")
+        self.assertIsNone(gate["provider"])
+        self.assertIn("missing_executed_provider", gate["missing_evidence"])
+        self.assertIn("missing_executed_provider_model", gate["missing_evidence"])
+        self.assertEqual(gate["safe_reply_policy"], "explain_missing")
+
+    def test_route_confidence_gate_blocks_privacy_violations(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="status",
+            candidate_route="spawner.latest_job_provider",
+            latest_spawner_job={
+                "status": "present",
+                "provider": "codex",
+                "freshness": "current",
+                "confidence": "high",
+                "data_boundary": {"provider_output_exported": True},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "refuse")
+        self.assertEqual(gate["confidence"], "blocked")
+        self.assertEqual(gate["safe_reply_policy"], "refuse_privacy_violation")
+        self.assertIn("privacy_violation:provider_output_exported", gate["missing_evidence"])
