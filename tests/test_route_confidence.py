@@ -301,3 +301,205 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertEqual(gate["safe_reply_policy"], "refuse_privacy_violation")
         self.assertIn("privacy_violation:env_or_secret_exported", gate["missing_evidence"])
         self.assertTrue(any("forbidden_payload_key:raw_prompt" in item for item in gate["missing_evidence"]))
+
+    def test_route_confidence_gate_allows_bounded_local_repair_with_fresh_health_evidence(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="repair",
+            candidate_route="spark.repair",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "spark_repair",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.repair",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+                "repair_target": "telegram_runtime",
+                "repair_scope": "local_supervised_restart",
+                "health_evidence": "fresh_degraded",
+                "data_boundary": {"exports_raw_prompt": False, "exports_chat_id": False},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "act")
+        self.assertEqual(gate["safe_reply_policy"], "execute_with_trace")
+        self.assertEqual(gate["repair_target"], "telegram_runtime")
+        self.assertEqual(gate["repair_scope"], "local_supervised_restart")
+
+    def test_route_confidence_gate_fails_repair_closed_without_repair_evidence(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="repair",
+            candidate_route="spark.repair",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "spark_repair",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.repair",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["confidence"], "blocked")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_route_evidence")
+        self.assertIn("repair_target_missing", gate["missing_evidence"])
+        self.assertIn("repair_health_evidence_missing", gate["missing_evidence"])
+
+    def test_route_confidence_gate_requires_confirmation_for_secret_repair(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="repair",
+            candidate_route="spark.repair",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "credential",
+                "permission_required": "spark_repair",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.repair",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "missing",
+                "reversibility": "partially_reversible",
+                "repair_target": "provider_auth",
+                "repair_scope": "credential_rotation_guidance",
+                "health_evidence": "fresh_degraded",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_confirmation")
+        self.assertIn("confirmation_required", gate["missing_evidence"])
+
+    def test_route_confidence_gate_blocks_memory_action_without_source_verdict(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="memory_action",
+            candidate_route="memory.forget",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "memory_action",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-intelligence-builder",
+                    "action_family": "memory.forget",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_route_evidence")
+        self.assertIn("memory_action_verdict_missing", gate["missing_evidence"])
+
+    def test_route_confidence_gate_refuses_blocked_memory_action_verdict(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="memory_action",
+            candidate_route="memory.forget",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "memory_action",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-intelligence-builder",
+                    "action_family": "memory.forget",
+                },
+                "memory_action_verdict": {
+                    "schema_version": "spark.memory_action_verdict.v1",
+                    "verdict": "blocked",
+                    "owner_system": "spark-intelligence-builder",
+                    "action_family": "memory_forget",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "reversibility": "reversible",
+            },
+        )
+
+        self.assertEqual(gate["decision"], "refuse")
+        self.assertEqual(gate["safe_reply_policy"], "refuse_authority_blocked")
+        self.assertIn("memory_action_blocked", gate["missing_evidence"])
+
+    def test_route_confidence_gate_requires_publish_target_and_confirmation(self) -> None:
+        missing_target = build_route_confidence_gate(
+            intent="publish",
+            candidate_route="spark.publish",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "external",
+                "permission_required": "external_publish",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.publish",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "missing",
+                "reversibility": "rollback_available",
+            },
+        )
+        self.assertEqual(missing_target["decision"], "ask")
+        self.assertEqual(missing_target["safe_reply_policy"], "ask_for_route_evidence")
+        self.assertIn("publication_target_missing", missing_target["missing_evidence"])
+
+        needs_confirmation = build_route_confidence_gate(
+            intent="publish",
+            candidate_route="spark.publish",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "external",
+                "permission_required": "external_publish",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-cli",
+                    "action_family": "spark.publish",
+                },
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "missing",
+                "reversibility": "rollback_available",
+                "publication_target": "agent.sparkswarm.ai",
+            },
+        )
+        self.assertEqual(needs_confirmation["decision"], "ask")
+        self.assertEqual(needs_confirmation["safe_reply_policy"], "ask_for_confirmation")

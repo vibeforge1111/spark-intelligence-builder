@@ -9,6 +9,21 @@ from spark_intelligence.self_awareness.route_confidence_doctrine import (
 
 
 ROUTE_CONFIDENCE_GATE_SCHEMA_VERSION = "spark.route_confidence_gate.v1"
+REPAIR_ACTION_ROUTES = frozenset({"spawner.repair", "spark.repair"})
+MEMORY_ACTION_ROUTES = frozenset(
+    {
+        "memory.write",
+        "memory.correct",
+        "memory.forget",
+        "memory.decay",
+        "memory.promote",
+        "memory.deepen",
+    }
+)
+PUBLISH_ACTION_ROUTES = frozenset({"spark.publish", "swarm.publish", "artifact.publish", "release.publish"})
+CONFIRMATION_REQUIRED_RISKS = frozenset(
+    {"high", "destructive", "external", "credential", "secret", "publication", "filesystem_delete", "broad_mutation"}
+)
 FORBIDDEN_DATA_FLAGS = (
     "raw_prompt_exported",
     "provider_output_exported",
@@ -126,8 +141,9 @@ def _is_action_route(route: str) -> bool:
         "spawner.contextual_mission",
         "spawner.prd_bridge",
         "spawner.project_iteration",
-        "spawner.repair",
-        "spark.repair",
+        *REPAIR_ACTION_ROUTES,
+        *MEMORY_ACTION_ROUTES,
+        *PUBLISH_ACTION_ROUTES,
     }
 
 
@@ -151,10 +167,19 @@ def _build_action_route_gate(
     confirmation_state = _safe_label(route_context.get("confirmation_state")) or "unknown"
     latest_instruction = _safe_label(route_context.get("latest_instruction")) or "unknown"
     reversibility = _safe_label(route_context.get("reversibility")) or "unknown"
+    repair_target = _safe_label(route_context.get("repair_target")) or "unknown"
+    repair_scope = _safe_label(route_context.get("repair_scope")) or "unknown"
+    health_evidence = _safe_label(route_context.get("health_evidence") or route_context.get("fresh_health_status")) or "unknown"
+    publication_target = _safe_label(route_context.get("publication_target")) or "unknown"
+    memory_action_verdict, memory_action_valid, memory_action_missing = _memory_action_verdict_status(
+        route_context.get("memory_action_verdict"),
+        candidate_route=candidate_route,
+    )
     source_status = _safe_label(route_context.get("source_status")) or "present"
     freshness = _safe_label(route_context.get("freshness")) or "current_turn"
     missing_evidence = [str(item) for item in _list(route_context.get("missing_evidence")) if str(item or "").strip()]
     missing_evidence.extend(authority_missing)
+    missing_evidence.extend(memory_action_missing)
 
     required_context_missing = []
     if latest_instruction == "unknown":
@@ -163,12 +188,27 @@ def _build_action_route_gate(
         required_context_missing.append("intent_clarity_missing")
     if route_fit == "unknown":
         required_context_missing.append("route_fit_missing")
+    if consequence_risk == "unknown":
+        required_context_missing.append("consequence_risk_missing")
+    if confirmation_state == "unknown":
+        required_context_missing.append("confirmation_state_missing")
     if capability_state == "unknown":
         required_context_missing.append("runner_capability_state_missing")
     if runner_state == "unknown":
         required_context_missing.append("runner_state_missing")
     if not authority_valid:
         required_context_missing.append("structured_authority_verdict_missing")
+    required_context_missing.extend(
+        _route_family_missing_context(
+            candidate_route=candidate_route,
+            repair_target=repair_target,
+            repair_scope=repair_scope,
+            health_evidence=health_evidence,
+            publication_target=publication_target,
+            consequence_risk=consequence_risk,
+            memory_action_valid=memory_action_valid,
+        )
+    )
 
     if privacy_violations:
         decision = "refuse"
@@ -184,6 +224,11 @@ def _build_action_route_gate(
         confidence = "blocked"
         safe_reply_policy = "refuse_authority_blocked"
         missing_evidence.append("authority_blocked")
+    elif memory_action_verdict in {"blocked", "denied"}:
+        decision = "refuse"
+        confidence = "blocked"
+        safe_reply_policy = "refuse_authority_blocked"
+        missing_evidence.append("memory_action_blocked")
     elif required_context_missing:
         decision = "ask"
         confidence = "blocked"
@@ -197,7 +242,17 @@ def _build_action_route_gate(
             missing_evidence.append("runner_capability_unavailable")
         if runner_state in {"unavailable", "missing"}:
             missing_evidence.append("runner_state_unavailable")
-    elif consequence_risk in {"high", "destructive", "external"} and confirmation_state != "confirmed":
+    elif authority_verdict == "confirm_required" and confirmation_state != "confirmed":
+        decision = "ask"
+        confidence = "medium"
+        safe_reply_policy = "ask_for_confirmation"
+        missing_evidence.append("authority_confirmation_required")
+    elif memory_action_verdict == "confirm_required" and confirmation_state != "confirmed":
+        decision = "ask"
+        confidence = "medium"
+        safe_reply_policy = "ask_for_confirmation"
+        missing_evidence.append("memory_action_confirmation_required")
+    elif consequence_risk in CONFIRMATION_REQUIRED_RISKS and confirmation_state != "confirmed":
         decision = "ask"
         confidence = "medium"
         safe_reply_policy = "ask_for_confirmation"
@@ -244,6 +299,11 @@ def _build_action_route_gate(
         "confirmation_state": confirmation_state,
         "latest_instruction": latest_instruction,
         "reversibility": reversibility,
+        "repair_target": repair_target if candidate_route in REPAIR_ACTION_ROUTES else None,
+        "repair_scope": repair_scope if candidate_route in REPAIR_ACTION_ROUTES else None,
+        "health_evidence": health_evidence if candidate_route in REPAIR_ACTION_ROUTES else None,
+        "publication_target": publication_target if candidate_route in PUBLISH_ACTION_ROUTES else None,
+        "memory_action_verdict": memory_action_verdict if candidate_route in MEMORY_ACTION_ROUTES else None,
         "safe_reply_policy": safe_reply_policy,
         "human_next_action": _action_human_next_action(safe_reply_policy, _dedupe(missing_evidence)),
         "verification_command": _safe_label(route_context.get("verification_command")) or "spark os trace --json",
@@ -268,6 +328,34 @@ def _build_action_route_gate(
             "hard_precedence_rules": build_route_confidence_doctrine()["hard_precedence_rules"],
         },
     }
+
+
+def _route_family_missing_context(
+    *,
+    candidate_route: str,
+    repair_target: str,
+    repair_scope: str,
+    health_evidence: str,
+    publication_target: str,
+    consequence_risk: str,
+    memory_action_valid: bool,
+) -> list[str]:
+    missing: list[str] = []
+    if candidate_route in REPAIR_ACTION_ROUTES:
+        if repair_target == "unknown":
+            missing.append("repair_target_missing")
+        if repair_scope == "unknown":
+            missing.append("repair_scope_missing")
+        if health_evidence == "unknown":
+            missing.append("repair_health_evidence_missing")
+    if candidate_route in PUBLISH_ACTION_ROUTES:
+        if publication_target == "unknown":
+            missing.append("publication_target_missing")
+        if consequence_risk not in CONFIRMATION_REQUIRED_RISKS:
+            missing.append("publication_risk_classification_missing")
+    if candidate_route in MEMORY_ACTION_ROUTES and not memory_action_valid:
+        missing.append("memory_action_verdict_missing")
+    return missing
 
 
 def _action_human_next_action(policy: str, missing_evidence: list[str]) -> str:
@@ -346,6 +434,26 @@ def _authority_verdict_status(value: Any, *, permission_required: str) -> tuple[
     if status == "not_required" and permission_required == "none":
         return status, True, []
     return status, False, ["structured_authority_verdict_missing"]
+
+
+def _memory_action_verdict_status(value: Any, *, candidate_route: str) -> tuple[str, bool, list[str]]:
+    if candidate_route not in MEMORY_ACTION_ROUTES:
+        return "not_applicable", True, []
+    if not isinstance(value, dict):
+        return "missing", False, ["structured_memory_action_verdict_missing"]
+    schema = _safe_label(value.get("schema_version"))
+    verdict = _safe_label(value.get("verdict") or value.get("decision") or value.get("status")) or "missing"
+    owner = _safe_label(value.get("owner_system") or value.get("source_owner") or value.get("source_owner_system"))
+    action_family = _safe_label(value.get("action_family") or value.get("action") or value.get("route"))
+    valid = (
+        schema == "spark.memory_action_verdict.v1"
+        and verdict in {"allowed", "not_required", "blocked", "denied", "confirm_required"}
+        and bool(owner)
+        and bool(action_family)
+    )
+    if valid:
+        return verdict, True, []
+    return verdict, False, ["invalid_memory_action_verdict_v1"]
 
 
 def _forbidden_payload_keys(value: Any, *, prefix: str = "") -> list[str]:

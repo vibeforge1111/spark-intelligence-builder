@@ -85,6 +85,36 @@ Memory and LLM wiki can explain policy, but they cannot answer "latest" question
 | Runtime source drift is detected | `explain` or `ask`; require `/diagnose` or source freshness proof |
 | Evidence is from fixture/test roots | block live answer unless explicitly in test mode |
 | Evidence contains forbidden payload keys | `refuse` and emit privacy blocker metadata |
+| Repair action lacks repair target, repair scope, or fresh health evidence | `ask` with route evidence blockers |
+| Local supervised repair has authority, runner capability, and fresh degraded health evidence | `act` |
+| Credential, secret, destructive, external, publication, or broad-mutation repair lacks confirmation | `ask` |
+| Memory action lacks source-owned `MemoryActionVerdictV1` | `ask` |
+| Memory action verdict is blocked or denied | `refuse` |
+| Publishing action lacks publication target or external-risk classification | `ask` |
+| Publishing action lacks confirmation | `ask` |
+
+## Action Route Adoption
+
+Action routes are stricter than status routes. Builder accepts metadata-only route context from adapters, but the adapter does not own the verdict.
+
+Required action evidence:
+
+- latest instruction
+- intent clarity
+- route fit
+- consequence risk
+- confirmation state
+- structured `spark.authority_verdict.v1` or explicit `not_required`
+- runner/capability state
+- clean privacy boundary
+
+Additional route-family evidence:
+
+- repair: repair target, repair scope, and fresh health evidence
+- memory action: source-owned `spark.memory_action_verdict.v1`
+- publishing: publication target and publication/external risk classification
+
+This keeps `spawner.build`, `spark.repair`, memory correction/forget/decay/promote/deepen, and publishing routes on the same Builder-owned `act | ask | explain | refuse` spine without making Telegram, CLI, or Cockpit a second authority engine.
 
 ## LLM Wiki Boundary
 
@@ -113,4 +143,3 @@ Do not promote this note to verified until the first route gate implementation a
 5. Add tests for stale memory, config-vs-executed provider, missing provider metadata, route hijack, and privacy keys.
 
 Do not add a new database or background worker for v1.
-
