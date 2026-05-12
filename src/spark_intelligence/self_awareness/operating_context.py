@@ -929,15 +929,29 @@ def _build_live_state(live_state: dict[str, Any] | None) -> dict[str, Any]:
             "source": "not_supplied",
             "claim_boundary": "No live Spark state was supplied to AOC for this turn.",
         }
-    normalized = dict(live_state)
-    normalized["present"] = True
-    normalized.setdefault("source", "operator_supplied_live_state")
-    normalized.setdefault("freshness", "live_probed")
-    normalized.setdefault(
-        "claim_boundary",
-        "Live Spark state is current runtime evidence for this turn; it can go stale after process restarts.",
-    )
+    normalized: dict[str, Any] = {
+        "present": True,
+        "source": _safe_live_state_text(live_state.get("source"), fallback="operator_supplied_live_state"),
+        "freshness": _safe_live_state_text(live_state.get("freshness"), fallback="live_probed"),
+        "claim_boundary": (
+            "Live Spark state is current runtime evidence for this turn; it can go stale after process restarts."
+        ),
+    }
+    for key in ("status", "top_level_state", "source_ref", "checked_at", "generated_at"):
+        value = _safe_live_state_text(live_state.get(key))
+        if value:
+            normalized[key] = value
+    for key in ("spawner_ok", "telegram_ok", "providers_ok", "memory_ok", "builder_ok", "voice_ok"):
+        if key in live_state:
+            normalized[key] = _optional_bool(live_state.get(key))
     return normalized
+
+
+def _safe_live_state_text(value: object, *, fallback: str = "") -> str:
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return fallback
+    text = _compact_probe_summary(value, limit=120)
+    return text or fallback
 
 
 def _build_source_ledger(

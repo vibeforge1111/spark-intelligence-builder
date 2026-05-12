@@ -134,3 +134,33 @@ class AgentOperatingPanelCliTests(SparkTestCase):
         source_items = {item["source"]: item for item in payload["source_ledger"]["items"]}
         self.assertTrue(source_items["live_spark_state"]["present"])
         self.assertEqual(source_items["live_spark_state"]["freshness"], "live_probed")
+
+    def test_self_panel_live_state_json_is_metadata_allowlisted(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--runner-writable",
+            "yes",
+            "--live-state-json",
+            json.dumps(
+                {
+                    "status": "healthy",
+                    "spawner_ok": True,
+                    "token": "secret-token",
+                    "raw_prompt": "please do not export me",
+                    "chat_id": "12345",
+                    "nested": {"provider_output": "raw"},
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload_text = json.dumps(json.loads(stdout))
+        self.assertIn("spawner_ok", payload_text)
+        self.assertNotIn("secret-token", payload_text)
+        self.assertNotIn("please do not export me", payload_text)
+        self.assertNotIn("12345", payload_text)
+        self.assertNotIn("provider_output", payload_text)
