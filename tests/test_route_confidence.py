@@ -2,12 +2,35 @@ from __future__ import annotations
 
 from spark_intelligence.self_awareness import build_agent_operating_context
 from spark_intelligence.self_awareness.route_confidence import build_route_confidence
+from spark_intelligence.self_awareness.route_confidence_doctrine import build_route_confidence_doctrine
 from spark_intelligence.self_awareness.route_confidence_gate import build_route_confidence_gate
 
 from tests.test_support import SparkTestCase
 
 
 class RouteConfidenceTests(SparkTestCase):
+    def test_route_confidence_doctrine_defines_agency_not_llm_confidence(self) -> None:
+        doctrine = build_route_confidence_doctrine()
+
+        self.assertEqual(doctrine["schema_version"], "spark.route_confidence_doctrine.v1")
+        self.assertEqual(doctrine["owner_system"], "spark-intelligence-builder")
+        self.assertIn("justified", doctrine["definition"])
+        self.assertIn("not LLM answer confidence", doctrine["not_definition"])
+        self.assertEqual(doctrine["decision_values"], ["act", "ask", "explain", "refuse"])
+        self.assertIn("explicit_no_execution_wins_over_action_keywords", doctrine["hard_precedence_rules"])
+        self.assertIn("bare_go_only_applies_to_active_pending_action", doctrine["hard_precedence_rules"])
+        self.assertIn("live_health", doctrine["deterministic_surfaces"])
+        self.assertIn("brainstorming", doctrine["contextual_surfaces"])
+
+    def test_route_confidence_doctrine_keeps_regression_prompts(self) -> None:
+        cases = {item["id"]: item for item in build_route_confidence_doctrine()["regression_cases"]}
+
+        self.assertEqual(cases["latest_constraint_wins"]["expected_decision"], "explain")
+        self.assertEqual(cases["action_keywords_with_prohibition"]["expected_decision"], "explain")
+        self.assertEqual(cases["bare_go_requires_active_pending_action"]["expected_decision"], "act_only_if_pending_action_exists")
+        self.assertEqual(cases["global_agent_change_is_proposal"]["expected_decision"], "explain_or_ask")
+        self.assertEqual(cases["bounded_no_edit_mission"]["expected_decision"], "act_if_spawner_permission_and_capability_pass")
+
     def test_spawner_route_confidence_uses_runner_and_route_health(self) -> None:
         report = build_route_confidence(
             task_fit={
@@ -103,6 +126,8 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertEqual(gate["model"], "gpt-test")
         self.assertEqual(gate["safe_reply_policy"], "answer_live")
         self.assertFalse(gate["authority_required"])
+        self.assertEqual(gate["doctrine"]["schema_version"], "spark.route_confidence_doctrine.v1")
+        self.assertIn("act", gate["doctrine"]["decision_values"])
 
     def test_route_confidence_gate_refuses_to_invent_missing_provider(self) -> None:
         gate = build_route_confidence_gate(

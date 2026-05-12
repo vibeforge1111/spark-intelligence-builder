@@ -180,6 +180,7 @@ from spark_intelligence.self_awareness.event_producers import (
     record_source_used_agent_event,
 )
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
+from spark_intelligence.self_awareness.route_confidence_doctrine import build_route_confidence_doctrine
 from spark_intelligence.self_awareness.route_confidence_gate import build_route_confidence_gate
 from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
 from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
@@ -1434,6 +1435,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional LatestSpawnerJobEvidenceV1 JSON object; defaults to compiled Spark OS evidence",
     )
     self_route_confidence_gate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_confidence_doctrine_parser = self_subparsers.add_parser(
+        "route-confidence-doctrine",
+        help="Show Builder-owned RouteConfidenceGateV1 doctrine and regression cases",
+    )
+    self_route_confidence_doctrine_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_black_box_parser = self_subparsers.add_parser(
         "black-box",
         help="Show agent black-box event trace for a request",
@@ -4635,6 +4641,20 @@ def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
     if missing:
         print(f"- missing: {', '.join(str(item) for item in missing[:5])}")
     print(f"- next: {gate.get('human_next_action')}")
+    return 0
+
+
+def handle_self_route_confidence_doctrine(args: argparse.Namespace) -> int:
+    doctrine = build_route_confidence_doctrine()
+    if args.json:
+        print(json.dumps(doctrine, indent=2))
+        return 0
+    print("Route Confidence doctrine")
+    print(f"- definition: {doctrine['definition']}")
+    print("- decisions: " + ", ".join(str(item) for item in doctrine["decision_values"]))
+    print("- factors: " + ", ".join(str(item) for item in doctrine["decision_factors"]))
+    print("- owner: spark-intelligence-builder")
+    print("- surface rule: adapters request or render Builder verdicts; they do not own route confidence")
     return 0
 
 
@@ -8920,6 +8940,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_panel(args)
     if args.command == "self" and args.self_command == "route-confidence-gate":
         return handle_self_route_confidence_gate(args)
+    if args.command == "self" and args.self_command == "route-confidence-doctrine":
+        return handle_self_route_confidence_doctrine(args)
     if args.command == "self" and args.self_command == "black-box":
         return handle_self_black_box(args)
     if args.command == "self" and args.self_command == "source-used":

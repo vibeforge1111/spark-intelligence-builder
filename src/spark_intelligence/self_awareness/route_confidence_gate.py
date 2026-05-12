@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from spark_intelligence.self_awareness.route_confidence_doctrine import (
+    ROUTE_CONFIDENCE_DOCTRINE_SCHEMA_VERSION,
+    build_route_confidence_doctrine,
+)
+
 
 ROUTE_CONFIDENCE_GATE_SCHEMA_VERSION = "spark.route_confidence_gate.v1"
 FORBIDDEN_DATA_FLAGS = (
@@ -100,6 +105,12 @@ def build_route_confidence_gate(
             "RouteConfidenceGateV1 answers latest route/status questions from source-owned compiled evidence. "
             "Memory and LLM wiki are supporting only and cannot answer current runtime facts."
         ),
+        "doctrine": {
+            "schema_version": ROUTE_CONFIDENCE_DOCTRINE_SCHEMA_VERSION,
+            "definition": "Route Confidence means whether Spark is justified in taking this route right now.",
+            "decision_values": ["act", "ask", "explain", "refuse"],
+            "hard_precedence_rules": build_route_confidence_doctrine()["hard_precedence_rules"],
+        },
     }
 
 
