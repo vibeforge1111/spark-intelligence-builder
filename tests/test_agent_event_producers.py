@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
@@ -110,6 +112,50 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
         self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
         self.assertEqual(entry["changed"], ["source_ledger_updated"])
+
+    def test_memory_preflight_source_used_event_feeds_memory_lane_without_payload(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="memory_preflight",
+            role="memory_boundary",
+            freshness="live_probed",
+            source_ref="telegram:preflight",
+            summary="Memory preflight completed.",
+            user_intent="run",
+            selected_route="writable_spawner_codex_mission",
+            confidence="high",
+            request_id="req-memory-preflight",
+            trace_ref="trace:req-memory-preflight",
+            actor_id="operator:test",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    request_id,
+                    trace_ref,
+                    artifact_lane,
+                    keepability,
+                    promotion_disposition,
+                    status,
+                    evidence_json
+                FROM memory_lane_records
+                WHERE request_id = ?
+                """,
+                ("req-memory-preflight",),
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["trace_ref"], "trace:req-memory-preflight")
+        self.assertEqual(row["artifact_lane"], "working_scratchpad")
+        self.assertEqual(row["keepability"], "ephemeral_context")
+        self.assertEqual(row["promotion_disposition"], "not_promotable")
+        self.assertEqual(row["status"], "blocked")
+        evidence = json.loads(row["evidence_json"])
+        self.assertFalse(evidence["trace_contract"]["has_message_text"])
+        self.assertIsNone(evidence["trace_contract"]["message_text"])
+        self.assertNotIn("memory_body", row["evidence_json"])
 
     def test_stale_context_sweep_emits_contradiction_found_agent_event(self) -> None:
         report = build_stale_context_sweep(

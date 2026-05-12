@@ -29,6 +29,20 @@ def record_source_used_agent_event(
     normalized_role = str(role or "").strip() or "supporting_evidence"
     normalized_freshness = _normalize_source_freshness(freshness)
     normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
+    facts: dict[str, Any] = {
+        "source": normalized_source,
+        "role": normalized_role,
+        "freshness": normalized_freshness,
+        "source_ref": str(source_ref or "").strip() or None,
+    }
+    if normalized_source == "memory_preflight" or normalized_role == "memory_boundary":
+        facts.update(
+            {
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+                "memory_role": "preflight_boundary",
+            }
+        )
     return record_agent_event(
         state_db,
         AgentEvent(
@@ -37,12 +51,7 @@ def record_source_used_agent_event(
             user_intent=str(user_intent or "").strip() or None,
             selected_route=str(selected_route or "").strip() or None,
             route_confidence=str(confidence or "").strip() or None,
-            facts={
-                "source": normalized_source,
-                "role": normalized_role,
-                "freshness": normalized_freshness,
-                "source_ref": str(source_ref or "").strip() or None,
-            },
+            facts=facts,
             sources=[
                 AgentSourceRef(
                     source=normalized_source,

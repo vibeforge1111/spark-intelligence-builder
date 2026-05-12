@@ -54,6 +54,54 @@ class AgentEventProducerCliTests(SparkTestCase):
         self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
         self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
 
+    def test_memory_preflight_cli_feeds_memory_lane_trace(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "source-used",
+            "memory_preflight",
+            "--home",
+            str(self.home),
+            "--role",
+            "memory_boundary",
+            "--freshness",
+            "live_probed",
+            "--source-ref",
+            "telegram:preflight",
+            "--summary",
+            "Memory preflight completed.",
+            "--user-intent",
+            "run",
+            "--selected-route",
+            "writable_spawner_codex_mission",
+            "--confidence",
+            "high",
+            "--request-id",
+            "req-cli-memory-preflight",
+            "--trace-ref",
+            "trace:req-cli-memory-preflight",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        source_payload = json.loads(stdout)
+        self.assertEqual(source_payload["event_type"], "source_used")
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT trace_ref, artifact_lane, promotion_disposition, status
+                FROM memory_lane_records
+                WHERE request_id = ?
+                """,
+                ("req-cli-memory-preflight",),
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["trace_ref"], "trace:req-cli-memory-preflight")
+        self.assertEqual(row["artifact_lane"], "working_scratchpad")
+        self.assertEqual(row["promotion_disposition"], "not_promotable")
+        self.assertEqual(row["status"], "blocked")
+
     def test_route_probe_cli_feeds_aoc_black_box(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
