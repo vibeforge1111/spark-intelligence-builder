@@ -1363,9 +1363,17 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             if event.get("reason_code") == "attachment_context_applied"
         ]
         self.assertTrue(chip_events)
+        active_hook_events = [
+            event
+            for event in events
+            if event.get("reason_code") == "active_chip_evaluate"
+        ]
+        self.assertTrue(active_hook_events)
         facts = chip_events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
         self.assertEqual(facts["active_chip_key"], "startup-yc")
+        self.assertEqual(chip_events[0]["trace_ref"], "trace:agent:test:human:test:req-provenance")
+        self.assertEqual(active_hook_events[0]["trace_ref"], "trace:agent:test:human:test:req-provenance")
         self.assertEqual(chip_events[0]["provenance_json"]["source_kind"], "chip_hook")
 
     def test_environment_parity_accepts_windows_and_wsl_paths_for_same_runtime(self) -> None:

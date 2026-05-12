@@ -6183,6 +6183,7 @@ def _run_active_chip_evaluate(
     attachment_context: dict[str, object],
     run_id: str | None = None,
 ) -> dict[str, Any] | None:
+    trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     payload = {
         "situation": user_message,
         "conversation_history": conversation_history,
@@ -6246,6 +6247,7 @@ def _run_active_chip_evaluate(
             keepability="ephemeral_context",
             run_id=run_id,
             request_id=request_id,
+            trace_ref=trace_ref,
             channel_id=channel_kind,
             session_id=session_id,
             human_id=human_id,
@@ -6267,7 +6269,7 @@ def _run_active_chip_evaluate(
             blocked_stage="pre_model",
             run_id=run_id,
             request_id=request_id,
-            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            trace_ref=trace_ref,
         )
         if not screened["allowed"]:
             quarantined_keys.append(record.key)
@@ -13311,6 +13313,7 @@ def build_researcher_reply(
             summary="Attachment or chip influence was recorded before bridge execution.",
             run_id=run_id,
             request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
             channel_id=channel_kind,
             session_id=session_id,
             human_id=human_id,

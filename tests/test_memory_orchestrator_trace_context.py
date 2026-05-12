@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from spark_intelligence.memory.orchestrator import (
     MemoryReadResult,
+    MemoryWriteResult,
     _memory_trace_ref,
     _record_memory_read_event,
     _record_memory_read_requested_subject,
+    _record_memory_write_event,
     _record_memory_write_requested_observations,
 )
 from spark_intelligence.observability.store import latest_events_by_type
@@ -79,5 +81,31 @@ class MemoryOrchestratorTraceContextTests(SparkTestCase):
         )
 
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=1)
+
+        self.assertEqual(events[0]["trace_ref"], "trace:memory-write:context_capsule:write")
+
+    def test_memory_write_succeeded_events_emit_trace_ref_from_turn_context(self) -> None:
+        _record_memory_write_event(
+            state_db=self.state_db,
+            result=MemoryWriteResult(
+                status="ok",
+                operation="upsert",
+                method="write_observation",
+                memory_role="current_state",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+            human_id="human:test",
+            session_id="memory-write:context_capsule",
+            turn_id="context_capsule:write",
+            actor_id="context_capsule",
+        )
+
+        events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=1)
 
         self.assertEqual(events[0]["trace_ref"], "trace:memory-write:context_capsule:write")
