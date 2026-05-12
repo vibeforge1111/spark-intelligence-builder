@@ -32,7 +32,7 @@ from spark_intelligence.memory_contracts import (
     memory_contract_reason,
     normalize_memory_role,
 )
-from spark_intelligence.observability.store import record_event, record_policy_gate_block
+from spark_intelligence.observability.store import payload_hash, record_event, record_policy_gate_block
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
@@ -8177,11 +8177,23 @@ def _record_memory_smoke_event(
         and bool(result.read_result.records)
         and (result.cleanup_result is None or result.cleanup_result.accepted_count > 0)
     )
+    trace_key = payload_hash(
+        {
+            "actor_id": actor_id,
+            "sdk_module": result.sdk_module,
+            "subject": result.subject,
+            "predicate": result.predicate,
+            "shadow_only_eval": result.shadow_only_eval,
+        }
+    )[:12]
+    request_id = f"memory_smoke:{trace_key}"
     record_event(
         state_db,
         event_type="memory_smoke_succeeded" if succeeded else "memory_smoke_failed",
         component="memory_orchestrator",
         summary="Spark direct memory smoke completed." if succeeded else "Spark direct memory smoke failed.",
+        request_id=request_id,
+        trace_ref=f"trace:{request_id}",
         actor_id=actor_id,
         status="recorded" if succeeded else "abstained",
         severity="medium" if succeeded else "high",

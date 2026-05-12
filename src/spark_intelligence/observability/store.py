@@ -697,6 +697,7 @@ def record_environment_snapshot(
     facts: dict[str, Any] | None = None,
     run_id: str | None = None,
     request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> EnvironmentSnapshotRecord:
     snapshot_id = _prefixed_id("env")
     merged_facts = {
@@ -710,6 +711,9 @@ def record_environment_snapshot(
         **(facts or {}),
     }
     config_hash = payload_hash(merged_facts)
+    normalized_surface = _trace_token(surface or "environment")
+    normalized_request_id = str(request_id or "").strip() or f"{normalized_surface}:environment_snapshot:{config_hash[:12]}"
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -736,7 +740,7 @@ def record_environment_snapshot(
                 snapshot_id,
                 surface,
                 run_id,
-                request_id,
+                normalized_request_id,
                 summary,
                 provider_id,
                 provider_model,
@@ -757,7 +761,8 @@ def record_environment_snapshot(
         component=surface,
         summary=summary,
         run_id=run_id,
-        request_id=request_id,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         reason_code="environment_snapshot",
         facts={"snapshot_id": snapshot_id, "config_hash": config_hash, **merged_facts},
         provenance={"env_refs": env_refs or {}},
@@ -1500,6 +1505,11 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
 def payload_hash(payload: Any) -> str:
     normalized = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _trace_token(value: Any) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "-", str(value or "").strip()).strip("-")
+    return token[:96] or "unknown"
 
 
 def build_text_mutation_facts(

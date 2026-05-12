@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from spark_intelligence.attachments.registry import AttachmentRecord, attachment_status
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import payload_hash, record_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -187,11 +187,22 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
         )
         conn.commit()
     if snapshot.active_chip_keys or snapshot.active_path_key:
+        trace_key = payload_hash(
+            {
+                "workspace_id": snapshot.workspace_id,
+                "active_chip_keys": snapshot.active_chip_keys,
+                "active_path_key": snapshot.active_path_key,
+                "snapshot_path": snapshot.snapshot_path,
+            }
+        )[:12]
+        request_id = f"attachment_snapshot:{trace_key}"
         record_event(
             state_db,
             event_type="plugin_or_chip_influence_recorded",
             component="attachment_snapshot",
             summary="Active chip and specialization-path attachment state was snapshotted with provenance.",
+            request_id=request_id,
+            trace_ref=f"trace:{request_id}",
             actor_id="attachment_snapshot",
             reason_code="attachment_snapshot_synced",
             facts={

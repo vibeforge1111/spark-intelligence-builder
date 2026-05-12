@@ -14,7 +14,7 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_deletions,
     parse_entity_state_deletion,
 )
-from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, record_event
+from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, payload_hash, record_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -2297,6 +2297,17 @@ def _record_brain_snapshot(
         if isinstance(creator_alignment.get("validation_issues"), list)
         else []
     )
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        diagnostic_hash = payload_hash(
+            {
+                "human_id_present": bool(str(human_id or "").strip()),
+                "topic_present": bool(str(topic or "").strip()),
+                "coverage_score": summary.get("coverage_score", coverage.get("score")),
+                "gap_names": [str(gap.get("name") or "") for gap in gaps],
+            }
+        )[:12]
+        normalized_request_id = f"memory_doctor:brain:{diagnostic_hash}"
     try:
         record_event(
             state_db,
@@ -2307,6 +2318,8 @@ def _record_brain_snapshot(
                 f"score={summary.get('coverage_score', coverage.get('score', 'unknown'))} "
                 f"gaps={summary.get('gap_count', len(gaps))}"
             ),
+            request_id=normalized_request_id,
+            trace_ref=f"trace:{normalized_request_id}",
             human_id=human_id,
             actor_id="memory_doctor",
             evidence_lane="observability",
