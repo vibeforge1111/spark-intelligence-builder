@@ -180,7 +180,12 @@ class RouteConfidenceTests(SparkTestCase):
                 "route_fit": "exact",
                 "consequence_risk": "medium",
                 "permission_required": "spawner_build",
-                "authority_verdict": "allowed",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-telegram-bot",
+                    "action_family": "spawner.build",
+                },
                 "capability_state": "available",
                 "runner_state": "available",
                 "confirmation_state": "not_required",
@@ -205,7 +210,6 @@ class RouteConfidenceTests(SparkTestCase):
                 "explicit_no_execution": True,
                 "intent_clarity": "explicit",
                 "route_fit": "exact",
-                "authority_verdict": "allowed",
                 "capability_state": "available",
                 "runner_state": "available",
             },
@@ -225,7 +229,12 @@ class RouteConfidenceTests(SparkTestCase):
                 "route_fit": "exact",
                 "consequence_risk": "external",
                 "confirmation_state": "missing",
-                "authority_verdict": "allowed",
+                "authority_verdict": {
+                    "schema_version": "spark.authority_verdict.v1",
+                    "decision": "allowed",
+                    "source_owner": "spark-telegram-bot",
+                    "action_family": "spawner.build",
+                },
                 "capability_state": "available",
                 "runner_state": "available",
             },
@@ -234,3 +243,61 @@ class RouteConfidenceTests(SparkTestCase):
         self.assertEqual(gate["decision"], "ask")
         self.assertEqual(gate["safe_reply_policy"], "ask_for_confirmation")
         self.assertIn("confirmation_required", gate["missing_evidence"])
+
+    def test_route_confidence_gate_fails_closed_without_action_context(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={},
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["confidence"], "blocked")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_route_evidence")
+        self.assertIn("structured_authority_verdict_missing", gate["missing_evidence"])
+        self.assertIn("runner_capability_state_missing", gate["missing_evidence"])
+
+    def test_route_confidence_gate_requires_structured_authority_for_actions(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "spawner_build",
+                "authority_verdict": "allowed",
+                "capability_state": "available",
+                "runner_state": "available",
+                "confirmation_state": "not_required",
+                "data_boundary": {"exports_raw_prompt": False},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "ask")
+        self.assertEqual(gate["safe_reply_policy"], "ask_for_route_evidence")
+        self.assertIn("structured_authority_verdict_missing", gate["missing_evidence"])
+
+    def test_route_confidence_gate_blocks_truthy_string_privacy_flags_and_raw_keys(self) -> None:
+        gate = build_route_confidence_gate(
+            intent="build_dispatch",
+            candidate_route="spawner.build",
+            route_context={
+                "latest_instruction": "allow_execution",
+                "intent_clarity": "explicit",
+                "route_fit": "exact",
+                "consequence_risk": "medium",
+                "permission_required": "none",
+                "authority_verdict": "not_required",
+                "capability_state": "available",
+                "runner_state": "available",
+                "raw_prompt": "do not export this",
+                "data_boundary": {"exports_secret": "true"},
+            },
+        )
+
+        self.assertEqual(gate["decision"], "refuse")
+        self.assertEqual(gate["safe_reply_policy"], "refuse_privacy_violation")
+        self.assertIn("privacy_violation:env_or_secret_exported", gate["missing_evidence"])
+        self.assertTrue(any("forbidden_payload_key:raw_prompt" in item for item in gate["missing_evidence"]))

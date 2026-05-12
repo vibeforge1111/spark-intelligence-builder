@@ -139,7 +139,10 @@ def _build_action_route_gate(
 ) -> dict[str, Any]:
     privacy_violations = _privacy_violations(route_context)
     permission_required = _safe_label(route_context.get("permission_required")) or "none"
-    authority_verdict = _safe_label(route_context.get("authority_verdict")) or "missing"
+    authority_verdict, authority_valid, authority_missing = _authority_verdict_status(
+        route_context.get("authority_verdict"),
+        permission_required=permission_required,
+    )
     capability_state = _safe_label(route_context.get("capability_state")) or "unknown"
     runner_state = _safe_label(route_context.get("runner_state")) or "unknown"
     intent_clarity = _safe_label(route_context.get("intent_clarity")) or "unknown"
@@ -151,6 +154,21 @@ def _build_action_route_gate(
     source_status = _safe_label(route_context.get("source_status")) or "present"
     freshness = _safe_label(route_context.get("freshness")) or "current_turn"
     missing_evidence = [str(item) for item in _list(route_context.get("missing_evidence")) if str(item or "").strip()]
+    missing_evidence.extend(authority_missing)
+
+    required_context_missing = []
+    if latest_instruction == "unknown":
+        required_context_missing.append("latest_instruction_missing")
+    if intent_clarity == "unknown":
+        required_context_missing.append("intent_clarity_missing")
+    if route_fit == "unknown":
+        required_context_missing.append("route_fit_missing")
+    if capability_state == "unknown":
+        required_context_missing.append("runner_capability_state_missing")
+    if runner_state == "unknown":
+        required_context_missing.append("runner_state_missing")
+    if not authority_valid:
+        required_context_missing.append("structured_authority_verdict_missing")
 
     if privacy_violations:
         decision = "refuse"
@@ -166,6 +184,11 @@ def _build_action_route_gate(
         confidence = "blocked"
         safe_reply_policy = "refuse_authority_blocked"
         missing_evidence.append("authority_blocked")
+    elif required_context_missing:
+        decision = "ask"
+        confidence = "blocked"
+        safe_reply_policy = "ask_for_route_evidence"
+        missing_evidence.extend(required_context_missing)
     elif capability_state in {"unavailable", "missing"} or runner_state in {"unavailable", "missing"}:
         decision = "ask"
         confidence = "blocked"
@@ -260,6 +283,8 @@ def _action_human_next_action(policy: str, missing_evidence: list[str]) -> str:
         return "Ask one confirmation question before taking the side-effecting action."
     if policy == "ask_for_scope":
         return "Ask one clarifying question before dispatch."
+    if policy == "ask_for_route_evidence":
+        return "Ask for or refresh source-owned route evidence before dispatch."
     if missing_evidence:
         return "Inspect missing route evidence before acting: " + ", ".join(_dedupe(missing_evidence)[:4])
     return "Pause and explain the route boundary."
@@ -275,7 +300,11 @@ def _missing_evidence(evidence: dict[str, Any]) -> list[str]:
 
 def _privacy_violations(evidence: dict[str, Any]) -> list[str]:
     boundary = _dict(evidence.get("data_boundary"))
-    violations = [f"privacy_violation:{flag}" for flag in FORBIDDEN_DATA_FLAGS if boundary.get(flag) is True]
+    violations = [
+        f"privacy_violation:{flag}"
+        for flag in FORBIDDEN_DATA_FLAGS
+        if _truthy(boundary.get(flag))
+    ]
     export_flags = {
         "exports_raw_prompt": "raw_prompt_exported",
         "exports_provider_output": "provider_output_exported",
@@ -287,9 +316,70 @@ def _privacy_violations(evidence: dict[str, Any]) -> list[str]:
         "exports_secret": "env_or_secret_exported",
     }
     for flag, canonical in export_flags.items():
-        if boundary.get(flag) is True:
+        if _truthy(boundary.get(flag)):
             violations.append(f"privacy_violation:{canonical}")
+    for key in _forbidden_payload_keys(evidence):
+        violations.append(f"privacy_violation:forbidden_payload_key:{key}")
     return _dedupe(violations)
+
+
+def _authority_verdict_status(value: Any, *, permission_required: str) -> tuple[str, bool, list[str]]:
+    if isinstance(value, dict):
+        schema = _safe_label(value.get("schema_version"))
+        status = _safe_label(value.get("decision") or value.get("status") or value.get("verdict")) or "missing"
+        owner = _safe_label(value.get("source_owner") or value.get("source_owner_system") or value.get("owner_system"))
+        action_family = _safe_label(value.get("action_family") or value.get("action") or value.get("route"))
+        valid = (
+            schema == "spark.authority_verdict.v1"
+            and status in {"allowed", "not_required", "blocked", "denied", "confirm_required"}
+            and bool(owner)
+            and bool(action_family)
+        )
+        missing: list[str] = []
+        if not valid:
+            missing.append("invalid_authority_verdict_v1")
+        return status, valid, missing
+
+    status = _safe_label(value) or "missing"
+    if status in {"blocked", "denied"}:
+        return status, True, []
+    if status == "not_required" and permission_required == "none":
+        return status, True, []
+    return status, False, ["structured_authority_verdict_missing"]
+
+
+def _forbidden_payload_keys(value: Any, *, prefix: str = "") -> list[str]:
+    forbidden = {
+        "raw_prompt",
+        "prompt",
+        "current_message",
+        "currentmessage",
+        "user_message",
+        "chat_id",
+        "userid",
+        "user_id",
+        "provider_output",
+        "memory_body",
+        "transcript_body",
+        "audio",
+        "env",
+        "secret",
+        "token",
+        "api_key",
+        "authorization",
+    }
+    found: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            key = str(raw_key).strip().lower()
+            normalized = key.replace("-", "_")
+            if normalized in forbidden or normalized.endswith("_secret") or normalized.endswith("_token"):
+                found.append(f"{prefix}{raw_key}"[:120])
+            found.extend(_forbidden_payload_keys(raw_value, prefix=f"{prefix}{raw_key}."))
+    elif isinstance(value, list):
+        for index, item in enumerate(value[:20]):
+            found.extend(_forbidden_payload_keys(item, prefix=f"{prefix}{index}."))
+    return _dedupe(found)
 
 
 def _human_next_action(policy: str, missing_evidence: list[str]) -> str:
@@ -324,6 +414,14 @@ def _safe_label(value: Any, *, limit: int = 160) -> str:
 def _bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
+def _truthy(value: Any) -> bool:
+    if value is True:
+        return True
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y"}
     return False
