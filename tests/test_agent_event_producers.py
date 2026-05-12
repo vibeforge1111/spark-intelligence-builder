@@ -14,6 +14,7 @@ from spark_intelligence.self_awareness.route_probe import record_route_probe_evi
 from spark_intelligence.self_awareness.source_hierarchy import SourceClaim
 from spark_intelligence.self_awareness.stale_context_sweeper import build_stale_context_sweep
 from spark_intelligence.memory.approval_inbox import record_memory_approval_decision
+from spark_intelligence.memory.constitution import validate_memory_proof_card_export
 
 from tests.test_support import SparkTestCase
 
@@ -155,7 +156,15 @@ class AgentEventProducerTests(SparkTestCase):
         evidence = json.loads(row["evidence_json"])
         self.assertFalse(evidence["trace_contract"]["has_message_text"])
         self.assertIsNone(evidence["trace_contract"]["message_text"])
+        proof_card = evidence["facts"]["memory_proof_card"]
+        self.assertEqual(proof_card["schema_version"], "spark.memory_proof_card.v1")
+        self.assertEqual(proof_card["owner_system"], "spark-intelligence-builder")
+        self.assertEqual(proof_card["durability_tier"], "ephemeral_context")
+        self.assertEqual(proof_card["decision"], "support_only")
+        self.assertEqual(validate_memory_proof_card_export(proof_card), [])
         self.assertNotIn("memory_body", row["evidence_json"])
+        self.assertNotIn("chat_id", row["evidence_json"])
+        self.assertNotIn("provider_output", row["evidence_json"])
 
     def test_stale_context_sweep_emits_contradiction_found_agent_event(self) -> None:
         report = build_stale_context_sweep(

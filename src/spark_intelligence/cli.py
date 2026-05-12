@@ -125,6 +125,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_regression,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
+from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
 from spark_intelligence.personality import (
     build_personality_import_payload,
     load_personality_profile,
@@ -4628,6 +4629,20 @@ def handle_self_source_used(args: argparse.Namespace) -> int:
         "source": str(getattr(args, "source", "") or ""),
         "freshness": str(getattr(args, "freshness", "") or "unknown"),
     }
+    source = str(getattr(args, "source", "") or "")
+    role = str(getattr(args, "role", "") or "")
+    if source.strip() == "memory_preflight" or role.strip() == "memory_boundary":
+        payload["memory_proof_card"] = build_memory_preflight_proof_card(
+            source=source,
+            role=role,
+            freshness=str(getattr(args, "freshness", "") or "unknown"),
+            source_ref=str(getattr(args, "source_ref", "") or ""),
+            selected_route=str(getattr(args, "selected_route", "") or ""),
+            confidence=str(getattr(args, "confidence", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or ""),
+            trace_ref=str(getattr(args, "trace_ref", "") or ""),
+            summary=str(getattr(args, "summary", "") or ""),
+        )
     if args.json:
         print(json.dumps(payload, indent=2))
     else:

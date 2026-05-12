@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from spark_intelligence.self_awareness.agent_events import AgentEvent, AgentSourceRef, record_agent_event
+from spark_intelligence.memory.constitution import memory_preflight_facts
 from spark_intelligence.state.db import StateDB
 
 SOURCE_FRESHNESS_VALUES = {"fresh", "stale", "contradicted", "unknown", "live_probed"}
@@ -41,6 +42,17 @@ def record_source_used_agent_event(
                 "keepability": "ephemeral_context",
                 "promotion_disposition": "not_promotable",
                 "memory_role": "preflight_boundary",
+                **memory_preflight_facts(
+                    source=normalized_source,
+                    role=normalized_role,
+                    freshness=normalized_freshness,
+                    source_ref=str(source_ref or "").strip(),
+                    selected_route=str(selected_route or "").strip(),
+                    confidence=str(confidence or "").strip(),
+                    request_id=str(request_id or "").strip(),
+                    trace_ref=str(trace_ref or "").strip(),
+                    summary=normalized_summary,
+                ),
             }
         )
     return record_agent_event(
