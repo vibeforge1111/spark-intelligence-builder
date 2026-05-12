@@ -105,6 +105,7 @@ def build_agent_operating_panel(
     runner_writable: bool | None = None,
     runner_label: str = "",
     execution_lane_state: dict[str, Any] | None = None,
+    live_state: dict[str, Any] | None = None,
     memory_inbox_status: str = "pending",
     stale_live_claims: list[SourceClaim | dict[str, Any]] | None = None,
     stale_context_claims: list[SourceClaim | dict[str, Any]] | None = None,
@@ -121,6 +122,7 @@ def build_agent_operating_panel(
         runner_writable=runner_writable,
         runner_label=runner_label,
         execution_lane_state=execution_lane_state,
+        live_state=live_state,
     )
     live_claims = list(stale_live_claims or [])
     if spark_access_level:

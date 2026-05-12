@@ -101,3 +101,66 @@ class AgentOperatingPanelCliTests(SparkTestCase):
         self.assertEqual(lane["docker"]["probed"], False)
         self.assertTrue(lane["workspace_sandbox"])
         self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+
+    def test_self_panel_cli_accepts_live_state_json(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--runner-writable",
+            "yes",
+            "--live-state-json",
+            json.dumps(
+                {
+                    "status": "healthy",
+                    "spawner_ok": True,
+                    "telegram_ok": True,
+                    "providers_ok": True,
+                    "memory_ok": True,
+                    "checked_at": "2026-05-12T00:10:00Z",
+                    "source_ref": "spark live status",
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        live_state = payload["aoc"]["live_state"]
+        self.assertTrue(live_state["present"])
+        self.assertEqual(live_state["status"], "healthy")
+        self.assertTrue(live_state["spawner_ok"])
+        source_items = {item["source"]: item for item in payload["source_ledger"]["items"]}
+        self.assertTrue(source_items["live_spark_state"]["present"])
+        self.assertEqual(source_items["live_spark_state"]["freshness"], "live_probed")
+
+    def test_self_panel_live_state_json_is_metadata_allowlisted(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--runner-writable",
+            "yes",
+            "--live-state-json",
+            json.dumps(
+                {
+                    "status": "healthy",
+                    "spawner_ok": True,
+                    "token": "secret-token",
+                    "raw_prompt": "please do not export me",
+                    "chat_id": "12345",
+                    "nested": {"provider_output": "raw"},
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload_text = json.dumps(json.loads(stdout))
+        self.assertIn("spawner_ok", payload_text)
+        self.assertNotIn("secret-token", payload_text)
+        self.assertNotIn("please do not export me", payload_text)
+        self.assertNotIn("12345", payload_text)
+        self.assertNotIn("provider_output", payload_text)
