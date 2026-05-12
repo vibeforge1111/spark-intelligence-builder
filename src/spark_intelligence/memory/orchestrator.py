@@ -25,7 +25,11 @@ from spark_intelligence.memory.profile_facts import (
     active_state_revalidation_days,
     parse_named_object_fact,
 )
-from spark_intelligence.memory.constitution import build_memory_result_proof_card
+from spark_intelligence.memory.constitution import (
+    MEMORY_ACTION_FAMILIES,
+    build_memory_action_authority_verdict,
+    build_memory_result_proof_card,
+)
 from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_memory_salience
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
@@ -8050,7 +8054,7 @@ def _record_memory_write_event(
     keepability = _memory_write_result_keepability(result)
     promotion_disposition = _memory_write_result_promotion_disposition(result, keepability)
     trace_ref = _memory_trace_ref(session_id=session_id, turn_id=turn_id)
-    record_event(
+    source_event_id = record_event(
         state_db,
         event_type="memory_write_succeeded" if result.accepted_count > 0 else "memory_write_abstained",
         component="memory_orchestrator",
@@ -8088,6 +8092,65 @@ def _record_memory_write_event(
         },
         provenance={"memory_role": result.memory_role, "sdk_provenance": result.provenance},
     )
+    _record_memory_action_authority_verdicts(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        trace_ref=trace_ref,
+        source_event_id=source_event_id,
+    )
+
+
+def _record_memory_action_authority_verdicts(
+    *,
+    state_db: StateDB,
+    result: MemoryWriteResult,
+    human_id: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+    trace_ref: str | None,
+    source_event_id: str,
+) -> None:
+    for action_family in MEMORY_ACTION_FAMILIES:
+        verdict = build_memory_action_authority_verdict(
+            action_family=action_family,
+            verdict="blocked",
+            reason_code="missing_memory_authority_verdict",
+            request_id=turn_id or "",
+            trace_ref=trace_ref or "",
+        )
+        record_event(
+            state_db,
+            event_type="memory_action_authority_verdict",
+            component="memory_orchestrator",
+            summary="Spark memory action remains blocked until source authority verdict exists.",
+            request_id=turn_id,
+            trace_ref=trace_ref,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id=actor_id,
+            status="blocked",
+            reason_code="missing_memory_authority_verdict",
+            facts={
+                "operation": result.operation,
+                "memory_role": result.memory_role,
+                "action_family": action_family,
+                "authority_schema_version": "spark.authority_verdict.v1",
+                "memory_action_verdict": verdict,
+                "authority_verdict": verdict["authority_verdict"],
+                "keepability": "not_keepable",
+                "promotion_disposition": "blocked",
+            },
+            provenance={
+                "memory_role": result.memory_role,
+                "source_kind": "memory_write_result",
+                "source_event_id": source_event_id,
+            },
+        )
 
 
 def _memory_write_result_keepability(result: MemoryWriteResult) -> str:

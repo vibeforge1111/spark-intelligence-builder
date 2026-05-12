@@ -8,6 +8,8 @@ from typing import Any
 MEMORY_CONSTITUTION_SCHEMA_VERSION = "spark.memory_constitution.v1"
 MEMORY_PROOF_CARD_SCHEMA_VERSION = "spark.memory_proof_card.v1"
 MEMORY_REVIEW_CARD_SCHEMA_VERSION = "spark.memory_review_card.v1"
+MEMORY_ACTION_VERDICT_SCHEMA_VERSION = "spark.memory_action_verdict.v1"
+AUTHORITY_VERDICT_SCHEMA_VERSION = "spark.authority_verdict.v1"
 
 MEMORY_TYPES = frozenset(
     {
@@ -49,6 +51,14 @@ FORBIDDEN_EXPORT_KEYS = frozenset(
         "secret",
         "token",
     }
+)
+
+MEMORY_ACTION_FAMILIES = (
+    "memory_correction",
+    "memory_forget",
+    "memory_decay",
+    "memory_promotion",
+    "memory_deepen",
 )
 
 
@@ -189,6 +199,56 @@ def build_memory_result_proof_card(
     }
 
 
+def build_memory_action_authority_verdict(
+    *,
+    action_family: str,
+    verdict: str = "blocked",
+    reason_code: str = "missing_memory_authority_verdict",
+    request_id: str = "",
+    trace_ref: str = "",
+    source_repo: str = "spark-intelligence-builder/domain-chip-memory",
+    scope: str = "local_memory_action",
+) -> dict[str, Any]:
+    safe_action = _safe_memory_action_family(action_family)
+    safe_verdict = _safe_authority_verdict(verdict)
+    safe_reason = _safe_label(reason_code, "missing_memory_authority_verdict")
+    safe_scope = _safe_label(scope, "local_memory_action")
+    safe_source_repo = _safe_source_ref(source_repo)
+    safe_request_id = _safe_source_ref(request_id) if request_id else None
+    safe_trace_ref = _safe_trace_ref(trace_ref)
+    authority_verdict = {
+        "schema_version": AUTHORITY_VERDICT_SCHEMA_VERSION,
+        "action_family": safe_action,
+        "verdict": safe_verdict,
+        "confirmation_required": safe_verdict == "confirm_required",
+        "reason_code": safe_reason,
+        "scope": safe_scope,
+        "source_policy": "builder_domain_chip_memory_memory_action_gate",
+        "source_repo": safe_source_repo,
+        "request_id": safe_request_id,
+        "trace_ref": safe_trace_ref,
+    }
+    card_seed = "|".join([trace_ref, request_id, safe_action, safe_verdict, safe_reason])
+    return {
+        "schema_version": MEMORY_ACTION_VERDICT_SCHEMA_VERSION,
+        "verdict_id": f"memory-action-verdict:{_short_hash(card_seed)}",
+        "authority_verdict": authority_verdict,
+        "owner_system": "spark-intelligence-builder",
+        "surface": "builder",
+        "action_family": safe_action,
+        "verdict": safe_verdict,
+        "reason_code": safe_reason,
+        "source_repo": safe_source_repo,
+        "scope": safe_scope,
+        "trace_ref": safe_trace_ref,
+        "request_id": safe_request_id,
+        "human_next_action": _memory_action_next_action(safe_action, safe_verdict),
+        "data_boundary": (
+            "No raw memory body, chat id, provider output, transcript, audio, env value, or secret is exported."
+        ),
+    }
+
+
 def build_memory_review_card_from_resolution(
     resolution: Any,
     *,
@@ -237,6 +297,11 @@ def build_memory_review_card_from_resolution(
 
 
 def validate_memory_review_card_export(card: dict[str, Any]) -> list[str]:
+    serialized = _flatten_keys(card)
+    return sorted(key for key in serialized if _forbidden_key(key))
+
+
+def validate_memory_action_verdict_export(card: dict[str, Any]) -> list[str]:
     serialized = _flatten_keys(card)
     return sorted(key for key in serialized if _forbidden_key(key))
 
@@ -307,6 +372,16 @@ def _safe_trace_ref(value: str | None) -> str | None:
     return _safe_source_ref(text) if text else None
 
 
+def _safe_memory_action_family(value: str | None) -> str:
+    label = _safe_label(value, "")
+    return label if label in MEMORY_ACTION_FAMILIES else "memory_review"
+
+
+def _safe_authority_verdict(value: str | None) -> str:
+    label = _safe_label(value, "blocked")
+    return label if label in {"allowed", "blocked", "confirm_required"} else "blocked"
+
+
 def _short_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
@@ -372,6 +447,14 @@ def _memory_result_next_action(accepted: bool) -> str:
     if accepted:
         return "Use Builder or Cockpit memory lanes to inspect provenance before relying on this later."
     return "Review the Builder memory route and blocked reason before claiming a save succeeded."
+
+
+def _memory_action_next_action(action_family: str, verdict: str) -> str:
+    if verdict == "allowed":
+        return "Review the source-owned memory action verdict and trace before executing the action."
+    if verdict == "confirm_required":
+        return "Ask for explicit human confirmation before executing this memory action."
+    return f"Keep {action_family} read-only until Builder/domain-chip-memory emits a source-owned allowed verdict."
 
 
 def _relations_for_preflight(*, selected_route: str, role: str) -> list[str]:

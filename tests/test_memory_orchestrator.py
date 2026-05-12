@@ -45,7 +45,10 @@ from spark_intelligence.memory.generic_observations import (
     build_telegram_generic_observation_answer,
     detect_telegram_generic_observation,
 )
-from spark_intelligence.memory.constitution import validate_memory_proof_card_export
+from spark_intelligence.memory.constitution import (
+    validate_memory_action_verdict_export,
+    validate_memory_proof_card_export,
+)
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
     build_profile_fact_explanation_answer,
@@ -1418,8 +1421,48 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result_lane_records)
         result_lane_evidence = result_lane_records[0]["evidence_json"]
         self.assertEqual(result_lane_evidence["facts"]["memory_proof_card"]["decision"], "accept_durable")
-        self.assertEqual(lane_records[0]["promotion_disposition"], "promote_current_state")
-        self.assertEqual(lane_records[0]["status"], "candidate")
+        self.assertEqual(result_lane_records[0]["promotion_disposition"], "promote_current_state")
+        self.assertEqual(result_lane_records[0]["status"], "candidate")
+
+        action_events = latest_events_by_type(
+            self.state_db,
+            event_type="memory_action_authority_verdict",
+            limit=10,
+        )
+        self.assertEqual(len(action_events), 5)
+        action_families = {
+            (event["facts_json"] or {}).get("memory_action_verdict", {}).get("action_family")
+            for event in action_events
+        }
+        self.assertEqual(
+            action_families,
+            {
+                "memory_correction",
+                "memory_forget",
+                "memory_decay",
+                "memory_promotion",
+                "memory_deepen",
+            },
+        )
+        action_facts = action_events[0]["facts_json"] or {}
+        action_card = action_facts["memory_action_verdict"]
+        self.assertEqual(action_card["schema_version"], "spark.memory_action_verdict.v1")
+        self.assertEqual(action_card["authority_verdict"]["schema_version"], "spark.authority_verdict.v1")
+        self.assertEqual(action_card["verdict"], "blocked")
+        self.assertEqual(action_card["reason_code"], "missing_memory_authority_verdict")
+        self.assertEqual(action_card["source_repo"], "spark-intelligence-builder/domain-chip-memory")
+        self.assertEqual(validate_memory_action_verdict_export(action_card), [])
+        serialized_action_card = json.dumps(action_card)
+        self.assertNotIn("Cem", serialized_action_card)
+        self.assertNotIn("Maya", serialized_action_card)
+        self.assertNotIn("evidence_text", serialized_action_card)
+        action_lane_records = [
+            record for record in recent_memory_lane_records(self.state_db, limit=20)
+            if record.get("event_id") in {event["event_id"] for event in action_events}
+        ]
+        self.assertEqual(len(action_lane_records), 5)
+        self.assertTrue(all(record["promotion_disposition"] == "blocked" for record in action_lane_records))
+        self.assertTrue(all(record["status"] == "blocked" for record in action_lane_records))
 
         lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
         lifecycle_facts = [
