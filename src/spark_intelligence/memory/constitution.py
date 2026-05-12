@@ -7,6 +7,7 @@ from typing import Any
 
 MEMORY_CONSTITUTION_SCHEMA_VERSION = "spark.memory_constitution.v1"
 MEMORY_PROOF_CARD_SCHEMA_VERSION = "spark.memory_proof_card.v1"
+MEMORY_REVIEW_CARD_SCHEMA_VERSION = "spark.memory_review_card.v1"
 
 MEMORY_TYPES = frozenset(
     {
@@ -119,6 +120,58 @@ def build_memory_preflight_proof_card(
     }
 
 
+def build_memory_review_card_from_resolution(
+    resolution: Any,
+    *,
+    request_id: str = "",
+    trace_ref: str = "",
+) -> dict[str, Any]:
+    payload = resolution.to_payload() if hasattr(resolution, "to_payload") else dict(resolution or {})
+    claim_key = _safe_label(str(payload.get("claim_key") or "memory_claim"), "memory_claim")
+    winner = payload.get("winner") if isinstance(payload.get("winner"), dict) else {}
+    stale_claims = payload.get("stale_claims") if isinstance(payload.get("stale_claims"), list) else []
+    contradicted_claims = (
+        payload.get("contradicted_claims") if isinstance(payload.get("contradicted_claims"), list) else []
+    )
+    review_type = "contradiction" if contradicted_claims else "source_freshness"
+    freshness = "contradicted" if contradicted_claims else "stale"
+    source_refs = [
+        _safe_source_ref(str(claim.get("source_ref") or claim.get("source") or "memory_source"))
+        for claim in [*stale_claims, *contradicted_claims]
+        if isinstance(claim, dict)
+    ]
+    winner_source = _safe_label(str(winner.get("source") or "unknown"), "unknown")
+    card_seed = "|".join([trace_ref, request_id, claim_key, winner_source, review_type])
+    return {
+        "schema_version": MEMORY_REVIEW_CARD_SCHEMA_VERSION,
+        "card_id": f"memory-review:{_short_hash(card_seed)}",
+        "trace_ref": _safe_trace_ref(trace_ref),
+        "owner_system": "spark-intelligence-builder",
+        "surface": "builder",
+        "review_type": review_type,
+        "decision": "needs_review",
+        "claim_key": claim_key,
+        "freshness": freshness,
+        "winner_source": winner_source,
+        "stale_source_count": len(stale_claims),
+        "contradicted_source_count": len(contradicted_claims),
+        "source_refs": source_refs[:8],
+        "relations": ["source_hierarchy", claim_key, review_type],
+        "blocked_reasons": [f"memory_source_{freshness}"],
+        "human_next_action": _review_human_next_action(review_type),
+        "correction_path": "Use Builder memory review or a current-source correction before reuse.",
+        "data_boundary": (
+            "No claim values, memory bodies, raw prompts, chat ids, provider output, transcripts, audio, env values, "
+            "or secrets are exported."
+        ),
+    }
+
+
+def validate_memory_review_card_export(card: dict[str, Any]) -> list[str]:
+    serialized = _flatten_keys(card)
+    return sorted(key for key in serialized if _forbidden_key(key))
+
+
 def memory_preflight_facts(
     *,
     source: str,
@@ -216,6 +269,12 @@ def _relations_for_preflight(*, selected_route: str, role: str) -> list[str]:
     if role_label and role_label not in relations:
         relations.append(role_label)
     return relations[:6]
+
+
+def _review_human_next_action(review_type: str) -> str:
+    if review_type == "contradiction":
+        return "Resolve the conflicting source before letting recalled memory guide action."
+    return "Confirm the current source, then mark stale lower-authority memory as stale or support-only."
 
 
 def _flatten_keys(value: Any, prefix: str = "") -> set[str]:

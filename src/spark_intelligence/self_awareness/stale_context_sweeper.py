@@ -119,7 +119,12 @@ def build_stale_context_sweep(
     recorded_ids: list[str] = []
     recorded_agent_ids: list[str] = []
     if record_contradictions and state_db is not None and resolutions:
-        recorded_ids = record_source_conflict_resolutions(state_db, resolutions, component="stale_context_sweeper")
+        recorded_ids = record_source_conflict_resolutions(
+            state_db,
+            resolutions,
+            component="stale_context_sweeper",
+            request_id=request_id,
+        )
         recorded_agent_ids = [
             record_contradiction_agent_event(
                 state_db,

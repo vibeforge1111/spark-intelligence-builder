@@ -69,6 +69,10 @@ class StaleContextSweeperTests(SparkTestCase):
         self.assertEqual(len(report.recorded_agent_event_ids), 1)
         self.assertEqual(rows[0]["component"], "stale_context_sweeper")
         self.assertEqual(rows[0]["facts_json"]["winner"]["source"], "current_user_message")
+        self.assertEqual(rows[0]["facts_json"]["memory_review_card"]["review_type"], "source_freshness")
+        self.assertEqual(rows[0]["facts_json"]["memory_review_card"]["claim_key"], "allowed_next_action")
+        self.assertNotIn("answer in chat", str(rows[0]["facts_json"]["memory_review_card"]))
+        self.assertNotIn("open Mission Control", str(rows[0]["facts_json"]["memory_review_card"]))
         self.assertEqual(report.stale_items[0].action_type, "mark_wiki_claim_stale")
         self.assertIn("action=mark_wiki_claim_stale", report.to_text())
 

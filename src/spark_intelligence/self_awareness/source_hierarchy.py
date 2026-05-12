@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from spark_intelligence.memory.constitution import build_memory_review_card_from_resolution
 from spark_intelligence.observability.store import record_contradiction
 from spark_intelligence.state.db import StateDB
 
@@ -134,9 +135,17 @@ def record_source_conflict_resolutions(
     resolutions: list[SourceConflictResolution],
     *,
     component: str = "source_hierarchy",
+    request_id: str = "",
+    trace_ref: str = "",
 ) -> list[str]:
     contradiction_ids: list[str] = []
     for resolution in resolutions:
+        facts = resolution.to_payload()
+        facts["memory_review_card"] = build_memory_review_card_from_resolution(
+            resolution,
+            request_id=request_id,
+            trace_ref=trace_ref,
+        )
         contradiction_ids.append(
             record_contradiction(
                 state_db,
@@ -146,13 +155,15 @@ def record_source_conflict_resolutions(
                 summary=f"Source hierarchy conflict for {resolution.claim_key}.",
                 detail=resolution.resolution,
                 severity="medium" if resolution.contradicted_claims else "low",
-                facts=resolution.to_payload(),
+                facts=facts,
                 provenance={
                     "source": "source_hierarchy",
                     "winner_source": resolution.winner.source,
                     "stale_sources": [claim.source for claim in resolution.stale_claims],
                     "contradicted_sources": [claim.source for claim in resolution.contradicted_claims],
                 },
+                request_id=request_id or None,
+                trace_ref=trace_ref or None,
             )
         )
     return contradiction_ids
