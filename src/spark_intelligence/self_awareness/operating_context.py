@@ -54,6 +54,7 @@ class AgentOperatingContextResult:
     stale_or_contradicted_context: list[dict[str, Any]] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     spark_system_map: dict[str, Any] = field(default_factory=dict)
+    live_state: dict[str, Any] = field(default_factory=dict)
     guardrails: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
@@ -78,6 +79,7 @@ class AgentOperatingContextResult:
             "stale_or_contradicted_context": self.stale_or_contradicted_context,
             "source_ledger": self.source_ledger,
             "spark_system_map": self.spark_system_map,
+            "live_state": self.live_state,
             "guardrails": self.guardrails,
             "truth_boundary": (
                 "This is a current preflight snapshot. Permission is not proof of runner writability, "
@@ -103,6 +105,7 @@ class AgentOperatingContextResult:
             f"Access: {self.access.get('label') or 'unknown'}",
             f"Runner: {self.runner.get('label') or 'unknown'}",
             f"Execution lane: {_execution_lane_summary(self.execution_lane)}",
+            f"Live Spark: {_live_state_summary(self.live_state)}",
             f"Spark OS map: {summarize_spark_system_map_context(self.spark_system_map)}",
             f"Access automation: {_access_automation_summary(self.access_automation)}",
             f"Current mode: {self.conversation_frame.get('current_mode') or 'unknown'}",
@@ -169,6 +172,7 @@ def build_agent_operating_context(
     runner_writable: bool | None = None,
     runner_label: str = "",
     execution_lane_state: dict[str, Any] | None = None,
+    live_state: dict[str, Any] | None = None,
 ) -> AgentOperatingContextResult:
     registry_payload = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
     capsule = build_self_awareness_capsule(
@@ -192,6 +196,7 @@ def build_agent_operating_context(
     runner = _build_runner(runner_writable=runner_writable, runner_label=runner_label)
     execution_lane = _build_execution_lane(execution_lane_state, access=access)
     access_automation = _build_access_automation(execution_lane_state, access=access, execution_lane=execution_lane)
+    normalized_live_state = _build_live_state(live_state)
     conversation_frame = build_conversation_operating_frame(
         user_message=user_message,
         source_turn_id=request_id,
@@ -206,7 +211,7 @@ def build_agent_operating_context(
     route_confidence = build_route_confidence(task_fit=task_fit, routes=routes, runner=runner, access=access).to_payload()
     spark_system_map = build_spark_system_map_context(config_manager)
     stale_flags = _build_stale_flags(state_db=state_db, access=access, user_message=user_message)
-    status = _build_status(routes=routes, runner=runner, stale_flags=stale_flags)
+    status = _build_status(routes=routes, runner=runner, stale_flags=stale_flags, live_state=normalized_live_state)
     memory_in_play = _build_memory_in_play(capsule_payload)
     wiki_in_play = _build_wiki_in_play(capsule_payload)
     agent_needs = _build_agent_needs(task_fit=task_fit, runner=runner, conversation_frame=conversation_frame, routes=routes)
@@ -225,6 +230,7 @@ def build_agent_operating_context(
         conversation_frame=conversation_frame,
         route_confidence=route_confidence,
         spark_system_map=spark_system_map,
+        live_state=normalized_live_state,
         routes=routes,
         stale_flags=stale_flags,
     )
@@ -248,6 +254,7 @@ def build_agent_operating_context(
         stale_or_contradicted_context=stale_flags,
         source_ledger=source_ledger,
         spark_system_map=spark_system_map,
+        live_state=normalized_live_state,
         guardrails=[
             "Separate operator permission from actual execution-runner capability.",
             "Use live route probes before claiming a capability worked this turn.",
@@ -915,6 +922,24 @@ def _build_wiki_in_play(capsule_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_live_state(live_state: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(live_state, dict) or not live_state:
+        return {
+            "present": False,
+            "source": "not_supplied",
+            "claim_boundary": "No live Spark state was supplied to AOC for this turn.",
+        }
+    normalized = dict(live_state)
+    normalized["present"] = True
+    normalized.setdefault("source", "operator_supplied_live_state")
+    normalized.setdefault("freshness", "live_probed")
+    normalized.setdefault(
+        "claim_boundary",
+        "Live Spark state is current runtime evidence for this turn; it can go stale after process restarts.",
+    )
+    return normalized
+
+
 def _build_source_ledger(
     *,
     capsule_payload: dict[str, Any],
@@ -925,6 +950,7 @@ def _build_source_ledger(
     conversation_frame: dict[str, Any],
     route_confidence: dict[str, Any],
     spark_system_map: dict[str, Any],
+    live_state: dict[str, Any],
     routes: list[dict[str, Any]],
     stale_flags: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -958,6 +984,12 @@ def _build_source_ledger(
             "role": "sandbox_and_runner_lane_context",
             "present": str(execution_lane.get("source") or "") == "operator_supplied_runner_state",
             "claim_boundary": execution_lane.get("claim_boundary"),
+        },
+        {
+            "source": "live_spark_state",
+            "role": "current_runtime_health_context",
+            "present": bool(live_state.get("present")),
+            "claim_boundary": live_state.get("claim_boundary"),
         },
         {
             "source": "spark_cli_access_automation",
@@ -1008,8 +1040,23 @@ def _build_source_ledger(
     return ledger
 
 
-def _build_status(*, routes: list[dict[str, Any]], runner: dict[str, Any], stale_flags: list[dict[str, Any]]) -> str:
-    if any(route.get("degraded") for route in routes) or runner.get("writable") is False or stale_flags:
+def _build_status(
+    *,
+    routes: list[dict[str, Any]],
+    runner: dict[str, Any],
+    stale_flags: list[dict[str, Any]],
+    live_state: dict[str, Any],
+) -> str:
+    live_status = str(live_state.get("status") or live_state.get("top_level_state") or "").strip().lower()
+    live_attention = bool(live_state.get("present")) and live_status in {
+        "attention",
+        "attention_needed",
+        "degraded",
+        "unhealthy",
+        "not_ready",
+        "unknown",
+    }
+    if any(route.get("degraded") for route in routes) or runner.get("writable") is False or stale_flags or live_attention:
         return "ready_with_warnings"
     if runner.get("writable") is None:
         return "ready_unknown_runner"
@@ -1196,6 +1243,25 @@ def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
         label = str(route.get("label") or route.get("key") or "Route").strip()
         lines.append(f"- {label}: {_compact_probe_summary(summary)}")
     return lines
+
+
+def _live_state_summary(live_state: dict[str, Any]) -> str:
+    if not live_state.get("present"):
+        return "not supplied"
+    status = str(live_state.get("status") or live_state.get("top_level_state") or "unknown").strip() or "unknown"
+    parts = [status]
+    for key, label in (
+        ("spawner_ok", "Spawner"),
+        ("telegram_ok", "Telegram"),
+        ("providers_ok", "Providers"),
+        ("memory_ok", "Memory"),
+    ):
+        if key in live_state:
+            parts.append(f"{label}={_display_optional_bool(_optional_bool(live_state.get(key)))}")
+    checked_at = str(live_state.get("checked_at") or live_state.get("generated_at") or "").strip()
+    if checked_at:
+        parts.append(f"checked={checked_at}")
+    return ", ".join(parts)
 
 
 def _stale_flag_line(item: dict[str, Any]) -> str:

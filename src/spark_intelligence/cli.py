@@ -1362,6 +1362,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional execution lane state JSON object for Docker and sandbox status",
     )
+    self_context_parser.add_argument(
+        "--live-state-json",
+        default="",
+        help="Optional live Spark state JSON object from the probing surface",
+    )
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_panel_parser = self_subparsers.add_parser(
         "panel",
@@ -1385,6 +1390,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-lane-json",
         default="",
         help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
+    self_panel_parser.add_argument(
+        "--live-state-json",
+        default="",
+        help="Optional live Spark state JSON object from the probing surface",
     )
     self_panel_parser.add_argument(
         "--memory-inbox-status",
@@ -4537,6 +4547,7 @@ def handle_self_context(args: argparse.Namespace) -> int:
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
         execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
+        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
@@ -4559,6 +4570,7 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
         execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
+        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
         stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
         stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),

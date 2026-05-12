@@ -61,6 +61,7 @@ def build_agent_source_ledger(
     frame = _dict(aoc_payload.get("conversation_frame"))
     access = _dict(aoc_payload.get("access"))
     runner = _dict(aoc_payload.get("runner"))
+    live_state = _dict(aoc_payload.get("live_state"))
     route_confidence = _dict(aoc_payload.get("route_confidence"))
     spark_system_map = _dict(aoc_payload.get("spark_system_map"))
     black_box_counts = _dict(black_box_payload.get("counts"))
@@ -89,6 +90,14 @@ def build_agent_source_ledger(
                 freshness="live_probed" if runner.get("writable") is not None else "unknown",
                 present=runner.get("writable") is not None,
                 summary=str(runner.get("label") or ""),
+            ),
+            AgentSourceLedgerItem(
+                source="live_spark_state",
+                role="current_runtime_health_context",
+                freshness=str(live_state.get("freshness") or "live_probed") if live_state.get("present") else "unknown",  # type: ignore[arg-type]
+                present=bool(live_state.get("present")),
+                summary=_live_state_summary(live_state),
+                source_ref=str(live_state.get("source_ref") or "") or None,
             ),
             AgentSourceLedgerItem(
                 source="route_confidence",
@@ -172,6 +181,24 @@ def _spark_system_map_summary(context: dict[str, Any]) -> str:
     if capability_cards:
         summary += f", capability cards {capability_cards}"
     return summary
+
+
+def _live_state_summary(context: dict[str, Any]) -> str:
+    if not context.get("present"):
+        return "not supplied"
+    status = str(context.get("status") or context.get("top_level_state") or "unknown").strip() or "unknown"
+    parts = [status]
+    for key, label in (
+        ("spawner_ok", "spawner"),
+        ("telegram_ok", "telegram"),
+        ("providers_ok", "providers"),
+        ("memory_ok", "memory"),
+    ):
+        if key in context:
+            value = context.get(key)
+            rendered = "yes" if value is True else "no" if value is False else "unknown"
+            parts.append(f"{label}={rendered}")
+    return ", ".join(parts)
 
 
 def _dict(value: object) -> dict[str, Any]:

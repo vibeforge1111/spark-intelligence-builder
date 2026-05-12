@@ -101,3 +101,36 @@ class AgentOperatingPanelCliTests(SparkTestCase):
         self.assertEqual(lane["docker"]["probed"], False)
         self.assertTrue(lane["workspace_sandbox"])
         self.assertFalse(lane["level5_whole_computer_claim_allowed"])
+
+    def test_self_panel_cli_accepts_live_state_json(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "panel",
+            "--home",
+            str(self.home),
+            "--runner-writable",
+            "yes",
+            "--live-state-json",
+            json.dumps(
+                {
+                    "status": "healthy",
+                    "spawner_ok": True,
+                    "telegram_ok": True,
+                    "providers_ok": True,
+                    "memory_ok": True,
+                    "checked_at": "2026-05-12T00:10:00Z",
+                    "source_ref": "spark live status",
+                }
+            ),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        live_state = payload["aoc"]["live_state"]
+        self.assertTrue(live_state["present"])
+        self.assertEqual(live_state["status"], "healthy")
+        self.assertTrue(live_state["spawner_ok"])
+        source_items = {item["source"]: item for item in payload["source_ledger"]["items"]}
+        self.assertTrue(source_items["live_spark_state"]["present"])
+        self.assertEqual(source_items["live_spark_state"]["freshness"], "live_probed")
