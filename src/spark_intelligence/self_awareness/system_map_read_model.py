@@ -192,6 +192,10 @@ def _resolve_system_map_dir(config_manager: ConfigManager) -> tuple[Path, str]:
     if home.name == "spark-intelligence" and home.parent.name == "state":
         return home.parent / "system-map", "spark_home_sibling"
 
+    spark_cli_state = Path.home() / ".spark" / "state" / "system-map"
+    if spark_cli_state.exists():
+        return spark_cli_state, "spark_cli_default_state"
+
     return home / "artifacts" / "system-map", "builder_artifacts_default"
 
 
