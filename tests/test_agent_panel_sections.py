@@ -37,7 +37,7 @@ class AgentPanelSectionsTests(SparkTestCase):
         self.assertEqual(by_id["runner_capability"]["status"], "read_only")
         self.assertEqual(by_id["current_task_fit"]["status"], "writable_spawner_codex_mission")
         self.assertEqual(by_id["access_automation"]["status"], "auto_safe")
-        self.assertEqual(by_id["trace_repair_queue"]["status"], "missing")
+        self.assertEqual(by_id["trace_repair_queue"]["status"], "needs_repair")
         self.assertEqual(by_id["black_box_recorder"]["status"], "present")
         self.assertTrue(any(item["label"] == "Entries" for item in by_id["black_box_recorder"]["items"]))
         self.assertEqual(by_id["contradictions"]["status"], "clear")
