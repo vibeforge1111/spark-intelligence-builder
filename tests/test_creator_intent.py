@@ -39,7 +39,12 @@ def test_creator_plan_detects_full_startup_yc_swarm_flow():
     ]
     assert packet.usage_surfaces == ["telegram", "builder", "swarm"]
     assert packet.benchmark_requirements["visible_cases"] == 20
+    assert packet.benchmark_requirements["baseline_vs_specialized_agent"] is True
     assert packet.benchmark_requirements["fresh_agent_absorption"] is True
+    assert packet.benchmark_requirements["tool_usage_quality"] is True
+    assert packet.benchmark_requirements["reasoning_quality"] is True
+    assert packet.benchmark_requirements["keep_revert_decisions"] is True
+    assert packet.benchmark_requirements["experiment_ledger"] is True
     assert packet.network_contribution_policy == "github_pr_required"
     assert "spark_telegram_bot" in packet.tools_in_scope
     assert "spark_swarm" in packet.tools_in_scope
@@ -221,7 +226,16 @@ def test_creator_artifact_bundle_generates_valid_startup_yc_manifests():
         "npm run test:smoke",
         "npm run typecheck",
     ]
+    assert "benchmarks/startup-yc.held-out-cases.json" in by_id["startup-yc-benchmark-pack-v1"].outputs
+    assert "benchmarks/startup-yc.traps.json" in by_id["startup-yc-benchmark-pack-v1"].outputs
+    assert "benchmarks/startup-yc.baseline-vs-specialized.json" in by_id["startup-yc-benchmark-pack-v1"].outputs
+    assert "benchmark_proof_gate" in by_id["startup-yc-benchmark-pack-v1"].promotion_gates
+    assert "autoloop/experiment-ledger.jsonl" in by_id["startup-yc-autoloop-policy-v1"].outputs
+    assert "autoloop/keep-revert-decisions.jsonl" in by_id["startup-yc-autoloop-policy-v1"].outputs
+    assert "reports/autoloop-promotion-readiness.json" in by_id["startup-yc-autoloop-policy-v1"].outputs
+    assert "python scripts/run_autoloop.py --dry-run --rounds 1 --require-benchmark-proof" in by_id["startup-yc-autoloop-policy-v1"].validation_commands
     assert "benchmark_gate" in by_id["startup-yc-autoloop-policy-v1"].promotion_gates
+    assert "benchmark_proof_gate" in by_id["startup-yc-autoloop-policy-v1"].promotion_gates
 
 
 def test_creator_artifact_manifests_default_to_local_chip_and_bench():

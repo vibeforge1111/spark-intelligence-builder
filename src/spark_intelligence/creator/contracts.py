@@ -24,6 +24,7 @@ PROMOTION_GATES = {
     "schema_gate",
     "lineage_gate",
     "benchmark_gate",
+    "benchmark_proof_gate",
     "transfer_gate",
     "complexity_gate",
     "memory_hygiene_gate",

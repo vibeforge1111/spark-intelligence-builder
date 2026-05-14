@@ -151,15 +151,18 @@ def _benchmark_pack_manifest(packet: CreatorIntentPacket, domain: str) -> Artifa
         repo=repo,
         inputs=[packet.intent_id],
         outputs=[
+            f"benchmarks/{domain}.visible-cases.json",
+            f"benchmarks/{domain}.held-out-cases.json",
             f"benchmarks/{domain}.cases.json",
             f"benchmarks/{domain}.scoring.json",
             f"benchmarks/{domain}.traps.json",
+            f"benchmarks/{domain}.baseline-vs-specialized.json",
             "docs/BENCHMARK_CALIBRATION.md",
         ],
         validation_commands=[
             *_benchmark_validation_commands(domain),
         ],
-        promotion_gates=["schema_gate", "benchmark_gate", "risk_gate", "rollback_gate"],
+        promotion_gates=["schema_gate", "benchmark_gate", "benchmark_proof_gate", "risk_gate", "rollback_gate"],
         rollback_plan=f"Revert the {repo} benchmark-pack commit and remove generated cases from promotion ledgers.",
     )
 
@@ -218,17 +221,21 @@ def _autoloop_policy_manifest(packet: CreatorIntentPacket, domain: str) -> Artif
         outputs=[
             "autoloop/policy.json",
             "autoloop/mutation_surface.json",
+            "autoloop/experiment-ledger.jsonl",
+            "autoloop/keep-revert-decisions.jsonl",
             "autoloop/rejected_mutations.jsonl",
+            "reports/autoloop-promotion-readiness.json",
             "docs/AUTOLOOP_POLICY.md",
         ],
         validation_commands=[
             "python -m pytest tests",
-            "python scripts/run_autoloop.py --dry-run --rounds 1",
+            "python scripts/run_autoloop.py --dry-run --rounds 1 --require-benchmark-proof",
         ],
         promotion_gates=[
             "schema_gate",
             "lineage_gate",
             "benchmark_gate",
+            "benchmark_proof_gate",
             "complexity_gate",
             "memory_hygiene_gate",
             "autonomy_gate",
