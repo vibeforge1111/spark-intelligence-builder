@@ -340,8 +340,13 @@ def _benchmark_requirements(
     return {
         "visible_cases": 20 if wants_mastery else 5,
         "fixed_suite": True,
+        "baseline_vs_specialized_agent": True,
         "held_out_cases": bool(wants_mastery),
         "trap_cases": True,
+        "tool_usage_quality": True,
+        "reasoning_quality": True,
+        "keep_revert_decisions": bool(desired_outputs.get("autoloop_policy")),
+        "experiment_ledger": bool(desired_outputs.get("autoloop_policy") or wants_mastery),
         "simulator_transfer": bool(wants_mastery),
         "fresh_agent_absorption": bool(desired_outputs.get("specialization_path") or privacy_mode == "swarm_shared"),
         "human_calibration": False,

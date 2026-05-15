@@ -9605,12 +9605,106 @@ def _render_swarm_latest_round_detail_lines(
             f"Round delta: {delta:+.4f} ({float(baseline_score):.4f} -> {float(candidate_score):.4f})."
         )
         if decision == "reverted":
-            lines.append("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.")
+            lines.append(
+                "Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged."
+            )
         elif decision == "kept":
             lines.append("Interpretation: this mutation beat the baseline and was kept in the repo.")
+    lines.extend(
+        _render_swarm_benchmark_proof_lines(
+            latest_round_summary.get("benchmarkProof", latest_round_summary.get("benchmark_proof"))
+        )
+    )
     if latest_round_summary_path:
         lines.append(f"Round artifact: {latest_round_summary_path}.")
     return lines
+
+
+def _render_swarm_benchmark_proof_lines(proof: Any) -> list[str]:
+    if not isinstance(proof, dict):
+        return []
+    lines: list[str] = []
+    baseline_agent = str(proof.get("baselineAgent") or proof.get("baseline_agent") or "").strip()
+    specialized_agent = str(proof.get("specializedAgent") or proof.get("specialized_agent") or "").strip()
+    proof_status = str(
+        proof.get("status") or proof.get("proofStatus") or proof.get("proof_status") or ""
+    ).strip()
+    promotion_ready = proof.get("promotionReady", proof.get("promotion_ready"))
+    if baseline_agent or specialized_agent:
+        left = baseline_agent or "baseline"
+        right = specialized_agent or "specialized"
+        lines.append(f"Benchmark proof: {left} vs {right}.")
+    slice_lines = _render_swarm_benchmark_slice_lines(proof)
+    if slice_lines:
+        lines.extend(slice_lines)
+    quality_lines = _render_swarm_quality_delta_lines(proof)
+    if quality_lines:
+        lines.extend(quality_lines)
+    if isinstance(promotion_ready, bool):
+        readiness = "ready" if promotion_ready else "not ready"
+        detail = f" ({proof_status})" if proof_status else ""
+        lines.append(f"Promotion readiness: {readiness}{detail}.")
+    elif proof_status:
+        lines.append(f"Promotion readiness: {proof_status}.")
+    return lines
+
+
+def _render_swarm_benchmark_slice_lines(proof: dict[str, Any]) -> list[str]:
+    labels = [
+        ("visibleCases", "visible_cases", "visible"),
+        ("heldOutCases", "held_out_cases", "held-out"),
+        ("trapCases", "trap_cases", "trap"),
+    ]
+    rendered: list[str] = []
+    for camel_key, snake_key, label in labels:
+        raw_slice = proof.get(camel_key, proof.get(snake_key))
+        if not isinstance(raw_slice, dict):
+            continue
+        count = raw_slice.get("count")
+        baseline = raw_slice.get("baselineScore", raw_slice.get("baseline_score"))
+        specialized = raw_slice.get(
+            "specializedScore",
+            raw_slice.get(
+                "candidateScore",
+                raw_slice.get("specialized_score", raw_slice.get("candidate_score")),
+            ),
+        )
+        prefix = f"{label} cases"
+        if isinstance(count, int):
+            prefix = f"{prefix} {count}"
+        if isinstance(baseline, (int, float)) and isinstance(specialized, (int, float)):
+            delta = float(specialized) - float(baseline)
+            rendered.append(
+                f"Proof slice: {prefix}, delta {delta:+.4f} ({float(baseline):.4f} -> {float(specialized):.4f})."
+            )
+        else:
+            rendered.append(f"Proof slice: {prefix}.")
+    return rendered
+
+
+def _render_swarm_quality_delta_lines(proof: dict[str, Any]) -> list[str]:
+    labels = [
+        ("toolUsageQuality", "tool_usage_quality", "tool usage"),
+        ("reasoningQuality", "reasoning_quality", "reasoning"),
+    ]
+    rendered: list[str] = []
+    for camel_key, snake_key, label in labels:
+        raw_metric = proof.get(camel_key, proof.get(snake_key))
+        if not isinstance(raw_metric, dict):
+            continue
+        baseline = raw_metric.get("baselineScore", raw_metric.get("baseline_score"))
+        specialized = raw_metric.get(
+            "specializedScore",
+            raw_metric.get(
+                "candidateScore",
+                raw_metric.get("specialized_score", raw_metric.get("candidate_score")),
+            ),
+        )
+        if not isinstance(baseline, (int, float)) or not isinstance(specialized, (int, float)):
+            continue
+        delta = float(specialized) - float(baseline)
+        rendered.append(f"Quality delta: {label} {delta:+.4f} ({float(baseline):.4f} -> {float(specialized):.4f}).")
+    return rendered
 
 
 def _describe_swarm_autoloop_stop_reason(reason: str) -> str:

@@ -3599,6 +3599,17 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "decision": "kept",
                         "baselineScore": 0.75,
                         "candidateScore": 0.78,
+                        "benchmarkProof": {
+                            "baselineAgent": "general Spark agent",
+                            "specializedAgent": "Startup Operator with domain chip",
+                            "visibleCases": {"count": 20, "baselineScore": 0.74, "specializedScore": 0.82},
+                            "heldOutCases": {"count": 8, "baselineScore": 0.70, "specializedScore": 0.77},
+                            "trapCases": {"count": 4, "baselineScore": 0.65, "specializedScore": 0.76},
+                            "toolUsageQuality": {"baselineScore": 0.66, "specializedScore": 0.80},
+                            "reasoningQuality": {"baselineScore": 0.68, "specializedScore": 0.79},
+                            "promotionReady": True,
+                            "status": "benchmark_proof_passed",
+                        },
                         "benchmarkRunnerType": "script",
                         "benchmarkRunnerLabel": "benchmarks/startup-operator.tool_calls.json",
                         "planner": {
@@ -3635,6 +3646,12 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Round candidate: Sharpen the startup operator tool script around explicit operator constraints.", str(result.detail["response_text"]))
         self.assertIn("Hypothesis: Sharper tool-call constraints will improve benchmark decision quality.", str(result.detail["response_text"]))
         self.assertIn("Round delta: +0.0300 (0.7500 -> 0.7800).", str(result.detail["response_text"]))
+        self.assertIn("Benchmark proof: general Spark agent vs Startup Operator with domain chip.", str(result.detail["response_text"]))
+        self.assertIn("Proof slice: held-out cases 8, delta +0.0700 (0.7000 -> 0.7700).", str(result.detail["response_text"]))
+        self.assertIn("Proof slice: trap cases 4, delta +0.1100 (0.6500 -> 0.7600).", str(result.detail["response_text"]))
+        self.assertIn("Quality delta: tool usage +0.1400 (0.6600 -> 0.8000).", str(result.detail["response_text"]))
+        self.assertIn("Quality delta: reasoning +0.1100 (0.6800 -> 0.7900).", str(result.detail["response_text"]))
+        self.assertIn("Promotion readiness: ready (benchmark_proof_passed).", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
 
