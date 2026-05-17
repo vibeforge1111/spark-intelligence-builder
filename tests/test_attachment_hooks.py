@@ -449,6 +449,8 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(history_payload["rows"][0]["target_ref"], "agent:human:telegram:111")
 
     def test_researcher_bridge_includes_active_chip_evaluate_context_in_provider_fallback(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
         self.config_manager.set_path("spark.researcher.enabled", True)

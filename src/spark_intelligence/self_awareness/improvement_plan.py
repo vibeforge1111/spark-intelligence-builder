@@ -169,8 +169,8 @@ def _wiki_query_for_goal(goal: str) -> str:
 
 
 def _priority_actions(*, capsule: dict[str, Any], goal: str) -> list[dict[str, Any]]:
-    lacks = _claim_rows(capsule.get("lacks"), 8)
-    improvements = _claim_rows(capsule.get("improvement_options"), 8)
+    lacks = _claim_rows(capsule.get("lacks"), 14)
+    improvements = _claim_rows(capsule.get("improvement_options"), 14)
     priorities = _priority_rows(capsule.get("weak_spot_priorities"), 10)
     rows: list[dict[str, Any]] = []
     for index, lack in enumerate(lacks):
@@ -215,7 +215,7 @@ def _priority_actions(*, capsule: dict[str, Any], goal: str) -> list[dict[str, A
                 "execution_state": "needs_probe_before_change",
             }
         )
-    rows.sort(key=lambda item: (-int(item.get("surprise_score") or 0), -int(item.get("score") or 0), str(item.get("title") or "")))
+    rows.sort(key=lambda item: (-int(item.get("score") or 0), -int(item.get("surprise_score") or 0), str(item.get("title") or "")))
     return rows[:5]
 
 

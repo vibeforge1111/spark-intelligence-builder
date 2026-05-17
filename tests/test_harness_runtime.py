@@ -35,7 +35,7 @@ class HarnessRuntimeTests(SparkTestCase):
         )
 
         self.assertEqual(envelope.harness_id, "browser.grounded")
-        self.assertEqual(envelope.backend_kind, "browser_bridge")
+        self.assertEqual(envelope.backend_kind, "browser_use_adapter")
         self.assertEqual(envelope.session_id, "session-1")
 
     def test_execute_builder_direct_harness_records_runtime_run(self) -> None:

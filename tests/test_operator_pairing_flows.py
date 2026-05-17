@@ -6338,7 +6338,8 @@ class OperatorPairingFlowTests(SparkTestCase):
             ),
         )
 
-        self.assertIn("set up voice", result.detail["response_text"])
+        self.assertIn("guide voice setup", result.detail["response_text"])
+        self.assertIn("/voice onboard local", result.detail["response_text"])
         self.assertNotIn("Voice replies enabled", result.detail["response_text"])
         self.assertIn("currently off", status.detail["response_text"])
 

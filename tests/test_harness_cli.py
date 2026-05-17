@@ -30,7 +30,7 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["harness_id"], "browser.grounded")
-        self.assertEqual(payload["backend_kind"], "browser_bridge")
+        self.assertEqual(payload["backend_kind"], "browser_use_adapter")
 
     def test_harness_execute_runs_researcher_advisory_runner(self) -> None:
         self._enable_fake_researcher()

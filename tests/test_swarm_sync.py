@@ -34,6 +34,43 @@ class SwarmSyncTests(SparkTestCase):
         encode = lambda value: base64.urlsafe_b64encode(json.dumps(value).encode("utf-8")).decode("ascii").rstrip("=")
         return f"{encode(header)}.{encode(payload)}."
 
+    def _ready_swarm_attachment_context(
+        self,
+        *,
+        active_chip_keys: list[str] | None = None,
+        active_path_key: str = "routing-fixture",
+    ) -> dict[str, object]:
+        path_root = self.home / f"specialization-path-{active_path_key}"
+        payload_path = path_root / ".spark-swarm" / "collective-sync.json"
+        payload_path.parent.mkdir(parents=True)
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "agentId": f"agent:{active_path_key}",
+                    "emittedAt": "2026-04-10T12:00:00+00:00",
+                    "runtimeSource": {"kind": "specialization_path"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "active_chip_keys": active_chip_keys or [],
+            "pinned_chip_keys": [],
+            "attached_chip_keys": active_chip_keys or [],
+            "attached_path_keys": [active_path_key],
+            "attached_chip_records": [],
+            "attached_path_records": [
+                {
+                    "key": active_path_key,
+                    "label": active_path_key.replace("-", " ").title(),
+                    "repo_root": str(path_root),
+                }
+            ],
+            "active_path_key": active_path_key,
+            "warning_count": 0,
+            "snapshot_path": "attachments.snapshot.json",
+        }
+
     def test_normalize_runtime_source_injects_required_swarm_fields(self) -> None:
         payload = {
             "agentId": "agent:spark-researcher",
@@ -132,11 +169,15 @@ class SwarmSyncTests(SparkTestCase):
     def test_evaluate_swarm_escalation_respects_disabled_auto_recommend_policy(self) -> None:
         self.config_manager.set_path("spark.swarm.routing.auto_recommend_enabled", False)
 
-        result = evaluate_swarm_escalation(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Please delegate this as parallel multi-agent work and research deeply.",
-        )
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Please delegate this as parallel multi-agent work and research deeply.",
+            )
 
         self.assertTrue(result.ok)
         self.assertFalse(result.escalate)
@@ -147,11 +188,15 @@ class SwarmSyncTests(SparkTestCase):
     def test_evaluate_swarm_escalation_respects_custom_long_task_threshold(self) -> None:
         self.config_manager.set_path("spark.swarm.routing.long_task_word_count", 3)
 
-        result = evaluate_swarm_escalation(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="one two three",
-        )
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="one two three",
+            )
 
         self.assertTrue(result.ok)
         self.assertTrue(result.escalate)
@@ -162,15 +207,22 @@ class SwarmSyncTests(SparkTestCase):
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
 
-        result = evaluate_swarm_escalation(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="delegate this as parallel work",
-            request_id="req-swarm-decision",
-            channel_id="telegram",
-            human_id="human:test",
-            agent_id="agent:test",
-        )
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(
+                active_chip_keys=["startup-yc", "quality-gate"],
+                active_path_key="startup-operator",
+            ),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="delegate this as parallel work",
+                request_id="req-swarm-decision",
+                channel_id="telegram",
+                human_id="human:test",
+                agent_id="agent:test",
+            )
 
         self.assertIn(result.mode, {"manual_recommended", "unavailable", "hold_local"})
         decision_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
@@ -193,11 +245,15 @@ class SwarmSyncTests(SparkTestCase):
     def test_evaluate_swarm_escalation_does_not_recommend_from_multi_chip_context_alone(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
 
-        result = evaluate_swarm_escalation(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Browse example.com and tell me the page title.",
-        )
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(active_chip_keys=["startup-yc", "quality-gate"]),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Browse example.com and tell me the page title.",
+            )
 
         self.assertTrue(result.ok)
         self.assertFalse(result.escalate)

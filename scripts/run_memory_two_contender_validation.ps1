@@ -86,6 +86,40 @@ function Get-GitRevision {
     return ($revision | Select-Object -First 1)
 }
 
+function Resolve-DomainChipRepoRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BuilderRepoRoot
+    )
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path (Split-Path $BuilderRepoRoot -Parent) "domain-chip-memory"))
+    if (-not [string]::IsNullOrWhiteSpace($env:DOMAIN_CHIP_MEMORY_REPO)) {
+        $candidates.Add($env:DOMAIN_CHIP_MEMORY_REPO)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
+        foreach ($entry in $env:PYTHONPATH.Split([IO.Path]::PathSeparator)) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+            $path = [IO.Path]::GetFullPath($entry)
+            if ((Split-Path $path -Leaf) -eq "src") {
+                $parent = Split-Path $path -Parent
+                if ((Split-Path $parent -Leaf) -eq "domain-chip-memory") {
+                    $candidates.Add($parent)
+                }
+            }
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+    return $candidates[0]
+}
+
 function Invoke-LedgerRender {
     param(
         [Parameter(Mandatory = $true)]
@@ -190,7 +224,7 @@ function Ensure-LatestFullRunPointer {
 }
 
 $builderRepoRoot = (Get-Location).Path
-$domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
+$domainChipRepoRoot = Resolve-DomainChipRepoRoot -BuilderRepoRoot $builderRepoRoot
 $builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
 $domainChipRevision = Get-GitRevision -RepoRoot $domainChipRepoRoot
 $expectedBaseline = Get-ExpectedValidationBaseline -LatestFullRunPath $expectedLatestFullRunPointer

@@ -13,10 +13,14 @@ from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.observability.store import record_event
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def _install_fake_configured_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
     def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")
         with self.state_db.connect() as conn:
@@ -504,9 +508,10 @@ class GatewayAskTelegramTests(SparkTestCase):
 
         frustration_response_text = frustration_output["result"]["detail"]["response_text"]
         self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
-        self.assertIn("Request: req-doctor-last-target.", frustration_response_text)
+        self.assertIn("Request: req-context-loss-prior.", frustration_response_text)
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
+        self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -543,7 +548,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
         self.assertEqual(
             update["result"]["detail"]["bridge_mode"],
-            "external_autodiscovered",
+            "external_configured",
         )
         self.assertEqual(
             deletion["result"]["detail"]["bridge_mode"],
@@ -556,6 +561,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         )
 
     def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:
+        self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -609,7 +615,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
                 self.assertEqual(
                     update["result"]["detail"]["bridge_mode"],
-                    "external_autodiscovered",
+                    "external_configured",
                 )
                 self.assertEqual(
                     deletion["result"]["detail"]["bridge_mode"],

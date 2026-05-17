@@ -1078,38 +1078,43 @@ def _build_lack_claims(
                 improvement_action="Connect or repair at least one provider profile, then record a successful provider invocation.",
             )
         )
-    claims.extend(
-        [
-            SelfAwarenessClaim(
-                claim="Registry visibility does not prove a chip, browser route, provider, or workflow succeeded this turn.",
-                source="self_awareness_capsule:claim_boundary",
-                source_kind="design_policy",
-                confidence="high",
-                verification_status="known_boundary",
-                next_probe="Run the target route and persist last-success, latency, and failure-mode evidence.",
-                improvement_action="Add per-capability last_success_at, last_failure_reason, and eval coverage fields.",
-            ),
-            SelfAwarenessClaim(
-                claim="Spark cannot inspect secrets, hidden prompts, private infrastructure, or deployment health unless a safe diagnostic surface exposes them.",
-                source="self_awareness_capsule:security_boundary",
-                source_kind="design_policy",
-                confidence="high",
-                verification_status="known_boundary",
-                next_probe="Expose only safe redacted diagnostics for secret-bound systems.",
-                improvement_action="Add redacted health summaries instead of raw secret or private infra access.",
-            ),
-            SelfAwarenessClaim(
-                claim="Natural-language invocability is only real when a user phrase maps to a route that exists, is authorized, and emits traceable evidence.",
-                source="self_awareness_capsule:natural_language_contract",
-                source_kind="design_policy",
-                confidence="high",
-                verification_status="known_boundary",
-                next_probe="Run route-selection evals for self-awareness and improvement requests.",
-                improvement_action="Add eval cases for 'improve this weak spot', stale status traps, and capability overclaim traps.",
-            ),
-        ]
-    )
-    return claims[:14]
+    policy_claims = [
+        SelfAwarenessClaim(
+            claim="Registry visibility does not prove a chip, browser route, provider, or workflow succeeded this turn.",
+            source="self_awareness_capsule:claim_boundary",
+            source_kind="design_policy",
+            confidence="high",
+            verification_status="known_boundary",
+            next_probe="Run the target route and persist last-success, latency, and failure-mode evidence.",
+            improvement_action="Add per-capability last_success_at, last_failure_reason, and eval coverage fields.",
+        ),
+        SelfAwarenessClaim(
+            claim="Spark cannot inspect secrets, hidden prompts, private infrastructure, or deployment health unless a safe diagnostic surface exposes them.",
+            source="self_awareness_capsule:security_boundary",
+            source_kind="design_policy",
+            confidence="high",
+            verification_status="known_boundary",
+            next_probe="Expose only safe redacted diagnostics for secret-bound systems.",
+            improvement_action="Add redacted health summaries instead of raw secret or private infra access.",
+        ),
+        SelfAwarenessClaim(
+            claim="Natural-language invocability is only real when a user phrase maps to a route that exists, is authorized, and emits traceable evidence.",
+            source="self_awareness_capsule:natural_language_contract",
+            source_kind="design_policy",
+            confidence="high",
+            verification_status="known_boundary",
+            next_probe="Run route-selection evals for self-awareness and improvement requests.",
+            improvement_action="Add eval cases for 'improve this weak spot', stale status traps, and capability overclaim traps.",
+        ),
+    ]
+    claims.extend(policy_claims)
+    limit = 14
+    if len(claims) <= limit:
+        return claims
+    policy_sources = {claim.source for claim in policy_claims}
+    policy_tail = [claim for claim in claims if claim.source in policy_sources]
+    other_claims = [claim for claim in claims if claim.source not in policy_sources]
+    return [*other_claims[: max(0, limit - len(policy_tail))], *policy_tail]
 
 
 def _build_improvement_claims(

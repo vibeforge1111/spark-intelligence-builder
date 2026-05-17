@@ -5646,6 +5646,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                 conversation_limit=3,
                 conversations_per_file=2,
                 validate=True,
+                validator_root=self.home,
                 run_report=True,
                 report_write_path=self.home / "artifacts" / "spark-shadow-batch-report.json",
             )
