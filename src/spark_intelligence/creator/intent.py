@@ -48,6 +48,17 @@ _STOPWORDS = {
     "with",
 }
 
+_KNOWN_DOMAINS = {
+    "startup yc": "startup-yc",
+    "yc startup": "startup-yc",
+    "spark telegram bot": "spark-telegram-bot",
+    "telegram bot": "telegram-bot",
+    "spark intelligence builder": "spark-intelligence-builder",
+    "spawner ui": "spawner-ui",
+    "founder arena": "founder-arena",
+    "startup bench": "startup-bench",
+}
+
 
 @dataclass(frozen=True)
 class CreatorIntentPacket:
@@ -155,28 +166,56 @@ def _intent_id(clean: str, target_domain: str) -> str:
     return f"creator-intent-{target_domain}-{digest}"
 
 
+def _primary_goal_text(lower: str) -> str:
+    boundaries = [
+        " treat higher-intelligence",
+        " require explicit evidence",
+        " keep publication.",
+        " keep publication ",
+        " use spark creator-system standards",
+        " keep telegram user-facing output",
+    ]
+    cut = len(lower)
+    for boundary in boundaries:
+        index = lower.find(boundary)
+        if index >= 0:
+            cut = min(cut, index)
+    return lower[:cut].strip() or lower
+
+
+def _known_domain(lower: str) -> str | None:
+    for phrase, domain in _KNOWN_DOMAINS.items():
+        if phrase in lower:
+            return domain
+    return None
+
+
 def _infer_domain(lower: str) -> str:
+    primary = _primary_goal_text(lower)
     match = re.search(
         r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
-        lower,
+        primary,
     )
     if match:
         return _slug(match.group(1))
 
-    known = {
-        "startup yc": "startup-yc",
-        "yc startup": "startup-yc",
-        "spark telegram bot": "spark-telegram-bot",
-        "telegram bot": "telegram-bot",
-        "spark intelligence builder": "spark-intelligence-builder",
-        "spawner ui": "spawner-ui",
-        "founder arena": "founder-arena",
-        "startup bench": "startup-bench",
-    }
-    for phrase, domain in known.items():
-        if phrase in lower:
-            return domain
-    return _slug(lower)
+    known = _known_domain(primary)
+    if known:
+        return known
+
+    known = _known_domain(lower)
+    if known:
+        return known
+
+    if primary != lower:
+        match = re.search(
+            r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
+            lower,
+        )
+        if match:
+            return _slug(match.group(1))
+
+    return _slug(primary)
 
 
 def _has_any(lower: str, words: tuple[str, ...]) -> bool:

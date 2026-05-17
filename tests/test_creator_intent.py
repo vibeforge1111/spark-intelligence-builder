@@ -96,6 +96,25 @@ def test_creator_plan_keeps_domain_clean_when_standards_footer_is_appended():
     assert packet.desired_outputs["autoloop_policy"] is True
 
 
+def test_creator_plan_prefers_user_goal_over_safety_footer_for_known_domain():
+    packet = build_creator_intent_packet(
+        "Create a private benchmarked Startup YC specialization path with a domain chip, benchmark pack, autoloop policy, and Telegram flow. "
+        "Do not run it or publish it yet. "
+        "Treat higher-intelligence, tool-usage, reasoning, or ability-gain claims as unproven until benchmark validation records a before/after gain. "
+        "Require explicit evidence for creator-intent.json, adapter-map.json, created-artifact-manifest.json, domain-chip/, benchmark/, specialization-path/, autoloop/policy.json, reports/evidence_ladder.md, reports/creator-mission-status.json, and swarm/contribution_packet.json before any publish or share step.",
+        privacy_mode="local_only",
+        risk_level="medium",
+    )
+
+    assert packet.target_domain == "startup-yc"
+    assert packet.intent_id.startswith("creator-intent-startup-yc-")
+    assert packet.desired_outputs["domain_chip"] is True
+    assert packet.desired_outputs["specialization_path"] is True
+    assert packet.desired_outputs["benchmark_pack"] is True
+    assert packet.desired_outputs["autoloop_policy"] is True
+    assert packet.desired_outputs["telegram_flow"] is True
+
+
 def test_creator_plan_prefers_explicit_for_domain_over_surface_mentions():
     packet = build_creator_intent_packet(
         "Create a private benchmarked specialization path with an autoloop for Spark QA Operator. "
