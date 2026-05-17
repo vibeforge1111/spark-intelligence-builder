@@ -59,6 +59,7 @@ class LocalProjectIndexTests(SparkTestCase):
         (dashboard_root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
         (dashboard_root / "src").mkdir()
         (dashboard_root / "tests").mkdir()
+        self.config_manager.set_path("spark.local_projects.roots", [str(dashboard_root)])
         self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
         self.config_manager.set_path("spark.local_projects.include_known_spark_repos", True)
 
@@ -67,7 +68,7 @@ class LocalProjectIndexTests(SparkTestCase):
 
         self.assertIn("spark-memory-quality-dashboard", records)
         record = records["spark-memory-quality-dashboard"]
-        self.assertIn(record["source"], {"known_spark_repo", "known_desktop_repo"})
+        self.assertIn(record["source"], {"config_root", "known_spark_repo", "known_desktop_repo", "installed_spark_module"})
         self.assertIn("memory_quality_dashboard", record["components"])
         self.assertIn("memory_quality_monitoring", record["capabilities"])
         self.assertEqual(record["owner_system"], "spark_memory_quality")

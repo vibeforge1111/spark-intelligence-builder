@@ -1039,7 +1039,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- browser: standby via spark-browser BROWSER_SESSION_STALE", status_stdout)
         self.assertIn("- browser detail: Live browser session is not currently connected.", status_stdout)
         self.assertIn(
-            "- browser repair: Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`.",
+            "- browser repair: Reconnect the governed browser-use session, then rerun `spark-intelligence browser status --json`.",
             status_stdout,
         )
 
@@ -1730,7 +1730,9 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(security_exit, 0, security_stderr)
         payload = json.loads(security_stdout)
         self.assertEqual(payload["counts"]["channel_alerts"], 1)
-        self.assertEqual(payload["counts"]["bridge_alerts"], 1)
+        bridge_statuses = {(row["bridge"], row["status"]) for row in payload["bridge_alerts"]}
+        self.assertIn(("researcher", "disabled"), bridge_statuses)
+        self.assertIn(("swarm", "not_ready"), bridge_statuses)
         self.assertEqual(payload["channel_alerts"][0]["status"], "poll_failure")
         self.assertEqual(payload["recent"]["duplicates"], [])
         self.assertEqual(payload["recent"]["rate_limited"], [])

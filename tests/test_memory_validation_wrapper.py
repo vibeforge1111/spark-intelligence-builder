@@ -17,6 +17,20 @@ def _git_revision(repo_root: Path) -> str:
     return completed.stdout.strip()
 
 
+def _domain_chip_memory_repo_root(repo_root: Path) -> Path:
+    candidates = [repo_root.parent / "domain-chip-memory"]
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        path = Path(entry)
+        if path.name == "src" and path.parent.name == "domain-chip-memory":
+            candidates.append(path.parent)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def _copy_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
@@ -134,7 +148,7 @@ def test_memory_validation_wrapper_recovers_latest_full_run_pointer_from_existin
 def test_memory_validation_wrapper_reports_clean_expected_baseline_banner(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "scripts" / "run_memory_two_contender_validation.ps1"
-    chip_repo_root = repo_root.parent / "domain-chip-memory"
+    chip_repo_root = _domain_chip_memory_repo_root(repo_root)
     spark_home = tmp_path / "spark-home"
     output_root = tmp_path / "validation-run"
     validation_runs_root = spark_home / "artifacts" / "memory-validation-runs"
@@ -274,7 +288,7 @@ def test_memory_validation_wrapper_reports_stale_expected_baseline_banner(tmp_pa
 
 def test_memory_validation_wrapper_full_run_updates_pointers_delta_and_docs_with_fake_cli(tmp_path: Path) -> None:
     real_builder_root = Path(__file__).resolve().parents[1]
-    real_chip_root = real_builder_root.parent / "domain-chip-memory"
+    real_chip_root = _domain_chip_memory_repo_root(real_builder_root)
 
     workspace_root = tmp_path / "workspace"
     builder_root = workspace_root / "spark-intelligence-builder"
@@ -568,6 +582,8 @@ else:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    env.pop("DOMAIN_CHIP_MEMORY_REPO", None)
+    env.pop("PYTHONPATH", None)
 
     completed = subprocess.run(
         [
@@ -775,6 +791,8 @@ else:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    env.pop("DOMAIN_CHIP_MEMORY_REPO", None)
+    env.pop("PYTHONPATH", None)
 
     completed = subprocess.run(
         [

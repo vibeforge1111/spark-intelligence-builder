@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import Counter
 from contextlib import contextmanager
@@ -92,7 +93,7 @@ def compare_telegram_memory_architectures(
         case_payloads=case_payloads,
         selected_cases=selected_cases,
     )
-    validator_path = Path(validator_root) if validator_root else DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
+    validator_path = Path(validator_root) if validator_root else _resolve_default_validator_root()
     errors: list[str] = []
     try:
         resolved_baseline_names = resolve_memory_architecture_baselines(
@@ -226,6 +227,23 @@ def build_telegram_regression_sample_specs(
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / _DEFAULT_OUTPUT_DIR_NAME
+
+
+def _resolve_default_validator_root() -> Path:
+    candidates = [DEFAULT_DOMAIN_CHIP_MEMORY_ROOT]
+    env_root = os.environ.get("DOMAIN_CHIP_MEMORY_REPO", "").strip()
+    if env_root:
+        candidates.append(Path(env_root))
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        path = Path(entry)
+        if path.name == "src" and path.parent.name == "domain-chip-memory":
+            candidates.append(path.parent)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
 
 
 def _is_comparable_case(*, case: Any, payload: dict[str, Any]) -> bool:
