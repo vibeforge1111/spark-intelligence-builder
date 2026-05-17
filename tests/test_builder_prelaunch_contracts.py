@@ -165,7 +165,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             ).fetchone()
             applied_event = conn.execute(
                 """
-                SELECT request_id, trace_ref
+                SELECT event_id, parent_event_id, request_id, trace_ref
                 FROM builder_events
                 WHERE event_type = 'config_mutation_applied'
                     AND actor_id = 'local-operator'
@@ -187,7 +187,16 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(applied_event["request_id"], expected_request_id)
         self.assertEqual(requested_event["trace_ref"], f"trace:{expected_request_id}")
         self.assertEqual(applied_event["trace_ref"], f"trace:{expected_request_id}")
-        self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
+        self.assertTrue(applied_event["parent_event_id"])
+
+        requested_events = latest_events_by_type(self.state_db, event_type="config_mutation_requested", limit=10)
+        requested_event_by_parent = next(
+            event
+            for event in requested_events
+            if event["event_id"] == applied_event["parent_event_id"]
+        )
+        self.assertEqual(requested_event_by_parent["request_id"], applied_event["request_id"])
+        self.assertEqual(requested_event_by_parent["trace_ref"], applied_event["trace_ref"])
 
     def test_env_secret_noop_upsert_is_rejected_without_rewrite(self) -> None:
         self.config_manager.upsert_env_secret("TEST_SECRET", "abc123")
