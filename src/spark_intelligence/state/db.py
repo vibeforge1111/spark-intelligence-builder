@@ -912,7 +912,7 @@ class StateDB:
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, factory=ClosingConnection)
+        conn = sqlite3.connect(self.path, factory=ClosingConnection, timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
 
