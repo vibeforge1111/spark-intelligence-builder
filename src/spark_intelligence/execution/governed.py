@@ -30,14 +30,23 @@ def run_governed_command(
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
 ) -> GovernedCommandExecution:
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError:
+        return GovernedCommandExecution(
+            command=list(command), cwd=str(cwd), exit_code=127, stdout="", stderr=f"command not found: {command[0]}"
+        )
+    except OSError as exc:
+        return GovernedCommandExecution(
+            command=list(command), cwd=str(cwd), exit_code=126, stdout="", stderr=str(exc)
+        )
     return GovernedCommandExecution(
         command=list(command),
         cwd=str(cwd),
