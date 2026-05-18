@@ -162,6 +162,8 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
 
 def _prepare_output_dir(output_dir: Path) -> None:
     if output_dir.exists():
+        if len(output_dir.parts) < 3:
+            raise ValueError(f"Refusing to rmtree a shallow path: {output_dir}")
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
