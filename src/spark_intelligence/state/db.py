@@ -914,6 +914,7 @@ class StateDB:
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     @staticmethod
