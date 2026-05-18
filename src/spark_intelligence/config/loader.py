@@ -167,11 +167,18 @@ class ConfigManager:
                 return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
         if windows_match and os.name != "nt":
-            drive = windows_match.group(1).lower()
-            remainder = windows_match.group(2).replace("\\", "/")
-            translated = Path("/mnt") / drive / remainder
-            if translated.exists():
-                return translated
+            # Only translate to WSL path if actually running under WSL
+            is_wsl = False
+            try:
+                is_wsl = "microsoft" in Path("/proc/version").read_text().lower()
+            except (OSError, AttributeError):
+                pass
+            if is_wsl:
+                drive = windows_match.group(1).lower()
+                remainder = windows_match.group(2).replace("\\", "/")
+                translated = Path("/mnt") / drive / remainder
+                if translated.exists():
+                    return translated
         return path
 
     def save(

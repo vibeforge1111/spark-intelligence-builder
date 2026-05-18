@@ -280,12 +280,16 @@ def _handle_discord_interaction_payload(
         return _discord_interaction_message(
             "Discord interaction type is not implemented yet.",
             ephemeral=True,
+            config_manager=config_manager,
+            state_db=state_db,
         )
 
     if payload.get("guild_id") not in {None, "", "null"} or payload.get("context") == 0:
         return _discord_interaction_message(
             "Discord interactions are DM-only in Spark v1.",
             ephemeral=True,
+            config_manager=config_manager,
+            state_db=state_db,
         )
 
     user = payload.get("user")
@@ -296,6 +300,8 @@ def _handle_discord_interaction_payload(
         return _discord_interaction_message(
             "Discord interaction payload is missing the invoking user.",
             ephemeral=True,
+            config_manager=config_manager,
+            state_db=state_db,
         )
 
     command_prompt = _extract_discord_interaction_prompt(payload.get("data"))
@@ -306,10 +312,12 @@ def _handle_discord_interaction_payload(
                 f"/{DISCORD_DM_COMMAND_NAME} {DISCORD_DM_COMMAND_OPTION}:<text> in Spark v1."
             ),
             ephemeral=True,
+            config_manager=config_manager,
+            state_db=state_db,
         )
     prompt, error_message = command_prompt
     if error_message:
-        return _discord_interaction_message(error_message, ephemeral=True)
+        return _discord_interaction_message(error_message, ephemeral=True, config_manager=config_manager, state_db=state_db)
 
     channel_id = str(payload.get("channel_id") or f"discord-interaction:{user['id']}")
     request_id = f"discord-interaction:{payload.get('id') or user['id']}"
@@ -342,6 +350,8 @@ def _handle_discord_interaction_payload(
         bridge_mode=str(bridge.detail.get("bridge_mode") or ""),
         max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
         redact_secret_like_replies=True,
+        config_manager=config_manager,
+        state_db=state_db,
     )
     delivered_text = _discord_single_response_text(prepared)
     mutation_actions = list(prepared["actions"])
@@ -457,12 +467,16 @@ def _discord_interaction_message(
     *,
     ephemeral: bool,
     bridge_mode: str | None = None,
+    config_manager: ConfigManager | None = None,
+    state_db: StateDB | None = None,
 ) -> GatewayWebhookResponse:
     prepared = prepare_outbound_text(
         text=content,
         bridge_mode=bridge_mode,
         max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
         redact_secret_like_replies=True,
+        config_manager=config_manager,
+        state_db=state_db,
     )
     data: dict[str, Any] = {"content": _discord_single_response_text(prepared)}
     if ephemeral:

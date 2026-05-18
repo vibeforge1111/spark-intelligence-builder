@@ -399,6 +399,7 @@ def _resolve_secret_value(
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
         if _oauth_token_expired(oauth_row):
             raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
+        # WARNING: column named "ciphertext" but stored as plaintext — see service.py _persist_oauth_tokens
         return str(oauth_row["access_token_ciphertext"])
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
