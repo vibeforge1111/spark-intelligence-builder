@@ -91,7 +91,9 @@ def execute_direct_provider_prompt(
             )
         else:
             raise RuntimeError(
-                f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
+                f"Provider '{provider.provider_id}' uses api_mode '{provider.api_mode}' "
+                f"which requires the researcher bridge wrapper, not direct HTTP execution. "
+                f"Check the provider's execution_transport configuration."
             )
     except Exception as exc:
         _record_provider_execution_event(
