@@ -14,10 +14,14 @@
 
 set -uo pipefail
 
-DESKTOP="/c/Users/USER/Desktop"
-SPAWNER_DIR="$DESKTOP/spawner-ui"
-BOT_DIR="$DESKTOP/spark-telegram-bot"
-BUILDER_DIR="$DESKTOP/spark-intelligence-builder"
+# Derive repo directories from this script's location rather than a hardcoded
+# Windows Desktop path. This allows boot-spark.sh to run on macOS, Linux, and
+# WSL without editing the file.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SPARK_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+SPAWNER_DIR="${SPARK_HOME}/../spawner-ui"
+BOT_DIR="${SPARK_HOME}/../spark-telegram-bot"
+BUILDER_DIR="${SPARK_HOME}"
 LOG_DIR="$BUILDER_DIR/.boot-logs"
 mkdir -p "$LOG_DIR"
 
@@ -32,14 +36,14 @@ done
 
 check_port() {
   local port="$1"
-  curl -s -o /dev/null -w "%{http_code}" -m 3 "http://127.0.0.1:$port/" 2>/dev/null
+  curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$port/" 2>/dev/null
 }
 
 wait_for() {
   local name="$1" port="$2" path="$3" deadline="$4"
   local n=0
   while [ "$n" -lt "$deadline" ]; do
-    code=$(curl -s -o /dev/null -w "%{http_code}" -m 2 "http://127.0.0.1:$port$path" 2>/dev/null)
+    code=$(curl -s -o /dev/null -w "%{http_code}" -m 2 "http://localhost:$port$path" 2>/dev/null)
     if [ "$code" = "200" ]; then
       echo "[$name] ready (:$port)"
       return 0
@@ -81,7 +85,7 @@ if [ "$code" = "200" ] || [ "$code" = "404" ]; then
   echo "[spawner-ui] already up on :4174"
 else
   echo "[spawner-ui] starting..."
-  (cd "$SPAWNER_DIR" && nohup npm run dev -- --port 4174 --host 127.0.0.1 >"$LOG_DIR/spawner-ui.log" 2>&1 &)
+  (cd "$SPAWNER_DIR" && nohup npm run dev -- --port 4174 --host 0.0.0.0 >"$LOG_DIR/spawner-ui.log" 2>&1 &)
   wait_for spawner-ui 4174 /api/providers 45 || { echo "spawner-ui failed to start - see $LOG_DIR/spawner-ui.log"; exit 1; }
 fi
 
