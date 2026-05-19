@@ -8,7 +8,7 @@ import urllib.request
 from typing import Any
 
 
-_SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
+_SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://localhost:4174"
 
 
 # Natural language for the mission board. Keep disjoint from schedule_list by

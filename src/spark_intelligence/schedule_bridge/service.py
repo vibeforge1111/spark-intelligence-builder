@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-_SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
+_SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://localhost:4174"
 
 # Scope note: scheduler-related vocabulary the bot should route here.
 # We match on any message that (a) asks about the scheduler surface or
