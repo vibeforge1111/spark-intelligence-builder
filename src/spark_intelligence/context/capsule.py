@@ -208,7 +208,9 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.debug("spark-intelligence: memory inspection failed for candidate %r: %s", candidate, exc)
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
