@@ -682,6 +682,8 @@ def record_config_mutation(
             "error_message": error_message,
         },
         provenance={"request_source": request_source, "actor_type": actor_type},
+        request_id=request_id,
+        trace_ref=trace_ref,
     )
     return mutation_id
 
