@@ -46,14 +46,16 @@ def _default_chip_labs_root() -> Path:
     env = os.environ.get("CHIP_LABS_ROOT")
     if env:
         return Path(env)
-    return Path("C:/Users/USER/Desktop/spark-domain-chip-labs")
+    # Fall back to cwd instead of hardcoded Windows path that doesn't exist on Linux/macOS
+    return Path.cwd() / "spark-domain-chip-labs"
 
 
 def _default_output_dir() -> Path:
     env = os.environ.get("CHIP_CREATE_OUTPUT_DIR")
     if env:
         return Path(env)
-    return Path("C:/Users/USER/Desktop")
+    # Fall back to cwd instead of hardcoded Windows path
+    return Path.cwd()
 
 
 def _ensure_chip_labs_importable(root: Path) -> None:
