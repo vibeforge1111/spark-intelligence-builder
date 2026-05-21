@@ -480,6 +480,8 @@ class ConfigManager:
         rollback_payload: Any,
         summary: str,
         error_message: str | None = None,
+        request_id: str | None = None,
+        trace_ref: str | None = None,
     ) -> None:
         try:
             state_db = StateDB(self.paths.state_db)
@@ -498,6 +500,8 @@ class ConfigManager:
                 rollback_payload=rollback_payload,
                 error_message=error_message,
                 summary=summary,
+                request_id=request_id,
+                trace_ref=trace_ref,
             )
         except Exception:
             return

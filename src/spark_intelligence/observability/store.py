@@ -547,6 +547,8 @@ def record_config_mutation(
     rollback_payload: Any,
     error_message: str | None = None,
     summary: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> str:
     mutation_id = _prefixed_id("cfg")
     rollback_ref = f"rollback:{mutation_id}"
@@ -580,6 +582,8 @@ def record_config_mutation(
             "rollback_ref": rollback_ref,
         },
         provenance={"request_source": request_source, "actor_type": actor_type},
+        request_id=request_id,
+        trace_ref=trace_ref,
     )
     recorded_at = utc_now_iso()
     with state_db.connect() as conn:
