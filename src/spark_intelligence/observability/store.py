@@ -561,11 +561,15 @@ def record_config_mutation(
     }
     validation_verdict = "semantic_noop" if status == "rejected" and error_message == "semantic_noop" else status
     request_summary = summary or f"{target_document}:{target_path} requested"
+    mutation_request_id = f"config_mutation:{mutation_id}"
+    mutation_trace_ref = f"trace:{mutation_request_id}"
     record_event(
         state_db,
         event_type="config_mutation_requested",
         component="config_manager",
         summary=request_summary,
+        request_id=mutation_request_id,
+        trace_ref=mutation_trace_ref,
         actor_id=actor_id,
         reason_code=reason_code,
         facts={
@@ -662,6 +666,8 @@ def record_config_mutation(
         event_type=event_type,
         component="config_manager",
         summary=summary or f"{target_document}:{target_path} {status}",
+        request_id=mutation_request_id,
+        trace_ref=mutation_trace_ref,
         actor_id=actor_id,
         reason_code=reason_code,
         severity="high" if status == "rejected" else DEFAULT_SEVERITY,
