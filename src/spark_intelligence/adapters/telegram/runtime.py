@@ -3957,6 +3957,7 @@ def _handle_runtime_command(
             state_db,
             user_message=normalized,
             request_id=request_id,
+            trace_ref=f"trace:{request_id}",
             session_id=session_id or f"session:telegram:{external_user_id}",
             human_id=human_id or f"human:telegram:{external_user_id}",
             agent_id=agent_id,
