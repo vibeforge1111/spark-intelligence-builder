@@ -584,6 +584,7 @@ def record_config_mutation(
         provenance={"request_source": request_source, "actor_type": actor_type},
         request_id=request_id,
         trace_ref=trace_ref,
+        correlation_id=mutation_id,
     )
     recorded_at = utc_now_iso()
     with state_db.connect() as conn:
@@ -684,6 +685,7 @@ def record_config_mutation(
         provenance={"request_source": request_source, "actor_type": actor_type},
         request_id=request_id,
         trace_ref=trace_ref,
+        correlation_id=mutation_id,
     )
     return mutation_id
 
