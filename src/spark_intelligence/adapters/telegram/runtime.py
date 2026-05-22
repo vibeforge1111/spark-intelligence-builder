@@ -5909,9 +5909,32 @@ def _memory_doctor_distress_score(simplified_text: str) -> int:
     return sum(int(signal["weight"]) for signal in _memory_doctor_distress_signals(simplified_text))
 
 
+def _is_install_guidance_request(text: str) -> bool:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    install_terms = re.search(
+        r"\b(?:install|installation|setup|fresh install|fresh setup|install path|setup path)\b",
+        normalized,
+    )
+    guidance_terms = re.search(
+        r"\b(?:guidance|instructions?|commands?|dry-run|prerequisites?|powershell|bash|macos|linux|windows)\b",
+        normalized,
+    )
+    qa_install_mission = re.search(r"\bmission\s+0?[12]\b", normalized) and re.search(
+        r"\b(?:qa|spark compete|install|setup)\b",
+        normalized,
+    )
+
+    return bool((install_terms and guidance_terms) or qa_install_mission)
+
+
 def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
     text = str(simplified_text or "").strip().lower()
     if not text:
+        return []
+    if _is_install_guidance_request(text):
         return []
     signals: list[dict[str, object]] = []
     if re.search(
