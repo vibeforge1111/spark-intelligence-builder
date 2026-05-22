@@ -42,6 +42,7 @@ from spark_intelligence.build_quality_review import (
     looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.researcher_bridge.trace_context import researcher_bridge_trace_ref
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.harness_registry import build_harness_prompt_context
@@ -10186,6 +10187,11 @@ def build_researcher_reply(
                     ):
                         assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
+                            bridge_trace_ref = researcher_bridge_trace_ref(
+                                agent_id=agent_id,
+                                human_id=human_id,
+                                request_id=request_id,
+                            )
                             record_event(
                                 state_db,
                                 event_type="memory_candidate_assessed",
@@ -10195,6 +10201,7 @@ def build_researcher_reply(
                                 ),
                                 run_id=run_id,
                                 request_id=request_id,
+                                trace_ref=bridge_trace_ref,
                                 channel_id=channel_kind,
                                 session_id=session_id,
                                 human_id=human_id,
@@ -10235,6 +10242,7 @@ def build_researcher_reply(
                                 severity="low",
                                 run_id=run_id,
                                 request_id=request_id,
+                                trace_ref=bridge_trace_ref,
                                 channel_id=channel_kind,
                                 session_id=session_id,
                                 actor_id="researcher_bridge",
@@ -10311,6 +10319,11 @@ def build_researcher_reply(
             summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
             run_id=run_id,
             request_id=request_id,
+            trace_ref=researcher_bridge_trace_ref(
+                agent_id=agent_id,
+                human_id=human_id,
+                request_id=request_id,
+            ),
             channel_id=channel_kind,
             session_id=session_id,
             human_id=human_id,
@@ -14054,6 +14067,11 @@ def build_researcher_reply(
                     summary="Researcher bridge dispatch started.",
                     run_id=run_id,
                     request_id=request_id,
+                    trace_ref=researcher_bridge_trace_ref(
+                        agent_id=agent_id,
+                        human_id=human_id,
+                        request_id=request_id,
+                    ),
                     channel_id=channel_kind,
                     session_id=session_id,
                     human_id=human_id,
