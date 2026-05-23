@@ -91,7 +91,19 @@ class GatewayRouteRegistry:
                 raise ValueError(
                     f"Gateway route {normalized_path} rejects method '{normalized_method}'."
                 )
-            raise ValueError("Gateway route not found.")
+            registered_paths = sorted({route.path for route in self._routes})
+            # Find registered paths that share a meaningful prefix with the rejected one
+            prefix_to_check = normalized_path.rsplit("/", 1)[0] or "/"
+            similar = [p for p in registered_paths if p.startswith(prefix_to_check)][:5]
+            hint = f" Registered paths sharing the prefix {prefix_to_check!r}: {similar}." if similar else (
+                f" {len(registered_paths)} routes are registered but none share a prefix with {normalized_path!r}."
+                if registered_paths else " No routes are registered on this registry."
+            )
+            raise ValueError(
+                f"Gateway route {normalized_path} (method {normalized_method}) is not "
+                f"registered.{hint} Verify the path spelling, or register the route "
+                "via GatewayRouteRegistry.register()."
+            )
         if route.content_types:
             normalized_content_type = _normalize_request_content_type(content_type)
             if not normalized_content_type:
