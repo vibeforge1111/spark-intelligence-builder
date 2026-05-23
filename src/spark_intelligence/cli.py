@@ -7511,8 +7511,6 @@ def _json_object_from_text(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"status": "unknown"}
     return payload if isinstance(payload, dict) else {"result": payload}
-
-
 def _telegram_kb_has_errors(payload: dict[str, Any]) -> bool:
     if payload.get("errors"):
         return True
