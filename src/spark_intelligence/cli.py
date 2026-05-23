@@ -115,6 +115,7 @@ from spark_intelligence.memory import (
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
+    write_memory_movement_status_export,
     LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
@@ -7236,6 +7237,10 @@ def handle_memory_run_sdk_maintenance(args: argparse.Namespace) -> int:
         actor_id="memory_cli",
     )
     print(result.to_json() if args.json else result.to_text())
+    try:
+        write_memory_movement_status_export(config_manager=config_manager, sdk_module=args.sdk_module)
+    except Exception:
+        pass
     return 0 if result.status == "succeeded" else 1
 
 
