@@ -36,5 +36,6 @@ class ConfigMutationTraceRefTests(SparkTestCase):
         self.assertEqual(len(applied), 1)
         expected_request_id = f"config_mutation:{mutation_id}"
         self.assertEqual(requested[0]["request_id"], expected_request_id)
+        self.assertEqual(applied[0]["request_id"], expected_request_id)
         self.assertEqual(requested[0]["trace_ref"], f"trace:{expected_request_id}")
         self.assertEqual(applied[0]["trace_ref"], f"trace:{expected_request_id}")
