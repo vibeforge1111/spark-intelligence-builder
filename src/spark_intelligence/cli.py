@@ -118,6 +118,7 @@ from spark_intelligence.memory import (
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
+    write_memory_movement_status_export,
     LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
