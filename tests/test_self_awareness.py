@@ -844,12 +844,16 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(browser["last_failure_reason"], "Browser hook failed.")
 
     def test_browser_route_probe_reports_browser_use_status_contract_when_missing(self) -> None:
-        result = run_route_probe_and_record(
-            self.config_manager,
-            self.state_db,
-            capability_key="spark_browser",
-            actor_id="operator:test",
-        )
+        with (
+            patch("spark_intelligence.browser.service._browser_use_cli_path", return_value=None),
+            patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=None),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
 
         self.assertEqual(result.status, "failure")
         self.assertEqual(result.failure_reason, "browser-use adapter status source is not ready.")
@@ -864,16 +868,158 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         state_db = StateDB(config_manager.paths.state_db)
         state_db.initialize()
 
-        result = run_route_probe_and_record(
-            config_manager,
-            state_db,
-            capability_key="spark_browser",
-            actor_id="operator:test",
-        )
+        with (
+            patch("spark_intelligence.browser.service._browser_use_cli_path", return_value=None),
+            patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=None),
+        ):
+            result = run_route_probe_and_record(
+                config_manager,
+                state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
 
         expected_path = spark_root / "state" / "browser-use" / "status.json"
         self.assertEqual(result.status, "failure")
         self.assertIn(f"status_path={expected_path}", result.probe_summary)
+
+    def test_browser_route_probe_writes_browser_use_status_from_doctor(self) -> None:
+        cli_path = str(self.home / "Scripts" / "browser-use.exe")
+        doctor = {
+            "status": "issues_found",
+            "summary": "4/5 checks passed, 1 missing",
+            "checks": {
+                "package": {"status": "ok", "message": "browser-use installed"},
+                "browser": {"status": "ok", "message": "Browser profile available"},
+                "network": {"status": "ok", "message": "Network connectivity OK"},
+                "profile_use": {
+                    "status": "missing",
+                    "message": "profile-use not installed (needed for browser-use profile)",
+                },
+            },
+        }
+        screenshot_path = self.home / "state" / "browser-use" / "smoke-screenshot.png"
+
+        def browser_use_run(*, command: list[str], **_: object) -> SimpleNamespace:
+            if "doctor" in command:
+                payload = doctor
+            elif "open" in command:
+                payload = {"id": "open-1", "success": True, "data": {"url": "https://example.com"}}
+            elif "state" in command:
+                payload = {
+                    "id": "state-1",
+                    "success": True,
+                    "data": {"_raw_text": "Example Domain\nThis domain is for use in documentation examples."},
+                }
+            elif "screenshot" in command:
+                screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                screenshot_path.write_bytes(b"png")
+                payload = {
+                    "id": "screenshot-1",
+                    "success": True,
+                    "data": {"saved": str(screenshot_path), "size": 3},
+                }
+            else:
+                payload = {"success": False, "error": "unexpected command"}
+            return SimpleNamespace(exit_code=0, stdout=json.dumps(payload), stderr="")
+
+        with (
+            patch("spark_intelligence.browser.service._browser_use_cli_path", return_value=cli_path),
+            patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=object()),
+            patch("spark_intelligence.browser.service.run_governed_command", side_effect=browser_use_run),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        status_path = self.home / "state" / "browser-use" / "status.json"
+        status_doc = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(result.status, "success")
+        self.assertTrue(status_doc["ready"])
+        self.assertEqual(status_doc["status"], "ready")
+        self.assertIn("profile_use: profile-use not installed", status_doc["limitations"][0])
+        self.assertEqual(status_doc["proofs"]["public_page_open"]["status"], "success")
+        self.assertEqual(status_doc["proofs"]["state_read"]["status"], "success")
+        self.assertEqual(status_doc["proofs"]["screenshot_capture"]["status"], "success")
+        self.assertIn("browser-use adapter status=ready", result.probe_summary)
+        self.assertIn("cli_available=True", result.probe_summary)
+        self.assertIn("public_page_open", result.probe_summary)
+        self.assertIn("screenshot_capture", result.probe_summary)
+
+    def test_browser_route_probe_fails_when_public_page_smoke_fails(self) -> None:
+        cli_path = str(self.home / "Scripts" / "browser-use.exe")
+        doctor = {
+            "status": "ok",
+            "summary": "3/3 checks passed",
+            "checks": {
+                "package": {"status": "ok"},
+                "browser": {"status": "ok"},
+                "network": {"status": "ok"},
+            },
+        }
+
+        def browser_use_run(*, command: list[str], **_: object) -> SimpleNamespace:
+            if "doctor" in command:
+                payload = doctor
+                return_code = 0
+            elif "open" in command:
+                payload = {"id": "open-1", "success": False, "error": "navigation failed"}
+                return_code = 0
+            else:
+                payload = {"id": "later-1", "success": True, "data": {"_raw_text": "Example Domain"}}
+                return_code = 0
+            return SimpleNamespace(exit_code=return_code, stdout=json.dumps(payload), stderr="")
+
+        with (
+            patch("spark_intelligence.browser.service._browser_use_cli_path", return_value=cli_path),
+            patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=object()),
+            patch("spark_intelligence.browser.service.run_governed_command", side_effect=browser_use_run),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        status_path = self.home / "state" / "browser-use" / "status.json"
+        status_doc = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(result.status, "failure")
+        self.assertFalse(status_doc["ready"])
+        self.assertEqual(status_doc["error_code"], "BROWSER_USE_SMOKE_REQUIRED_PROOF_FAILED")
+        self.assertEqual(status_doc["proofs"]["public_page_open"]["status"], "failure")
+
+    def test_agent_operating_context_reads_passive_browser_use_status(self) -> None:
+        status_path = self.home / "state" / "browser-use" / "status.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "ready": True,
+                    "last_success_at": "2026-05-24T17:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("spark_intelligence.browser.service._browser_use_cli_path", return_value=None),
+            patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=object()),
+        ):
+            context = build_agent_operating_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        browser = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "healthy")
+        self.assertEqual(browser["registry_status"], "ready")
+        self.assertTrue(browser["available"])
+        self.assertTrue(browser["active"])
 
     def test_browser_route_probe_records_browser_use_adapter_success(self) -> None:
         with patch(

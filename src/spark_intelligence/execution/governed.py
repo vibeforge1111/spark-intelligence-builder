@@ -29,14 +29,23 @@ def run_governed_command(
     cwd: str | Path,
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
+    encoding: str | None = None,
+    errors: str | None = None,
 ) -> GovernedCommandExecution:
+    run_kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "env": env,
+        "capture_output": True,
+        "text": True,
+        "timeout": timeout_seconds,
+    }
+    if encoding:
+        run_kwargs["encoding"] = encoding
+    if errors:
+        run_kwargs["errors"] = errors
     completed = subprocess.run(
         command,
-        cwd=str(cwd),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
+        **run_kwargs,
     )
     return GovernedCommandExecution(
         command=list(command),
