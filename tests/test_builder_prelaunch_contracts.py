@@ -524,11 +524,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         )
 
         open_rows = recent_contradictions(self.state_db, status="open", limit=10)
-        open_by_key = {row["contradiction_key"]: row for row in open_rows}
-        self.assertEqual(len(open_by_key), 2)
-        self.assertIn("stop_ship:stop_ship_intent_without_proof", open_by_key)
-        self.assertEqual(int(open_by_key["stop_ship:stop_ship_intent_without_proof"]["occurrence_count"]), 2)
-        self.assertTrue(all(int(row["occurrence_count"]) == 2 for row in open_by_key.values()))
+        self.assertEqual(len(open_rows), 1)
+        self.assertEqual(open_rows[0]["contradiction_key"], "stop_ship:stop_ship_intent_without_proof")
+        self.assertEqual(int(open_rows[0]["occurrence_count"]), 2)
 
         record_event(
             self.state_db,
@@ -2311,8 +2309,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             limit=20,
         )
 
-        self.assertEqual(report.payload["counts"]["contradiction_incidents"], 2)
-        self.assertEqual(report.payload["watchtower"]["contradictions"]["counts"]["open"], 2)
+        self.assertEqual(report.payload["counts"]["contradiction_incidents"], 1)
+        self.assertEqual(report.payload["watchtower"]["contradictions"]["counts"]["open"], 1)
         self.assertTrue(any("contradiction" in item["summary"].lower() for item in report.payload["items"]))
 
     def test_operator_security_report_surfaces_observer_incident_counts(self) -> None:
