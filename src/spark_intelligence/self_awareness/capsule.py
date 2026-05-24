@@ -615,7 +615,8 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 "last_success_at": None,
                 "last_failure_at": None,
                 "last_failure_reason": None,
-                "latest_probe_summary": None,
+                "last_success_summary": None,
+                "last_failure_summary": None,
                 "route_latency_ms": None,
                 "eval_coverage_status": "missing",
                 "eval_coverage_sources": [],
@@ -628,8 +629,6 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         event_id = str(event.get("event_id") or "").strip()
         if not row.get("source") and event_id:
             row["source"] = f"event:{event_id}"
-        if row.get("latest_probe_summary") is None:
-            row["latest_probe_summary"] = _probe_summary(event)
         latency = _latency_ms(facts)
         if latency is not None and row.get("route_latency_ms") is None:
             row["route_latency_ms"] = latency
@@ -641,9 +640,11 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         )[:8]
         if str(event.get("event_type") or "") == "tool_result_received" and row.get("last_success_at") is None:
             row["last_success_at"] = created_at
+            row["last_success_summary"] = _probe_summary(event)
         if str(event.get("event_type") or "") == "dispatch_failed" and row.get("last_failure_at") is None:
             row["last_failure_at"] = created_at
             row["last_failure_reason"] = _failure_reason(event)
+            row["last_failure_summary"] = _probe_summary(event)
     query_tokens = _tokens(user_message)
     evidence_rows: list[CapabilityEvidence] = []
     for row in sorted(
@@ -654,6 +655,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         confidence = _capability_confidence(row)
         freshness = _capability_freshness(row)
         goal_relevance = _capability_goal_relevance(str(row["capability_key"]), query_tokens)
+        latest_probe_summary = _latest_probe_summary_for_row(row, confidence=confidence)
         evidence_rows.append(
             CapabilityEvidence(
                 capability_key=str(row["capability_key"]),
@@ -661,7 +663,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 last_success_at=row.get("last_success_at"),
                 last_failure_at=row.get("last_failure_at"),
                 last_failure_reason=row.get("last_failure_reason"),
-                latest_probe_summary=row.get("latest_probe_summary"),
+                latest_probe_summary=latest_probe_summary,
                 route_latency_ms=row.get("route_latency_ms"),
                 eval_coverage_status=str(row.get("eval_coverage_status") or "missing"),
                 eval_coverage_sources=[str(item) for item in row.get("eval_coverage_sources") or [] if str(item).strip()],
@@ -747,14 +749,26 @@ def _failure_reason(event: dict[str, Any]) -> str:
 
 def _probe_summary(event: dict[str, Any]) -> str | None:
     facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
-    value = str(facts.get("probe_summary") or "").strip()
-    return value[:240] if value else None
+    for key in ("probe_summary", "evidence_summary", "summary"):
+        value = str(facts.get(key) or "").strip()
+        if value:
+            return value[:300]
+    value = str(event.get("summary") or "").strip()
+    return value[:300] or None
+
+
+def _latest_probe_summary_for_row(row: dict[str, Any], *, confidence: str) -> str | None:
+    if confidence == "recent_failure":
+        return row.get("last_failure_summary") or row.get("last_success_summary")
+    if row.get("last_success_at"):
+        return row.get("last_success_summary") or row.get("last_failure_summary")
+    return row.get("last_failure_summary")
 
 
 def _capability_confidence(row: dict[str, Any]) -> str:
     last_success = _parse_iso(row.get("last_success_at"))
     last_failure = _parse_iso(row.get("last_failure_at"))
-    if last_failure and (last_success is None or last_failure >= last_success):
+    if last_failure and (last_success is None or last_failure > last_success):
         return "recent_failure"
     if last_success is None:
         return "observed_without_success"

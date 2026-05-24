@@ -1,4 +1,4 @@
-# Spark Self-Awareness Intelligence Plan 2026-05-01
+﻿# Spark Self-Awareness Intelligence Plan 2026-05-01
 
 ## Goal
 
@@ -407,7 +407,7 @@ Examples:
 - Builder: `spark-intelligence status --json`
 - diagnostics: `spark-intelligence diagnostics scan --json`
 - memory: `spark-intelligence memory inspect-capsule --query ... --json`
-- browser: `spark-intelligence browser status --json`
+- browser: `spark browser-use status --json`
 - Telegram bot: `/diagnose`
 - Spawner: provider and mission ping
 
@@ -681,4 +681,3 @@ But:
 ```text
 I see six attached chips. Two were invoked successfully today, one is only registered, and browser is in standby. For your goal of improving agent self-awareness, the biggest gap is not chip count, it is missing last-success telemetry and failure-mode metadata. Ask me to run a capability probe, then I can tell you what is genuinely working.
 ```
-

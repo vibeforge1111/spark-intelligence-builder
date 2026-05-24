@@ -1,12 +1,12 @@
-# Spark Intelligence Browser Integration Handoff 2026-04-08
+﻿# Spark Intelligence Browser Integration Handoff 2026-04-08
 
 ## 1. What This Checkpoint Represents
 
-This note captures the browser-specific Builder state after the governed browser V1 repo was finalized and the real cross-repo Builder path was re-tested.
+This note is historical. The legacy browser extension path described below has since been disabled; use the guarded Spark CLI browser-use MCP lane instead.
 
 The important shift is that Builder is no longer only structurally compatible with the browser-extension repo.
 
-It now completes a real governed `browser status` and `browser page-snapshot` flow against the live `spark-browser-extension` runtime on this machine.
+The old checkpoint completed a governed browser-extension status/snapshot flow. That flow is no longer an active runtime path.
 
 ## 2. What Changed In Builder
 
@@ -16,7 +16,7 @@ Builder shipped the missing live browser snapshot fallback in commit:
 
 What changed:
 
-- `spark-intelligence browser page-snapshot` no longer stops at a direct `browser.page.snapshot` attempt when the extension lacks live page context
+- Historical: the old extension snapshot command no longer stopped at a direct `browser.page.snapshot` attempt when the extension lacked live page context.
 - Builder now falls back to:
   - `browser.navigate`
   - `browser.tab.wait`
@@ -37,28 +37,24 @@ Builder verification completed:
 
 - `python -m pytest tests/test_cli_smoke.py tests/test_attachment_hooks.py -k browser -q`
 - `python -m pytest tests/test_cli_smoke.py tests/test_attachment_hooks.py -q`
-- `spark-intelligence attachments add-root chips <workspace>\\spark-browser-extension --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
-- `spark-intelligence attachments activate-chip spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
-- `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json`
-- `spark-intelligence browser page-snapshot --origin https://example.com/ --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json`
+- `spark browser-use status --json`
+- `spark browser-use mcp-config --client codex`
 
 Results:
 
 - browser-adjacent tests pass in Builder
-- the real manifest-backed attachment path is active
-- live `browser status` returns `completed`
-- live `browser page-snapshot` now returns `completed`
-- the returned snapshot includes real bounded page data plus a real `tab_id`
+- the guarded browser-use status/config commands are the supported path now
+- the legacy extension attachment path is disabled
 
 ## 4. Honest Readiness Status
 
-For the current Builder-owned browser CLI surface, this is ready.
+For the current Builder-owned browser CLI surface, this historical note is superseded.
 
 That means:
 
-- `browser status` works against the real extension runtime
-- `browser page-snapshot` works against the real extension runtime
-- Builder now behaves like a real downstream consumer of the governed browser adapter rather than only a fixture-mode contract checker
+- use `spark browser-use status --json` for browser-use readiness
+- use `spark browser-use mcp-config --client codex` for Codex MCP wiring
+- Builder should not call the legacy extension adapter
 
 This does not mean Builder owns the full browser product.
 
@@ -70,8 +66,8 @@ What still remains outside this specific Builder checkpoint:
 
 ## 5. Current Risks And Caveats
 
-- the live path still depends on the dedicated browser profile being launched and connected
-- the extension remains `active_tab_only`, so Builder must keep using explicit page-context establishment instead of assuming ambient page access
+- the legacy extension live path is disabled
+- browser automation should go through the guarded browser-use MCP lane
 - this repo still has unrelated local untracked files not touched by this checkpoint
 
 Those unrelated local files should not be confused with the shipped browser integration state.
@@ -92,7 +88,7 @@ Current live truth:
 - the live Builder gateway was restarted and verified on the Telegram socket
 - real Telegram traffic processed again after the rollback
 - `spark-swarm` remains a downstream or adjacent system here, not the active Telegram ingress owner for this bot
-- `spark-browser-extension` remains the downstream governed browser runtime for Brave execution
+- browser automation now belongs to the guarded Spark CLI browser-use MCP lane, not `spark-browser-extension`
 
 The current production-shaped runtime is:
 
@@ -100,14 +96,14 @@ The current production-shaped runtime is:
 2. Builder enforces pairing, operator policy, and delivery.
 3. Builder handles runtime commands such as `/swarm status`, `/swarm evaluate <task>`, and `/swarm sync` locally.
 4. Builder uses Spark Researcher and the configured provider path for normal conversational reasoning.
-5. Builder uses the `spark-browser-extension` attachment when a Telegram request needs governed browser evidence.
+5. Builder should not use the `spark-browser-extension` attachment for governed browser evidence.
 6. Builder uses the Swarm bridge when the operator asks for evaluation or collective sync.
 
 This keeps one clear chain of responsibility:
 
 - Telegram channel ownership: Builder
 - multi-agent escalation and collective sync: Swarm
-- governed browser execution: `spark-browser-extension`
+- governed browser execution: guarded Spark CLI browser-use MCP lane
 
 Live verification completed on the production-shaped Telegram home:
 

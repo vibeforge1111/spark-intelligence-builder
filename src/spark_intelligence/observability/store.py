@@ -1145,7 +1145,7 @@ def recent_procedural_lesson_records(
         clauses.append("lesson_kind = ?")
         params.append(lesson_kind)
     if active_only:
-        clauses.append("status IN ('active', 'candidate', 'confirmed') AND retired_at IS NULL")
+        clauses.append("status IN ('active', 'confirmed') AND retired_at IS NULL")
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY updated_at DESC, lesson_id DESC LIMIT ?"

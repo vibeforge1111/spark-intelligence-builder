@@ -16,6 +16,8 @@ from spark_intelligence.self_awareness.connector_harness import (
 from spark_intelligence.self_awareness.capability_ledger import (
     CAPABILITY_LEDGER_STATES,
     CapabilityLedgerResult,
+    build_capability_activation_dry_run,
+    build_capability_activation_preflight,
     capability_is_active,
     load_capability_ledger,
     record_capability_ledger_event,
@@ -59,6 +61,8 @@ __all__ = [
     "AgentOperatingContextResult",
     "RouteProbeEvidenceResult",
     "build_agent_operating_context",
+    "build_capability_activation_dry_run",
+    "build_capability_activation_preflight",
     "build_capability_drift_heartbeat",
     "build_capability_proposal_packet",
     "build_connector_harness_envelope",

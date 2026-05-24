@@ -9,7 +9,14 @@ from spark_intelligence.observability.store import record_event, utc_now_iso
 from spark_intelligence.state.db import StateDB
 
 
-ACTIVE_PROCEDURAL_LESSON_STATUSES = {"active", "candidate", "confirmed"}
+PROCEDURAL_LESSON_SCHEMA_VERSION = "spark.procedural_lesson.v2"
+ACTIVE_PROCEDURAL_LESSON_STATUSES = {"active", "confirmed"}
+VALID_PROCEDURAL_LESSON_APPROVAL_STATES = {
+    "approved",
+    "needs_review",
+    "rejected",
+    "superseded",
+}
 
 
 @dataclass(frozen=True)
@@ -40,18 +47,24 @@ class ProceduralLessonRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "lesson_id": self.lesson_id,
             "lesson_key": self.lesson_key,
             "lesson_kind": self.lesson_kind,
             "status": self.status,
+            "scope": self.scope,
             "trigger_pattern": self.trigger_pattern,
             "corrective_action": self.corrective_action,
+            "reuse_condition": self.reuse_condition,
+            "revalidation_condition": self.revalidation_condition,
+            "approval_state": self.approval_state,
             "failure_summary": self.failure_summary,
             "target_repo": self.target_repo,
             "target_component": self.target_component,
             "applies_to_component": self.applies_to_component,
             "source_event_id": self.source_event_id,
             "source_task_key": self.source_task_key,
+            "provenance_refs": self.provenance_refs,
             "confidence": self.confidence,
             "occurrence_count": self.occurrence_count,
             "evidence": dict(self.evidence),
@@ -62,11 +75,74 @@ class ProceduralLessonRecord:
             "is_active": self.is_active,
         }
 
+    @property
+    def lesson_schema(self) -> dict[str, Any]:
+        schema = self.evidence.get("lesson_schema")
+        return schema if isinstance(schema, dict) else {}
+
+    @property
+    def schema_version(self) -> str:
+        return str(self.lesson_schema.get("schema_version") or PROCEDURAL_LESSON_SCHEMA_VERSION)
+
+    @property
+    def scope(self) -> dict[str, Any]:
+        schema_scope = self.lesson_schema.get("scope")
+        if isinstance(schema_scope, dict) and schema_scope:
+            return dict(schema_scope)
+        return {
+            key: value
+            for key, value in {
+                "target_repo": self.target_repo,
+                "target_component": self.target_component,
+                "applies_to_component": self.applies_to_component,
+            }.items()
+            if value
+        }
+
+    @property
+    def reuse_condition(self) -> str:
+        return str(self.lesson_schema.get("reuse_condition") or self.trigger_pattern)
+
+    @property
+    def revalidation_condition(self) -> str:
+        return str(
+            self.lesson_schema.get("revalidation_condition")
+            or "Re-run a task-specific probe if the target, repo, workflow, or evidence changed."
+        )
+
+    @property
+    def approval_state(self) -> str:
+        value = str(self.lesson_schema.get("approval_state") or "").strip()
+        if value:
+            return value
+        if self.status in {"active", "confirmed"}:
+            return "approved"
+        if self.status in {"retired", "superseded"}:
+            return "superseded"
+        return "needs_review"
+
+    @property
+    def provenance_refs(self) -> list[str]:
+        provenance = self.lesson_schema.get("provenance")
+        if isinstance(provenance, dict):
+            refs = provenance.get("source_refs")
+            if isinstance(refs, list):
+                return [str(ref).strip() for ref in refs if str(ref).strip()]
+        refs = []
+        if self.source_event_id:
+            refs.append(f"event:{self.source_event_id}")
+        if self.source_task_key:
+            refs.append(f"task:{self.source_task_key}")
+        return refs
+
     def to_context_text(self) -> str:
         parts = [
             f"Procedural lesson: {self.lesson_kind}",
             f"Trigger: {self.trigger_pattern}",
             f"Do next time: {self.corrective_action}",
+            f"Reuse when: {self.reuse_condition}",
+            f"Revalidate before reuse: {self.revalidation_condition}",
+            f"Approval: {self.approval_state}",
         ]
         if self.failure_summary:
             parts.append(f"Failure learned from: {self.failure_summary}")
@@ -101,6 +177,13 @@ def upsert_procedural_lesson(
     source_task_key: str | None = None,
     confidence: float = 0.7,
     evidence: dict[str, Any] | None = None,
+    scope: dict[str, Any] | None = None,
+    reuse_condition: str | None = None,
+    revalidation_condition: str | None = None,
+    approval_state: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    source_refs: list[str] | None = None,
     actor_id: str = "procedural_memory",
 ) -> ProceduralLessonRecord:
     normalized_key = _required_text(lesson_key, "lesson_key")
@@ -111,7 +194,31 @@ def upsert_procedural_lesson(
     now = utc_now_iso()
     lesson_id = f"lesson-{uuid4().hex[:12]}"
     retired_at = now if normalized_status in {"retired", "superseded"} else None
-    evidence_json = json.dumps(dict(evidence or {}), sort_keys=True, ensure_ascii=True, default=str)
+    normalized_approval = _normalize_approval_state(
+        approval_state
+        or ("approved" if normalized_status in ACTIVE_PROCEDURAL_LESSON_STATUSES else "needs_review")
+    )
+    evidence_payload = dict(evidence or {})
+    evidence_payload["lesson_schema"] = _build_lesson_schema(
+        lesson_kind=normalized_kind,
+        status=normalized_status,
+        trigger_pattern=normalized_trigger,
+        corrective_action=normalized_action,
+        scope=scope,
+        target_repo=target_repo,
+        target_component=target_component,
+        applies_to_component=applies_to_component,
+        reuse_condition=reuse_condition,
+        revalidation_condition=revalidation_condition,
+        approval_state=normalized_approval,
+        source_event_id=source_event_id,
+        source_task_key=source_task_key,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        source_refs=source_refs,
+    )
+    evidence_json = json.dumps(evidence_payload, sort_keys=True, ensure_ascii=True, default=str)
     bounded_confidence = max(0.0, min(1.0, float(confidence)))
 
     with state_db.connect() as conn:
@@ -278,6 +385,54 @@ def record_timeout_recovery_lesson(
     )
 
 
+def record_mission_lesson_candidate(
+    state_db: StateDB,
+    *,
+    mission_id: str,
+    lesson_kind: str,
+    trigger_pattern: str,
+    corrective_action: str,
+    evidence: dict[str, Any],
+    reuse_condition: str,
+    revalidation_condition: str,
+    source_task_key: str | None = None,
+    target_repo: str | None = None,
+    target_component: str | None = None,
+    applies_to_component: str | None = "mission_recovery",
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    source_refs: list[str] | None = None,
+) -> ProceduralLessonRecord:
+    return upsert_procedural_lesson(
+        state_db,
+        lesson_key=f"mission_lesson_candidate:{_key_fragment(mission_id)}:{_key_fragment(lesson_kind)}",
+        lesson_kind=lesson_kind,
+        status="candidate",
+        trigger_pattern=trigger_pattern,
+        corrective_action=corrective_action,
+        failure_summary=None,
+        target_repo=target_repo,
+        target_component=target_component,
+        applies_to_component=applies_to_component,
+        source_task_key=source_task_key or mission_id,
+        confidence=0.45,
+        evidence=evidence,
+        scope={
+            "mission_id": mission_id,
+            "target_repo": target_repo,
+            "target_component": target_component,
+            "applies_to_component": applies_to_component,
+        },
+        reuse_condition=reuse_condition,
+        revalidation_condition=revalidation_condition,
+        approval_state="needs_review",
+        human_id=human_id,
+        agent_id=agent_id,
+        source_refs=source_refs,
+        actor_id="mission_lesson_candidate",
+    )
+
+
 def get_procedural_lesson(state_db: StateDB, *, lesson_key: str) -> ProceduralLessonRecord | None:
     with state_db.connect() as conn:
         row = conn.execute(
@@ -440,6 +595,81 @@ def _optional_text(value: Any) -> str | None:
 def _normalize_status(value: str | None) -> str:
     cleaned = str(value or "").strip().casefold()
     return cleaned or "active"
+
+
+def _normalize_approval_state(value: str | None) -> str:
+    cleaned = str(value or "").strip().casefold()
+    if not cleaned:
+        return "needs_review"
+    if cleaned not in VALID_PROCEDURAL_LESSON_APPROVAL_STATES:
+        raise ValueError(
+            "approval_state must be one of: "
+            + ", ".join(sorted(VALID_PROCEDURAL_LESSON_APPROVAL_STATES))
+        )
+    return cleaned
+
+
+def _build_lesson_schema(
+    *,
+    lesson_kind: str,
+    status: str,
+    trigger_pattern: str,
+    corrective_action: str,
+    scope: dict[str, Any] | None,
+    target_repo: str | None,
+    target_component: str | None,
+    applies_to_component: str | None,
+    reuse_condition: str | None,
+    revalidation_condition: str | None,
+    approval_state: str,
+    source_event_id: str | None,
+    source_task_key: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    actor_id: str,
+    source_refs: list[str] | None,
+) -> dict[str, Any]:
+    default_scope = {
+        "target_repo": target_repo,
+        "target_component": target_component,
+        "applies_to_component": applies_to_component,
+    }
+    normalized_scope = {
+        str(key): value
+        for key, value in {**default_scope, **dict(scope or {})}.items()
+        if value not in (None, "", [], {})
+    }
+    refs = [str(ref).strip() for ref in (source_refs or []) if str(ref).strip()]
+    if source_event_id:
+        refs.append(f"event:{source_event_id}")
+    if source_task_key:
+        refs.append(f"task:{source_task_key}")
+    return {
+        "schema_version": PROCEDURAL_LESSON_SCHEMA_VERSION,
+        "lesson_kind": lesson_kind,
+        "status": status,
+        "scope": normalized_scope,
+        "reuse_condition": str(reuse_condition or trigger_pattern).strip(),
+        "revalidation_condition": str(
+            revalidation_condition
+            or "Re-run a task-specific probe if the target, repo, workflow, or evidence changed."
+        ).strip(),
+        "approval_state": approval_state,
+        "provenance": {
+            "human_id": str(human_id or "").strip() or None,
+            "agent_id": str(agent_id or "").strip() or None,
+            "actor_id": str(actor_id or "").strip() or None,
+            "source_event_id": source_event_id,
+            "source_task_key": source_task_key,
+            "source_refs": list(dict.fromkeys(refs)),
+        },
+        "candidate_boundary": (
+            "candidate lessons are internal review items and must not enter active context until approved or confirmed"
+            if status == "candidate"
+            else "approved procedural advice remains advisory, not user fact memory"
+        ),
+        "corrective_action": corrective_action,
+    }
 
 
 def _key_fragment(value: str) -> str:

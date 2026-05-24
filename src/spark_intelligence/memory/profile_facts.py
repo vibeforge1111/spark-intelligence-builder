@@ -56,6 +56,8 @@ _OCCUPATION_PATTERNS = [
 _NAME_PATTERNS = [
     re.compile(r"\bset\s+my\s+preferred\s+name\s+to\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bmy\s+preferred\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bwrite\s+(?:it|my\s+name)\s+as\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bstill\s+(?:my\s+)?name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?i(?:'m| am)\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?my\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\-'.`]{0,40})\s*,?\s+not\s+[a-z][a-z\s\-'.`]{0,40}", re.I),
@@ -85,7 +87,7 @@ _TIMEZONE_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+on\s+(utc[+-]\d{1,2}(?::\d{2})?)", re.I),
     re.compile(r"\bmy\s+timezone\s+is\s+(utc[+-]\d{1,2}(?::\d{2})?)", re.I),
 ]
-_STOP_WORDS = {"and", "but", "because", "so", "that", "which", "where"}
+_STOP_WORDS = {"and", "but", "because", "so", "that", "which", "where", "pronounce", "pronounced"}
 _LOWERCASE_JOINERS = {"and", "of", "the", "de", "al", "bin"}
 _TEMPORAL_TAIL_WORDS = {"now", "today", "currently"}
 _KNOWN_COUNTRY_NAMES = {
