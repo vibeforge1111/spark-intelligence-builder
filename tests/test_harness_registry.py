@@ -34,15 +34,15 @@ class HarnessRegistryTests(SparkTestCase):
         harness_ids = [contract["harness_id"] for contract in payload["contracts"]]
         self.assertIn("builder.direct", harness_ids)
         self.assertIn("researcher.advisory", harness_ids)
-        self.assertIn("browser.grounded", harness_ids)
+        self.assertNotIn("browser.grounded", harness_ids)
         self.assertIn("voice.io", harness_ids)
         self.assertIn("swarm.escalation", harness_ids)
         recipe_ids = [recipe["recipe_id"] for recipe in payload["recipes"]]
         self.assertIn("advisory_voice_reply", recipe_ids)
         self.assertIn("research_then_swarm", recipe_ids)
-        self.assertIn("browser_then_advisory", recipe_ids)
+        self.assertNotIn("browser_then_advisory", recipe_ids)
 
-    def test_browser_route_selects_browser_harness(self) -> None:
+    def test_browser_route_selects_researcher_when_legacy_browser_is_disabled(self) -> None:
         self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
@@ -54,9 +54,11 @@ class HarnessRegistryTests(SparkTestCase):
             task="How would you execute a task where you need to search the web and inspect a page?",
         )
 
-        self.assertEqual(selection.harness_id, "browser.grounded")
-        self.assertEqual(selection.backend_kind, "browser_bridge")
-        self.assertIn("web_search", selection.required_capabilities)
+        self.assertEqual(selection.harness_id, "researcher.advisory")
+        self.assertEqual(selection.backend_kind, "provider_bridge")
+        self.assertEqual(selection.owner_system, "Spark Researcher")
+        self.assertIn("provider_advisory", selection.required_capabilities)
+        self.assertIn("legacy browser extension is disabled", selection.reason)
 
     def test_swarm_disabled_request_holds_local_on_researcher_harness(self) -> None:
         self._enable_fake_researcher()

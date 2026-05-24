@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.registry import attachment_status
+from spark_intelligence.attachments.hooks import run_chip_hook, run_first_active_chip_hook
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -14,6 +15,19 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class AttachmentHookTests(SparkTestCase):
+    def test_legacy_browser_extension_hooks_are_disabled_at_execution_boundary(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
+
+        with self.assertRaises(ValueError) as direct:
+            run_chip_hook(self.config_manager, chip_key="spark-browser", hook="browser.status", payload={})
+        with self.assertRaises(ValueError) as active:
+            run_first_active_chip_hook(self.config_manager, hook="browser.status", payload={})
+
+        self.assertIn("legacy browser extension lane is disabled", str(direct.exception))
+        self.assertIn("legacy browser extension lane is disabled", str(active.exception))
+
     def test_attachment_status_autodiscovers_generic_spark_chip_repo(self) -> None:
         desktop_root = self.home / "Desktop"
         desktop_root.mkdir(parents=True, exist_ok=True)
@@ -69,7 +83,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(records["spark-swarm"]["attachment_mode"], "available")
         self.assertIn("evaluate", records["spark-browser"]["hook_names"])
 
-    def test_attachments_run_hook_allows_browser_status_hook(self) -> None:
+    def test_attachments_run_hook_blocks_legacy_browser_status_hook(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
@@ -82,7 +96,7 @@ class AttachmentHookTests(SparkTestCase):
         )
         self.assertEqual(activate_exit, 0, activate_stderr)
 
-        hook_exit, hook_stdout, hook_stderr = self.run_cli(
+        hook_exit, _, hook_stderr = self.run_cli(
             "attachments",
             "run-hook",
             "browser.status",
@@ -92,11 +106,9 @@ class AttachmentHookTests(SparkTestCase):
             "--payload-json",
             json.dumps({"request_id": "browser-status-test", "target": {"browser_family": "brave"}}),
         )
-        self.assertEqual(hook_exit, 0, hook_stderr)
-        payload = json.loads(hook_stdout)
-        self.assertEqual(payload["hook"], "browser.status")
-        self.assertEqual(payload["output"]["result"]["browser"]["family"], "brave")
-        self.assertEqual(payload["output"]["result"]["runtime_mode"], "native-host-session")
+        self.assertEqual(hook_exit, 2)
+        self.assertIn("legacy browser extension lane is disabled", hook_stderr)
+        self.assertIn("browser-use MCP lane", hook_stderr)
 
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
@@ -638,11 +650,9 @@ class AttachmentHookTests(SparkTestCase):
             )
 
         self.assertIn("Source: https://www.coingecko.com/en/coins/bitcoin", result.reply_text)
-        self.assertIn("Do not say you cannot browse", str(captured["system_prompt"]))
-        self.assertIn("[Browser search evidence]", str(captured["user_prompt"]))
-        self.assertIn("search_query=current BTC price in USD", str(captured["user_prompt"]))
-        self.assertIn("source_url=https://www.coingecko.com/en/coins/bitcoin", str(captured["user_prompt"]))
-        self.assertIn("Bitcoin price today is $84,321.18 USD", str(captured["user_prompt"]))
+        self.assertRegex(str(captured["system_prompt"]), r"Do not (?:say|claim) you cannot browse")
+        self.assertNotIn("[Browser search evidence]", str(captured["user_prompt"]))
+        self.assertIn("spark-browser mode=available router_invokable=no", str(captured["user_prompt"]))
 
     def test_researcher_bridge_returns_explicit_browser_permission_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -665,8 +675,8 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is blocked because the browser extension does not have host access "
-                    "for https://duckduckgo.com. Open the extension popup and grant explicit site "
+                    "Web search is blocked because the legacy browser extension does not have host access "
+                    "for https://duckduckgo.com. Open the legacy extension popup and grant explicit site "
                     "access for https://duckduckgo.com, then retry the search."
                 ),
                 "blocked_code": "HOST_PERMISSION_REQUIRED",
@@ -723,7 +733,7 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is currently unavailable because the Spark Browser Extension live session "
+                    "Web search is currently unavailable because the legacy browser extension live session "
                     "is disconnected. Reload or reconnect the extension, then retry the search."
                 ),
                 "blocked_code": "BROWSER_SESSION_UNAVAILABLE",

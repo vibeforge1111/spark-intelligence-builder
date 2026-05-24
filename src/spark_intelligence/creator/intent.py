@@ -35,6 +35,7 @@ _STOPWORDS = {
     "on",
     "path",
     "please",
+    "private",
     "specialization",
     "specialisation",
     "system",
@@ -42,6 +43,8 @@ _STOPWORDS = {
     "the",
     "this",
     "to",
+    "use",
+    "using",
     "with",
 }
 
@@ -153,6 +156,13 @@ def _intent_id(clean: str, target_domain: str) -> str:
 
 
 def _infer_domain(lower: str) -> str:
+    match = re.search(
+        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
+        lower,
+    )
+    if match:
+        return _slug(match.group(1))
+
     known = {
         "startup yc": "startup-yc",
         "yc startup": "startup-yc",
@@ -166,13 +176,6 @@ def _infer_domain(lower: str) -> str:
     for phrase, domain in known.items():
         if phrase in lower:
             return domain
-
-    match = re.search(
-        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|with|which|so|to|and|from)\b|[,.]|$)",
-        lower,
-    )
-    if match:
-        return _slug(match.group(1))
     return _slug(lower)
 
 

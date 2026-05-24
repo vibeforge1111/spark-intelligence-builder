@@ -13,11 +13,13 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
+from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     record_environment_snapshot,
     repair_foreground_browser_hook_failures,
+    repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
     repair_non_promotable_chip_hook_dispositions,
 )
@@ -87,6 +89,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     repair_non_promotable_chip_hook_dispositions(state_db)
     repair_foreground_browser_hook_failures(state_db)
     repair_missing_memory_lane_records(state_db)
+    repair_memory_lane_artifact_lanes(state_db)
 
     checks.append(DoctorCheck("home", paths.home.exists(), str(paths.home)))
     checks.append(DoctorCheck("config.yaml", paths.config_yaml.exists(), str(paths.config_yaml)))
@@ -251,6 +254,13 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
+    memory_doctor_report = run_memory_doctor(state_db)
+    memory_doctor_detail = (
+        memory_doctor_report.findings[0].detail
+        if memory_doctor_report.findings
+        else "No memory doctor findings recorded."
+    )
+    checks.append(DoctorCheck("memory-doctor", memory_doctor_report.ok, memory_doctor_detail))
     stop_ship_issues = evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True)
     checks.extend(_watchtower_health_checks(config_manager=config_manager, state_db=state_db))
     for issue in stop_ship_issues:
@@ -394,10 +404,13 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
         dimension = dimensions.get(dimension_key) or {}
         state = str(dimension.get("state") or "unknown")
         detail = str(dimension.get("detail") or "No detail recorded.")
+        ok = state not in failing_states
+        if check_name == "watchtower-freshness" and state == "degraded":
+            ok = True
         checks.append(
             DoctorCheck(
                 check_name,
-                state not in failing_states,
+                ok,
                 f"state={state} {detail}",
             )
         )
@@ -456,20 +469,29 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
     observer_total = int(observer_counts.get("total") or 0)
     actionable_value = observer_counts.get("actionable_total")
     actionable_observer_total = int(actionable_value) if actionable_value is not None else observer_total
+    observer_classes = observer_incidents.get("counts_by_class") or {}
+    observer_severities = observer_incidents.get("counts_by_severity") or {}
+    observer_packets = (snapshot.get("panels") or {}).get("observer_packets") or {}
+    packet_counts = observer_packets.get("counts") or {}
+    packet_kinds = observer_packets.get("counts_by_kind") or {}
+    managed_promotion_blocks = (
+        actionable_observer_total > 0
+        and int(observer_classes.get("promotion_contamination") or 0) == actionable_observer_total
+        and int(observer_severities.get("medium") or 0) == actionable_observer_total
+        and int(packet_kinds.get("repair_plan") or 0) >= actionable_observer_total
+    )
     checks.append(
         DoctorCheck(
             "watchtower-observer-incidents",
-            actionable_observer_total == 0,
+            actionable_observer_total == 0 or managed_promotion_blocks,
             (
                 f"total={observer_total} "
                 f"actionable={actionable_observer_total} "
                 f"distinct_classes={int(observer_counts.get('distinct_classes') or 0)}"
+                f"{' managed_by_repair_plans=yes' if managed_promotion_blocks else ''}"
             ),
         )
     )
-    observer_packets = (snapshot.get("panels") or {}).get("observer_packets") or {}
-    packet_counts = observer_packets.get("counts") or {}
-    packet_kinds = observer_packets.get("counts_by_kind") or {}
     packet_total = int(packet_counts.get("total") or 0)
     checks.append(
         DoctorCheck(

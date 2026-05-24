@@ -58,7 +58,7 @@ class CliSmokeTests(SparkTestCase):
             ).fetchone()
         self.assertIsNotNone(row)
 
-    def test_browser_status_command_reports_governed_runtime_posture(self) -> None:
+    def test_browser_status_command_reports_legacy_extension_disabled(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
@@ -78,14 +78,13 @@ class CliSmokeTests(SparkTestCase):
             str(self.home),
             "--json",
         )
-        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
         payload = json.loads(stdout)
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["hook"], "browser.status")
-        self.assertEqual(payload["result"]["browser"]["family"], "brave")
-        self.assertEqual(payload["result"]["profile"]["key"], "spark-default")
+        self.assertEqual(payload["status"], "disabled")
+        self.assertEqual(payload["error"]["code"], "LEGACY_BROWSER_EXTENSION_DISABLED")
 
-    def test_browser_page_snapshot_command_reports_bounded_snapshot(self) -> None:
+    def test_browser_page_snapshot_command_reports_legacy_extension_disabled(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
@@ -107,15 +106,14 @@ class CliSmokeTests(SparkTestCase):
             "https://docs.example.com/guide",
             "--json",
         )
-        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
         payload = json.loads(stdout)
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["hook"], "browser.page.snapshot")
-        self.assertEqual(payload["result"]["title"], "Spark Browser Guide")
-        self.assertEqual(payload["result"]["origin"], "https://docs.example.com/guide")
-        self.assertEqual(payload["artifacts"][0]["type"], "page_snapshot")
+        self.assertEqual(payload["status"], "disabled")
+        self.assertEqual(payload["origin"], "https://docs.example.com/guide")
+        self.assertEqual(payload["error"]["code"], "LEGACY_BROWSER_EXTENSION_DISABLED")
 
-    def test_browser_page_snapshot_command_falls_back_to_navigate_wait_for_live_page_context(self) -> None:
+    def test_browser_page_snapshot_command_does_not_call_legacy_fallback_hooks(self) -> None:
         snapshot_failure = SimpleNamespace(
             ok=True,
             chip_key="spark-browser",
@@ -275,24 +273,14 @@ class CliSmokeTests(SparkTestCase):
                 "--json",
             )
 
-        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
         payload = json.loads(stdout)
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["hook"], "browser.page.snapshot")
-        self.assertEqual(payload["result"]["origin"], "https://example.com/")
-        self.assertEqual(payload["provenance"]["tab_id"], "tab-live-123")
+        self.assertEqual(payload["status"], "disabled")
+        self.assertEqual(payload["error"]["code"], "LEGACY_BROWSER_EXTENSION_DISABLED")
+        self.assertEqual(run_hook.call_count, 0)
 
-        self.assertEqual(run_hook.call_count, 4)
-        initial_snapshot_payload = run_hook.call_args_list[0].kwargs["payload"]
-        navigate_payload = run_hook.call_args_list[1].kwargs["payload"]
-        wait_payload = run_hook.call_args_list[2].kwargs["payload"]
-        final_snapshot_payload = run_hook.call_args_list[3].kwargs["payload"]
-        self.assertIsNone(initial_snapshot_payload["target"]["tab_id"])
-        self.assertEqual(navigate_payload["arguments"]["url"], "https://example.com/")
-        self.assertEqual(wait_payload["target"]["tab_id"], "tab-live-123")
-        self.assertEqual(final_snapshot_payload["target"]["tab_id"], "tab-live-123")
-
-    def test_browser_status_command_surfaces_governed_hook_failures(self) -> None:
+    def test_browser_status_command_does_not_call_legacy_status_hook(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
@@ -344,7 +332,7 @@ class CliSmokeTests(SparkTestCase):
             "ok": fake_execution.ok,
         }
 
-        with patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=fake_execution):
+        with patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=fake_execution) as run_first:
             exit_code, stdout, stderr = self.run_cli(
                 "browser",
                 "status",
@@ -356,14 +344,11 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(stderr, "")
         self.assertEqual(exit_code, 1)
         payload = json.loads(stdout)
-        self.assertEqual(payload["status"], "failed")
-        self.assertEqual(payload["hook_status"], "failed")
-        self.assertEqual(payload["error"]["code"], "BROWSER_SESSION_NOT_CONNECTED")
-        self.assertEqual(payload["result"], {})
+        self.assertEqual(payload["status"], "disabled")
+        self.assertEqual(payload["error"]["code"], "LEGACY_BROWSER_EXTENSION_DISABLED")
+        self.assertEqual(run_first.call_count, 0)
         failed_runs = recent_runs(self.state_db, limit=10, status="failed")
-        self.assertTrue(failed_runs)
-        self.assertEqual(failed_runs[0]["run_kind"], "operator:browser_hook:browser.status")
-        self.assertEqual(failed_runs[0]["closure_reason"], "browser_hook_failed")
+        self.assertFalse(failed_runs)
         self.assertFalse(recent_runs(self.state_db, limit=10, status="stalled"))
 
     def test_memory_direct_smoke_runs_in_process_domain_chip_bridge(self) -> None:
@@ -998,7 +983,7 @@ class CliSmokeTests(SparkTestCase):
             self.assertIn("Spark Intelligence status", status_stdout)
             self.assertIn("- doctor: ok", status_stdout)
 
-    def test_status_reports_stale_browser_runtime_when_active_browser_hook_fails(self) -> None:
+    def test_status_reports_legacy_browser_extension_disabled(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
@@ -1031,15 +1016,14 @@ class CliSmokeTests(SparkTestCase):
             },
         )
 
-        with patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=browser_failure):
-            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+        status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
 
         self.assertEqual(status_stderr, "")
         self.assertIn(status_exit, (0, 1))
-        self.assertIn("- browser: standby via spark-browser BROWSER_SESSION_STALE", status_stdout)
-        self.assertIn("- browser detail: Live browser session is not currently connected.", status_stdout)
+        self.assertIn("- browser: disabled via spark-browser LEGACY_BROWSER_EXTENSION_DISABLED", status_stdout)
+        self.assertIn("- browser detail: Legacy browser extension execution is disabled.", status_stdout)
         self.assertIn(
-            "- browser repair: Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`.",
+            "- browser repair: Use `spark browser-use status` and connect Codex/Claude through `spark browser-use mcp-config`.",
             status_stdout,
         )
 

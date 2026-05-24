@@ -10,6 +10,22 @@ from tests.test_support import SparkTestCase
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def test_gateway_ask_telegram_runs_memory_doctor_from_natural_language(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="check memory deletes",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        self.assertEqual(output["result"]["detail"]["response_text"].splitlines()[0], "Memory Doctor: healthy.")
+
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)

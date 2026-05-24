@@ -1,0 +1,110 @@
+{
+  "matrix_id": "spark_capability_natural_language_routes_v1",
+  "purpose": "Golden natural-language cases for separating Spark capability proposals from ordinary app builds.",
+  "guardrails": [
+    "capability proposals are not normal Spawner app builds",
+    "normal dashboards and user tools still build",
+    "proposal packets remain proposal_plan_only",
+    "connector and workflow capabilities start behind dry-run harnesses",
+    "voice-specific phrases may route to the voice surface while still avoiding app-build drift"
+  ],
+  "cases": [
+    {
+      "id": "install_voice_self",
+      "prompt": "lets make today about improving your capabilities... can you install a voice to yourself?",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["install a voice"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "voice_io",
+      "expected_builder_target_system": "Spark Voice",
+      "expected_proposal_route": "capability_connector",
+      "expected_connector_key": "voice"
+    },
+    {
+      "id": "build_for_you_email",
+      "prompt": "Okay let's build this for you, Spark: a way to read my emails and summarize them.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["read my emails"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "capability_connector",
+      "expected_connector_key": "email"
+    },
+    {
+      "id": "build_you_email_reader",
+      "prompt": "Let's build you an email reader so you can summarize my inbox.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["email reader"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "capability_connector",
+      "expected_connector_key": "email"
+    },
+    {
+      "id": "calendar_capability",
+      "prompt": "Create a capability for Spark to read my calendar.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["read my calendar"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "capability_connector",
+      "expected_connector_key": "calendar"
+    },
+    {
+      "id": "files_skill",
+      "prompt": "Build a skill that lets you access my project files.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["project files"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "capability_connector",
+      "expected_connector_key": "files"
+    },
+    {
+      "id": "daily_memory_reports",
+      "prompt": "Set up daily reports of my memories so I know what changed.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["daily reports of my memories"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "workflow_automation",
+      "expected_connector_key": "workflow"
+    },
+    {
+      "id": "brain_workflow_change",
+      "prompt": "Change your brain so you handle my workflow differently.",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["capability proposal"],
+      "expected_builder_capability_query": true,
+      "expected_builder_route_mode": "capability_improvement",
+      "expected_builder_target_system": "Spark Intelligence Builder",
+      "expected_proposal_route": "runtime_patch"
+    },
+    {
+      "id": "spark_choose_improvement",
+      "prompt": "Okay Spark, what do you want to improve today?",
+      "expected_telegram_build_intent": false,
+      "expected_telegram_self_improvement_goal_contains": ["highest-leverage Spark self-improvement"],
+      "expected_builder_capability_query": false
+    },
+    {
+      "id": "spark_memory_dashboard_build",
+      "prompt": "Build a Spark memory dashboard.",
+      "expected_telegram_build_intent": true,
+      "expected_telegram_self_improvement_goal_contains": [],
+      "expected_builder_capability_query": false
+    },
+    {
+      "id": "spark_users_reminder_tool_build",
+      "prompt": "Build a tool for Spark users to manage reminders.",
+      "expected_telegram_build_intent": true,
+      "expected_telegram_self_improvement_goal_contains": [],
+      "expected_builder_capability_query": false
+    }
+  ]
+}

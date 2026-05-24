@@ -12,7 +12,7 @@ class HarnessCliTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
-    def test_harness_plan_reports_browser_harness_for_url_task(self) -> None:
+    def test_harness_plan_routes_browser_task_away_from_legacy_extension(self) -> None:
         self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
@@ -29,8 +29,9 @@ class HarnessCliTests(SparkTestCase):
 
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)
-        self.assertEqual(payload["harness_id"], "browser.grounded")
-        self.assertEqual(payload["backend_kind"], "browser_bridge")
+        self.assertEqual(payload["harness_id"], "researcher.advisory")
+        self.assertEqual(payload["backend_kind"], "provider_bridge")
+        self.assertEqual(payload["route_mode"], "researcher_without_browser")
 
     def test_harness_execute_runs_researcher_advisory_runner(self) -> None:
         self._enable_fake_researcher()

@@ -672,8 +672,8 @@ def _derive_plan_blockers(
         blockers.extend(str(item) for item in (target_confirmation.get("blockers") or []) if str(item))
     availability = route.get("availability") or {}
     route_mode = str(route.get("route_mode") or "")
-    if route_mode == "browser_grounded" and not bool(availability.get("browser")):
-        blockers.append("Spark Browser is not currently available.")
+    if route_mode == "browser_grounded":
+        blockers.append("Legacy Browser Extension is disabled; use the guarded Spark CLI browser-use MCP lane.")
     if route_mode == "voice_io" and not bool(availability.get("voice")):
         blockers.append("Spark Voice is not currently available.")
     if route_mode == "researcher_advisory" and not bool(availability.get("researcher")):

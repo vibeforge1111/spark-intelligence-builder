@@ -227,26 +227,6 @@ def build_harness_registry(
             system_records=system_records,
         ),
         _build_harness_contract(
-            harness_id="browser.grounded",
-            label="Browser Grounding Harness",
-            owner_system="Spark Browser",
-            owner_key="spark_browser",
-            route_modes=["browser_grounded"],
-            backend_kind="browser_bridge",
-            session_scope="tab_or_search_session",
-            prompt_strategy="governed_browser_payload_plus_contextual_task",
-            toolsets=["web_search", "page_inspection", "source_capture"],
-            required_capabilities=["web_search", "page_inspection", "source_capture"],
-            artifacts=["search_results", "page_text", "citations"],
-            retry_policy="retry_after_browser_reconnect_or_surface_repair",
-            approval_mode="operator_governed",
-            limitations=[
-                "Requires a healthy browser surface and compatible attachment/runtime wiring.",
-                "Optimized for evidence capture, not parallel orchestration.",
-            ],
-            system_records=system_records,
-        ),
-        _build_harness_contract(
             harness_id="voice.io",
             label="Voice I/O Harness",
             owner_system="Spark Voice",
@@ -509,8 +489,6 @@ def _select_harness_id(
     route_mode = str(getattr(route_decision, "route_mode", "") or "").strip()
     if route_mode == "voice_io":
         return "voice.io"
-    if route_mode == "browser_grounded":
-        return "browser.grounded"
     if route_mode == "swarm_escalation":
         return "swarm.escalation"
     if route_mode in {"researcher_advisory", "researcher_without_browser"}:
@@ -552,13 +530,6 @@ def _build_harness_recipes(contracts: list[HarnessContract]) -> list[dict[str, A
             "description": "Generate an advisory answer first, then prepare the task for Swarm escalation with a dry-run payload build.",
             "primary_harness_id": "researcher.advisory",
             "follow_up_harness_ids": ["swarm.escalation"],
-        },
-        {
-            "recipe_id": "browser_then_advisory",
-            "label": "Browser Then Advisory",
-            "description": "Open a governed browser-grounding step first, then hand the grounded task back into Spark Researcher.",
-            "primary_harness_id": "browser.grounded",
-            "follow_up_harness_ids": ["researcher.advisory"],
         },
     ]
     recipes: list[dict[str, Any]] = []

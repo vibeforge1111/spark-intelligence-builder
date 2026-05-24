@@ -5017,8 +5017,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(result.mode, "system_registry_direct")
         self.assertEqual(result.routing_decision, "system_registry_direct")
-        self.assertIn("Spark Browser: standby", result.reply_text)
-        self.assertIn("Live browser session is not currently connected.", result.reply_text)
+        self.assertIn("Legacy Browser Extension: disabled", result.reply_text)
+        self.assertIn("Legacy browser extension execution is disabled.", result.reply_text)
 
     def test_build_researcher_reply_answers_mission_control_queries_directly(self) -> None:
         with patch(

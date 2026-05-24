@@ -430,11 +430,12 @@ def _is_agent_persona_authoring_message(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
         return False
+    behavioral_rules = _extract_behavioral_rules(text)
     if _extract_agent_name(text):
         return True
-    if len(_extract_behavioral_rules(text)) >= 2:
+    if len(behavioral_rules) >= 2:
         return True
-    if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and _has_personality_signal(text):
+    if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and (behavioral_rules or _has_personality_signal(text)):
         return True
     if lowered.startswith("/agent persona "):
         return True

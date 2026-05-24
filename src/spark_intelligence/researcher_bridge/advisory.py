@@ -75,9 +75,9 @@ from spark_intelligence.memory.episodic_events import (
 from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
-    build_telegram_generic_deletion_answer,
+    build_telegram_generic_deletions_answer,
     build_telegram_generic_observation_answer,
-    detect_telegram_generic_deletion,
+    detect_telegram_generic_deletions,
     detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary, build_session_summary
@@ -155,6 +155,7 @@ _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "spark-browser": "Governed browser and search chip for page inspection, browse flows, and source capture.",
     "spark-personality-chip-labs": "Baseline personality import chip; it seeds Builder, but Builder owns live style state after import.",
     "spark-swarm": "Swarm bridge and identity/escalation chip for collective or deep-work execution.",
+    "spark-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
     "domain-chip-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
 }
 
@@ -4651,7 +4652,7 @@ def _build_browser_search_context(
     session_unavailable = {
         "context": "",
         "blocked_reply": (
-            "Web search is currently unavailable because the Spark Browser Extension live session "
+            "Web search is currently unavailable because the browser-use live session "
             "is disconnected. Reload or reconnect the extension, then retry the search."
         ),
         "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
@@ -8561,6 +8562,7 @@ def build_researcher_reply(
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
+    detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
     try:
         personality_profile = load_personality_profile(
@@ -10083,23 +10085,37 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletion = detect_telegram_generic_deletion(memory_user_message)
-                            if detected_generic_memory_deletion is not None:
+                            detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
+                            accepted_generic_memory_deletions = []
+                            for deletion_index, generic_memory_deletion in enumerate(
+                                detected_generic_memory_deletions,
+                                start=1,
+                            ):
+                                deletion_turn_id = request_id
+                                if len(detected_generic_memory_deletions) > 1:
+                                    deletion_turn_id = f"{request_id}:delete-{deletion_index}"
                                 generic_delete_result = delete_profile_fact_from_memory(
                                     config_manager=config_manager,
                                     state_db=state_db,
                                     human_id=human_id,
-                                    predicate=detected_generic_memory_deletion.predicate,
-                                    evidence_text=detected_generic_memory_deletion.evidence_text,
-                                    fact_name=detected_generic_memory_deletion.fact_name,
+                                    predicate=generic_memory_deletion.predicate,
+                                    evidence_text=generic_memory_deletion.evidence_text,
+                                    fact_name=generic_memory_deletion.fact_name,
                                     session_id=session_id,
-                                    turn_id=request_id,
+                                    turn_id=deletion_turn_id,
                                     channel_kind=channel_kind,
                                     actor_id="telegram_generic_observation_loader",
                                 )
-                                if generic_delete_result.accepted_count <= 0:
-                                    detected_generic_memory_candidate = None
-                                    detected_generic_memory_deletion = None
+                                if generic_delete_result.accepted_count > 0:
+                                    accepted_generic_memory_deletions.append(generic_memory_deletion)
+                            detected_generic_memory_deletions = accepted_generic_memory_deletions
+                            detected_generic_memory_deletion = (
+                                detected_generic_memory_deletions[0]
+                                if detected_generic_memory_deletions
+                                else None
+                            )
+                            if detected_generic_memory_deletion is None:
+                                detected_generic_memory_candidate = None
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
@@ -10510,6 +10526,19 @@ def build_researcher_reply(
                     if detected_generic_memory_deletion is not None
                     else None
                 ),
+                "detected_generic_memory_deletions": (
+                    [
+                        {
+                            "predicate": deletion.predicate,
+                            "fact_name": deletion.fact_name,
+                            "label": deletion.label,
+                            "evidence_text": deletion.evidence_text,
+                        }
+                        for deletion in detected_generic_memory_deletions
+                    ]
+                    if detected_generic_memory_deletions
+                    else []
+                ),
                 "detected_generic_memory_candidate": (
                     {
                         "predicate": detected_generic_memory_candidate.predicate,
@@ -10806,12 +10835,13 @@ def build_researcher_reply(
             routing_decision="memory_generic_observation_delete",
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text = build_telegram_generic_deletion_answer(
-            deletion=detected_generic_memory_deletion
+        reply_text = build_telegram_generic_deletions_answer(
+            deletions=detected_generic_memory_deletions or [detected_generic_memory_deletion]
         )
         evidence_summary = (
             "status=memory_generic_observation_delete "
-            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'}"
+            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'} "
+            f"delete_count={len(detected_generic_memory_deletions) or 1}"
         )
         record_event(
             state_db,
@@ -10840,6 +10870,15 @@ def build_researcher_reply(
                     "fact_name": detected_generic_memory_deletion.fact_name,
                     "predicate": detected_generic_memory_deletion.predicate,
                     "label": detected_generic_memory_deletion.label,
+                    "deletions": [
+                        {
+                            "fact_name": deletion.fact_name,
+                            "predicate": deletion.predicate,
+                            "label": deletion.label,
+                            "evidence_text": deletion.evidence_text,
+                        }
+                        for deletion in (detected_generic_memory_deletions or [detected_generic_memory_deletion])
+                    ],
                     "memory_role": (
                         detected_generic_memory_candidate.memory_role
                         if detected_generic_memory_candidate is not None

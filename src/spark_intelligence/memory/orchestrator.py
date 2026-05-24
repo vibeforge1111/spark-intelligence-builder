@@ -2366,7 +2366,7 @@ def hybrid_memory_retrieve(
     read_result = MemoryReadResult(
         status="supported" if selected_records else "abstained",
         method="hybrid_memory_retrieve",
-        memory_role="hybrid",
+        memory_role="aggregate",
         records=selected_records,
         provenance=[
             {
@@ -5530,7 +5530,7 @@ def _normalize_domain_task_recovery_result(*, result: Any) -> dict[str, Any]:
             records.append(payload)
     memory_role = records[0]["memory_role"] if records else "unknown"
     return {
-        "status": "supported" if records else str(getattr(result, "status", "") or "not_found"),
+        "status": "supported" if records else "not_found",
         "memory_role": memory_role,
         "records": records,
         "provenance": records,
@@ -5569,7 +5569,7 @@ def _normalize_domain_episodic_recall_result(*, result: Any) -> dict[str, Any]:
             records.append(payload)
     memory_role = records[0]["memory_role"] if records else "unknown"
     return {
-        "status": "supported" if records else str(getattr(result, "status", "") or "not_found"),
+        "status": "supported" if records else "not_found",
         "memory_role": memory_role,
         "records": records,
         "provenance": records,
@@ -5670,6 +5670,9 @@ def _normalize_read_result(
     shadow_only: bool,
 ) -> MemoryReadResult:
     status = str(raw.get("status") or "").lower()
+    records = _normalize_records(raw)
+    if not records and status in {"ok", "supported"}:
+        status = "not_found"
     abstained = status in {"abstained", "invalid_request", "unsupported", "not_found", ""}
     raw_memory_role = raw.get("memory_role")
     memory_role = normalize_memory_role(raw_memory_role, allow_unknown=abstained)
@@ -5703,7 +5706,7 @@ def _normalize_read_result(
         status=status or "abstained",
         method=method,
         memory_role=memory_role,
-        records=_normalize_records(raw),
+        records=records,
         provenance=_normalize_provenance(raw),
         retrieval_trace=retrieval_trace,
         answer_explanation=dict(raw["answer_explanation"]) if isinstance(raw.get("answer_explanation"), dict) else None,
@@ -6472,6 +6475,9 @@ def _procedural_lesson_to_hybrid_record(lesson: dict[str, Any]) -> dict[str, Any
         f"Procedural lesson {lesson.get('lesson_kind') or 'unknown'}:",
         f"trigger={lesson.get('trigger_pattern') or ''}",
         f"corrective_action={lesson.get('corrective_action') or ''}",
+        f"reuse={lesson.get('reuse_condition') or ''}",
+        f"revalidate={lesson.get('revalidation_condition') or ''}",
+        f"approval={lesson.get('approval_state') or ''}",
         f"failure={lesson.get('failure_summary') or ''}",
         f"applies_to={lesson.get('applies_to_component') or ''}",
     ]
@@ -6494,6 +6500,11 @@ def _procedural_lesson_to_hybrid_record(lesson: dict[str, Any]) -> dict[str, Any
             "applies_to_component": lesson.get("applies_to_component"),
             "target_repo": lesson.get("target_repo"),
             "target_component": lesson.get("target_component"),
+            "scope": lesson.get("scope"),
+            "reuse_condition": lesson.get("reuse_condition"),
+            "revalidation_condition": lesson.get("revalidation_condition"),
+            "approval_state": lesson.get("approval_state"),
+            "provenance_refs": lesson.get("provenance_refs"),
             "confidence": lesson.get("confidence"),
             "occurrence_count": lesson.get("occurrence_count"),
         },

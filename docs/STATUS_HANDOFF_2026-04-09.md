@@ -1,4 +1,4 @@
-# Spark Intelligence Telegram To Swarm Handoff 2026-04-09
+﻿# Spark Intelligence Telegram To Swarm Handoff 2026-04-09
 
 ## 1. What Today Achieved
 
@@ -112,7 +112,7 @@ Telegram autoloop replies now include:
 
 ### E. Browser-Backed Telegram Replies
 
-Today’s broader live stack still includes the earlier browser work:
+Todayâ€™s broader live stack still includes the earlier browser work:
 
 - Builder can use `spark-browser-extension` downstream
 - broad host access is active in the dedicated Brave profile
@@ -236,7 +236,7 @@ Focus:
 - richer natural-language coverage
 - clearer follow-up suggestions
 - better summaries of runs, loops, and agent state
-- better “what changed?” and “what should I do next?” answers
+- better â€œwhat changed?â€ and â€œwhat should I do next?â€ answers
 
 ### Priority 3. Make Replies Feel Human And Composed
 
@@ -302,7 +302,7 @@ Run:
 - `spark-intelligence channel test telegram --home .tmp-home-live-telegram-real`
 - `spark-intelligence gateway start --continuous --home .tmp-home-live-telegram-real`
 - `spark-intelligence swarm status --home .tmp-home-live-telegram-real`
-- `spark-intelligence browser status --home .tmp-home-live-telegram-real --json`
+- `spark browser-use status --json`
 
 Confirm:
 

@@ -160,14 +160,20 @@ from spark_intelligence.ops import (
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
     build_capability_drift_heartbeat,
     build_handoff_freshness_check,
     build_live_telegram_regression_cadence,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    record_route_probe_evidence,
+    run_route_probe_and_record,
 )
 from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
-from spark_intelligence.self_awareness.event_producers import record_source_used_agent_event
+from spark_intelligence.self_awareness.event_producers import (
+    record_route_selection_agent_event,
+    record_source_used_agent_event,
+)
 from spark_intelligence.self_awareness.operating_panel import build_agent_operating_panel
 from spark_intelligence.self_awareness.spawner_agent_events import read_configured_spawner_black_box_entries
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
@@ -368,7 +374,7 @@ class SystemStatus:
 def _browser_status_repair_hint(browser: dict[str, object]) -> str | None:
     error_code = str(browser.get("error_code") or "").strip()
     if error_code == "BROWSER_SESSION_STALE":
-        return "Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`."
+        return "Reconnect the governed browser-use MCP lane, then rerun `spark-intelligence browser status --json`."
     if error_code:
         return "Rerun `spark-intelligence browser status --json` for the full governed browser failure payload."
     return None
@@ -1374,6 +1380,72 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_probe_parser = self_subparsers.add_parser(
+        "route-probe",
+        help="Run or record a bounded route probe for capability evidence",
+    )
+    self_route_probe_parser.add_argument("capability_key", help="Capability key to probe, for example spark_memory")
+    self_route_probe_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_probe_parser.add_argument("--run", action="store_true", help="Execute the builtin probe before recording evidence")
+    self_route_probe_parser.add_argument(
+        "--status",
+        choices=("success", "failure"),
+        default="success",
+        help="Status to record when --run is not used",
+    )
+    self_route_probe_parser.add_argument("--latency-ms", type=int, default=None, help="Observed route latency in milliseconds")
+    self_route_probe_parser.add_argument("--eval-ref", default="", help="Eval or test reference covering this probe")
+    self_route_probe_parser.add_argument("--source-ref", default="", help="Trace, test, or operator source reference")
+    self_route_probe_parser.add_argument("--failure-reason", default="", help="Failure reason when recording a failed probe")
+    self_route_probe_parser.add_argument("--actor-id", default="self_route_probe", help="Actor recording the probe")
+    self_route_probe_parser.add_argument("--request-id", default="", help="Optional request id")
+    self_route_probe_parser.add_argument("--session-id", default="", help="Optional session id")
+    self_route_probe_parser.add_argument("--human-id", default="", help="Optional human id")
+    self_route_probe_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_route_selection_parser = self_subparsers.add_parser(
+        "route-selection",
+        help="Record a route selection in the agent black box",
+    )
+    self_route_selection_parser.add_argument("selected_route", help="Selected route, for example writable_spawner_codex_mission")
+    self_route_selection_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_route_selection_parser.add_argument("--user-intent", default="", help="Perceived user intent, for example edit")
+    self_route_selection_parser.add_argument("--confidence", default="", help="Route confidence label")
+    self_route_selection_parser.add_argument("--reason", default="", help="Short reason for this route choice")
+    self_route_selection_parser.add_argument("--request-id", default="", help="Request id associated with this route choice")
+    self_route_selection_parser.add_argument("--trace-ref", default="", help="Trace ref associated with this route choice")
+    self_route_selection_parser.add_argument("--session-id", default="", help="Session id associated with this route choice")
+    self_route_selection_parser.add_argument("--human-id", default="", help="Human id associated with this route choice")
+    self_route_selection_parser.add_argument("--actor-id", default="route_selection", help="Actor recording the route choice")
+    self_route_selection_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_context_parser = self_subparsers.add_parser(
+        "context",
+        help="Show agent operating context with access, runner, route, and stale-source boundaries",
+    )
+    self_context_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_context_parser.add_argument("--human-id", default="", help="Optional human id for context-aware preflight")
+    self_context_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_context_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_context_parser.add_argument("--request-id", default="", help="Optional current request id for trace filtering")
+    self_context_parser.add_argument("--user-message", default="", help="Optional current user message for task-fit routing")
+    self_context_parser.add_argument("--spark-access-level", default="", help="Operator access level visible to the agent")
+    self_context_parser.add_argument(
+        "--runner-writable",
+        choices=("yes", "no", "unknown"),
+        default="unknown",
+        help="Whether the current runner can edit/write files",
+    )
+    self_context_parser.add_argument("--runner-label", default="", help="Human-readable runner label")
+    self_context_parser.add_argument(
+        "--execution-lane-json",
+        default="",
+        help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
+    self_context_parser.add_argument(
+        "--live-state-json",
+        default="",
+        help="Optional live Spark state JSON object from the probing surface",
+    )
+    self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_panel_parser = self_subparsers.add_parser(
         "panel",
         help="Show shared AOC panel with black box, memory inbox, stale context, and route confidence",
@@ -1396,6 +1468,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-lane-json",
         default="",
         help="Optional execution lane state JSON object for Docker and sandbox status",
+    )
+    self_panel_parser.add_argument(
+        "--live-state-json",
+        default="",
+        help="Optional live Spark state JSON object from the probing surface",
     )
     self_panel_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_black_box_parser = self_subparsers.add_parser(
@@ -4364,6 +4441,65 @@ def handle_self_improve(args: argparse.Namespace) -> int:
     return 0 if result.payload.get("priority_actions") else 1
 
 
+def handle_self_route_probe(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    if bool(getattr(args, "run", False)):
+        result = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key=str(getattr(args, "capability_key", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or ""),
+            session_id=str(getattr(args, "session_id", "") or ""),
+            human_id=str(getattr(args, "human_id", "") or ""),
+        )
+    else:
+        result = record_route_probe_evidence(
+            state_db,
+            capability_key=str(getattr(args, "capability_key", "") or ""),
+            status=str(getattr(args, "status", "") or "success"),
+            route_latency_ms=getattr(args, "latency_ms", None),
+            eval_ref=str(getattr(args, "eval_ref", "") or ""),
+            source_ref=str(getattr(args, "source_ref", "") or ""),
+            failure_reason=str(getattr(args, "failure_reason", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or ""),
+            session_id=str(getattr(args, "session_id", "") or ""),
+            human_id=str(getattr(args, "human_id", "") or ""),
+        )
+    print(json.dumps(result.to_payload(), indent=2) if args.json else result.to_text())
+    return 0 if result.status == "success" else 1
+
+
+def handle_self_route_selection(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    event_id = record_route_selection_agent_event(
+        state_db,
+        selected_route=str(getattr(args, "selected_route", "") or ""),
+        user_intent=str(getattr(args, "user_intent", "") or ""),
+        confidence=str(getattr(args, "confidence", "") or ""),
+        reason=str(getattr(args, "reason", "") or ""),
+        trace_ref=str(getattr(args, "trace_ref", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "route_selection"),
+    )
+    payload = {
+        "event_id": event_id,
+        "event_type": "route_selected",
+        "selected_route": str(getattr(args, "selected_route", "") or ""),
+    }
+    print(json.dumps(payload, indent=2) if args.json else f"Route selection recorded: {payload['selected_route']}\n- event: {event_id}")
+    return 0
+
+
 def _parse_runner_writable(raw: str) -> bool | None:
     value = str(raw or "").strip().lower()
     if value == "yes":
@@ -4381,6 +4517,28 @@ def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
     if not isinstance(value, dict):
         raise SystemExit("JSON argument must be an object")
     return value
+
+
+def handle_self_context(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    context = build_agent_operating_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_label=str(getattr(args, "runner_label", "") or ""),
+        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
+    )
+    print(json.dumps(context.to_payload(), indent=2) if args.json else context.to_text())
+    return 0
 
 
 def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
@@ -8366,6 +8524,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
+    if args.command == "self" and args.self_command == "route-probe":
+        return handle_self_route_probe(args)
+    if args.command == "self" and args.self_command == "route-selection":
+        return handle_self_route_selection(args)
+    if args.command == "self" and args.self_command == "context":
+        return handle_self_context(args)
     if args.command == "self" and args.self_command == "panel":
         return handle_self_panel(args)
     if args.command == "self" and args.self_command == "black-box":

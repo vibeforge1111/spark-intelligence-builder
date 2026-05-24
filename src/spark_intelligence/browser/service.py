@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
+import json
+import os
+import shutil
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -18,6 +23,23 @@ DEFAULT_BROWSER_FAMILY = "brave"
 DEFAULT_PROFILE_KEY = "spark-default"
 DEFAULT_PROFILE_MODE = "dedicated"
 DEFAULT_AGENT_ID = "agent:local-operator"
+LEGACY_BROWSER_BACKEND_KIND = "legacy_browser_extension"
+LEGACY_BROWSER_BACKEND_LABEL = "Legacy Browser Extension"
+LEGACY_BROWSER_DEFAULT_SURFACE = "advanced"
+LEGACY_BROWSER_REPLACEMENT_SURFACE = "spark-cli browser-use agent"
+BROWSER_USE_BACKEND_KIND = "browser_use_adapter"
+BROWSER_USE_BACKEND_LABEL = "Browser-use Adapter"
+BROWSER_USE_STATUS_ENV = "SPARK_BROWSER_USE_STATUS_PATH"
+_BROWSER_USE_READY_STATUSES = {
+    "ready",
+    "running",
+    "healthy",
+    "available",
+    "ok",
+    "success",
+    "completed",
+}
+_BROWSER_USE_FAILURE_STATUSES = {"failed", "failure", "error", "unavailable", "degraded"}
 
 
 def build_browser_status_payload(
@@ -49,6 +71,90 @@ def build_browser_status_payload(
             "allowed_domains": [],
             "sensitive_domain": False,
             "operator_required": False,
+        },
+    }
+
+
+def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[str, Any] | None:
+    config = config_manager.load()
+    browser_use_config = _browser_use_config(config)
+    status_path = _browser_use_status_path(config_manager, browser_use_config)
+    status_doc = _read_browser_use_status(status_path)
+    package_available = importlib.util.find_spec("browser_use") is not None
+    cli_path = shutil.which("browser-use") or shutil.which("browser_use")
+    configured = bool(browser_use_config) or status_path is not None or package_available or bool(cli_path)
+    if not configured and not status_doc:
+        return None
+
+    raw_status = _browser_use_raw_status(status_doc)
+    ready = raw_status in _BROWSER_USE_READY_STATUSES or bool(status_doc.get("ready") is True)
+    failed = raw_status in _BROWSER_USE_FAILURE_STATUSES or bool(status_doc.get("ready") is False)
+    status = "completed" if ready else "failed" if failed else "configured"
+    failure_reason = _browser_use_failure_reason(status_doc, status=status)
+    summary = _browser_use_summary(
+        status=status,
+        raw_status=raw_status,
+        package_available=package_available,
+        cli_path=cli_path,
+        status_path=status_path,
+        failure_reason=failure_reason,
+    )
+    return {
+        "status": status,
+        "backend_kind": BROWSER_USE_BACKEND_KIND,
+        "backend_label": BROWSER_USE_BACKEND_LABEL,
+        "adapter_status": raw_status or status,
+        "configured": bool(configured),
+        "package_available": bool(package_available),
+        "cli_path": cli_path,
+        "status_path": str(status_path) if status_path else None,
+        "last_success_at": _string_or_none(status_doc.get("last_success_at")),
+        "last_failure_at": _string_or_none(status_doc.get("last_failure_at")),
+        "last_failure_reason": failure_reason,
+        "error_code": _string_or_none(status_doc.get("error_code")),
+        "error_message": failure_reason,
+        "evidence_summary": summary,
+        "provenance": {
+            "source": "browser_use_adapter_status",
+            "status_path": str(status_path) if status_path else None,
+        },
+    }
+
+
+def collect_browser_use_probe_contract(config_manager: ConfigManager) -> dict[str, Any]:
+    status = collect_browser_use_adapter_status(config_manager)
+    if status is not None:
+        return status
+
+    status_path = _browser_use_default_status_path(config_manager)
+    package_available = importlib.util.find_spec("browser_use") is not None
+    cli_path = shutil.which("browser-use") or shutil.which("browser_use")
+    failure_reason = "browser-use adapter status source is not ready."
+    return {
+        "status": "missing_status",
+        "backend_kind": BROWSER_USE_BACKEND_KIND,
+        "backend_label": BROWSER_USE_BACKEND_LABEL,
+        "adapter_status": "missing_status",
+        "configured": False,
+        "package_available": bool(package_available),
+        "cli_path": cli_path,
+        "status_path": str(status_path),
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": failure_reason,
+        "error_code": "BROWSER_USE_STATUS_MISSING",
+        "error_message": failure_reason,
+        "evidence_summary": _browser_use_summary(
+            status="missing_status",
+            raw_status="missing_status",
+            package_available=package_available,
+            cli_path=cli_path,
+            status_path=status_path,
+            failure_reason=failure_reason,
+        ),
+        "provenance": {
+            "source": "browser_use_probe_contract",
+            "status_path": str(status_path),
         },
     }
 
@@ -322,7 +428,8 @@ def render_browser_status(result: dict[str, Any]) -> str:
     profile = result.get("profile") if isinstance(result.get("profile"), dict) else {}
     extension = result.get("extension") if isinstance(result.get("extension"), dict) else {}
     native_host = result.get("native_host") if isinstance(result.get("native_host"), dict) else {}
-    lines = ["Browser status"]
+    backend_label = str(result.get("backend_label") or LEGACY_BROWSER_BACKEND_LABEL)
+    lines = [f"{backend_label} status"]
     lines.append(f"- browser family: {browser.get('family') or 'unknown'}")
     lines.append(f"- profile: {profile.get('key') or 'unknown'} ({profile.get('mode') or 'unknown'})")
     lines.append(f"- extension running: {'yes' if extension.get('running') else 'no'}")
@@ -369,6 +476,10 @@ def _build_target(
     origin: str | None,
 ) -> dict[str, Any]:
     return {
+        "backend_kind": LEGACY_BROWSER_BACKEND_KIND,
+        "backend_label": LEGACY_BROWSER_BACKEND_LABEL,
+        "default_surface": LEGACY_BROWSER_DEFAULT_SURFACE,
+        "replacement_surface": LEGACY_BROWSER_REPLACEMENT_SURFACE,
         "browser_family": browser_family or DEFAULT_BROWSER_FAMILY,
         "profile_key": profile_key or DEFAULT_PROFILE_KEY,
         "profile_mode": profile_mode or DEFAULT_PROFILE_MODE,
@@ -393,3 +504,105 @@ def _normalize_origin(url: str) -> str | None:
     if not parsed.scheme or not parsed.netloc:
         return None
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _browser_use_config(config: dict[str, Any]) -> dict[str, Any]:
+    spark = config.get("spark") if isinstance(config.get("spark"), dict) else {}
+    direct = spark.get("browser_use") if isinstance(spark.get("browser_use"), dict) else {}
+    browser = spark.get("browser") if isinstance(spark.get("browser"), dict) else {}
+    nested = browser.get("use") if isinstance(browser.get("use"), dict) else {}
+    merged = {**nested, **direct}
+    return {str(key): value for key, value in merged.items() if value not in (None, "", [], {})}
+
+
+def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, Any]) -> Path | None:
+    explicit = os.environ.get(BROWSER_USE_STATUS_ENV) or str(config.get("status_path") or "").strip()
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(ConfigManager.normalize_runtime_path(explicit) or Path(explicit).expanduser())
+    candidates.extend(
+        [
+            _browser_use_default_status_path(config_manager),
+            config_manager.paths.home / "state" / "browser-use" / "status.json",
+            config_manager.paths.home / "state" / "spark-browser-use" / "status.json",
+            config_manager.paths.home / "artifacts" / "browser-use" / "status.json",
+            config_manager.paths.home / "diagnostics" / "browser-use-status.json",
+        ]
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0] if explicit else None
+
+
+def _browser_use_default_status_path(config_manager: ConfigManager) -> Path:
+    return _spark_runtime_root(config_manager.paths.home) / "state" / "browser-use" / "status.json"
+
+
+def _spark_runtime_root(home: Path) -> Path:
+    resolved = home.resolve(strict=False)
+    if resolved.name == "spark-intelligence" and resolved.parent.name == "state":
+        return resolved.parent.parent
+    return resolved
+
+
+def _read_browser_use_status(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {"status": "error", "last_failure_reason": f"could not read browser-use status file: {path}"}
+    if isinstance(data, dict):
+        return data
+    return {"status": "error", "last_failure_reason": "browser-use status file is not a JSON object"}
+
+
+def _browser_use_raw_status(status_doc: dict[str, Any]) -> str:
+    for key in ("status", "state", "health"):
+        value = str(status_doc.get(key) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _browser_use_failure_reason(status_doc: dict[str, Any], *, status: str) -> str | None:
+    for key in ("last_failure_reason", "failure_reason", "error_message"):
+        value = _string_or_none(status_doc.get(key))
+        if value:
+            return value
+    error = status_doc.get("error")
+    if isinstance(error, dict):
+        return _string_or_none(error.get("message")) or _string_or_none(error.get("code"))
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    if status == "configured":
+        return "browser-use adapter configured, but no passing status proof has been recorded."
+    return None
+
+
+def _browser_use_summary(
+    *,
+    status: str,
+    raw_status: str,
+    package_available: bool,
+    cli_path: str | None,
+    status_path: Path | None,
+    failure_reason: str | None,
+) -> str:
+    parts = [
+        f"browser-use adapter status={raw_status or status}",
+        f"package_available={package_available}",
+        f"cli_available={bool(cli_path)}",
+    ]
+    if status_path:
+        parts.append(f"status_path={status_path}")
+        parts.append(f"exists={status_path.exists()}")
+    if failure_reason and status != "completed":
+        parts.append(f"reason={failure_reason}")
+    return " ".join(parts)
+
+
+def _string_or_none(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None

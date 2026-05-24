@@ -56,7 +56,7 @@ def looks_like_capability_router_query(message: str) -> bool:
         "should you use voice",
         "route this task",
     )
-    return any(signal in lowered_message for signal in direct_signals)
+    return any(signal in lowered_message for signal in direct_signals) or _looks_like_capability_improvement_task(lowered_message)
 
 
 def build_capability_route_decision(
@@ -96,13 +96,20 @@ def build_capability_route_decision(
         reason = "The task is about speech input/output, so route through Builder plus the voice surface."
         supporting_systems = ["Spark Intelligence Builder"]
         required_capabilities = ["speech_to_text", "text_to_speech"]
-    elif _looks_like_browser_task(lowered):
-        target_system = "Spark Browser" if availability["browser"] else "Spark Researcher"
-        route_mode = "browser_grounded" if availability["browser"] else "researcher_without_browser"
+    elif _looks_like_capability_improvement_task(lowered):
+        target_system = "Spark Intelligence Builder"
+        route_mode = "capability_improvement"
         reason = (
-            "The task needs live web or page evidence, so use the browser/search surface when it is available."
-            if availability["browser"]
-            else "The task needs live web or page evidence, but the browser surface is unavailable, so fall back to Researcher."
+            "The task asks to add or change Spark's own runtime capability, so Builder should create a "
+            "proposal packet, permission boundary, safe probe, and ledger entry before activation."
+        )
+        supporting_systems = []
+        required_capabilities = ["capability_proposal", "permissioned_runtime_probe", "capability_ledger"]
+    elif _looks_like_browser_task(lowered):
+        target_system = "Spark Researcher"
+        route_mode = "researcher_without_browser"
+        reason = (
+            "The task needs live web or page evidence, but the legacy browser extension is disabled; use Researcher or the guarded Spark CLI browser-use MCP lane."
         )
         supporting_systems = ["Spark Intelligence Builder"]
         required_capabilities = ["web_search", "page_inspection"]
@@ -249,11 +256,62 @@ def _looks_like_voice_task(lowered: str) -> bool:
         "voice reply",
         "audio reply",
         "transcribe",
+        "install a voice",
+        "voice to yourself",
         "speak this",
         "say this out loud",
         "use voice",
     )
     return any(signal in lowered for signal in signals)
+
+
+def _looks_like_capability_improvement_task(lowered: str) -> bool:
+    if _looks_like_user_facing_artifact_request(lowered):
+        return False
+    capability_signals = (
+        "capability for spark",
+        "improving your capabilities",
+        "install a voice to yourself",
+        "for you, spark",
+        "build you",
+        "lets you",
+        "let you",
+        "so you can",
+        "so spark can",
+        "access my project files",
+        "read my emails",
+        "read my email",
+        "read my inbox",
+        "read my calendar",
+        "daily reports of my memories",
+        "change your brain",
+        "handle my workflow differently",
+    )
+    if any(signal in lowered for signal in capability_signals):
+        return True
+    build_or_create = any(signal in lowered for signal in ("build", "create", "set up", "install", "change"))
+    spark_self = any(signal in lowered for signal in ("you can", "you access", "yourself", "your capabilities", "your brain"))
+    permissioned_surface = any(
+        signal in lowered
+        for signal in ("email", "inbox", "calendar", "voice", "files", "filesystem", "browser", "api", "webhook")
+    )
+    return build_or_create and spark_self and permissioned_surface
+
+
+def _looks_like_user_facing_artifact_request(lowered: str) -> bool:
+    user_artifact_signals = (
+        "for spark users",
+        "users of spark",
+        "dashboard",
+        "app",
+        "website",
+        "site",
+        "portal",
+        "viewer",
+        "panel",
+        "landing page",
+    )
+    return any(signal in lowered for signal in user_artifact_signals)
 
 
 def _looks_like_self_knowledge_task(lowered: str) -> bool:

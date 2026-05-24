@@ -29,7 +29,8 @@ class SystemRegistryTests(SparkTestCase):
         self.assertEqual(records[("system", "spark_intelligence_builder")]["kind"], "system")
         self.assertEqual(records[("system", "spark_researcher")]["kind"], "system")
         self.assertEqual(records[("system", "spark_swarm")]["kind"], "system")
-        self.assertEqual(records[("system", "spark_browser")]["status"], "ready")
+        self.assertEqual(records[("system", "spark_browser")]["status"], "disabled")
+        self.assertFalse(records[("system", "spark_browser")]["available"])
         self.assertEqual(records[("system", "spark_voice")]["status"], "available")
         self.assertEqual(records[("system", "spark_spawner")]["status"], "configured")
         self.assertEqual(records[("system", "spark_local_work")]["status"], "available")
@@ -37,18 +38,12 @@ class SystemRegistryTests(SparkTestCase):
         self.assertEqual(records[("chip", "startup-yc")]["kind"], "chip")
         self.assertTrue(records[("chip", "startup-yc")]["pinned"])
         self.assertEqual(records[("chip", "spark-browser")]["status"], "active")
-        self.assertEqual(
-            records[("chip", "spark-browser")]["metadata"]["onboarding"]["harnesses"],
-            ["browser.grounded"],
-        )
+        self.assertEqual(records[("chip", "spark-browser")]["metadata"]["onboarding"]["harnesses"], ["browser.grounded"])
         self.assertIn(
             "origin_access",
             records[("chip", "spark-browser")]["metadata"]["onboarding"]["permissions"],
         )
-        self.assertIn(
-            "governed browser search and page inspection",
-            payload["summary"]["current_capabilities"],
-        )
+        self.assertNotIn("legacy extension-backed browser search and page inspection", payload["summary"]["current_capabilities"])
         self.assertIn(
             "operator-governed local repo/file inspection through Codex or Spawner workflows",
             payload["summary"]["current_capabilities"],
@@ -71,12 +66,13 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("[Spark system registry]", prompt_context)
         self.assertIn("Spark Intelligence Builder: status=", prompt_context)
         self.assertIn("[Onboarded contracts]", prompt_context)
-        self.assertIn("spark-browser:", prompt_context)
-        self.assertIn("harnesses=browser.grounded", prompt_context)
+        self.assertNotIn("- spark-browser: harnesses=", prompt_context)
+        self.assertNotIn("active chips: spark-browser", prompt_context)
+        self.assertIn("Legacy Browser Extension: status=disabled", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
 
-    def test_build_system_registry_marks_browser_standby_when_session_is_stale(self) -> None:
+    def test_build_system_registry_keeps_browser_disabled_even_if_session_payload_exists(self) -> None:
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -93,10 +89,10 @@ class SystemRegistryTests(SparkTestCase):
             payload = build_system_registry(self.config_manager, self.state_db).to_payload()
 
         records = {str(record["key"]): record for record in payload["records"]}
-        self.assertEqual(records["spark_browser"]["status"], "standby")
+        self.assertEqual(records["spark_browser"]["status"], "disabled")
         self.assertFalse(records["spark_browser"]["active"])
         self.assertNotIn(
-            "governed browser search and page inspection",
+            "legacy extension-backed browser search and page inspection",
             payload["summary"]["current_capabilities"],
         )
 
@@ -125,8 +121,8 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Here's what is connected right now:", reply)
         self.assertIn("Spark Intelligence Builder:", reply)
         self.assertIn("Spark Researcher:", reply)
-        self.assertIn("Spark Browser: standby", reply)
-        self.assertIn("Live browser session is not currently connected.", reply)
+        self.assertIn("Legacy Browser Extension: disabled", reply)
+        self.assertIn("Legacy browser extension execution is disabled.", reply)
         self.assertIn("Active chips:", reply)
         self.assertIn("startup-yc", reply)
         self.assertIn("spark-browser", reply)

@@ -6,17 +6,29 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
 from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
+    build_agent_operating_context,
     build_capability_drift_heartbeat,
+    build_capability_proposal_packet,
+    build_connector_harness_envelope,
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    capability_is_active,
+    load_capability_ledger,
+    record_capability_ledger_event,
+    record_capability_proposal,
+    record_route_probe_evidence,
+    run_route_probe_and_record,
+    redact_connector_probe_sample,
 )
+from spark_intelligence.state.db import StateDB
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
@@ -192,6 +204,886 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("project_awareness", payload)
         self.assertIn("capability_probe_registry", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_agent_operating_context_separates_access_from_runner_writability(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:cem",
+            session_id="session:telegram:cem",
+            channel_kind="telegram",
+            user_message="inspect and patch the mission memory loop",
+            spark_access_level="4",
+            runner_writable=False,
+            runner_label="read-only Codex sandbox",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["schema_version"], "spark.agent_operating_context.v1")
+        self.assertTrue(payload["access"]["local_workspace_allowed"])
+        self.assertFalse(payload["runner"]["writable"])
+        self.assertEqual(payload["task_fit"]["recommended_route"], "writable_spawner_codex_mission")
+        self.assertIn("current_runner_read_only", payload["task_fit"]["blocked_here_by"])
+        self.assertIn("Permission is not proof of runner writability", payload["truth_boundary"])
+        rendered = result.to_text()
+        self.assertIn("Access: Level 4 - sandboxed workspace allowed", rendered)
+        self.assertIn("Runner: read-only Codex sandbox", rendered)
+        self.assertIn("writable Spawner/Codex mission", rendered)
+
+    def test_agent_operating_context_exposes_route_health_with_claim_boundaries(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="what should Rec use for this task?",
+            runner_writable=None,
+        )
+        payload = result.to_payload()
+
+        route_keys = {route["key"] for route in payload["routes"]}
+        self.assertIn("chat", route_keys)
+        self.assertIn("spark_intelligence_builder", route_keys)
+        self.assertIn("spark_memory", route_keys)
+        self.assertIn("spark_spawner", route_keys)
+        for route in payload["routes"]:
+            self.assertIn("status", route)
+            self.assertIn("claim_boundary", route)
+            self.assertIn("evidence_status", route)
+            self.assertIn("next_probe", route)
+            self.assertIn("eval_coverage_status", route)
+        ledger_sources = {item["source"] for item in payload["source_ledger"]}
+        self.assertIn("operator_supplied_access", ledger_sources)
+        self.assertIn("runner_preflight", ledger_sources)
+        self.assertIn("system_registry", ledger_sources)
+        self.assertIn("memory_context", ledger_sources)
+        self.assertIn("wiki_context", ledger_sources)
+
+    def test_agent_operating_context_routes_write_tasks_away_from_chat_when_runner_unknown(self) -> None:
+        result = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="/aoc fix mission memory loop",
+            spark_access_level="4",
+            runner_writable=None,
+            runner_label="telegram bot runner unknown",
+        )
+
+        payload = result.to_payload()
+        self.assertEqual(payload["task_fit"]["recommended_route"], "probe_runner_or_spawner_codex_mission")
+        self.assertIn("current_runner_unknown", payload["task_fit"]["blocked_here_by"])
+        self.assertTrue(payload["task_fit"]["needs_local_workspace"])
+        self.assertIn("probe runner or Spawner/Codex mission", result.to_text())
+
+    def test_agent_operating_context_labels_builder_command_path_available_with_warnings(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_intelligence_builder",
+                    "label": "Spark Intelligence Builder",
+                    "status": "degraded",
+                    "available": True,
+                    "degraded": True,
+                    "active": True,
+                    "attached": True,
+                    "limitations": ["Gateway/provider/channel readiness is not fully green yet."],
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            result = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = result.to_payload()
+        builder = next(route for route in payload["routes"] if route["key"] == "spark_intelligence_builder")
+        self.assertEqual(builder["status"], "available_with_warnings")
+        self.assertEqual(builder["registry_status"], "degraded")
+        self.assertFalse(builder["degraded"])
+        self.assertTrue(builder["ecosystem_degraded"])
+        self.assertIn("Builder: available with warnings", result.to_text())
+
+    def test_agent_operating_context_marks_route_evidence_gaps_without_claiming_success(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_spawner",
+                    "label": "Spark Spawner",
+                    "status": "available",
+                    "available": True,
+                    "degraded": False,
+                    "active": True,
+                    "attached": True,
+                    "limitations": [],
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            result = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = result.to_payload()
+        spawner = next(route for route in payload["routes"] if route["key"] == "spark_spawner")
+        self.assertEqual(spawner["status"], "healthy")
+        self.assertEqual(spawner["evidence_status"], "current_probe_missing")
+        self.assertEqual(spawner["eval_coverage_status"], "missing")
+        self.assertIn("Spawner health/status probe", spawner["next_probe"])
+        self.assertIn("not proof the route succeeded", spawner["claim_boundary"])
+
+    def test_route_probe_evidence_moves_aoc_route_from_missing_to_last_success(self) -> None:
+        result = record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_spawner",
+            status="success",
+            route_latency_ms=123,
+            eval_ref="pytest:aoc-route-probe",
+            source_ref="test:spawner-health",
+            actor_id="operator:test",
+            probe_summary="mission status=attention drift=ok active_systems=6",
+        )
+
+        self.assertEqual(result.status, "success")
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="/aoc fix mission memory loop",
+            spark_access_level="4",
+            runner_writable=True,
+            runner_label="test writable runner",
+        )
+        payload = context.to_payload()
+        spawner = next(route for route in payload["routes"] if route["key"] == "spark_spawner")
+        self.assertEqual(spawner["evidence_status"], "last_success_recorded")
+        self.assertEqual(spawner["route_latency_ms"], 123)
+        self.assertEqual(spawner["eval_coverage_status"], "covered")
+        self.assertEqual(spawner["latest_probe_summary"], "mission status=attention drift=ok active_systems=6")
+        self.assertIsNotNone(spawner["last_success_at"])
+        self.assertIn("Route Evidence", context.to_text())
+        self.assertIn("- Spark Spawner: mission status=attention drift=ok", context.to_text())
+        ledger = {item["source"]: item for item in payload["source_ledger"]}
+        self.assertTrue(ledger["capability_evidence"]["present"])
+
+    def test_agent_operating_context_tracks_voice_as_first_class_route(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_voice",
+                    "label": "Spark Voice",
+                    "status": "ready",
+                    "available": True,
+                    "degraded": False,
+                    "active": True,
+                    "attached": True,
+                    "limitations": [],
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        voice = next(route for route in payload["routes"] if route["key"] == "spark_voice")
+        self.assertEqual(voice["status"], "healthy")
+        self.assertIn("voice.status", voice["next_probe"])
+        self.assertIn("Telegram delivery", voice["claim_boundary"])
+        self.assertIn("Voice: healthy", context.to_text())
+        self.assertIn("Spark Voice: healthy", context.to_text())
+
+    def test_voice_route_probe_uses_voice_status_hook(self) -> None:
+        with patch(
+            "spark_intelligence.attachments.hooks.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "ready": True,
+                        "local_ready": True,
+                        "provider_id": "elevenlabs",
+                        "reply_text": "Voice chip is ready.\nCurrent state: local and hosted voice are configured.",
+                    }
+                },
+            ),
+        ) as hook:
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_voice",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("voice.status ready=True", result.probe_summary)
+        self.assertIn("provider=elevenlabs", result.probe_summary)
+        hook.assert_called_once()
+
+    def test_recent_route_probe_failure_downgrades_aoc_route_status(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_memory",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:memory-route-probe",
+            source_ref="test:memory-health",
+            failure_reason="memory smoke failed",
+            actor_id="operator:test",
+            probe_summary="memory smoke write=failed read_records=0 cleanup=ok",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        memory = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_memory")
+        self.assertEqual(memory["status"], "degraded")
+        self.assertEqual(memory["evidence_status"], "last_failure_recorded")
+        self.assertIn("- Spark Memory: memory smoke write=failed", context.to_text())
+        repairs = context.to_payload()["route_repairs"]
+        memory_repair = next(repair for repair in repairs if repair["route_key"] == "spark_memory")
+        self.assertIn("memory smoke", memory_repair["next_action"])
+        self.assertIn("fresh route probe succeeds", memory_repair["claim_boundary"])
+        self.assertIn("Route Repairs", context.to_text())
+        self.assertIn("- Spark Memory: Run a memory smoke", context.to_text())
+
+    def test_swarm_payload_not_ready_is_planned_rollout_not_repair(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_swarm",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:swarm-route-probe",
+            source_ref="test:swarm-health",
+            failure_reason="Spark Swarm cannot be recommended because the local payload path is not ready.",
+            actor_id="operator:test",
+            probe_summary="swarm payload_ready=False api_ready=False auth_state=missing",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+
+        payload = context.to_payload()
+        swarm = next(route for route in payload["routes"] if route["key"] == "spark_swarm")
+        self.assertEqual(swarm["status"], "planned")
+        self.assertFalse(swarm["degraded"])
+        self.assertEqual(swarm["planned_reason"], "swarm payload/API rollout pending")
+        self.assertNotIn("spark_swarm", {repair["route_key"] for repair in payload["route_repairs"]})
+        self.assertIn("Spark Swarm: planned, swarm payload/API rollout pending", context.to_text())
+
+    def test_agent_operating_context_text_prefers_recent_success_over_stale_failure(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_intelligence_builder",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:builder-route-probe",
+            source_ref="test:builder-health",
+            failure_reason=".env-permissions",
+            actor_id="operator:test",
+            probe_summary="gateway ready=False doctor_blocking_ok=False providers=1 channels=1",
+        )
+        record_route_probe_evidence(
+            self.state_db,
+            capability_key="spark_intelligence_builder",
+            status="success",
+            route_latency_ms=88,
+            eval_ref="pytest:builder-route-probe",
+            source_ref="test:builder-health",
+            actor_id="operator:test",
+            probe_summary="gateway ready=True doctor_blocking_ok=True providers=1 channels=1",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+
+        builder = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_intelligence_builder")
+        self.assertEqual(builder["confidence_level"], "recent_success")
+        self.assertEqual(builder["evidence_status"], "last_success_recorded")
+        rendered = context.to_text()
+        self.assertIn("Spark Intelligence Builder: available with warnings, last success:", rendered)
+        self.assertNotIn("Spark Intelligence Builder: available with warnings, last failure: .env-permissions", rendered)
+        builder_repair = next(repair for repair in context.to_payload()["route_repairs"] if repair["route_key"] == "spark_intelligence_builder")
+        self.assertIn("gateway ready=True", builder_repair["reason"])
+        self.assertNotEqual(builder_repair["reason"], ".env-permissions")
+
+    def test_self_route_probe_cli_records_evidence_for_aoc(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "route-probe",
+            "spark_memory",
+            "--home",
+            str(self.home),
+            "--status",
+            "success",
+            "--latency-ms",
+            "45",
+            "--eval-ref",
+            "memory-smoke",
+            "--source-ref",
+            "test:memory-smoke",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        probe_payload = json.loads(stdout)
+        self.assertEqual(probe_payload["capability_key"], "spark_memory")
+        self.assertEqual(probe_payload["status"], "success")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "context",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        context_payload = json.loads(stdout)
+        memory = next(route for route in context_payload["routes"] if route["key"] == "spark_memory")
+        self.assertEqual(memory["evidence_status"], "last_success_recorded")
+        self.assertEqual(memory["route_latency_ms"], 45)
+        self.assertEqual(memory["eval_coverage_status"], "covered")
+
+    def test_run_route_probe_records_registry_backed_success(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_local_work",
+                    "label": "Spark Local Work",
+                    "status": "ready",
+                    "available": True,
+                    "degraded": False,
+                    "limitations": [],
+                }
+            ],
+        }
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_local_work",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.capability_key, "spark_local_work")
+        self.assertIn("registry status=ready", result.probe_summary)
+
+    def test_run_route_probe_uses_memory_smoke_for_memory_route(self) -> None:
+        smoke_result = SimpleNamespace(
+            write_result=SimpleNamespace(status="succeeded", accepted_count=1, reason=None),
+            read_result=SimpleNamespace(abstained=False, records=[{"value": "ok"}], reason=None),
+            cleanup_result=SimpleNamespace(accepted_count=1),
+        )
+        with patch(
+            "spark_intelligence.memory.run_memory_sdk_smoke_test",
+            return_value=smoke_result,
+        ) as smoke:
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_memory",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("memory smoke", result.probe_summary)
+        smoke.assert_called_once()
+
+    def test_spawner_route_probe_succeeds_when_unrelated_mission_control_surfaces_are_degraded(self) -> None:
+        mission_payload = {
+            "summary": {
+                "top_level_state": "degraded",
+                "active_systems": ["Spark Spawner"],
+                "degraded_surfaces": ["Spark Swarm payload", "Watchtower scheduler"],
+            },
+            "panels": {
+                "spawner_payload_drift": {"status": "ok"},
+            },
+        }
+        with patch(
+            "spark_intelligence.mission_control.build_mission_control_snapshot",
+            return_value=SimpleNamespace(to_payload=lambda: mission_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_spawner",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("degraded_surfaces=2", result.probe_summary)
+
+    def test_spawner_route_probe_fails_when_spawner_surface_is_degraded(self) -> None:
+        mission_payload = {
+            "summary": {
+                "top_level_state": "degraded",
+                "active_systems": ["Spark Spawner"],
+                "degraded_surfaces": ["Spark Spawner"],
+            },
+            "panels": {
+                "spawner_payload_drift": {"status": "ok"},
+            },
+        }
+        with patch(
+            "spark_intelligence.mission_control.build_mission_control_snapshot",
+            return_value=SimpleNamespace(to_payload=lambda: mission_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_spawner",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "spawner surface degraded; mission status=degraded")
+        self.assertIn("mission status=degraded", result.probe_summary)
+
+    def test_run_route_probe_records_browser_failure(self) -> None:
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.collect_browser_use_probe_contract",
+            return_value={
+                "status": "failed",
+                "last_failure_reason": "Browser hook failed.",
+                "evidence_summary": "browser-use adapter status=failed",
+            },
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "Browser hook failed.")
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        browser = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["evidence_status"], "last_failure_recorded")
+        self.assertEqual(browser["last_failure_reason"], "Browser hook failed.")
+
+    def test_browser_route_probe_reports_browser_use_status_contract_when_missing(self) -> None:
+        result = run_route_probe_and_record(
+            self.config_manager,
+            self.state_db,
+            capability_key="spark_browser",
+            actor_id="operator:test",
+        )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "browser-use adapter status source is not ready.")
+        self.assertIn("browser-use adapter status=missing_status", result.probe_summary)
+        self.assertIn("status_path=", result.probe_summary)
+
+    def test_browser_route_probe_uses_shared_spark_root_from_nested_builder_home(self) -> None:
+        spark_root = self.home / ".spark"
+        builder_home = spark_root / "state" / "spark-intelligence"
+        config_manager = ConfigManager.from_home(str(builder_home))
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+
+        result = run_route_probe_and_record(
+            config_manager,
+            state_db,
+            capability_key="spark_browser",
+            actor_id="operator:test",
+        )
+
+        expected_path = spark_root / "state" / "browser-use" / "status.json"
+        self.assertEqual(result.status, "failure")
+        self.assertIn(f"status_path={expected_path}", result.probe_summary)
+
+    def test_browser_route_probe_records_browser_use_adapter_success(self) -> None:
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.collect_browser_use_probe_contract",
+            return_value={
+                "status": "completed",
+                "backend_kind": "browser_use_adapter",
+                "adapter_status": "ready",
+                "package_available": True,
+                "evidence_summary": "browser-use adapter status=ready package_available=True cli_available=False",
+            },
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("browser-use adapter status=ready", result.probe_summary)
+
+    def test_agent_operating_context_marks_legacy_browser_gap_as_planned_browser_use_migration(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "missing",
+                    "available": False,
+                    "degraded": True,
+                    "active": False,
+                    "attached": False,
+                    "limitations": ["Chip 'spark-browser' is not attached in this workspace."],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_failure_at": "2026-05-06T16:16:00Z",
+                    "last_failure_reason": "Chip 'spark-browser' is not attached in this workspace.",
+                    "latest_probe_summary": "registry status=missing available=False",
+                    "confidence_level": "recent_failure",
+                }
+            ],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "planned")
+        self.assertFalse(browser["degraded"])
+        self.assertIn("browser-use adapter", browser["claim_boundary"])
+        self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+        self.assertIn("Spark Browser: planned, browser-use adapter migration pending", context.to_text())
+
+    def test_agent_operating_context_marks_inactive_legacy_browser_as_planned_migration(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "available",
+                    "available": True,
+                    "degraded": False,
+                    "active": False,
+                    "attached": True,
+                    "limitations": [],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "planned")
+        self.assertFalse(browser["degraded"])
+        self.assertEqual(browser["planned_reason"], "browser-use adapter migration pending")
+        self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+
+    def test_agent_operating_context_keeps_missing_browser_use_contract_as_planned_migration(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Legacy Browser Extension",
+                    "status": "missing",
+                    "available": False,
+                    "degraded": True,
+                    "active": False,
+                    "attached": False,
+                    "limitations": ["Chip 'spark-browser' is not attached in this workspace."],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_failure_at": "2026-05-06T18:55:00Z",
+                    "last_failure_reason": "browser-use adapter status source is not ready.",
+                    "latest_probe_summary": "browser-use adapter status=missing_status status_path=C:\\Users\\USER\\.spark\\state\\browser-use\\status.json exists=False",
+                    "confidence_level": "recent_failure",
+                }
+            ],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "planned")
+        self.assertEqual(browser["label"], "Spark Browser")
+        self.assertFalse(browser["degraded"])
+        self.assertEqual(browser["planned_reason"], "browser-use adapter migration pending")
+        self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+
+    def test_agent_operating_context_promotes_browser_use_success_evidence_over_legacy_row(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "available",
+                    "available": True,
+                    "degraded": False,
+                    "active": False,
+                    "attached": True,
+                    "limitations": [],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_success_at": "2026-05-06T18:45:00Z",
+                    "latest_probe_summary": "browser-use adapter status=ready package_available=True cli_available=False",
+                    "confidence_level": "latest_success",
+                }
+            ],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "healthy")
+        self.assertIsNone(browser["planned_reason"])
+        self.assertEqual(browser["evidence_status"], "last_success_recorded")
+        self.assertIn("Spark Browser: healthy, last success:", context.to_text())
+
+    def test_agent_operating_context_does_not_hide_browser_use_adapter_warnings_as_planned(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "standby",
+                    "available": True,
+                    "degraded": True,
+                    "active": False,
+                    "attached": True,
+                    "limitations": ["browser-use adapter configured, but no passing status proof has been recorded."],
+                    "metadata": {"backend_kind": "browser_use_adapter", "adapter_status": "configured"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [
+                {
+                    "capability_key": "spark_browser",
+                    "last_failure_at": "2026-05-06T16:16:00Z",
+                    "last_failure_reason": "Chip 'spark-browser' is not attached in this workspace.",
+                    "latest_probe_summary": "registry status=missing available=False",
+                    "confidence_level": "recent_failure",
+                }
+            ],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "degraded")
+        self.assertTrue(browser["degraded"])
+        self.assertIsNone(browser["planned_reason"])
+        self.assertIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+        self.assertNotIn("Spark Browser: planned", context.to_text())
+
+    def test_agent_operating_context_expands_stop_ship_contradictions_with_actionable_detail(self) -> None:
+        contradiction_row = {
+            "contradiction_key": "stop_ship:stop_ship_memory_contract",
+            "reason_code": "stop_ship_memory_contract",
+            "summary": "Stop-ship contradiction: stop_ship_memory_contract.",
+            "detail": "2 memory event(s) violated the Builder memory role contract.",
+            "severity": "high",
+            "last_seen_at": "2026-05-06T16:40:00Z",
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.recent_contradictions",
+            return_value=[contradiction_row],
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+        payload = context.to_payload()
+        flag = payload["stale_or_contradicted_context"][0]
+
+        self.assertEqual(flag["summary"], "2 memory event(s) violated the Builder memory role contract.")
+        self.assertEqual(flag["reason_code"], "stop_ship_memory_contract")
+        self.assertEqual(flag["severity"], "high")
+        self.assertIn("operational residue", flag["next_action"])
+        rendered = context.to_text()
+        self.assertIn(
+            "stop_ship_memory_contract: 2 memory event(s) violated the Builder memory role contract.",
+            rendered,
+        )
+        self.assertNotIn("Stop-ship contradiction: stop_ship_memory_contract.", rendered)
+
+    def test_self_route_probe_cli_can_run_builtin_probe(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "route-probe",
+            "spark_memory",
+            "--home",
+            str(self.home),
+            "--run",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        probe_payload = json.loads(stdout)
+        self.assertEqual(probe_payload["capability_key"], "spark_memory")
+        self.assertEqual(probe_payload["status"], "success")
+        self.assertIn("memory smoke", probe_payload["probe_summary"])
+
+    def test_self_route_selection_cli_records_black_box_event(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "route-selection",
+            "spawner_run",
+            "--home",
+            str(self.home),
+            "--user-intent",
+            "telegram_run_mission",
+            "--confidence",
+            "high",
+            "--reason",
+            "test route-selection preflight",
+            "--request-id",
+            "req-route-selection",
+            "--trace-ref",
+            "trace:route-selection",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["event_type"], "route_selected")
+        self.assertEqual(payload["selected_route"], "spawner_run")
+        self.assertTrue(payload["event_id"])
+
+    def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "context",
+            "--home",
+            str(self.home),
+            "--spark-access-level",
+            "4",
+            "--runner-writable",
+            "no",
+            "--user-message",
+            "fix mission memory loop",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["schema_version"], "spark.agent_operating_context.v1")
+        self.assertEqual(payload["task_fit"]["recommended_route"], "writable_spawner_codex_mission")
+        self.assertFalse(payload["runner"]["writable"])
 
     def test_builder_aggregate_readiness_points_to_concrete_provider_records(self) -> None:
         registry_payload = {
@@ -639,6 +1531,12 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("surprise_score", action_text)
         self.assertTrue(payload["live_self_awareness"]["weak_spot_priorities"])
         self.assertIn("Natural-language invocability", action_text)
+        proposal = payload["capability_proposal_packet"]
+        self.assertEqual(proposal["schema_version"], "spark.capability_proposal.v1")
+        self.assertEqual(proposal["status"], "proposal_plan_only")
+        self.assertIn("capability_ledger_key", proposal)
+        self.assertIn("safe_probe", proposal)
+        self.assertIn("claim_boundary", proposal)
 
     def test_self_improve_cli_emits_machine_readable_plan(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -657,6 +1555,228 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["priority_actions"])
         self.assertTrue(payload["natural_language_invocations"])
         self.assertEqual(payload["mode"], "plan_only_probe_first")
+        self.assertEqual(payload["capability_proposal_packet"]["schema_version"], "spark.capability_proposal.v1")
+
+    def test_self_improvement_text_leads_with_requested_capability_proposal(self) -> None:
+        result = build_self_improvement_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            goal="can you actually install a voice to yourself?",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+        )
+
+        text = result.to_text()
+        capability_index = text.index("Capability proposal")
+        hardening_index = text.index("Related hardening probes")
+        self.assertLess(capability_index, hardening_index)
+        first_block = text[:hardening_index]
+        self.assertIn("requested capability: can you actually install a voice to yourself", first_block)
+        self.assertIn("status: proposal_plan_only (not installed yet)", first_block)
+        self.assertIn("connector: voice", first_block)
+        self.assertIn("safe probe: Run voice.status", first_block)
+        self.assertIn("not proof of a live capability", first_block)
+        self.assertNotIn("swarm_decision_unavailable", first_block)
+
+    def test_capability_proposal_packet_classifies_connector_and_workflow_routes(self) -> None:
+        email_packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+        self.assertEqual(email_packet["implementation_route"], "capability_connector")
+        self.assertIn("email_account_access", email_packet["permissions_required"])
+        self.assertIn("redacted", email_packet["safe_probe"])
+        self.assertIn("capability_connector:", email_packet["capability_ledger_key"])
+        self.assertEqual(email_packet["connector_harness"]["schema_version"], "spark.connector_harness.v1")
+        self.assertEqual(email_packet["connector_harness"]["connector_key"], "email")
+        self.assertEqual(email_packet["connector_harness"]["authority_stage"], "proposal_only")
+        self.assertIn("read_message_body", email_packet["connector_harness"]["blocked_live_actions"])
+        self.assertIn("human_approval_recorded", email_packet["connector_harness"]["live_access_blocked_until"])
+
+        report_packet = build_capability_proposal_packet(
+            goal="Set up daily reports of my memories so I know what changed.",
+            user_message="Set up daily reports of my memories so I know what changed.",
+        ).to_payload()
+        self.assertEqual(report_packet["implementation_route"], "workflow_automation")
+        self.assertIn("scheduler_write_scope", report_packet["permissions_required"])
+        self.assertIn("dry-run", report_packet["safe_probe"])
+        self.assertEqual(report_packet["connector_harness"]["connector_key"], "workflow")
+        self.assertIn("enable_delivery", report_packet["connector_harness"]["blocked_live_actions"])
+
+    def test_capability_proposal_packet_keeps_mission_artifacts_distinct(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build a Spark memory dashboard.",
+            user_message="Build a Spark memory dashboard.",
+        ).to_payload()
+
+        self.assertEqual(packet["implementation_route"], "mission_artifact")
+        self.assertEqual(packet["owner_system"], "Spark Spawner / Mission Control")
+        self.assertIn("not proof of a live capability", packet["claim_boundary"])
+        self.assertNotIn("connector_harness", packet)
+
+    def test_connector_harness_envelope_blocks_live_access_until_approval(self) -> None:
+        harness = build_connector_harness_envelope(
+            goal="Let Spark read my calendar and summarize upcoming events.",
+            implementation_route="capability_connector",
+            permissions_required=["calendar_account_access", "event_read_scope"],
+        )
+
+        self.assertIsNotNone(harness)
+        payload = harness.to_payload()
+        self.assertEqual(payload["connector_key"], "calendar")
+        self.assertEqual(payload["authority_stage"], "proposal_only")
+        self.assertIn("calendar_account_access", payload["permissions_required"])
+        self.assertIn("metadata sample", payload["dry_run_probe"])
+        self.assertIn("create_event", payload["blocked_live_actions"])
+        self.assertIn("approval", payload["approval_prompt"].lower())
+        self.assertIn("capability_ledger_key", payload["trace_fields"])
+
+    def test_connector_probe_redaction_removes_private_content_and_secrets(self) -> None:
+        redacted = redact_connector_probe_sample(
+            connector_key="email",
+            sample={
+                "id": "msg_123",
+                "from": "alice@example.com",
+                "subject": "Private launch details",
+                "snippet": "Revenue and medical info",
+                "headers": {"authorization": "Bearer sk-test-abcdefghijklmnopqrstuvwxyz"},
+                "metadata_count": 1,
+            },
+        )
+
+        self.assertEqual(redacted["id"], "msg_123")
+        self.assertEqual(redacted["metadata_count"], 1)
+        self.assertIn("<redacted email from>", redacted["from"])
+        self.assertIn("<redacted email subject>", redacted["subject"])
+        self.assertIn("<redacted email snippet>", redacted["snippet"])
+        self.assertIn("<redacted email authorization>", redacted["headers"]["authorization"])
+
+    def test_capability_ledger_records_proposal_without_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:proposal-only",
+        )
+        entry = result.payload
+
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertEqual(entry["activation_evidence"], [])
+        self.assertFalse(capability_is_active(entry))
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(packet["capability_ledger_key"], ledger["entries"])
+
+    def test_capability_ledger_rejects_packet_status_as_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        packet["status"] = "activated"
+
+        with self.assertRaises(ValueError):
+            record_capability_proposal(
+                config_manager=self.config_manager,
+                proposal_packet=packet,
+                actor_id="human:test-ledger",
+                source_ref="pytest:tampered-status",
+            )
+
+    def test_capability_ledger_requires_separate_activation_evidence(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:activation-evidence",
+        )
+        key = packet["capability_ledger_key"]
+
+        with self.assertRaises(ValueError):
+            record_capability_ledger_event(
+                config_manager=self.config_manager,
+                capability_ledger_key=key,
+                lifecycle_state="activated",
+                actor_id="human:test-ledger",
+            )
+
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="probed",
+            actor_id="human:test-ledger",
+            source_ref="pytest:probe",
+            evidence={"probe_ref": "voice.status:ok"},
+        )
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="approved",
+            actor_id="human:test-ledger",
+            source_ref="pytest:approval",
+            evidence={"approval_ref": "operator:approved"},
+        )
+        activated = record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="activated",
+            actor_id="human:test-ledger",
+            source_ref="pytest:voice-smoke",
+            evidence={"approval_ref": "operator:approved", "eval_ref": "voice-smoke:passed"},
+        ).payload
+
+        self.assertTrue(capability_is_active(activated))
+        self.assertEqual(activated["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertNotIn("eval_ref", activated["proposal_packet"])
+        self.assertEqual(activated["current_activation"]["evidence"]["eval_ref"], "voice-smoke:passed")
+
+    def test_capability_ledger_preserves_unknown_future_packet_fields(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Create a daily memory report for Spark.",
+            user_message="Create a daily memory report for Spark.",
+        ).to_payload()
+        packet["future_upgrade_field"] = {"kept": True, "ignored_by_v1": True}
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:future-field",
+        )
+
+        self.assertEqual(result.payload["proposal_packet"]["future_upgrade_field"]["kept"], True)
+        ledger = load_capability_ledger(self.config_manager).payload
+        saved = ledger["entries"][packet["capability_ledger_key"]]
+        self.assertEqual(saved["proposal_packet"]["future_upgrade_field"]["ignored_by_v1"], True)
+        self.assertEqual(saved["status"], "proposed")
+
+    def test_self_improve_cli_can_record_capability_ledger_entry(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "improve",
+            "Give Spark a voice so it can reply with audio.",
+            "--home",
+            str(self.home),
+            "--record-ledger",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        entry = payload["capability_ledger_entry"]
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(entry["capability_ledger_key"], ledger["entries"])
 
     def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
         capsule = build_self_awareness_capsule(
@@ -1096,6 +2216,16 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
                 text="/wiki candidates",
             ),
         )
+        context_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1004,
+                user_id="111",
+                username="alice",
+                text="/context",
+            ),
+        )
 
         self.assertTrue(self_result.ok)
         self.assertEqual(self_result.detail["bridge_mode"], "runtime_command")
@@ -1106,3 +2236,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("Spark LLM wiki candidate inbox", wiki_result.detail["response_text"])
         self.assertIn("Telegram command candidate", wiki_result.detail["response_text"])
         self.assertIn("not live Spark truth", wiki_result.detail["response_text"])
+        self.assertTrue(context_result.ok)
+        self.assertEqual(context_result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Agent Operating Context", context_result.detail["response_text"])
+        self.assertIn("Best route:", context_result.detail["response_text"])
+        self.assertIn("Guardrails", context_result.detail["response_text"])

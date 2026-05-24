@@ -18,6 +18,9 @@ class NormalizedTelegramUpdate:
     media_file_id: str | None
     media_mime_type: str | None
     media_duration_seconds: int | None
+    media_audio_base64: str | None
+    media_filename: str | None
+    media_source: str | None
     caption_text: str | None
     is_dm: bool
 
@@ -58,6 +61,10 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     media_file_id = str(media_payload.get("file_id")).strip() if media_payload.get("file_id") else None
     media_mime_type = str(media_payload.get("mime_type")).strip() if media_payload.get("mime_type") else None
     media_duration_seconds = int(media_payload.get("duration")) if media_payload.get("duration") is not None else None
+    spark_media = message.get("spark_media") if isinstance(message.get("spark_media"), dict) else {}
+    media_audio_base64 = str(spark_media.get("audio_base64")).strip() if spark_media.get("audio_base64") else None
+    media_filename = str(spark_media.get("filename")).strip() if spark_media.get("filename") else None
+    media_source = str(spark_media.get("source")).strip() if spark_media.get("source") else None
     caption_text = str(message.get("caption") or "").strip() or None
 
     return NormalizedTelegramUpdate(
@@ -73,6 +80,9 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
         media_file_id=media_file_id,
         media_mime_type=media_mime_type,
         media_duration_seconds=media_duration_seconds,
+        media_audio_base64=media_audio_base64,
+        media_filename=media_filename,
+        media_source=media_source,
         caption_text=caption_text,
         is_dm=is_dm,
     )

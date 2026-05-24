@@ -5,11 +5,14 @@ from unittest.mock import patch
 from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
+    detect_telegram_generic_deletions,
 )
+from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import (
     latest_events_by_type,
+    record_event,
     recent_memory_lane_records,
     recent_policy_gate_records,
 )
@@ -4810,6 +4813,159 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(current_result.reply_text, "I don't currently have that saved.")
         self.assertEqual(history_result.reply_text, "An earlier saved cofounder was Omar.")
         self.assertEqual(event_history_result.reply_text, "I only have one saved cofounder event: Omar.")
+
+    def test_build_researcher_reply_handles_multiple_generic_deletions_in_one_turn(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        detected_deletions = detect_telegram_generic_deletions(
+            "Forget my cofounder.\nForget my current owner.\nForget who owns the launch checklist."
+        )
+        self.assertEqual(
+            [deletion.predicate for deletion in detected_deletions],
+            ["profile.cofounder_name", "profile.current_owner", "entity.owner"],
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-cofounder-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="My cofounder is Omar.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-owner-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="My current owner is Maya.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-launch-owner-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="For later, Maya owns the launch checklist.",
+        )
+
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message=(
+                "Forget my cofounder.\n"
+                "Forget my current owner.\n"
+                "Forget who owns the launch checklist."
+            ),
+        )
+        cofounder_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-cofounder-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who is my cofounder?",
+        )
+        owner_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-owner-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who is the owner?",
+        )
+        launch_owner_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-multi-delete-launch-owner-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-multi-delete",
+            channel_kind="telegram",
+            user_message="Who owns the launch checklist?",
+        )
+
+        self.assertEqual(
+            delete_result.reply_text,
+            "I'll forget your cofounder, your current owner, and the launch checklist owner.",
+        )
+        self.assertIn("delete_count=3", delete_result.evidence_summary)
+        self.assertEqual(cofounder_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(owner_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(launch_owner_result.reply_text, "I don't currently have saved owner for that.")
+
+        doctor_report = run_memory_doctor(self.state_db)
+        self.assertTrue(doctor_report.ok)
+        self.assertIn("No partial multi-delete writes detected", doctor_report.to_text())
+
+    def test_memory_doctor_flags_partial_multi_delete_writes(self) -> None:
+        message_text = (
+            "Forget my cofounder.\n"
+            "Forget my current owner.\n"
+            "Forget who owns the launch checklist."
+        )
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Researcher bridge recorded memory delete influence.",
+            request_id="req-partial-delete",
+            facts={
+                "detected_generic_memory_deletion": {
+                    "predicate": "profile.cofounder_name",
+                    "fact_name": "cofounder",
+                    "label": "cofounder",
+                    "message_text": message_text,
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark memory write requested.",
+            request_id="req-partial-delete",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            component="memory_orchestrator",
+            summary="Spark memory write completed.",
+            request_id="req-partial-delete",
+            facts={
+                "operation": "delete",
+                "method": "write_observation",
+                "memory_role": "current_state",
+                "accepted_count": 1,
+            },
+        )
+
+        doctor_report = run_memory_doctor(self.state_db)
+
+        self.assertFalse(doctor_report.ok)
+        self.assertEqual(doctor_report.scanned_multi_delete_turns, 1)
+        self.assertIn("expected 3 delete write(s), requested 1, accepted 1", doctor_report.to_text())
 
     def test_build_researcher_reply_preserves_generic_decision_history_and_delete_lifecycle(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

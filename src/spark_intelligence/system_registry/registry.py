@@ -10,7 +10,13 @@ from spark_intelligence.attachments import (
     build_attachment_context,
     run_first_active_chip_hook,
 )
-from spark_intelligence.browser.service import build_browser_status_payload
+from spark_intelligence.browser.service import (
+    LEGACY_BROWSER_BACKEND_KIND,
+    LEGACY_BROWSER_BACKEND_LABEL,
+    LEGACY_BROWSER_DEFAULT_SURFACE,
+    LEGACY_BROWSER_REPLACEMENT_SURFACE,
+    build_browser_status_payload,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
@@ -20,7 +26,7 @@ _SYSTEM_ROLE_HINTS: dict[str, str] = {
     "spark_intelligence_builder": "Runtime owner for delivery, operator controls, attachment state, persona state, routing, and final user-visible replies.",
     "spark_researcher": "Primary intelligence core behind provider-backed advisory and normal reasoning.",
     "spark_swarm": "Deep-work escalation and collective coordination surface for parallel or multi-node work.",
-    "spark_browser": "Governed browser/search surface for page inspection, source capture, and browse workflows.",
+    "spark_browser": "Legacy extension-backed browser/search surface for page inspection, source capture, and browse workflows.",
     "spark_voice": "Speech I/O surface for transcription and synthesis around the Builder-owned personality.",
     "spark_memory": "Persistent local memory and observability state used across sessions and runtime surfaces.",
     "spark_spawner": "Mission, schedule, Kanban, and workflow execution surface for operator-governed work.",
@@ -40,9 +46,10 @@ _SYSTEM_CAPABILITY_HINTS: dict[str, list[str]] = {
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
-    "spark-browser": "Governed browser and search chip for page inspection, browse flows, and source capture.",
+    "spark-browser": "Legacy browser extension chip for page inspection, browse flows, and source capture.",
     "spark-personality-chip-labs": "Baseline personality import chip; it seeds Builder, but Builder owns live style state after import.",
     "spark-swarm": "Swarm bridge and identity/escalation chip for collective or deep-work execution.",
+    "spark-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
     "domain-chip-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
 }
 _BROWSER_STATUS_HOOK = "browser.status"
@@ -110,7 +117,9 @@ class SystemRegistrySnapshot:
                     [
                         record
                         for record in self.records
-                        if record.kind in {"chip", "path"} and isinstance(record.metadata.get("onboarding"), dict)
+                        if record.kind in {"chip", "path"}
+                        and record.key != "spark-browser"
+                        and isinstance(record.metadata.get("onboarding"), dict)
                     ]
                 ),
                 "current_capabilities": _derive_current_capabilities(self.records),
@@ -262,9 +271,17 @@ def build_system_registry(
     config = config_manager.load()
     active_chip_keys = set(str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item))
     pinned_chip_keys = set(str(item) for item in (attachment_context.get("pinned_chip_keys") or []) if str(item))
+    attached_chip_keys = set(str(item) for item in (attachment_context.get("attached_chip_keys") or []) if str(item))
     active_path_key = str(attachment_context.get("active_path_key") or "").strip() or None
     channel_records = config.get("channels", {}).get("records", {}) or {}
     workspace_id = str(config_manager.get_path("workspace.id", default="default"))
+    voice_chip_key = (
+        "spark-voice-comms"
+        if "spark-voice-comms" in active_chip_keys or "spark-voice-comms" in attached_chip_keys
+        else "domain-chip-voice-comms"
+        if "domain-chip-voice-comms" in active_chip_keys or "domain-chip-voice-comms" in attached_chip_keys
+        else "spark-voice-comms"
+    )
 
     records: list[SystemRegistryRecord] = []
     records.extend(
@@ -279,7 +296,7 @@ def build_system_registry(
             ),
             _build_chip_backed_system_record(
                 system_key="spark_voice",
-                chip_key="domain-chip-voice-comms",
+                chip_key=voice_chip_key,
                 active_chip_keys=active_chip_keys,
                 attachment_context=attachment_context,
             ),
@@ -680,7 +697,7 @@ def _build_chip_backed_system_record(
         kind="system",
         key=system_key,
         label={
-            "spark_browser": "Spark Browser",
+            "spark_browser": LEGACY_BROWSER_BACKEND_LABEL,
             "spark_voice": "Spark Voice",
         }[system_key],
         role=_SYSTEM_ROLE_HINTS[system_key],
@@ -705,52 +722,29 @@ def _build_browser_record(
 ) -> SystemRegistryRecord:
     attached_chip_keys = set(str(item) for item in (attachment_context.get("attached_chip_keys") or []) if str(item))
     attached = "spark-browser" in attached_chip_keys
-    if isinstance(browser_payload, dict) and browser_payload:
-        error_code = str(browser_payload.get("error_code") or "").strip()
-        error_message = str(browser_payload.get("error_message") or "").strip()
-        if str(browser_payload.get("status") or "") == "completed":
-            status = "ready"
-            active = True
-            available = True
-            degraded = False
-            limitations: list[str] = []
-        elif error_code == "BROWSER_SESSION_STALE":
-            status = "standby"
-            active = False
-            available = attached
-            degraded = False
-            limitations = [
-                error_message or "Live browser session is not currently connected.",
-                "Reconnect the Spark Browser extension session to restore live search and page inspection.",
-            ]
-        else:
-            status = "degraded"
-            active = False
-            available = attached
-            degraded = True
-            limitations = [error_message or "Browser hook failed or is unavailable."]
-        return SystemRegistryRecord(
-            record_id="system:spark_browser",
-            kind="system",
-            key="spark_browser",
-            label="Spark Browser",
-            role=_SYSTEM_ROLE_HINTS["spark_browser"],
-            status=status,
-            attached=attached,
-            active=active,
-            pinned=False,
-            available=available,
-            degraded=degraded,
-            requires_restart=False,
-            capabilities=_SYSTEM_CAPABILITY_HINTS["spark_browser"],
-            limitations=limitations,
-            metadata=browser_payload,
-        )
-    return _build_chip_backed_system_record(
-        system_key="spark_browser",
-        chip_key="spark-browser",
-        active_chip_keys=active_chip_keys,
-        attachment_context=attachment_context,
+    return SystemRegistryRecord(
+        record_id="system:spark_browser",
+        kind="system",
+        key="spark_browser",
+        label=LEGACY_BROWSER_BACKEND_LABEL,
+        role=_SYSTEM_ROLE_HINTS["spark_browser"],
+        status="disabled",
+        attached=attached,
+        active=False,
+        pinned=False,
+        available=False,
+        degraded=False,
+        requires_restart=False,
+        capabilities=[],
+        limitations=[
+            "Legacy browser extension execution is disabled.",
+            "Use the guarded Spark CLI browser-use MCP lane for browser automation.",
+        ],
+        metadata={
+            "backend_kind": LEGACY_BROWSER_BACKEND_KIND,
+            "backend_label": LEGACY_BROWSER_BACKEND_LABEL,
+            "replacement_surface": LEGACY_BROWSER_REPLACEMENT_SURFACE,
+        },
     )
 
 
@@ -1048,7 +1042,11 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
     active_systems = {record.key for record in records if record.kind == "system" and record.status in {"ready", "configured", "available"}}
     adapters = sorted(record.key for record in records if record.kind == "adapter" and record.active)
     providers = sorted(record.key for record in records if record.kind == "provider" and record.available)
-    active_chips = sorted(record.key for record in records if record.kind == "chip" and record.active)
+    active_chips = sorted(
+        record.key
+        for record in records
+        if record.kind == "chip" and record.active and record.key != "spark-browser"
+    )
     active_paths = sorted(record.key for record in records if record.kind == "path" and record.active)
     local_repos = sorted(record.key for record in records if record.kind == "repo" and record.available)
 
@@ -1057,7 +1055,7 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
     if "spark_swarm" in active_systems:
         capabilities.append("Swarm escalation and collective execution")
     if "spark_browser" in active_systems:
-        capabilities.append("governed browser search and page inspection")
+        capabilities.append("legacy extension-backed browser search and page inspection")
     if "spark_voice" in active_systems:
         capabilities.append("voice transcription and speech replies")
     if "spark_spawner" in active_systems:
@@ -1078,38 +1076,17 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
 
 
 def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str, Any] | None:
-    payload = build_browser_status_payload(
-        config_manager=config_manager,
-        browser_family="brave",
-        profile_key="spark-default",
-        profile_mode="dedicated",
-        agent_id=None,
-    )
-    try:
-        execution = run_first_active_chip_hook(config_manager, hook=_BROWSER_STATUS_HOOK, payload=payload)
-    except ValueError as exc:
-        return {
-            "status": "unavailable",
-            "chip_key": "browser",
-            "error_code": "BROWSER_STATUS_INVALID",
-            "error_message": str(exc),
-        }
-    if execution is None:
-        return None
-    hook_output = execution.output if isinstance(execution.output, dict) else {}
-    hook_status = _normalize_browser_hook_status(hook_output)
-    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else {}
-    hook_failed = (not execution.ok) or bool(hook_error) or (
-        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
-    )
     return {
-        "status": "failed" if hook_failed else "completed",
-        "chip_key": execution.chip_key,
-        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
-        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
-        "error_code": str(hook_error.get("code") or "").strip() or None,
-        "error_message": str(hook_error.get("message") or "").strip() or None,
-        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+        "status": "disabled",
+        "chip_key": "spark-browser",
+        "backend_kind": LEGACY_BROWSER_BACKEND_KIND,
+        "backend_label": LEGACY_BROWSER_BACKEND_LABEL,
+        "default_surface": LEGACY_BROWSER_DEFAULT_SURFACE,
+        "replacement_surface": LEGACY_BROWSER_REPLACEMENT_SURFACE,
+        "hook_status": "disabled",
+        "error_code": "LEGACY_BROWSER_EXTENSION_DISABLED",
+        "error_message": "Legacy browser extension execution is disabled.",
+        "provenance": {},
     }
 
 
@@ -1126,9 +1103,9 @@ def _format_system_registry_direct_reply_line(record: dict[str, Any]) -> str:
         detail = "Escalation and collective sync are available." if status in {"ready", "configured"} else limitations[:1]
     elif key == "spark_browser":
         if status == "ready":
-            detail = "Live search and page inspection are available."
+            detail = "Legacy extension-backed search and page inspection are available."
         elif status == "standby":
-            detail = limitations[:1] or ["Reconnect the extension session to restore live browser grounding."]
+            detail = limitations[:1] or ["Reconnect the legacy extension session to restore extension-backed browser grounding."]
         else:
             detail = limitations[:1]
     elif key == "spark_voice":
@@ -1181,6 +1158,8 @@ def _prompt_onboarding_lines(records: list[dict[str, Any]]) -> list[str]:
     section_lines: list[str] = []
     for record in records:
         if not isinstance(record, dict) or str(record.get("kind") or "") not in {"chip", "path"}:
+            continue
+        if str(record.get("key") or "") == "spark-browser":
             continue
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
         onboarding = metadata.get("onboarding") if isinstance(metadata.get("onboarding"), dict) else {}
