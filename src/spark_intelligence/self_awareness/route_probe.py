@@ -124,6 +124,8 @@ def _run_route_probe(
         return _run_swarm_status_probe(config_manager, state_db)
     if capability_key == "spark_browser":
         return _run_browser_use_status_probe(config_manager)
+    if capability_key == "spark_voice":
+        return _run_voice_status_probe(config_manager, state_db)
     return _run_registry_route_probe(config_manager, state_db, capability_key=capability_key)
 
 
@@ -336,6 +338,74 @@ def _run_browser_use_status_probe(config_manager: ConfigManager) -> dict[str, An
         ),
         "summary": str(status.get("evidence_summary") or "browser-use adapter status=unknown"),
     }
+
+
+def _run_voice_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    from spark_intelligence.attachments.hooks import run_first_chip_hook_supporting
+
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.status",
+        payload={
+            "surface": "route_probe",
+            "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+            "advisor_context": {
+                "source_ledger": [
+                    {
+                        "source": "agent_operating_context.route_probe",
+                        "role": "voice_runtime_probe",
+                        "claim_boundary": "This checks the voice chip status hook only; Telegram delivery still needs a sendVoice smoke.",
+                    }
+                ]
+            },
+        },
+    )
+    if execution is None:
+        return {
+            "status": "failure",
+            "failure_reason": "No attached chip supports voice.status.",
+            "summary": "spark-voice-comms status hook unavailable",
+        }
+    result = execution.output.get("result") if isinstance(execution.output, dict) else None
+    result_payload = result if isinstance(result, dict) else {}
+    ready = bool(result_payload.get("ready")) and execution.ok
+    reply_text = str(result_payload.get("reply_text") or "").strip()
+    error = str(result_payload.get("error") or "").strip()
+    summary = _voice_probe_summary(result_payload=result_payload, execution_ok=execution.ok, reply_text=reply_text)
+    return {
+        "status": "success" if ready else "failure",
+        "failure_reason": "" if ready else error or _first_voice_status_line(reply_text) or "voice.status did not report ready",
+        "summary": summary,
+    }
+
+
+def _voice_probe_summary(*, result_payload: dict[str, Any], execution_ok: bool, reply_text: str) -> str:
+    provider = str(result_payload.get("provider_id") or result_payload.get("transcription_provider") or "").strip()
+    model = str(result_payload.get("model") or result_payload.get("transcription_model") or "").strip()
+    local_ready = result_payload.get("local_ready")
+    paid_ready = result_payload.get("paid_ready")
+    ready = bool(result_payload.get("ready")) and execution_ok
+    parts = [f"voice.status ready={ready}"]
+    if local_ready is not None:
+        parts.append(f"local_ready={bool(local_ready)}")
+    if paid_ready is not None:
+        parts.append(f"paid_ready={bool(paid_ready)}")
+    if provider:
+        parts.append(f"provider={provider}")
+    if model:
+        parts.append(f"model={model}")
+    first_line = _first_voice_status_line(reply_text)
+    if first_line:
+        parts.append(first_line)
+    return " ".join(parts)
+
+
+def _first_voice_status_line(reply_text: str) -> str:
+    for line in str(reply_text or "").splitlines():
+        cleaned = " ".join(line.strip().split())
+        if cleaned:
+            return cleaned[:140]
+    return ""
 
 
 def _run_registry_route_probe(

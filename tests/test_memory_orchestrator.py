@@ -3034,6 +3034,22 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.preferred_name")
         self.assertEqual(detected.value, "Cem")
 
+    def test_profile_name_detection_separates_spelling_from_pronunciation(self) -> None:
+        detected = detect_profile_fact_observation("still name is Cem, but pronounced like Gem")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Cem")
+
+        write_as = detect_profile_fact_observation("write it as Cem and pronounce it like Gem")
+        self.assertIsNotNone(write_as)
+        assert write_as is not None
+        self.assertEqual(write_as.predicate, "profile.preferred_name")
+        self.assertEqual(write_as.value, "Cem")
+
+        pronunciation_only = detect_profile_fact_observation("my name is pronounced like Gem btw")
+        self.assertIsNone(pronunciation_only)
+
     def test_profile_occupation_detection_accepts_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I am an entrepreneur now.")
         self.assertIsNotNone(detected)

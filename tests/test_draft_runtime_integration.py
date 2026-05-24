@@ -207,6 +207,15 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
         )
         self.assertIn("no matching saved instruction to forget", returned)
 
+    def test_memory_forget_language_does_not_archive_unrelated_instructions(self) -> None:
+        returned = _maybe_capture_user_instruction(
+            state_db=self.state_db,
+            external_user_id=self.USER,
+            user_message="Forget any saved memory that says Maya is my name.",
+            reply_text="Got it.",
+        )
+        self.assertEqual(returned, "Got it.")
+
     def test_prompt_injection_instruction_is_not_saved(self) -> None:
         returned = _maybe_capture_user_instruction(
             state_db=self.state_db,

@@ -308,6 +308,25 @@ def resolve_runtime_provider(
     )
 
 
+def build_runtime_provider_reference_payload(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, object]:
+    provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
+    secret_ref = provider.secret_ref
+    return {
+        "provider_id": provider.provider_id,
+        "provider_kind": provider.provider_kind,
+        "auth_method": provider.auth_method,
+        "api_mode": provider.api_mode,
+        "execution_transport": provider.execution_transport,
+        "base_url": provider.base_url,
+        "default_model": provider.default_model,
+        "secret_env_ref": secret_ref.ref_id if secret_ref and secret_ref.source == "env" else None,
+    }
+
+
 def _resolve_secret_ref(
     *,
     record: dict[str, object],

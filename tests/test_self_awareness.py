@@ -555,6 +555,36 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         ledger = {item["source"]: item for item in payload["source_ledger"]}
         self.assertTrue(ledger["capability_evidence"]["present"])
 
+    def test_voice_route_probe_uses_voice_status_hook(self) -> None:
+        with patch(
+            "spark_intelligence.attachments.hooks.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="spark-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "ready": True,
+                        "local_ready": True,
+                        "provider_id": "elevenlabs",
+                        "reply_text": "Voice chip is ready.\nCurrent state: local and hosted voice are configured.",
+                    }
+                },
+            ),
+        ) as hook:
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_voice",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("voice.status ready=True", result.probe_summary)
+        self.assertIn("provider=elevenlabs", result.probe_summary)
+        hook.assert_called_once()
+
     def test_recent_route_probe_failure_downgrades_aoc_route_status(self) -> None:
         record_route_probe_evidence(
             self.state_db,

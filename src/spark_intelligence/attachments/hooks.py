@@ -20,6 +20,12 @@ from spark_intelligence.execution.governed import (
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
+DISABLED_LEGACY_BROWSER_CHIP_KEYS = {"spark-browser", "spark_browser"}
+DISABLED_LEGACY_BROWSER_HOOK_PREFIXES = ("browser.",)
+LEGACY_BROWSER_DISABLED_MESSAGE = (
+    "The legacy browser extension lane is disabled. Use the guarded Spark CLI browser-use MCP lane instead."
+)
+
 
 @dataclass
 class ChipHookExecution:
@@ -148,6 +154,8 @@ def execute_chip_hook_record(
 ) -> ChipHookExecution:
     if record.kind != "chip":
         raise ValueError(f"Attachment '{record.key}' is not a chip.")
+    if _is_disabled_legacy_browser_hook(record.key, hook):
+        raise ValueError(LEGACY_BROWSER_DISABLED_MESSAGE)
     if record.io_protocol not in {None, "", "spark-hook-io.v1"}:
         raise ValueError(
             f"Chip '{record.key}' uses unsupported io_protocol '{record.io_protocol}'."
@@ -191,6 +199,14 @@ def execute_chip_hook_record(
         payload=payload,
         output=output,
     )
+
+
+def _is_disabled_legacy_browser_hook(chip_key: str, hook: str) -> bool:
+    normalized_key = str(chip_key or "").strip().lower().replace("_", "-")
+    normalized_hook = str(hook or "").strip().lower()
+    if normalized_key in DISABLED_LEGACY_BROWSER_CHIP_KEYS:
+        return True
+    return any(normalized_hook.startswith(prefix) for prefix in DISABLED_LEGACY_BROWSER_HOOK_PREFIXES)
 
 
 def record_chip_hook_execution(

@@ -68,7 +68,7 @@ Run on the canonical Builder home:
 
 - Telegram channel health
 - Swarm status
-- browser status
+- browser-use status via `spark browser-use status --json`
 - real Telegram prompts for the latest startup-operator autoloop session
 
 Confirm:

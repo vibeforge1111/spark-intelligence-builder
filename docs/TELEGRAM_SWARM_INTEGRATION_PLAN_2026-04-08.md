@@ -42,7 +42,7 @@ As of 2026-04-08:
   - masteries
   - pending upgrades
 - `spark-swarm` does not currently implement Telegram bot ingress in this repo.
-- `spark-browser-extension` is the governed browser runtime used downstream through Builder.
+- The old `spark-browser-extension` runtime is disabled; browser automation should go through the guarded Spark CLI browser-use MCP lane.
 - `spark-researcher` remains the heavy local runtime behind Builder and Swarm.
 
 That meant the right architecture was:

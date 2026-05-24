@@ -1,4 +1,4 @@
-# Spark Intelligence Handoff 2026-03-29
+﻿# Spark Intelligence Handoff 2026-03-29
 
 ## 1. Purpose
 
@@ -54,8 +54,8 @@ What changed:
 
 - `attachments run-hook` no longer artificially hardcodes only `evaluate`, `suggest`, `packets`, and `watchtower`
 - Builder now has a first-class `browser` CLI surface:
-  - `spark-intelligence browser status`
-  - `spark-intelligence browser page-snapshot --origin <url>`
+  - `spark browser-use status --json`
+  - `spark browser-use mcp-config --client codex`
 - Builder now has browser request builders and renderers in:
   - `src/spark_intelligence/browser/service.py`
 - test scaffolding now includes fake browser hooks:
@@ -166,9 +166,9 @@ Builder verification completed:
 - `python -m pytest tests/test_cli_smoke.py -k browser -q`
 - `spark-intelligence attachments add-root chips <workspace>\\spark-browser-extension --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
 - `spark-intelligence attachments activate-chip spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
-- fixture-mode `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
-- fixture-mode `spark-intelligence browser page-snapshot --origin https://example.com --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
-- live-session `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- fixture-mode `spark browser-use status --json`
+- fixture-mode `spark browser-use mcp-config --client codex`
+- live-session `spark browser-use status --json`
 
 Result:
 
@@ -230,8 +230,8 @@ Recommended order:
 2. Run the first true end-to-end attach smoke from Builder against the real browser session.
    Goal:
    prove:
-   - `spark-intelligence browser status --chip-key spark-browser`
-   - `spark-intelligence browser page-snapshot --chip-key spark-browser --origin <url>`
+   - `spark browser-use status --json`
+   - `spark browser-use mcp-config --client codex`
 
 3. Add browser readiness and operator surfaces only after the live attach smoke is green.
    Goal:
@@ -255,7 +255,7 @@ For Builder:
 ```text
 python -m pytest tests/test_cli_smoke.py -k browser -q
 spark-intelligence attachments status --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json
-spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension
+spark browser-use status --json
 ```
 
 For the browser repo:

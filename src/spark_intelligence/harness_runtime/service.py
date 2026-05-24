@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from spark_intelligence.auth.runtime import build_runtime_provider_reference_payload
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
@@ -236,10 +237,14 @@ def execute_harness_task(
                 envelope=envelope,
             )
         elif envelope.harness_id == "browser.grounded":
-            artifacts, summary, status = _execute_browser_grounded_harness(
-                config_manager=config_manager,
-                envelope=envelope,
-            )
+            artifacts = {
+                "disabled": {
+                    "reason": "The legacy browser extension harness is disabled.",
+                    "replacement": "Use the guarded Spark CLI browser-use MCP lane.",
+                }
+            }
+            summary = "Legacy browser extension harness is disabled and was not executed."
+            status = "blocked"
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
                 config_manager=config_manager,
@@ -535,7 +540,7 @@ def _execute_voice_io_harness(
             state_db=state_db,
             envelope=envelope,
             hook="voice.status",
-            payload=_build_voice_hook_payload(config_manager=config_manager, envelope=envelope),
+            payload=_build_voice_hook_payload(config_manager=config_manager, state_db=state_db, envelope=envelope),
             run_id=run_id,
         )
     except Exception as exc:
@@ -587,6 +592,7 @@ def _execute_voice_io_harness(
                 hook="voice.speak",
                 payload=_build_voice_hook_payload(
                     config_manager=config_manager,
+                    state_db=state_db,
                     envelope=envelope,
                     text=task_payload,
                 ),
@@ -742,6 +748,7 @@ def _execute_swarm_escalation_harness(
 def _build_voice_hook_payload(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
     text: str | None = None,
 ) -> dict[str, Any]:
@@ -751,6 +758,10 @@ def _build_voice_hook_payload(
         "human_id": envelope.human_id,
         "agent_id": envelope.agent_id,
     }
+    try:
+        payload["provider"] = build_runtime_provider_reference_payload(config_manager=config_manager, state_db=state_db)
+    except Exception as exc:
+        payload["provider_error"] = str(exc)
     if text is not None:
         payload["text"] = text
     return payload
