@@ -189,8 +189,12 @@ def _execution_lane_text(execution_lane: dict[str, Any]) -> str:
         f"selected={_optional_bool_text(docker.get('selected'))}, "
         f"probed={_optional_bool_text(docker.get('probed'))}; "
         f"workspace sandbox={_optional_bool_text(execution_lane.get('workspace_sandbox'))}; "
-        f"level5 whole-computer claim={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
+        f"whole-computer claim gate={_claim_gate_text(execution_lane)}"
     )
+
+
+def _claim_gate_text(execution_lane: dict[str, Any]) -> str:
+    return "opened" if execution_lane.get("level5_whole_computer_claim_allowed") else "not opened"
 
 
 def _access_automation_text(access_automation: dict[str, Any]) -> str:
