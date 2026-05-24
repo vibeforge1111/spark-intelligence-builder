@@ -7,11 +7,11 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import tempfile
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import SubprocessError
 from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -30,6 +30,7 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.execution import run_governed_command
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
     is_duplicate_event,
@@ -3000,8 +3001,8 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
             input_path = temp_path / f"input{input_suffix}"
             output_path = temp_path / "parrot.ogg"
             input_path.write_bytes(audio_bytes)
-            subprocess.run(
-                [
+            execution = run_governed_command(
+                command=[
                     ffmpeg_path,
                     "-y",
                     "-hide_banner",
@@ -3029,8 +3030,11 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                     "voip",
                     str(output_path),
                 ],
-                check=True,
+                cwd=temp_path,
+                timeout_seconds=30,
             )
+            if not execution.ok:
+                return payload
             processed = output_path.read_bytes()
             if not processed:
                 return payload
@@ -3108,8 +3112,8 @@ def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) ->
             input_path = temp_path / "input.wav"
             output_path = temp_path / "output.ogg"
             input_path.write_bytes(bytes(payload["audio_bytes"]))
-            subprocess.run(
-                [
+            execution = run_governed_command(
+                command=[
                     ffmpeg_path,
                     "-y",
                     "-hide_banner",
@@ -3127,17 +3131,18 @@ def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) ->
                     "voip",
                     str(output_path),
                 ],
-                check=True,
-                capture_output=True,
-                timeout=30,
+                cwd=temp_path,
+                timeout_seconds=30,
             )
+            if not execution.ok:
+                return payload
             converted = dict(payload)
             converted["audio_bytes"] = output_path.read_bytes()
             converted["mime_type"] = "audio/ogg"
             converted["filename"] = f"{Path(filename or 'telegram-reply').stem}.ogg"
             converted["voice_compatible"] = True
             return converted
-    except (OSError, subprocess.SubprocessError, TimeoutError, ValueError):
+    except (OSError, SubprocessError, TimeoutError, ValueError):
         return payload
 
 
