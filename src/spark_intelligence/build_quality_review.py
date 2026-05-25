@@ -202,7 +202,7 @@ def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
         path = Path(str(root)).expanduser()
         if path.name == "spark-memory-quality-dashboard":
             return str(path)
-    desktop_path = Path.home() / "Desktop" / "spark-memory-quality-dashboard"
+    desktop_path = Path.home() / ".spark" / "spark-memory-quality-dashboard"
     return str(desktop_path) if desktop_path.exists() else None
 
 
