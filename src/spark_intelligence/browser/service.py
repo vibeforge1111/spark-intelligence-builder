@@ -50,6 +50,8 @@ _BROWSER_USE_READY_STATUSES = {
     "completed",
 }
 _BROWSER_USE_FAILURE_STATUSES = {"failed", "failure", "error", "unavailable", "degraded"}
+_BROWSER_USE_REQUIRED_PROOFS = {"doctor", "public_page_open", "screenshot_capture", "state_read"}
+_BROWSER_USE_PROOF_TTL_SECONDS = 15 * 60
 
 
 def build_browser_status_payload(
@@ -97,10 +99,22 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
         return None
 
     raw_status = _browser_use_raw_status(status_doc)
-    ready = raw_status in _BROWSER_USE_READY_STATUSES or bool(status_doc.get("ready") is True)
+    proof_tokens = _browser_use_proofs(status_doc)
+    proof_fresh = _browser_use_proof_is_fresh(status_doc)
+    proof_complete = _BROWSER_USE_REQUIRED_PROOFS.issubset(set(proof_tokens))
+    screenshot_ok = _browser_use_screenshot_ok(status_doc)
+    ready_signal = raw_status in _BROWSER_USE_READY_STATUSES or bool(status_doc.get("ready") is True)
+    ready = ready_signal and proof_complete and proof_fresh and screenshot_ok
     failed = raw_status in _BROWSER_USE_FAILURE_STATUSES or bool(status_doc.get("ready") is False)
     status = "completed" if ready else "failed" if failed else "configured"
-    failure_reason = _browser_use_failure_reason(status_doc, status=status)
+    failure_reason = _browser_use_failure_reason(
+        status_doc,
+        status=status,
+        ready_signal=ready_signal,
+        proof_complete=proof_complete,
+        proof_fresh=proof_fresh,
+        screenshot_ok=screenshot_ok,
+    )
     summary = _browser_use_summary(
         status=status,
         raw_status=raw_status,
@@ -122,6 +136,9 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
         "last_success_at": _string_or_none(status_doc.get("last_success_at")),
         "last_failure_at": _string_or_none(status_doc.get("last_failure_at")),
         "last_failure_reason": failure_reason,
+        "proofs": proof_tokens,
+        "proof_fresh": proof_fresh,
+        "required_proofs": sorted(_BROWSER_USE_REQUIRED_PROOFS),
         "error_code": _string_or_none(status_doc.get("error_code")),
         "error_message": failure_reason,
         "evidence_summary": summary,
@@ -850,7 +867,15 @@ def _browser_use_raw_status(status_doc: dict[str, Any]) -> str:
     return ""
 
 
-def _browser_use_failure_reason(status_doc: dict[str, Any], *, status: str) -> str | None:
+def _browser_use_failure_reason(
+    status_doc: dict[str, Any],
+    *,
+    status: str,
+    ready_signal: bool = False,
+    proof_complete: bool = True,
+    proof_fresh: bool = True,
+    screenshot_ok: bool = True,
+) -> str | None:
     for key in ("last_failure_reason", "failure_reason", "error_message"):
         value = _string_or_none(status_doc.get(key))
         if value:
@@ -860,9 +885,55 @@ def _browser_use_failure_reason(status_doc: dict[str, Any], *, status: str) -> s
         return _string_or_none(error.get("message")) or _string_or_none(error.get("code"))
     if isinstance(error, str) and error.strip():
         return error.strip()
+    if ready_signal and not proof_complete:
+        missing = sorted(_BROWSER_USE_REQUIRED_PROOFS.difference(_browser_use_proofs(status_doc)))
+        return "browser-use status is ready, but proof receipt is incomplete: missing " + ", ".join(missing)
+    if ready_signal and not proof_fresh:
+        return "browser-use proof receipt is stale; rerun the browser route probe."
+    if ready_signal and not screenshot_ok:
+        return "browser-use screenshot proof artifact is missing."
     if status == "configured":
         return "browser-use adapter configured, but no passing status proof has been recorded."
     return None
+
+
+def _browser_use_proofs(status_doc: dict[str, Any]) -> list[str]:
+    proofs = status_doc.get("proofs")
+    if isinstance(proofs, list):
+        return sorted({str(item).strip() for item in proofs if str(item).strip()})
+    if isinstance(proofs, dict):
+        return sorted(
+            str(name).strip()
+            for name, proof in proofs.items()
+            if str(name).strip() and _browser_use_proof_succeeded(proof)
+        )
+    steps = status_doc.get("steps")
+    if isinstance(steps, dict):
+        return sorted(
+            str(name).strip()
+            for name, step in steps.items()
+            if str(name).strip() and (step is True or (isinstance(step, dict) and step.get("status") in {"ok", "success", "passed"}))
+        )
+    return []
+
+
+def _browser_use_proof_is_fresh(status_doc: dict[str, Any]) -> bool:
+    timestamp = _string_or_none(status_doc.get("last_success_at") or status_doc.get("recorded_at") or status_doc.get("checked_at"))
+    if not timestamp:
+        return False
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds() <= _BROWSER_USE_PROOF_TTL_SECONDS
+
+
+def _browser_use_screenshot_ok(status_doc: dict[str, Any]) -> bool:
+    screenshot = _string_or_none(status_doc.get("screenshot_path") or status_doc.get("screenshot"))
+    if not screenshot:
+        return "screenshot_capture" not in set(_browser_use_proofs(status_doc))
+    path = ConfigManager.normalize_runtime_path(screenshot) or Path(screenshot).expanduser()
+    return path.exists()
 
 
 def _browser_use_summary(
