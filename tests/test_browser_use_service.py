@@ -85,3 +85,36 @@ class BrowserUseServiceTests(SparkTestCase):
         assert payload is not None
         self.assertEqual(payload["status"], "configured")
         self.assertIn("stale", payload["last_failure_reason"])
+
+    def test_browser_use_receipt_can_report_spark_venv_cli(self) -> None:
+        status_path = self.home / "browser-use-status.json"
+        screenshot_path = self.home / "probe-screenshot.png"
+        screenshot_path.write_bytes(b"png")
+        cli_path = self.home / "venv" / "Scripts" / "browser-use.exe"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "package_available": True,
+                    "cli_available": True,
+                    "cli_path": str(cli_path),
+                    "last_success_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "proofs": ["doctor", "public_page_open", "screenshot_capture", "state_read"],
+                    "screenshot_path": str(screenshot_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict("os.environ", {"SPARK_BROWSER_USE_STATUS_PATH": str(status_path)}), \
+             patch("spark_intelligence.browser.service.importlib.util.find_spec", return_value=None), \
+             patch("spark_intelligence.browser.service.shutil.which", return_value=None):
+            payload = collect_browser_use_adapter_status(self.config_manager)
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(payload["package_available"])
+        self.assertEqual(payload["cli_path"], str(cli_path))
+        self.assertIn("package_available=True", payload["evidence_summary"])
+        self.assertIn("cli_available=True", payload["evidence_summary"])

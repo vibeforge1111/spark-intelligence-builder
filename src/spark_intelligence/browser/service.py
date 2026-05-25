@@ -94,7 +94,11 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
     status_doc = _read_browser_use_status(status_path)
     package_available = importlib.util.find_spec("browser_use") is not None
     cli_path = _browser_use_cli_path()
-    configured = bool(browser_use_config) or status_path is not None or package_available or bool(cli_path)
+    receipt_package_available = status_doc.get("package_available") is True
+    receipt_cli_path = _string_or_none(status_doc.get("cli_path"))
+    effective_package_available = package_available or receipt_package_available
+    effective_cli_path = cli_path or receipt_cli_path
+    configured = bool(browser_use_config) or status_path is not None or effective_package_available or bool(effective_cli_path)
     if not configured and not status_doc:
         return None
 
@@ -118,10 +122,10 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
     summary = _browser_use_summary(
         status=status,
         raw_status=raw_status,
-        package_available=package_available,
-        cli_path=cli_path,
+        package_available=effective_package_available,
+        cli_path=effective_cli_path,
         status_path=status_path,
-        proofs=status_doc.get("proofs") if isinstance(status_doc.get("proofs"), dict) else {},
+        proofs=status_doc.get("proofs"),
         failure_reason=failure_reason,
     )
     return {
@@ -130,8 +134,8 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
         "backend_label": BROWSER_USE_BACKEND_LABEL,
         "adapter_status": raw_status or status,
         "configured": bool(configured),
-        "package_available": bool(package_available),
-        "cli_path": cli_path,
+        "package_available": bool(effective_package_available),
+        "cli_path": effective_cli_path,
         "status_path": str(status_path) if status_path else None,
         "last_success_at": _string_or_none(status_doc.get("last_success_at")),
         "last_failure_at": _string_or_none(status_doc.get("last_failure_at")),
@@ -947,7 +951,7 @@ def _browser_use_summary(
     package_available: bool,
     cli_path: str | None,
     status_path: Path | None,
-    proofs: dict[str, Any],
+    proofs: object,
     failure_reason: str | None,
 ) -> str:
     parts = [
@@ -958,11 +962,15 @@ def _browser_use_summary(
     if status_path:
         parts.append(f"status_path={status_path}")
         parts.append(f"exists={status_path.exists()}")
-    successful_proofs = [
-        proof_key
-        for proof_key, proof in sorted(proofs.items())
-        if isinstance(proof, dict) and str(proof.get("status") or "") == "success"
-    ]
+    successful_proofs: list[str] = []
+    if isinstance(proofs, dict):
+        successful_proofs = [
+            proof_key
+            for proof_key, proof in sorted(proofs.items())
+            if isinstance(proof, dict) and str(proof.get("status") or "") == "success"
+        ]
+    elif isinstance(proofs, list):
+        successful_proofs = sorted({str(proof).strip() for proof in proofs if str(proof).strip()})
     if successful_proofs:
         parts.append(f"proofs={','.join(successful_proofs)}")
     if failure_reason and status != "completed":
