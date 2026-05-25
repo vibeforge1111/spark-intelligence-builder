@@ -2373,8 +2373,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     chips_create_parser = chips_subparsers.add_parser("create", help="Create a new domain chip from a natural-language prompt")
     chips_create_parser.add_argument("--prompt", required=True, help="Natural-language description of the chip to create")
-    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: CHIP_CREATE_OUTPUT_DIR or current working directory)")
-    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: CHIP_LABS_ROOT or ./spark-domain-chip-labs)")
+    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: ~/.spark/chips)")
+    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: ~/.spark/spark-domain-chip-labs)")
     chips_create_parser.add_argument(
         "--governor-decision-json",
         help="Harness Core Governor decision JSON authorizing this domain-chip creation",
@@ -7926,7 +7926,7 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
     swarm_runtime_root = args.swarm_runtime_root
     if not swarm_runtime_root:
         current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
-        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
+        default_swarm_root = Path.home() / ".spark" / "spark-swarm"
         if not current_swarm_root and default_swarm_root.exists():
             swarm_runtime_root = str(default_swarm_root)
             notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
