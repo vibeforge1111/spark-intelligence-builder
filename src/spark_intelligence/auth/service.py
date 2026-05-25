@@ -13,6 +13,21 @@ from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, ge
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
 from spark_intelligence.config.loader import ConfigManager
+
+
+def _validate_token_url(url: str, provider: str) -> None:
+    """Reject token URLs that are not HTTPS or point to local/private addresses."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"OAuth token_url for provider '{provider}' must use HTTPS, got: {url!r}"
+        )
+    hostname = (parsed.hostname or "").lower()
+    blocked = ("localhost", "127.", "0.0.0.0", "::1", "169.254.", "10.", "172.16.", "192.168.")
+    if any(hostname == b or hostname.startswith(b) for b in blocked):
+        raise ValueError(
+            f"OAuth token_url for provider '{provider}' must not point to a local address, got: {url!r}"
+        )
 from spark_intelligence.state.db import StateDB
 
 
@@ -644,6 +659,7 @@ def exchange_oauth_authorization_code(
             "code_verifier": code_verifier,
         }
     ).encode("utf-8")
+    _validate_token_url(spec.oauth.token_url, provider)
     request = urllib.request.Request(
         spec.oauth.token_url,
         data=data,
@@ -672,6 +688,7 @@ def exchange_oauth_refresh_token(
             "client_id": spec.oauth.client_id,
         }
     ).encode("utf-8")
+    _validate_token_url(spec.oauth.token_url, provider)
     request = urllib.request.Request(
         spec.oauth.token_url,
         data=data,
