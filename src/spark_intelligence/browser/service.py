@@ -930,6 +930,10 @@ def _browser_use_proof_is_fresh(status_doc: dict[str, Any]) -> bool:
 
 def _browser_use_screenshot_ok(status_doc: dict[str, Any]) -> bool:
     screenshot = _string_or_none(status_doc.get("screenshot_path") or status_doc.get("screenshot"))
+    proofs = status_doc.get("proofs") if isinstance(status_doc.get("proofs"), dict) else {}
+    screenshot_proof = proofs.get("screenshot_capture") if isinstance(proofs, dict) else {}
+    if not screenshot and isinstance(screenshot_proof, dict):
+        screenshot = _string_or_none(screenshot_proof.get("path") or screenshot_proof.get("screenshot_path"))
     if not screenshot:
         return "screenshot_capture" not in set(_browser_use_proofs(status_doc))
     path = ConfigManager.normalize_runtime_path(screenshot) or Path(screenshot).expanduser()
