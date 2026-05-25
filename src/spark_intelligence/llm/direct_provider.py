@@ -256,7 +256,15 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
     )
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read().decode("utf-8")
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as exc:
+                preview = body[:200] if body else "(empty)"
+                raise RuntimeError(
+                    f"Provider returned non-JSON response: {exc.msg} at position {exc.pos}. "
+                    f"Response preview: {preview}"
+                ) from exc
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
