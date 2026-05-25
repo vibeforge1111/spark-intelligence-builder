@@ -145,7 +145,7 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
         parent = current_repo.parent
         for repo_name in _KNOWN_SPARK_REPOS:
             add(parent / repo_name, "known_spark_repo")
-        desktop = Path.home() / "Desktop"
+        desktop = Path.home() / ".spark" / "projects"
         if desktop != parent:
             for repo_name in _KNOWN_SPARK_REPOS:
                 add(desktop / repo_name, "known_desktop_repo")
