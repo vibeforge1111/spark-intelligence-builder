@@ -46,14 +46,14 @@ def _default_chip_labs_root() -> Path:
     env = os.environ.get("CHIP_LABS_ROOT")
     if env:
         return Path(env)
-    return Path("C:/Users/USER/Desktop/spark-domain-chip-labs")
+    return Path.home() / ".spark" / "spark-domain-chip-labs"
 
 
 def _default_output_dir() -> Path:
     env = os.environ.get("CHIP_CREATE_OUTPUT_DIR")
     if env:
         return Path(env)
-    return Path("C:/Users/USER/Desktop")
+    return Path.home() / ".spark" / "chips"
 
 
 def _ensure_chip_labs_importable(root: Path) -> None:
