@@ -126,7 +126,7 @@ def _format_next_fire(iso: str | None) -> str:
         else:
             rel = f"{int(delta // 86_400)}d"
         return f"{local_str} (in {rel})"
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
         return iso
 
 
@@ -296,7 +296,7 @@ def _load_pending() -> dict[str, Any]:
         return {}
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
         return {}
 
 

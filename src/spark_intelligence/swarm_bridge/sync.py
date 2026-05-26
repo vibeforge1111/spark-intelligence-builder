@@ -1555,7 +1555,7 @@ def _researcher_has_ledger(config_path: Path) -> bool:
         ledger_path = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "ledger_path")
         runtime_root = resolve_runtime_root(config_path)
         return ledger_path(runtime_root).exists()
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
         return False
 
 
@@ -2505,7 +2505,7 @@ def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
     try:
         raw = base64.urlsafe_b64decode(padded.encode("ascii"))
         payload = json.loads(raw.decode("utf-8"))
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -2536,7 +2536,7 @@ def _http_error_requires_auth(body: dict[str, Any] | None) -> bool:
 def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
     try:
         raw = exc.read().decode("utf-8")
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
         return None
     if not raw.strip():
         return None
