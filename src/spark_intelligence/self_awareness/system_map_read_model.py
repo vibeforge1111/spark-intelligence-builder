@@ -204,7 +204,7 @@ def _read_json_object(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as _exc:
         return {}
     return payload if isinstance(payload, dict) else {}
 
