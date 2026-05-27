@@ -200,3 +200,40 @@ class GatewayRouteRegistryTests(SparkTestCase):
                 method="POST",
                 content_type="text/plain",
             )
+
+    def test_validate_request_not_found_names_rejected_route_without_route_map(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/api/private-alpha",
+                methods=("GET",),
+                auth_mode="provider_internal",
+                owner="internal-alpha",
+            )
+        )
+        registry.register(
+            GatewayRouteRegistration(
+                path="/api/private-beta",
+                methods=("POST",),
+                auth_mode="provider_internal",
+                owner="internal-beta",
+            )
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            registry.validate_request(path="/api/missing", method="GET")
+
+        message = str(ctx.exception)
+        self.assertIn("Gateway route /api/missing (method GET) is not registered.", message)
+        self.assertIn("2 registered route(s) share parent prefix '/api'.", message)
+        self.assertIn("GatewayRouteRegistry.register()", message)
+        self.assertNotIn("/api/private-alpha", message)
+        self.assertNotIn("/api/private-beta", message)
+        self.assertNotIn("internal-alpha", message)
+        self.assertNotIn("internal-beta", message)
+
+    def test_validate_request_not_found_handles_empty_registry(self) -> None:
+        registry = GatewayRouteRegistry()
+
+        with self.assertRaisesRegex(ValueError, "No routes are registered"):
+            registry.validate_request(path="/api/missing", method="GET")
