@@ -123,6 +123,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_acceptance,
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
+    write_memory_movement_status_export,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
@@ -2600,6 +2601,11 @@ def build_parser() -> argparse.ArgumentParser:
     memory_run_maintenance_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_run_maintenance_parser.add_argument("--sdk-module", help="Override the SDK module for this maintenance run")
     memory_run_maintenance_parser.add_argument("--now", help="Override maintenance clock timestamp for deterministic runs")
+    memory_run_maintenance_parser.add_argument(
+        "--compile-telegram-kb",
+        action="store_true",
+        help="After successful maintenance, explicitly compile Telegram KB artifacts",
+    )
     memory_run_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_compile_kb_parser = memory_subparsers.add_parser(
         "compile-telegram-kb",
@@ -7235,8 +7241,64 @@ def handle_memory_run_sdk_maintenance(args: argparse.Namespace) -> int:
         now=args.now,
         actor_id="memory_cli",
     )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.status == "succeeded" else 1
+    artifacts: dict[str, Any] = {}
+    artifact_errors: list[str] = []
+    if result.status == "succeeded":
+        try:
+            artifacts["memory_movement_status"] = write_memory_movement_status_export(
+                config_manager=config_manager,
+                sdk_module=args.sdk_module,
+            )
+        except OSError as exc:
+            artifact_errors.append(f"memory_movement_status:{exc.__class__.__name__}")
+
+        if args.compile_telegram_kb:
+            kb_result = build_telegram_state_knowledge_base(config_manager=config_manager)
+            artifacts["telegram_kb"] = kb_result.payload
+            if _telegram_kb_has_errors(kb_result.payload):
+                artifact_errors.append("telegram_kb:invalid")
+
+    if args.json:
+        payload = _json_object_from_text(result.to_json())
+        payload["post_maintenance_artifacts"] = artifacts
+        if artifact_errors:
+            payload["post_maintenance_errors"] = artifact_errors
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = [result.to_text()]
+        if artifacts.get("memory_movement_status"):
+            lines.append("- memory_movement_status: written")
+        if artifacts.get("telegram_kb") is not None:
+            lines.append("- telegram_kb: compiled")
+        if artifact_errors:
+            lines.append(f"- post_maintenance_errors: {len(artifact_errors)}")
+        print("\n".join(lines))
+    if result.status != "succeeded":
+        return 1
+    return 1 if artifact_errors else 0
+
+
+def _json_object_from_text(text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {"status": "unknown"}
+    return payload if isinstance(payload, dict) else {"result": payload}
+
+
+def _telegram_kb_has_errors(payload: dict[str, Any]) -> bool:
+    if payload.get("errors"):
+        return True
+    summary = payload.get("summary")
+    if isinstance(summary, dict) and summary.get("kb_valid") is False:
+        return True
+    health_report = payload.get("health_report")
+    if isinstance(health_report, dict):
+        if health_report.get("errors"):
+            return True
+        if health_report.get("valid") is False:
+            return True
+    return False
 
 
 def handle_memory_compile_telegram_kb(args: argparse.Namespace) -> int:
