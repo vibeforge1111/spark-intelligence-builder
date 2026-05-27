@@ -231,23 +231,55 @@ def _validate_callback_query(query: str) -> None:
     error_values = [value for value in parsed.get("error", []) if value]
 
     if len(state_values) != 1:
-        raise ValueError("OAuth callback must include exactly one non-empty 'state' value.")
+        raise ValueError(
+            "OAuth callback must include exactly one non-empty 'state' value. "
+            "Check that your OAuth provider is configured to echo the 'state' parameter "
+            "back unchanged (it is used to bind the callback to your PKCE verifier)."
+        )
     if code_values and error_values:
-        raise ValueError("OAuth callback must not include both 'code' and 'error'.")
+        raise ValueError(
+            "OAuth callback must not include both 'code' and 'error'. "
+            "This usually means the provider redirected with a malformed response — "
+            "retry the auth flow from the start."
+        )
     if len(code_values) > 1:
-        raise ValueError("OAuth callback must include at most one 'code' value.")
+        raise ValueError(
+            "OAuth callback must include at most one 'code' value. "
+            "Multiple 'code' parameters indicate a malformed redirect — retry the auth "
+            "flow and inspect the provider's callback URL configuration."
+        )
     if len(error_values) > 1:
-        raise ValueError("OAuth callback must include at most one 'error' value.")
+        raise ValueError(
+            "OAuth callback must include at most one 'error' value. "
+            "Retry the auth flow; if the issue persists, check the provider's error "
+            "response format."
+        )
     if not code_values and not error_values:
-        raise ValueError("OAuth callback must include either 'code' or 'error'.")
+        raise ValueError(
+            "OAuth callback must include either 'code' or 'error'. "
+            "The provider returned a callback with neither — this usually means the "
+            "callback URL was opened directly. Restart the auth flow from `spark auth login`."
+        )
 
 
 def _validate_redirect_uri(redirect_uri: str) -> SplitResult:
     parsed = urlsplit(redirect_uri)
     if parsed.scheme != "http":
-        raise ValueError("OAuth callback listener requires an http:// redirect URI.")
+        raise ValueError(
+            f"OAuth callback listener requires an http:// redirect URI "
+            f"(got scheme={parsed.scheme!r}). Configure your OAuth provider to redirect "
+            f"to http://127.0.0.1:<port>/<path> — this listener only binds to localhost."
+        )
     if not parsed.hostname or parsed.hostname not in {"127.0.0.1", "localhost"}:
-        raise ValueError("OAuth callback listener only supports loopback redirect URIs.")
+        raise ValueError(
+            f"OAuth callback listener only supports loopback redirect URIs "
+            f"(got host={parsed.hostname!r}). Use 127.0.0.1 or localhost — the listener "
+            f"refuses to bind to public interfaces so callbacks cannot be intercepted."
+        )
     if not parsed.path.startswith("/"):
-        raise ValueError("OAuth callback listener redirect URI must include an absolute path.")
+        raise ValueError(
+            f"OAuth callback listener redirect URI must include an absolute path "
+            f"(got path={parsed.path!r}). Use a URL of the form "
+            f"http://127.0.0.1:<port>/callback."
+        )
     return parsed
