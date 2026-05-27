@@ -378,7 +378,11 @@ def complete_oauth_login_from_callback_url(
         oauth_state=state,
     )
     if not oauth_state:
-        raise ValueError("OAuth callback state was not found.")
+        raise ValueError(
+            "OAuth callback state was not found. This usually means the callback URL "
+            "was opened directly (without an in-flight auth flow), or the state record "
+            "was already consumed or expired. Restart the flow from `spark auth login`."
+        )
     if expected_provider and oauth_state.provider_id != expected_provider:
         raise ValueError(
             f"OAuth callback provider mismatch: expected '{expected_provider}', got '{oauth_state.provider_id}'."
@@ -634,7 +638,13 @@ def exchange_oauth_authorization_code(
     if not spec.oauth:
         raise ValueError(f"Provider '{provider}' does not support OAuth token exchange.")
     if not code_verifier:
-        raise ValueError("OAuth callback state is missing PKCE verifier.")
+        raise ValueError(
+            f"OAuth callback state for provider '{provider}' is missing the PKCE verifier. "
+            "This usually means the original `spark auth login` invocation didn't issue a "
+            "PKCE challenge (the state record wasn't populated with code_verifier), or the "
+            "state DB row is corrupt. Restart the flow from `spark auth login` so a fresh "
+            "PKCE pair is generated."
+        )
     data = urllib.parse.urlencode(
         {
             "grant_type": "authorization_code",
