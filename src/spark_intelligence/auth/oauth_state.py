@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from spark_intelligence.state.db import StateDB
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -103,31 +106,35 @@ def consume_oauth_callback_state(
             )
         record = _row_to_record(row)
         if record.provider_id != provider_id:
+            # Do not echo the stored provider id back to the caller (info-disclosure);
+            # log it server-side for diagnosis.
+            logger.debug("oauth callback provider mismatch: stored=%r requested=%r", record.provider_id, provider_id)
             raise ValueError(
-                f"OAuth callback state provider mismatch: callback was issued for "
-                f"'{record.provider_id}' but the consume call requested '{provider_id}'. "
-                "This usually means a state token from a different provider's flow was "
-                "replayed. Restart the correct provider's flow via `spark auth login --provider {target}`."
+                "OAuth callback state provider mismatch. This usually means a state token "
+                "from a different provider's flow was replayed. Restart the correct "
+                "provider's flow via `spark auth login`."
             )
         if record.status != "pending" or record.consumed_at:
+            logger.debug("oauth callback state already consumed: status=%r consumed_at=%r", record.status, record.consumed_at)
             raise ValueError(
-                f"OAuth callback state was already consumed (status={record.status!r}, "
-                f"consumed_at={record.consumed_at!r}). OAuth state tokens are single-use. "
-                "Restart the flow from `spark auth login` to get a fresh state."
+                "OAuth callback state was already consumed. OAuth state tokens are "
+                "single-use. Restart the flow from `spark auth login` to get a fresh state."
             )
         if redirect_uri and record.redirect_uri and redirect_uri != record.redirect_uri:
+            # Don't echo the configured redirect URI back to the caller.
+            logger.debug("oauth callback redirect_uri mismatch: configured=%r received=%r", record.redirect_uri, redirect_uri)
             raise ValueError(
-                f"OAuth callback redirect URI mismatch: callback was issued for "
-                f"'{record.redirect_uri}' but the consume call received '{redirect_uri}'. "
-                "Check that the OAuth provider is configured with the exact redirect URI "
-                "Spark uses; restart from `spark auth login` after fixing the provider config."
+                "OAuth callback redirect URI mismatch. Check that the OAuth provider is "
+                "configured with the exact redirect URI Spark uses; restart from "
+                "`spark auth login` after fixing the provider config."
             )
         if expected_issuer and record.expected_issuer and expected_issuer != record.expected_issuer:
+            # Don't echo the configured issuer back to the caller.
+            logger.debug("oauth callback issuer mismatch: configured=%r received=%r", record.expected_issuer, expected_issuer)
             raise ValueError(
-                f"OAuth callback issuer mismatch: callback was issued for "
-                f"'{record.expected_issuer}' but the consume call received '{expected_issuer}'. "
-                "The provider's ID token issuer changed — verify the provider's "
-                "`.well-known/openid-configuration` and update Spark's provider config."
+                "OAuth callback issuer mismatch. The provider's ID token issuer changed — "
+                "verify the provider's `.well-known/openid-configuration` and update "
+                "Spark's provider config."
             )
         if _parse_timestamp(record.expires_at) <= now:
             conn.execute(
@@ -139,9 +146,9 @@ def consume_oauth_callback_state(
                 (record.callback_id,),
             )
             conn.commit()
+            logger.debug("oauth callback state expired: created_at=%r expires_at=%r", record.created_at, record.expires_at)
             raise ValueError(
-                f"OAuth callback state expired (issued at {record.created_at}, "
-                f"expired at {record.expires_at}). Restart the flow from `spark auth login` "
+                "OAuth callback state expired. Restart the flow from `spark auth login` "
                 "and complete the browser handoff promptly — the state TTL is short on purpose."
             )
         consumed_at = _format_timestamp(now)
