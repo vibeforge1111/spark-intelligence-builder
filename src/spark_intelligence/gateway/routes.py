@@ -91,7 +91,7 @@ class GatewayRouteRegistry:
                 raise ValueError(
                     f"Gateway route {normalized_path} rejects method '{normalized_method}'."
                 )
-            raise ValueError("Gateway route not found.")
+            raise ValueError(self._route_not_found_message(normalized_path, normalized_method))
         if route.content_types:
             normalized_content_type = _normalize_request_content_type(content_type)
             if not normalized_content_type:
@@ -113,6 +113,30 @@ class GatewayRouteRegistry:
             for method in route.methods
         }
         return tuple(sorted(methods))
+
+    def _route_not_found_message(self, path: str, method: str) -> str:
+        parent_prefix = path.rsplit("/", 1)[0] or "/"
+        same_prefix_count = sum(
+            1 for route in self._routes if route.path.startswith(parent_prefix)
+        )
+        route_count = len(self._routes)
+        if route_count == 0:
+            registry_hint = "No routes are registered in this registry."
+        elif same_prefix_count:
+            registry_hint = (
+                f"{same_prefix_count} registered route(s) share parent prefix "
+                f"{parent_prefix!r}."
+            )
+        else:
+            registry_hint = (
+                f"{route_count} route(s) are registered, but none share parent "
+                f"prefix {parent_prefix!r}."
+            )
+        return (
+            f"Gateway route {path} (method {method}) is not registered. "
+            f"{registry_hint} Verify the path spelling or register it via "
+            "GatewayRouteRegistry.register()."
+        )
 
     def _find_conflict_index(self, candidate: GatewayRouteRegistration) -> int | None:
         for index, existing in enumerate(self._routes):
