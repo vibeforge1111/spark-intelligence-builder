@@ -167,9 +167,9 @@ def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
     The scaffolder emits `from ..lab_hooks import (...)`, which breaks
     when the chip is scaffolded outside the chip_labs package. We
     rewrite it to an absolute import and prepend a sys.path shim that
-    locates chip_labs via env (CHIP_LABS_SRC) or the known default.
+    locates chip_labs via CHIP_LABS_SRC env var; raises RuntimeError with
+    recovery instructions if the variable is not set.
     """
-    chip_labs_src = (chip_labs_root / "src").resolve()
     src_dir = chip_dir / "src"
     if not src_dir.exists():
         return
@@ -180,8 +180,14 @@ def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
         shim = (
             "import os as _os\n"
             "import sys as _sys\n"
-            f"_CHIP_LABS_SRC = _os.environ.get('CHIP_LABS_SRC') or r'{chip_labs_src}'\n"
-            "if _CHIP_LABS_SRC and _CHIP_LABS_SRC not in _sys.path:\n"
+            "_CHIP_LABS_SRC = _os.environ.get('CHIP_LABS_SRC')\n"
+            "if not _CHIP_LABS_SRC:\n"
+            "    raise RuntimeError(\n"
+            "        'CHIP_LABS_SRC env var is not set. '\n"
+            "        'Set it to the chip_labs/src directory before running this chip. '\n"
+            "        'Example: set CHIP_LABS_SRC=C:\\\\path\\\\to\\\\spark-domain-chip-labs\\\\src'\n"
+            "    )\n"
+            "if _CHIP_LABS_SRC not in _sys.path:\n"
             "    _sys.path.insert(0, _CHIP_LABS_SRC)\n"
         )
         patched = text.replace(
