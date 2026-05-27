@@ -961,22 +961,136 @@ class CliSmokeTests(SparkTestCase):
         )
 
         with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result) as maintenance:
-            exit_code, stdout, stderr = self.run_cli(
-                "memory",
-                "run-sdk-maintenance",
-                "--home",
-                str(self.home),
-                "--now",
-                "2025-04-02T09:00:00Z",
-                "--json",
-            )
+            with patch(
+                "spark_intelligence.cli.write_memory_movement_status_export",
+                return_value={"status": "written", "path": str(self.home / "artifacts" / "memory-movement-status.json")},
+            ) as status_export:
+                exit_code, stdout, stderr = self.run_cli(
+                    "memory",
+                    "run-sdk-maintenance",
+                    "--home",
+                    str(self.home),
+                    "--now",
+                    "2025-04-02T09:00:00Z",
+                    "--json",
+                )
 
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["status"], "succeeded")
         self.assertEqual(payload["maintenance"]["active_state_stale_preserved_count"], 1)
+        self.assertEqual(payload["post_maintenance_artifacts"]["memory_movement_status"]["status"], "written")
         maintenance.assert_called_once()
         self.assertEqual(maintenance.call_args.kwargs["now"], "2025-04-02T09:00:00Z")
+        status_export.assert_called_once()
+
+    def test_memory_run_sdk_maintenance_fails_when_status_export_fails(self) -> None:
+        fake_result = SimpleNamespace(
+            status="succeeded",
+            to_json=lambda: json.dumps({"status": "succeeded", "maintenance": {}}),
+            to_text=lambda: "Spark memory SDK maintenance\n- status: succeeded",
+        )
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result):
+            with patch("spark_intelligence.cli.write_memory_movement_status_export", side_effect=OSError("readonly")):
+                exit_code, stdout, stderr = self.run_cli(
+                    "memory",
+                    "run-sdk-maintenance",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                )
+
+        self.assertEqual(exit_code, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["post_maintenance_errors"], ["memory_movement_status:OSError"])
+
+    def test_memory_run_sdk_maintenance_compiles_telegram_kb_only_when_explicit(self) -> None:
+        fake_result = SimpleNamespace(
+            status="succeeded",
+            to_json=lambda: json.dumps({"status": "succeeded", "maintenance": {}}),
+            to_text=lambda: "Spark memory SDK maintenance\n- status: succeeded",
+        )
+        kb_result = SimpleNamespace(payload={"summary": {"kb_valid": True}, "errors": []})
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result):
+            with patch("spark_intelligence.cli.write_memory_movement_status_export", return_value={"status": "written"}):
+                with patch("spark_intelligence.cli.build_telegram_state_knowledge_base", return_value=kb_result) as kb_build:
+                    exit_code, stdout, stderr = self.run_cli(
+                        "memory",
+                        "run-sdk-maintenance",
+                        "--home",
+                        str(self.home),
+                        "--json",
+                    )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertNotIn("telegram_kb", payload["post_maintenance_artifacts"])
+        kb_build.assert_not_called()
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result):
+            with patch("spark_intelligence.cli.write_memory_movement_status_export", return_value={"status": "written"}):
+                with patch("spark_intelligence.cli.build_telegram_state_knowledge_base", return_value=kb_result) as kb_build:
+                    exit_code, stdout, stderr = self.run_cli(
+                        "memory",
+                        "run-sdk-maintenance",
+                        "--home",
+                        str(self.home),
+                        "--compile-telegram-kb",
+                        "--json",
+                    )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["post_maintenance_artifacts"]["telegram_kb"]["summary"]["kb_valid"], True)
+        kb_build.assert_called_once()
+
+    def test_memory_run_sdk_maintenance_fails_when_explicit_telegram_kb_is_invalid(self) -> None:
+        fake_result = SimpleNamespace(
+            status="succeeded",
+            to_json=lambda: json.dumps({"status": "succeeded", "maintenance": {}}),
+            to_text=lambda: "Spark memory SDK maintenance\n- status: succeeded",
+        )
+        kb_result = SimpleNamespace(payload={"summary": {"kb_valid": False}, "errors": []})
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result):
+            with patch("spark_intelligence.cli.write_memory_movement_status_export", return_value={"status": "written"}):
+                with patch("spark_intelligence.cli.build_telegram_state_knowledge_base", return_value=kb_result):
+                    exit_code, stdout, stderr = self.run_cli(
+                        "memory",
+                        "run-sdk-maintenance",
+                        "--home",
+                        str(self.home),
+                        "--compile-telegram-kb",
+                        "--json",
+                    )
+
+        self.assertEqual(exit_code, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["post_maintenance_errors"], ["telegram_kb:invalid"])
+
+    def test_memory_run_sdk_maintenance_skips_artifacts_when_maintenance_fails(self) -> None:
+        fake_result = SimpleNamespace(
+            status="failed",
+            to_json=lambda: json.dumps({"status": "failed", "maintenance": {}}),
+            to_text=lambda: "Spark memory SDK maintenance\n- status: failed",
+        )
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result):
+            with patch("spark_intelligence.cli.write_memory_movement_status_export") as status_export:
+                exit_code, stdout, stderr = self.run_cli(
+                    "memory",
+                    "run-sdk-maintenance",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                )
+
+        self.assertEqual(exit_code, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["post_maintenance_artifacts"], {})
+        status_export.assert_not_called()
 
     def test_setup_creates_bootstrap_and_doctor_and_status_report_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
