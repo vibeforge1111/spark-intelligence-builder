@@ -5872,6 +5872,12 @@ def _match_contextual_memory_doctor_command(
     session_id: str,
     current_request_id: str,
 ) -> dict[str, object] | None:
+    # Skip contextual trigger when the message already contains Memory Doctor
+    # evidence appended by the Telegram bridge. Without this guard, the appended
+    # evidence text (which contains "memory") triggers distress signals that
+    # re-trigger the Doctor on every subsequent message, creating an infinite loop.
+    if '[Spark Telegram Memory Doctor evidence]' in str(inbound_text or ''):
+        return None
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
     previous_record = _memory_doctor_previous_gateway_record(
         config_manager=config_manager,
