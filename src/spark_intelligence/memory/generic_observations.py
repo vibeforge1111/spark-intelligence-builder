@@ -822,7 +822,54 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                     domain_pack=pack.domain_pack,
                 )
 
+    # Catch-all: "my X is Y" pattern for arbitrary personal facts.
+    # This avoids needing to whitelist every possible attribute.
+    _CATCH_ALL_FACT_PATTERN = re.compile(
+        r"^my\s+(.+)\s+is\s+(.+?)[.!]?$", re.IGNORECASE,
+    )
+    for variant in variants:
+        match = _CATCH_ALL_FACT_PATTERN.fullmatch(variant)
+        if match is None:
+            continue
+        attribute_raw = _clean_value(match.group(1))
+        value = _clean_value(match.group(2))
+        if not attribute_raw or not value:
+            continue
+        # Skip if attribute is too short (likely noise) or too long
+        if len(attribute_raw) < 2 or len(attribute_raw) > 60:
+            continue
+        # Skip if this attribute is already handled by a specific pack
+        attr_lower = attribute_raw.lower()
+        skip_keywords = {
+            "name", "cofounder", "mentor", "manager", "assistant",
+            "partner", "wife", "husband", "mother", "father", "sister",
+            "brother", "son", "daughter", "country", "timezone",
+            "occupation", "role", "city", "startup", "mission",
+        }
+        if attr_lower in skip_keywords:
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "_", attr_lower).strip("_")
+        if not slug:
+            continue
+        return TelegramGenericCandidate(
+            predicate=f"profile.{slug}",
+            value=value,
+            evidence_text=text,
+            fact_name=f"profile_{slug}",
+            label=attribute_raw,
+            operation="update",
+            memory_role="current_state",
+            retention_class="active_state",
+            domain_pack="profile_custom",
+        )
+
     return None
+
+
+_MEMORY_DIRECTIVE_PREFIX_PATTERN = re.compile(
+    r"^(?:please\s+)?remember\s+this\s*[:,-]?\s*",
+    re.IGNORECASE,
+)
 
 
 def _candidate_text_variants(text: str) -> list[str]:
@@ -830,6 +877,10 @@ def _candidate_text_variants(text: str) -> list[str]:
     if not normalized:
         return []
     variants = [normalized]
+    # Also try with memory-directive prefix stripped (e.g. "Please remember this: my name is Sampson")
+    stripped = _MEMORY_DIRECTIVE_PREFIX_PATTERN.sub("", normalized, count=1).strip()
+    if stripped and stripped != normalized:
+        variants.append(stripped)
     for chunk in re.split(r"(?<=[.!?])\s+|\s+(?:and\s+then|then)\s+", normalized, flags=re.IGNORECASE):
         cleaned = _clean_text(chunk)
         if cleaned and cleaned not in variants:
