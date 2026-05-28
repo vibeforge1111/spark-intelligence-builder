@@ -300,6 +300,8 @@ def complete_oauth_login(
         raise ValueError(f"Provider '{provider}' does not support OAuth login.")
 
     parsed = urllib.parse.urlparse(callback_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("OAuth callback URL must be an absolute URL including scheme and host.")
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     state = _required_query_value(query, "state")
     callback_error = _oauth_callback_error(query)
