@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -2856,7 +2857,14 @@ def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
     snippet = str(episode_text or "").strip()
     if not snippet:
         return "Noted."
-    return f"Noted: \"{snippet}\""
+    templates = [
+        "Got it, I'll remember that.",
+        "Noted \u2014 I've saved that.",
+        "Saved! I'll keep that in mind.",
+        "Got it, noted.",
+        "I'll remember that, thanks.",
+    ]
+    return random.choice(templates)
 
 
 @dataclass
@@ -8385,6 +8393,11 @@ _EXPLICIT_MEMORY_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_MEMORY_DIRECTIVE_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:just\s+for\s+this\s+conversation|temporarily|for\s+now)\s*[:,]?\s*",
+    re.IGNORECASE,
+)
+
 
 def _normalize_explicit_memory_message(user_message: str) -> tuple[bool, str]:
     text = " ".join(str(user_message or "").strip().split())
@@ -8393,6 +8406,7 @@ def _normalize_explicit_memory_message(user_message: str) -> tuple[bool, str]:
     normalized = _EXPLICIT_MEMORY_PREFIX_PATTERN.sub("", text, count=1).strip()
     if not normalized or normalized == text:
         return False, text
+    normalized = _MEMORY_DIRECTIVE_PREFIX_PATTERN.sub("", normalized, count=1).strip()
     return True, normalized
 
 
