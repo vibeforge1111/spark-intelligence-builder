@@ -912,8 +912,13 @@ class StateDB:
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, factory=ClosingConnection)
+        conn = sqlite3.connect(self.path, factory=ClosingConnection, timeout=30)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+        except sqlite3.DatabaseError:
+            # WAL may be unavailable on some filesystems; keep default mode.
+            pass
         return conn
 
     @staticmethod
