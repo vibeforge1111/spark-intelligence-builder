@@ -237,14 +237,10 @@ def execute_harness_task(
                 envelope=envelope,
             )
         elif envelope.harness_id == "browser.grounded":
-            artifacts = {
-                "disabled": {
-                    "reason": "The legacy browser extension harness is disabled.",
-                    "replacement": "Use the guarded Spark CLI browser-use MCP lane.",
-                }
-            }
-            summary = "Legacy browser extension harness is disabled and was not executed."
-            status = "blocked"
+            artifacts, summary, status = _execute_browser_grounded_harness(
+                config_manager=config_manager,
+                envelope=envelope,
+            )
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
                 config_manager=config_manager,

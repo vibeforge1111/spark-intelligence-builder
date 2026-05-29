@@ -16,6 +16,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     poll_telegram_updates_once,
     simulate_telegram_update,
 )
+from spark_intelligence.execution import GovernedCommandExecution
 from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.identity.service import (
     approve_pairing,
@@ -6316,6 +6317,9 @@ class OperatorPairingFlowTests(SparkTestCase):
 
     def test_natural_language_install_voice_opens_onboarding_without_enabling_replies(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        empty_chip_root = self.home / "empty-chips"
+        empty_chip_root.mkdir()
+        self.config_manager.set_path("spark.chips.roots", [str(empty_chip_root)])
 
         result = simulate_telegram_update(
             config_manager=self.config_manager,
@@ -7321,15 +7325,21 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertNotIn("voice_id", tts)
 
     def test_parrot_voice_effect_uses_ffmpeg_filter_when_enabled(self) -> None:
-        def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
-            Path(args[-1]).write_bytes(b"processed-parrot-audio")
-            return SimpleNamespace(returncode=0)
+        def fake_run(*, command: list[str], cwd: Path, **_kwargs: object) -> GovernedCommandExecution:
+            Path(command[-1]).write_bytes(b"processed-parrot-audio")
+            return GovernedCommandExecution(
+                command=command,
+                cwd=str(cwd),
+                exit_code=0,
+                stdout="",
+                stderr="",
+            )
 
         with patch.dict("os.environ", {"SPARK_TELEGRAM_VOICE_AUDIO_EFFECT": "parrot"}, clear=False), patch(
             "spark_intelligence.adapters.telegram.runtime.shutil.which",
             return_value="ffmpeg",
         ), patch(
-            "spark_intelligence.adapters.telegram.runtime.subprocess.run",
+            "spark_intelligence.adapters.telegram.runtime.run_governed_command",
             side_effect=fake_run,
         ) as run_mock:
             result = _apply_telegram_voice_effect_from_env(
@@ -7345,7 +7355,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result["mime_type"], "audio/ogg")
         self.assertEqual(result["filename"], "telegram-reply-parrot.ogg")
         self.assertEqual(result["audio_effect"], "parrot")
-        filter_arg = run_mock.call_args.args[0][run_mock.call_args.args[0].index("-af") + 1]
+        command = run_mock.call_args.kwargs["command"]
+        filter_arg = command[command.index("-af") + 1]
         self.assertIn("asetrate=48000*1.10", filter_arg)
         self.assertIn("tremolo=f=6:d=0.035", filter_arg)
 

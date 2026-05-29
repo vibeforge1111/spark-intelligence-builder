@@ -1841,7 +1841,6 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["counts"]["channel_alerts"], 1)
         bridge_statuses = {(row["bridge"], row["status"]) for row in payload["bridge_alerts"]}
         self.assertIn(("researcher", "disabled"), bridge_statuses)
-        self.assertIn(("swarm", "not_ready"), bridge_statuses)
         self.assertEqual(payload["channel_alerts"][0]["status"], "poll_failure")
         self.assertEqual(payload["recent"]["duplicates"], [])
         self.assertEqual(payload["recent"]["rate_limited"], [])

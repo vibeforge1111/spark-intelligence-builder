@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from spark_intelligence.harness_registry import (
     build_harness_prompt_context,
     build_harness_registry,
@@ -44,15 +46,23 @@ class HarnessRegistryTests(SparkTestCase):
 
     def test_browser_route_selects_browser_harness(self) -> None:
         self._enable_fake_researcher()
-        create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
-        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
-
-        selection = build_harness_selection(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="How would you execute a task where you need to search the web and inspect a page?",
-        )
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value={
+                "status": "completed",
+                "backend_kind": "browser_use_adapter",
+                "backend_label": "Browser-use Adapter",
+                "adapter_status": "ready",
+                "configured": True,
+                "package_available": True,
+                "evidence_summary": "browser-use adapter status=ready",
+            },
+        ):
+            selection = build_harness_selection(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="How would you execute a task where you need to search the web and inspect a page?",
+            )
 
         self.assertEqual(selection.harness_id, "browser.grounded")
         self.assertEqual(selection.backend_kind, "browser_use_adapter")

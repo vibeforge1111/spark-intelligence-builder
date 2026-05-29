@@ -124,7 +124,7 @@ class AgentOperatingContextResult:
             lines.extend(f"- {item}" for item in why[:4])
         if self.routes:
             lines.extend(["", "Routes"])
-            for route in self.routes[:8]:
+            for route in self.routes[:10]:
                 lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{_route_timeline_suffix(route)}")
             evidence_lines = _route_evidence_lines(self.routes)
             if evidence_lines:

@@ -10,7 +10,7 @@ from spark_intelligence.harness_runtime import (
     execute_harness_task,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
+from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class HarnessRuntimeTests(SparkTestCase):
@@ -19,20 +19,31 @@ class HarnessRuntimeTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
+    def _ready_browser_use_status(self) -> dict[str, object]:
+        return {
+            "status": "completed",
+            "backend_kind": "browser_use_adapter",
+            "backend_label": "Browser-use Adapter",
+            "adapter_status": "ready",
+            "configured": True,
+            "package_available": True,
+            "evidence_summary": "browser-use adapter status=ready",
+        }
+
     def test_build_harness_task_envelope_uses_router_selection(self) -> None:
         self._enable_fake_researcher()
-        create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
-        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
-
-        envelope = build_harness_task_envelope(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Search https://example.com and inspect the page.",
-            session_id="session-1",
-            human_id="human-1",
-            agent_id="agent-1",
-        )
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Search https://example.com and inspect the page.",
+                session_id="session-1",
+                human_id="human-1",
+                agent_id="agent-1",
+            )
 
         self.assertEqual(envelope.harness_id, "browser.grounded")
         self.assertEqual(envelope.backend_kind, "browser_use_adapter")
@@ -61,14 +72,15 @@ class HarnessRuntimeTests(SparkTestCase):
 
     def test_execute_browser_grounded_harness_prepares_navigate_payload_for_url(self) -> None:
         self._enable_fake_researcher()
-        create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
-        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
-        envelope = build_harness_task_envelope(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Open https://example.com and inspect it.",
-        )
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Open https://example.com and inspect it.",
+            )
 
         result = execute_harness_task(
             config_manager=self.config_manager,
@@ -83,14 +95,15 @@ class HarnessRuntimeTests(SparkTestCase):
 
     def test_execute_browser_grounded_harness_requires_url_for_first_runner(self) -> None:
         self._enable_fake_researcher()
-        create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
-        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
-        envelope = build_harness_task_envelope(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Search the web for Spark architecture.",
-        )
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Search the web for Spark architecture.",
+            )
 
         result = execute_harness_task(
             config_manager=self.config_manager,
