@@ -153,7 +153,7 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
     if normalized:
         return _filter_ignored_roots(normalized, ignored_roots), "configured"
 
-    desktop = Path.home() / "Desktop"
+    desktop = Path.home() / ".spark" / "attachments"
     if not desktop.exists():
         return [], "missing"
 
@@ -185,7 +185,7 @@ def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob
     ]
     if normalized:
         return _filter_ignored_roots(normalized, ignored_roots), "configured"
-    desktop = Path.home() / "Desktop"
+    desktop = Path.home() / ".spark" / "attachments"
     autodetected = sorted(
         path for path in desktop.glob(default_glob) if path.is_dir() and not _is_ignored_root(path, ignored_roots)
     )
