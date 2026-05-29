@@ -1,0 +1,167 @@
+# spark-compete-hotfix-v1 packet
+
+- **packet schema:** spark-compete-hotfix-v1
+- **repo:** vibeforge1111/spark-intelligence-builder
+- **target_repo.source:** https://github.com/vibeforge1111/spark-intelligence-builder
+- **target_repo.owner_surface:** spark-intelligence-builder
+- **team.name:** Bug Hunters
+- **team.members:** @drophub_sir, @Daraking2612, @Saleemkhan114
+- **team.github_accounts:** Esc1200, ZakJan777, dara917
+- **team.llm_device_holder:** @drophub_sir
+- **team.device_holder_github:** Esc1200
+- **pr_author (pr.author_github):** Esc1200
+- **pr.url:** https://github.com/vibeforge1111/spark-intelligence-builder/pull/98
+- **pr.branch:** fix/false-positive-instruction-detection
+- **pr.title_prefix:** [spark-compete]
+- **submission_mode:** public_repo_pr
+
+## issue.type / issue.severity / issue.title
+- **issue.type:** bug
+- **issue.severity:** medium
+- **issue.title:** False positive instruction detection in route planning
+
+## issue.actual_behavior
+Route planning requests containing phrases like 'stop at the pharmacy' incorrectly trigger the instruction save mechanism because the _INLINE_DIRECTIVE regex pattern matches any line starting with 'stop', 'keep', 'remember', etc.
+
+## issue.expected_behavior
+Route planning requests should not trigger instruction saving. Only actual instruction directives like 'always remember this' or 'never forget this' should be matched.
+
+## issue.repro_steps
+1. Send a route planning request: 'Pick the best route home. Constraints: I must avoid toll roads, my fuel is nearly empty, and I need to stop at the pharmacy before it closes in 15 minutes'
+2. Observe that the instruction save mechanism is triggered incorrectly
+3. Send an actual instruction: 'always remember this location'
+4. Verify that the instruction is saved correctly
+
+## issue.affected_workflow
+Instruction detection in user messages
+
+## evidence.before_after_proof
+Screenshots needed: Before screenshot should show route planning request with 'stop at the pharmacy' triggering instruction saving. After screenshot should show route planning request no longer triggering instruction saving while actual instructions still work correctly.
+
+- **evidence.safe_links_only:** true
+- **evidence.links:** https://github.com/vibeforge1111/spark-intelligence-builder/pull/98
+- **evidence.forbidden:** raw secrets, raw logs, raw conversations, private chat IDs, session tokens, cookies, private repo maps, raw memory dumps, full compile JSON, scoring details
+
+## Root cause and fix summary
+The _INLINE_DIRECTIVE regex pattern was too broad and matched any line starting with 'stop', 'keep', 'remember', etc., including route planning requests.
+The fix refines the regex pattern to only match actual instruction directives with specific patterns: context-aware matching after sentence boundaries, exclusion of pronouns, limited directive set (always, never, stop), and body extraction.
+
+## proposed_fix.approach
+Refined the _INLINE_DIRECTIVE regex pattern to only match actual instruction directives with specific patterns: context-aware matching after sentence boundaries, exclusion of pronouns, limited directive set (always, never, stop), and body extraction.
+
+- **proposed_fix.files_expected:** src/spark_intelligence/user_instructions/service.py
+- **proposed_fix.tests_or_smoke:** Route planning requests with 'stop at the pharmacy' no longer trigger instruction saving. Actual instruction directives like 'always remember this' or 'never forget this' still work correctly.
+
+## review_claim
+- **review_claim.duplicate_notes:** Searched public PRs and issues in vibeforge1111/spark-intelligence-builder for bug-specific terms covering false positive instruction detection in route planning; no obvious public duplicate was found for this exact behavior.
+- **review_claim.risk_notes:** This change only affects the instruction detection regex pattern in user_instructions/service.py. It does not change authentication flows, secrets handling, dependency files, CI, installer behavior, or private owner routing. Reviewers should verify that the refined pattern correctly distinguishes between route planning requests and actual instruction directives.
+- **review_claim.evidence_types:** smoke_test, passing_test
+- **review_claim.impact_claim:** medium
+- **review_claim.review_state_requested:** pr_review
+
+## validator
+- **status:** pass
+- **packet_valid:** true
+- **next_step:** continue_to_review_gates
+
+---
+
+<details><summary>spark-compete-hotfix-v1 packet (machine-readable)</summary>
+
+```json
+{
+  "schema": "spark-compete-hotfix-v1",
+  "event": "spark-compete-first-event",
+  "submission_mode": "public_repo_pr",
+  "submission_target_url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/98",
+  "team": {
+    "name": "Bug Hunters",
+    "members": [
+      "@drophub_sir",
+      "@Daraking2612",
+      "@Saleemkhan114"
+    ],
+    "github_accounts": [
+      "Esc1200",
+      "ZakJan777",
+      "dara917"
+    ],
+    "llm_device_holder": "@drophub_sir",
+    "device_holder_github": "Esc1200"
+  },
+  "target_repo": {
+    "id": "vibeforge1111/spark-intelligence-builder",
+    "source": "https://github.com/vibeforge1111/spark-intelligence-builder",
+    "owner_surface": "spark-intelligence-builder"
+  },
+  "issue": {
+    "type": "bug",
+    "severity": "medium",
+    "title": "False positive instruction detection in route planning",
+    "actual_behavior": "Route planning requests containing phrases like 'stop at the pharmacy' incorrectly trigger the instruction save mechanism because the _INLINE_DIRECTIVE regex pattern matches any line starting with 'stop', 'keep', 'remember', etc.",
+    "expected_behavior": "Route planning requests should not trigger instruction saving. Only actual instruction directives like 'always remember this' or 'never forget this' should be matched.",
+    "repro_steps": [
+      "Send a route planning request: 'Pick the best route home. Constraints: I must avoid toll roads, my fuel is nearly empty, and I need to stop at the pharmacy before it closes in 15 minutes'",
+      "Observe that the instruction save mechanism is triggered incorrectly",
+      "Send an actual instruction: 'always remember this location'",
+      "Verify that the instruction is saved correctly"
+    ],
+    "affected_workflow": "Instruction detection in user messages"
+  },
+  "evidence": {
+    "safe_links_only": true,
+    "before_after_proof": "Screenshots needed: Before screenshot should show route planning request with 'stop at the pharmacy' triggering instruction saving. After screenshot should show route planning request no longer triggering instruction saving while actual instructions still work correctly.",
+    "links": [
+      "https://github.com/vibeforge1111/spark-intelligence-builder"
+    ],
+    "forbidden": [
+      "pdf",
+      "zip",
+      "exe",
+      "shortened links",
+      "raw logs",
+      "tokens",
+      "wallet material"
+    ]
+  },
+  "proposed_fix": {
+    "approach": "Refined the _INLINE_DIRECTIVE regex pattern to only match actual instruction directives with specific patterns: context-aware matching after sentence boundaries, exclusion of pronouns, limited directive set (always, never, stop), and body extraction.",
+    "files_expected": [
+      "src/spark_intelligence/user_instructions/service.py"
+    ],
+    "tests_or_smoke": "Route planning requests with 'stop at the pharmacy' no longer trigger instruction saving. Actual instruction directives like 'always remember this' or 'never forget this' still work correctly."
+  },
+  "pr": {
+    "url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/98",
+    "branch": "fix/false-positive-instruction-detection",
+    "title_prefix": "[spark-compete]",
+    "author_github": "esc1200",
+    "body_must_include": [
+      "packet",
+      "team",
+      "pr_author",
+      "repo",
+      "actual_behavior",
+      "expected_behavior",
+      "repro_steps",
+      "before_after_proof",
+      "tests_or_smoke",
+      "duplicate_notes",
+      "risk_notes",
+      "review_claim"
+    ]
+  },
+  "review_claim": {
+    "impact_claim": "medium",
+    "evidence_types": [
+      "smoke_test",
+      "passing_test"
+    ],
+    "duplicate_notes": "Searched public PRs and issues in vibeforge1111/spark-intelligence-builder for bug-specific terms covering false positive instruction detection in route planning; no obvious public duplicate was found for this exact behavior.",
+    "risk_notes": "This change only affects the instruction detection regex pattern in user_instructions/service.py. It does not change authentication flows, secrets handling, dependency files, CI, installer behavior, or private owner routing.",
+    "review_state_requested": "pr_review"
+  }
+}
+```
+
+</details>

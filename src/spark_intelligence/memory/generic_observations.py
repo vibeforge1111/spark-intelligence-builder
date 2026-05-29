@@ -838,7 +838,8 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
         # Skip if attribute is too short (likely noise) or too long
         if len(attribute_raw) < 2 or len(attribute_raw) > 60:
             continue
-        # Skip if this attribute is already handled by a specific pack
+        # ── Privacy-boundary guards ──────────────────────────────────
+        # 1) Reject attributes that reference sensitive credential fields.
         attr_lower = attribute_raw.lower()
         skip_keywords = {
             "name", "cofounder", "mentor", "manager", "assistant",
@@ -847,6 +848,25 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
             "occupation", "role", "city", "startup", "mission",
         }
         if attr_lower in skip_keywords:
+            continue
+        # Sensitive-attribute blocklist: never store credentials or secrets.
+        sensitive_attr_keywords = {
+            "password", "passwd", "passcode", "pin", "secret",
+            "token", "api_key", "apikey", "api secret", "bearer",
+            "private key", "ssh key", "access key", "session id",
+            "cookie", "auth", "credential", "otp", "ssn",
+            "credit card", "card number", "cvv",
+            "social security", "passport",
+        }
+        if attr_lower in sensitive_attr_keywords or any(
+            kw in attr_lower for kw in sensitive_attr_keywords
+        ):
+            continue
+        # 2) Reject values that look like secrets / tokens / URLs.
+        if _CATCH_ALL_SECRET_LIKE_PATTERN.search(value):
+            continue
+        # 3) Bound value length: prevents storing raw conversation blobs.
+        if len(value) > _CATCH_ALL_MAX_VALUE_LEN:
             continue
         slug = re.sub(r"[^a-z0-9]+", "_", attr_lower).strip("_")
         if not slug:
@@ -868,6 +888,20 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
 
 _MEMORY_DIRECTIVE_PREFIX_PATTERN = re.compile(
     r"^(?:please\s+)?remember\s+this\s*[:,-]?\s*",
+    re.IGNORECASE,
+)
+
+# ── Catch-all privacy-boundary constants ────────────────────────────
+_CATCH_ALL_MAX_VALUE_LEN = 200
+_CATCH_ALL_SECRET_LIKE_PATTERN = re.compile(
+    r"(?:"
+    r"[A-Za-z0-9+/]{20,}={0,2}"     # base64-ish blob
+    r"|sk-[A-Za-z0-9]{8,}"           # OpenAI-style API key
+    r"|ghp_[A-Za-z0-9]{8,}"          # GitHub personal access token
+    r"|xoxb-[A-Za-z0-9-]{8,}"        # Slack bot token
+    r"|AKIA[A-Z0-9]{12,}"            # AWS access key
+    r"|https?://\S+"                  # any URL (no raw links in facts)
+    r")",
     re.IGNORECASE,
 )
 
