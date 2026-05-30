@@ -25,6 +25,10 @@ DISABLED_LEGACY_BROWSER_HOOK_PREFIXES = ("browser.",)
 LEGACY_BROWSER_DISABLED_MESSAGE = (
     "The legacy browser extension lane is disabled. Use the guarded Spark CLI browser-use MCP lane instead."
 )
+MAX_HOOK_PAYLOAD_BYTES = 100_000
+MAX_HOOK_OUTPUT_BYTES = 1_000_000
+HOOK_PAYLOAD_SUMMARY_SCHEMA = "spark.attachment_hook_payload_summary.v1"
+HOOK_OUTPUT_FAILURE_SCHEMA = "spark.attachment_hook_output_failure.v1"
 
 
 @dataclass
@@ -41,7 +45,10 @@ class ChipHookExecution:
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0
+        output_returncode = _coerce_output_returncode(self.output)
+        return self.exit_code == 0 and (
+            output_returncode is None or output_returncode == 0
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -75,7 +82,19 @@ class ChipHookExecution:
             lines.append(f"- stderr: {self.stderr.strip()}")
         if isinstance(result, dict):
             lines.append(f"- result keys: {', '.join(sorted(result.keys())) if result else 'none'}")
+        output_returncode = _coerce_output_returncode(self.output)
+        if output_returncode is not None:
+            lines.append(f"- output_returncode: {output_returncode}")
         return "\n".join(lines)
+
+
+def _coerce_output_returncode(output: dict[str, Any]) -> int | None:
+    if not isinstance(output, dict) or "returncode" not in output:
+        return None
+    try:
+        return int(output.get("returncode"))
+    except (TypeError, ValueError):
+        return None
 
 
 def list_active_chip_records(config_manager: ConfigManager) -> list[AttachmentRecord]:
@@ -180,7 +199,9 @@ def execute_chip_hook_record(
         temp_root = Path(temp_dir)
         input_path = temp_root / "input.json"
         output_path = temp_root / "output.json"
-        input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        payload_json = _encode_hook_payload(payload)
+        public_payload = _public_hook_payload_summary(payload=payload, encoded_payload=payload_json)
+        input_path.write_text(payload_json, encoding="utf-8")
         command = [*final_command, "--input", str(input_path), "--output", str(output_path)]
         completed = run_governed_command(
             command=command,
@@ -196,7 +217,7 @@ def execute_chip_hook_record(
         exit_code=completed.exit_code,
         stdout=completed.stdout,
         stderr=completed.stderr,
-        payload=payload,
+        payload=public_payload,
         output=output,
     )
 
@@ -348,10 +369,53 @@ def _load_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+    except OSError as exc:
+        return _hook_output_failure(f"Chip hook output could not be read: {exc.__class__.__name__}.")
+    if len(raw) > MAX_HOOK_OUTPUT_BYTES:
+        return _hook_output_failure("Chip hook output is too large.")
+    try:
+        payload = json.loads(raw.decode("utf-8-sig"))
     except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        return _hook_output_failure("Chip hook output must be valid JSON.")
+    except UnicodeDecodeError:
+        return _hook_output_failure("Chip hook output must be UTF-8 JSON.")
+    if not isinstance(payload, dict):
+        return _hook_output_failure("Chip hook output must be a JSON object.")
+    return payload
+
+
+def _encode_hook_payload(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError("Hook payload must be a JSON object.")
+    try:
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Hook payload must be JSON-serializable.") from exc
+    if len(encoded.encode("utf-8")) > MAX_HOOK_PAYLOAD_BYTES:
+        raise ValueError("Hook payload is too large.")
+    return encoded
+
+
+def _public_hook_payload_summary(*, payload: dict[str, Any], encoded_payload: str) -> dict[str, Any]:
+    return {
+        "schema": HOOK_PAYLOAD_SUMMARY_SCHEMA,
+        "json_bytes": len(encoded_payload.encode("utf-8")),
+        "top_level_key_count": len(payload),
+        "values_redacted": True,
+    }
+
+
+def _hook_output_failure(message: str) -> dict[str, Any]:
+    return {
+        "schema": HOOK_OUTPUT_FAILURE_SCHEMA,
+        "returncode": 1,
+        "stdout": "",
+        "stderr": message,
+        "metrics": {},
+        "result": {},
+        "error": message,
+    }
 
 
 def _runtime_env_overrides(record: AttachmentRecord) -> dict[str, str]:
