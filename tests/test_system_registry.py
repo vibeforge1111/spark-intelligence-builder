@@ -230,3 +230,7 @@ class SystemRegistryTests(SparkTestCase):
         self.assertTrue(looks_like_system_registry_query("Can you self-introspect?"))
         self.assertTrue(looks_like_system_registry_query("Where do you lack knowledge?"))
         self.assertFalse(looks_like_system_registry_query("Help me write a landing page"))
+        self.assertFalse(looks_like_system_registry_query("Spark Swarm is a term here, not a route request."))
+        self.assertFalse(
+            looks_like_system_registry_query("The phrase what tools appears in our prompt; do not self-introspect.")
+        )

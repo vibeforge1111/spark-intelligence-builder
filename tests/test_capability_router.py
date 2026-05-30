@@ -112,3 +112,5 @@ class CapabilityRouterTests(SparkTestCase):
         self.assertTrue(looks_like_capability_router_query("Should you browse this?"))
         self.assertTrue(looks_like_capability_router_query("Can you add a capability for Spark to read my emails?"))
         self.assertFalse(looks_like_capability_router_query("Write a tighter landing page headline."))
+        self.assertFalse(looks_like_capability_router_query("Mentioning build and agent does not mean build an agent."))
+        self.assertFalse(looks_like_capability_router_query("Do not route anything; just explain the build-word bug."))

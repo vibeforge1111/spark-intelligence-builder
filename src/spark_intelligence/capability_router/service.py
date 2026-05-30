@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
 
 
@@ -40,6 +41,11 @@ class CapabilityRouteDecision:
 def looks_like_capability_router_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
+        return False
+    if has_conversation_only_boundary(lowered_message) or denies_intent(
+        lowered_message,
+        ("route", "route this", "use builder", "use swarm", "browse", "use browser", "use voice"),
+    ):
         return False
     direct_signals = (
         "should this stay in builder",
@@ -291,6 +297,11 @@ def _looks_like_voice_task(lowered: str) -> bool:
 
 
 def _looks_like_capability_improvement_task(lowered: str) -> bool:
+    if has_conversation_only_boundary(lowered) or denies_intent(
+        lowered,
+        ("build", "add", "create", "install", "enable", "connect", "wire", "integrate", "change", "improve"),
+    ):
+        return False
     action_signals = (
         "add",
         "build",

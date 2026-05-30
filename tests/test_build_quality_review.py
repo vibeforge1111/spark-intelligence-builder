@@ -343,3 +343,9 @@ class BuildQualityReviewTests(SparkTestCase):
                 "Review the quality of the memory quality dashboard build in spark-memory-quality-dashboard."
             )
         )
+        self.assertFalse(looks_like_build_quality_review_query("Quality and build are words here; do not review a build."))
+        self.assertFalse(
+            looks_like_memory_quality_dashboard_operator_query(
+                "memory quality dashboard is just a repo name in this sentence; do not open it"
+            )
+        )
