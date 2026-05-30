@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 from typing import Iterable
 from uuid import uuid4
 
+from spark_intelligence.security.prompt_boundaries import scan_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
+
+MAX_INSTRUCTION_LENGTH = 500
 
 
 @dataclass
@@ -91,6 +94,16 @@ def add_instruction(
     text = str(instruction_text or "").strip()
     if not text:
         raise ValueError("instruction_text is required")
+    if len(text) > MAX_INSTRUCTION_LENGTH:
+        raise ValueError(
+            f"instruction_text exceeds maximum length of {MAX_INSTRUCTION_LENGTH} characters"
+        )
+    findings = scan_prompt_boundary_text(text)
+    if findings:
+        categories = ", ".join(sorted({f.category for f in findings}))
+        raise ValueError(
+            f"instruction_text contains disallowed content: {categories}"
+        )
     user = str(external_user_id or "").strip()
     channel = str(channel_kind or "").strip()
     if not user or not channel:
