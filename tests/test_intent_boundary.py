@@ -23,6 +23,9 @@ class IntentBoundaryTests(SparkTestCase):
             "Spark Swarm is a term here, not a route request.",
             "quality and build are words here; do not review a build",
             "Codex, repo, memory, wiki, access, and provider are just words here.",
+            "build appears in this sentence as meta-language; stay in chat and explain the boundary.",
+            "Bug report: schedule hijacked routing before; do not create a mission.",
+            "QA case for provider: words alone should not execute.",
         ):
             with self.subTest(prompt=prompt):
                 self.assertTrue(has_conversation_only_boundary(prompt))
