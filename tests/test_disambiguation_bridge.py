@@ -14,3 +14,11 @@ def test_mission_disambiguation_still_catches_mission_surface_terms() -> None:
 
     assert intent is not None
     assert intent["primary"] == "mission"
+
+
+def test_signal_words_as_words_do_not_trigger_clarifier() -> None:
+    intent = detect_ambiguous_intent(
+        "mission and chip are words here; do not ask a routing question"
+    )
+
+    assert intent is None

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 
 # Create a chip FROM a natural-language brief.
 # Patterns target explicit creation verbs paired with chip vocabulary.
@@ -101,6 +103,11 @@ def detect_chip_create_intent(message: str) -> dict | None:
     """Detect intent to scaffold a NEW domain chip from a brief."""
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("build", "create", "scaffold", "generate", "make", "spin up", "craft", "author"),
+    ):
         return None
     for neg in _NEGATIVE_ANCHORS:
         if neg.search(text):

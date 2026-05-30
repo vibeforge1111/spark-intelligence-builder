@@ -97,6 +97,12 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertTrue(looks_like_harness_query("How would Spark execute this task?"))
         self.assertTrue(looks_like_harness_query("What backend would you use?"))
         self.assertFalse(looks_like_harness_query("Write a shorter reply."))
+        self.assertFalse(
+            looks_like_harness_query("The phrase what harness appears here; do not route anything.")
+        )
+        self.assertFalse(
+            looks_like_harness_query("How would you execute is quoted text, not a request.")
+        )
 
     def test_select_harness_recipe_returns_expected_chain(self) -> None:
         self._enable_fake_researcher()

@@ -181,6 +181,16 @@ PLAIN_CHAT_PHRASES = [
     "what's the weather tomorrow",
     "summarize this article",
     "who won the last world cup",
+    "mentioning schedules and cron does not mean show my schedules",
+    "schedule is a keyword here; do not create or list anything",
+    "mission, board, and kanban are words here, not a request",
+    "loop startup-yc is quoted text; do not run it",
+    "build a chip is a phrase here, do not scaffold anything",
+    "remember this is a phrase here; do not save a preference",
+    "forget this is quoted text; do not delete any instruction",
+    "I am mentioning build, mission, Codex, memory, wiki, access, and provider, but do not start anything",
+    "run domain-chip-spark-ops-critic is a phrase, not a command",
+    "every Monday at 3pm run startup-yc is quoted text, do not schedule anything",
 ]
 
 

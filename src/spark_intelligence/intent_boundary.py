@@ -31,6 +31,11 @@ _META_LANGUAGE_SIGNALS = (
     "talking about the phrase",
     "discussing the word",
     "discussing the phrase",
+    "not a request",
+    "not an instruction",
+    "not a command",
+    "not asking for",
+    "not asking you to",
 )
 
 _EXPLAIN_ONLY_SIGNALS = (
