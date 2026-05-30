@@ -136,6 +136,37 @@ class GatewayRouteRegistryTests(SparkTestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route.owner, "channel-adapter")
 
+    def test_prefix_route_requires_path_segment_boundary(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/api",
+                methods=("POST",),
+                auth_mode="provider_internal",
+                owner="gateway-core",
+                match_mode="prefix",
+            )
+        )
+
+        self.assertIsNone(registry.resolve(path="/apiary", method="POST"))
+        self.assertIsNone(registry.resolve(path="/api-private/task", method="POST"))
+        self.assertEqual(registry.resolve(path="/api/task", method="POST").owner, "gateway-core")
+
+    def test_allowed_methods_respects_prefix_segment_boundary(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/webhooks",
+                methods=("POST",),
+                auth_mode="provider_internal",
+                owner="gateway-core",
+                match_mode="prefix",
+            )
+        )
+
+        self.assertEqual(registry.allowed_methods_for_path(path="/webhooks/telegram"), ("POST",))
+        self.assertEqual(registry.allowed_methods_for_path(path="/webhooks-test/telegram"), ())
+
     def test_rejects_adapter_webhook_without_content_type_contract(self) -> None:
         registry = GatewayRouteRegistry()
 
