@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any
 from urllib.parse import urlsplit
