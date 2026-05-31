@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 _DOW = {
     "sunday": 0, "sun": 0,
     "monday": 1, "mon": 1,
@@ -158,6 +160,11 @@ def _extract_action(text: str, cron: str | None) -> dict[str, Any]:
 def detect_schedule_create_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("schedule", "automate", "set up", "run", "trigger", "fire", "recur"),
+    ):
         return None
     for neg in _NEGATIVE_ANCHORS:
         if neg.search(text):
