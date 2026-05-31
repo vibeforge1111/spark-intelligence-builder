@@ -29,6 +29,11 @@ Builder should not:
 
 ## Shared Source Of Truth
 
+Spark-wide TurnIntent rules are documented locally in:
+
+- `docs/TURNINTENT_HARNESS_RULESET.md`
+- `docs/TURNINTENT_AGENTS_ADOPTION.md`
+
 The proposed shared private contract repo is:
 
 `/Users/alchemistab/Documents/Codex/2026-05-30/we-have-been-working-on-achieving/work/spark-harness-contracts`
