@@ -207,7 +207,7 @@ _SCORE_LABEL_PATTERN = re.compile(
     r"confidence|"
     r"score"
     r")"
-    r"(?P<sep>\s*(?:=|:)?\s*\(?\s*)"
+    r"(?P<sep>\s*(?:=|:)\s*\(?\s*)"
     r"(?P<value>(?:0|1)?\.\d{1,3}|1\.0+)"
     r"(?P<trail>\s*\)?)",
     flags=re.IGNORECASE,
