@@ -29,6 +29,7 @@ from spark_intelligence.attachments import (
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action, authorize_pending_confirmation
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
@@ -310,6 +311,7 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
 def _maybe_save_reply_as_draft(
     *,
     state_db,
+    update_payload: dict[str, Any] | None = None,
     external_user_id: str,
     session_id: str | None,
     chip_used: str | None,
@@ -337,6 +339,15 @@ def _maybe_save_reply_as_draft(
 
     is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
     is_generative = bool(user_message) and detect_generative_intent(user_message)
+    if is_iteration or is_generative:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+        )
+        if not authority.allowed:
+            return reply_text
 
     try:
         from pathlib import Path as _P
@@ -824,6 +835,13 @@ def _build_voice_chip_payload(
         "human_id": human_id,
         "agent_id": agent_id,
         "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+        "spark_machine_origin_policy": {
+            "schema": "spark.machine_origin_policy.v1",
+            "ownerSystem": "spark-intelligence-builder",
+            "allowedTools": ["voice.install", "voice.transcribe", "voice.speak"],
+            "mutationClassesAllowed": ["read_only", "writes_files", "external_network"],
+            "networkPolicy": "provider_allowed",
+        },
         "advisor_context": {
             "runtime": {
                 "os": platform.system() or "unknown",
@@ -1353,12 +1371,19 @@ def simulate_telegram_update(
                     _shortcircuited = True
                     if _confirmation_yes:
                         sid = str(_pending_delete.get("schedule_id") or "")
-                        try:
-                            ok = _delete_schedule(sid) if sid else False
-                        except Exception:
+                        confirmation_authority = authorize_pending_confirmation(update_payload)
+                        pending_authorized = _pending_delete.get("authority") == "schedule.delete"
+                        if not pending_authorized or not confirmation_authority.allowed:
                             ok = False
+                        else:
+                            try:
+                                ok = _delete_schedule(sid) if sid else False
+                            except Exception:
+                                ok = False
                         if ok:
                             outbound_text = _fmt_delete_success(_pending_delete)
+                        elif not pending_authorized or not confirmation_authority.allowed:
+                            outbound_text = "I can see the pending schedule delete, but this turn was not authorized to delete it. Send the delete request again plainly and I will ask for confirmation."
                         else:
                             outbound_text = f"Tried to kill {sid}, but the scheduler rejected it. Run 'show my schedules' to check."
                     else:
@@ -1375,18 +1400,29 @@ def simulate_telegram_update(
                     bridge_result = None
                 elif _delete_intent is not None and _instruction_intent is None:
                     _shortcircuited = True
-                    try:
-                        existing = _fetch_schedules()
-                    except Exception:
-                        existing = []
-                    matches = _match_schedules(existing, _delete_intent.get("hints", {}))
-                    if len(matches) == 0:
-                        outbound_text = _fmt_delete_notfound(_delete_intent.get("hints", {}))
-                    elif len(matches) == 1:
-                        _arm_pending_delete(str(normalized.telegram_user_id), matches[0])
-                        outbound_text = _fmt_delete_prompt(matches[0])
+                    delete_authority = authorize_builder_bridge_action(
+                        update_payload,
+                        tool_name="schedule.delete",
+                        owner_system="spark-intelligence-builder",
+                        mutation_class="deletes_schedule",
+                    )
+                    if not delete_authority.allowed:
+                        outbound_text = "I can talk through schedules, but I will not arm a delete from this turn. Send the delete request plainly if you want me to queue the confirmation."
                     else:
-                        outbound_text = _fmt_delete_ambiguous(matches)
+                        try:
+                            existing = _fetch_schedules()
+                        except Exception:
+                            existing = []
+                        matches = _match_schedules(existing, _delete_intent.get("hints", {}))
+                        if len(matches) == 0:
+                            outbound_text = _fmt_delete_notfound(_delete_intent.get("hints", {}))
+                        elif len(matches) == 1:
+                            pending_schedule = dict(matches[0])
+                            pending_schedule["authority"] = "schedule.delete"
+                            _arm_pending_delete(str(normalized.telegram_user_id), pending_schedule)
+                            outbound_text = _fmt_delete_prompt(matches[0])
+                        else:
+                            outbound_text = _fmt_delete_ambiguous(matches)
                     trace_ref = None
                     bridge_mode = "schedule_delete_shortcircuit"
                     attachment_context = None
@@ -1638,6 +1674,7 @@ def simulate_telegram_update(
                     )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
+                        update_payload=update_payload,
                         external_user_id=normalized.telegram_user_id,
                         session_id=resolution.session_id,
                         chip_used=bridge_result.active_chip_key,
@@ -2440,6 +2477,7 @@ def poll_telegram_updates_once(
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
+            update_payload=update_payload,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
             chip_used=bridge_result.active_chip_key,

@@ -9,6 +9,8 @@ import urllib.error
 from datetime import datetime, timezone
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
 
@@ -59,6 +61,11 @@ def detect_schedule_intent(message: str) -> dict | None:
     """
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("show schedules", "list schedules", "open schedule", "route", "show scheduler"),
+    ):
         return None
     for pat in _LIST_PATTERNS:
         if pat.search(text):
@@ -224,6 +231,11 @@ def detect_delete_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
         return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("cancel", "delete", "kill", "remove", "stop", "disable", "turn off", "drop"),
+    ):
+        return None
     matched = False
     for pat in _DELETE_PATTERNS:
         if pat.search(text):
@@ -318,6 +330,7 @@ def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
         "cron": schedule.get("cron"),
         "payload": schedule.get("payload"),
         "action": schedule.get("action"),
+        "authority": schedule.get("authority"),
         "expires_at": _time.time() + _PENDING_TTL_SECONDS,
     }
     _save_pending(store)

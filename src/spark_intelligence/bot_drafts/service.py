@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
 
 
@@ -288,12 +289,22 @@ def detect_generative_intent(message: str) -> bool:
     text = str(message or "").strip()
     if not text:
         return False
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("write", "draft", "compose", "create", "generate", "build", "outline", "show", "give"),
+    ):
+        return False
     return bool(_GENERATIVE_REQUEST_PATTERN.search(text))
 
 
 def detect_iteration_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("iterate", "revise", "improve", "rewrite", "tweak", "change", "cut", "rework", "draft"),
+    ):
         return None
     handle_match = DRAFT_HANDLE_PATTERN.search(text)
     if handle_match:

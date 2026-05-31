@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 
 # Signal words that indicate the user is talking about an agent surface,
 # even when we can't pin down the exact intent. Ordered by specificity.
@@ -123,6 +125,11 @@ def detect_ambiguous_intent(message: str) -> dict[str, Any] | None:
     """
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("ask", "clarify", "route", "start", "run", "open", "build", "create"),
+    ):
         return None
     if len(text.split()) < _MIN_WORDS:
         return None
