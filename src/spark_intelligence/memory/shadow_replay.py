@@ -22,7 +22,7 @@ from spark_intelligence.state.db import StateDB
 
 DEFAULT_WRITABLE_ROLES = ["user"]
 DEFAULT_EVENT_LIMIT = 2000
-DEFAULT_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_VALIDATOR_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 
 
 @dataclass(frozen=True)
