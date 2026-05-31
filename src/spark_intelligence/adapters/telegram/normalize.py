@@ -35,6 +35,16 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     text_payload = message.get("text")
     voice_payload = message.get("voice")
     audio_payload = message.get("audio")
+    photo_payload = message.get("photo")
+    video_payload = message.get("video")
+    document_payload = message.get("document")
+    sticker_payload = message.get("sticker")
+    video_note_payload = message.get("video_note")
+    animation_payload = message.get("animation")
+    contact_payload = message.get("contact")
+    location_payload = message.get("location")
+    caption_text_raw = str(message.get("caption") or "").strip()
+
     message_kind = "text"
     if isinstance(text_payload, str) and text_payload.strip():
         text = text_payload.strip()
@@ -44,8 +54,39 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     elif isinstance(audio_payload, dict):
         text = "[audio message]"
         message_kind = "audio"
+    elif isinstance(photo_payload, list) and len(photo_payload) > 0:
+        text = caption_text_raw or "[photo]"
+        message_kind = "photo"
+    elif isinstance(video_payload, dict):
+        text = caption_text_raw or "[video]"
+        message_kind = "video"
+    elif isinstance(document_payload, dict):
+        filename = document_payload.get("file_name", "document")
+        text = caption_text_raw or f"[document: {filename}]"
+        message_kind = "document"
+    elif isinstance(sticker_payload, dict):
+        emoji = sticker_payload.get("emoji", "")
+        text = f"[sticker{': ' + emoji if emoji else ''}]"
+        message_kind = "sticker"
+    elif isinstance(video_note_payload, dict):
+        text = "[video note]"
+        message_kind = "video_note"
+    elif isinstance(animation_payload, dict):
+        text = caption_text_raw or "[gif]"
+        message_kind = "animation"
+    elif isinstance(contact_payload, dict):
+        name = contact_payload.get("first_name", "")
+        text = f"[contact: {name}]"
+        message_kind = "contact"
+    elif isinstance(location_payload, dict):
+        text = "[location]"
+        message_kind = "location"
+    elif caption_text_raw:
+        text = caption_text_raw
+        message_kind = "caption_only"
     else:
-        raise ValueError("Telegram update does not contain a supported text, voice, or audio message")
+        text = f"[unsupported message type]"
+        message_kind = "unsupported"
 
     update_id = update.get("update_id")
     message_id = message.get("message_id")
