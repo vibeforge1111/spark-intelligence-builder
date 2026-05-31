@@ -2363,7 +2363,7 @@ def _record_brain_snapshot(
                 "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
             },
         )
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return
 
 
