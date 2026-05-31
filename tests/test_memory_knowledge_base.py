@@ -248,6 +248,18 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
             ],
         )
 
+    def test_build_telegram_state_knowledge_base_refuses_shallow_output_dir_delete(self) -> None:
+        with patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            return_value=SimpleNamespace(exit_code=0, stdout=json.dumps({"valid": True}), stderr=""),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Refusing to delete shallow output_dir"):
+                build_telegram_state_knowledge_base(
+                    config_manager=self.config_manager,
+                    output_dir=Path("/root"),
+                    validator_root=self.home,
+                )
+
     def test_build_telegram_state_knowledge_base_passes_absolute_builder_paths_to_domain_cli(self) -> None:
         relative_home = Path("relative-home-fixture")
         relative_output_dir = relative_home / "artifacts" / "spark-memory-kb"
