@@ -321,7 +321,7 @@ def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
     ok = bool(status.payload_ready)
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
+        "failure_reason": "" if ok else f"swarm_payload_not_ready: auth_state={status.auth_state}, api_ready={status.api_ready}. Run: spark swarm auth to configure authentication.",
         "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
     }
 
