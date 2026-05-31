@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import pytest
@@ -98,12 +97,15 @@ def test_closed_interrupted_task_excluded(state_db: StateDB) -> None:
     assert "open-interrupted" in keys
 
 
-def test_regression_source_confirms_standalone_open_only_guard() -> None:
-    """Source inspection: closed_at IS NULL must appear in a standalone if open_only:
-    block — not only inside elif open_only: — proving the fix structure is present."""
-    from spark_intelligence.workflow_recovery import pending_tasks as _mod
+def test_combined_status_and_open_only_on_multiple_statuses(state_db: StateDB) -> None:
+    """Negative: closed tasks across multiple statuses are all excluded when open_only=True.
+    Proves the guard is not specific to a single status value."""
+    for status in ("timed_out", "blocked", "interrupted"):
+        _insert_task(state_db, f"closed-{status}", status, closed_at="2024-01-02T00:00:00")
+        _insert_task(state_db, f"open-{status}", status, closed_at=None)
 
-    src = inspect.getsource(_mod)
-    assert "if open_only:" in src, "standalone if open_only: block must exist post-fix"
-    assert "closed_at IS NULL" in src, "closed_at IS NULL clause must be in source"
-    assert "elif open_only:" in src, "elif open_only: branch for status IN filter must remain"
+    for status in ("timed_out", "blocked", "interrupted"):
+        results = latest_pending_tasks(state_db, status=status, open_only=True)
+        keys = {r.task_key for r in results}
+        assert f"closed-{status}" not in keys, f"closed {status} task must be excluded"
+        assert f"open-{status}" in keys, f"open {status} task must be included"
