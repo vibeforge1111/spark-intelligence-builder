@@ -851,7 +851,11 @@ class ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
         try:
             if exc_type is None:
-                self.commit()
+                try:
+                    self.commit()
+                except BaseException:
+                    self.rollback()
+                    raise
             else:
                 self.rollback()
         finally:
