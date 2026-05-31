@@ -218,7 +218,7 @@ def _run_builder_status_probe(config_manager: ConfigManager, state_db: StateDB) 
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else _first_nonempty(status.doctor_blocking_failures) or status.provider_runtime_detail,
         "summary": (
-            f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} "
+            f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} " + ("WARNING: gateway not ready - run spark providers status to configure " if not status.ready else "") + ("WARNING: no providers configured - run spark providers status " if not status.configured_providers else "") +
             f"providers={len(status.configured_providers)} channels={len(status.configured_channels)}"
         ),
     }
