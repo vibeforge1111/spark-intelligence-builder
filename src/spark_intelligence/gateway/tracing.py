@@ -45,13 +45,14 @@ def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> li
     path = trace_log_path(config_manager)
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    selected = lines[-limit:] if limit > 0 else lines
     traces: list[dict[str, Any]] = []
-    for line in selected:
+    for line in _tail_lines(path, limit):
         if not line.strip():
             continue
-        traces.append(json.loads(line))
+        try:
+            traces.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
     return traces
 
 
@@ -59,14 +60,35 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
     path = outbound_log_path(config_manager)
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    selected = lines[-limit:] if limit > 0 else lines
     records: list[dict[str, Any]] = []
-    for line in selected:
+    for line in _tail_lines(path, limit):
         if not line.strip():
             continue
-        records.append(json.loads(line))
+        try:
+            records.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
     return records
+
+
+def _tail_lines(path: Path, n: int) -> list[str]:
+    """Read the last *n* lines from a file without loading it entirely into memory."""
+    if n <= 0:
+        return []
+    buf_size = 8192
+    lines: list[str] = []
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        remaining = f.tell()
+        block_end = remaining
+        blocks: list[bytes] = []
+        while remaining > 0 and len(lines) <= n:
+            read_size = min(buf_size, remaining)
+            remaining -= read_size
+            f.seek(remaining)
+            blocks.append(f.read(read_size))
+            lines = b"".join(reversed(blocks)).split(b"\n")
+        return [l.decode("utf-8", errors="replace") for l in lines[-n:]]
 
 
 def _utc_now_iso() -> str:
