@@ -14,7 +14,8 @@
 
 set -uo pipefail
 
-DESKTOP="/c/Users/USER/Desktop"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DESKTOP="$(bash "$SCRIPT_DIR/lib/resolve-boot-desktop.sh")"
 SPAWNER_DIR="$DESKTOP/spawner-ui"
 BOT_DIR="$DESKTOP/spark-telegram-bot"
 BUILDER_DIR="$DESKTOP/spark-intelligence-builder"
