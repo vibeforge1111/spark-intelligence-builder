@@ -1559,10 +1559,28 @@ def simulate_telegram_update(
                             bridge_mode = "board_shortcircuit"
                             routing_decision = "board_shortcircuit"
                         else:
-                            try:
-                                outbound_text = _fmt_schedules()
-                            except Exception as exc:
-                                outbound_text = f"Could not reach scheduler: {exc}"
+                            schedule_list_authority = authorize_builder_bridge_action(
+                                update_payload,
+                                tool_name="schedule.list",
+                                owner_system="spark-intelligence-builder",
+                                mutation_class="read_only",
+                            )
+                            if not schedule_list_authority.allowed:
+                                reason_text = (
+                                    ", ".join(schedule_list_authority.reason_codes)
+                                    if schedule_list_authority.reason_codes
+                                    else "turn_not_authorized"
+                                )
+                                outbound_text = (
+                                    "I can talk through schedules, but this turn is missing Spark authority to read scheduler state.\n"
+                                    f"Reason: {reason_text}.\n"
+                                    "Ask for schedules as a fresh schedule-status request and I will check."
+                                )
+                            else:
+                                try:
+                                    outbound_text = _fmt_schedules()
+                                except Exception as exc:
+                                    outbound_text = f"Could not reach scheduler: {exc}"
                             bridge_mode = "schedule_list_shortcircuit"
                             routing_decision = "schedule_list_shortcircuit"
                         trace_ref = None
