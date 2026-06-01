@@ -41,18 +41,26 @@ def append_outbound_audit(config_manager: ConfigManager, record: dict[str, Any])
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
 
+def _parse_jsonl_lines(lines: list[str], *, limit: int = 20) -> list[dict[str, Any]]:
+    """Parse JSONL lines, gracefully skipping any malformed entries."""
+    selected = lines[-limit:] if limit > 0 else lines
+    records: list[dict[str, Any]] = []
+    for line in selected:
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return records
+
+
 def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> list[dict[str, Any]]:
     path = trace_log_path(config_manager)
     if not path.exists():
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
-    selected = lines[-limit:] if limit > 0 else lines
-    traces: list[dict[str, Any]] = []
-    for line in selected:
-        if not line.strip():
-            continue
-        traces.append(json.loads(line))
-    return traces
+    return _parse_jsonl_lines(lines, limit=limit)
 
 
 def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -60,13 +68,7 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
     if not path.exists():
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
-    selected = lines[-limit:] if limit > 0 else lines
-    records: list[dict[str, Any]] = []
-    for line in selected:
-        if not line.strip():
-            continue
-        records.append(json.loads(line))
-    return records
+    return _parse_jsonl_lines(lines, limit=limit)
 
 
 def _utc_now_iso() -> str:
