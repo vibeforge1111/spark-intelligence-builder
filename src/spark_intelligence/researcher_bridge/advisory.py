@@ -4333,6 +4333,185 @@ def _authorize_researcher_active_chip_evaluate(
     return False
 
 
+def _memory_write_boundary_blocks_adapter_authority(user_message: str) -> bool:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text:
+        return True
+    lowered = text.casefold()
+    if re.search(
+        r"\b(?:do\s+not|don't|dont|please\s+don't|no\s+need\s+to|without)\s+"
+        r"(?:save|remember|store|write|record|capture|persist|learn)\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        r"\b(?:not\s+a\s+(?:command|request|instruction)|just\s+(?:an?\s+)?example|"
+        r"example\s+only|quoted\s+example|bug\s+report|hypothetical|for\s+example)\b",
+        lowered,
+    ) and re.search(r"\b(?:memory|remember|save|forget|favorite|current|decision|plan|focus)\b", lowered):
+        return True
+    if re.match(r"^\s*(?:example|quote|quoted\s+text)\s*:", lowered):
+        return True
+    return False
+
+
+def _build_researcher_memory_turn_intent_envelope(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> TurnIntentEnvelope | None:
+    if channel_kind != "telegram":
+        return None
+    if _memory_write_boundary_blocks_adapter_authority(user_message):
+        return None
+    try:
+        return parse_turn_intent_envelope(
+            {
+                "schema": "spark.turn_intent.v1",
+                "turnId": f"turn:researcher-memory:{request_id}",
+                "traceId": f"trace:researcher-memory:{request_id}",
+                "surface": channel_kind,
+                "directive": {
+                    "mode": "execute",
+                    "noExecution": False,
+                    "noPublish": True,
+                    "localOnly": True,
+                    "explanationOnly": False,
+                    "quotedOrMetaLanguage": False,
+                },
+                "selectedIntent": {
+                    "kind": "memory_action",
+                    "ownerSystem": "domain-chip-memory",
+                    "action": "memory.write",
+                    "confidence": "explicit",
+                    "requiresConfirmation": False,
+                    "source": source_kind,
+                },
+                "sessionScope": {
+                    "sessionKey": session_id,
+                    "surface": channel_kind,
+                    "conversationKind": "telegram_dm",
+                    "userRef": human_id,
+                    "chatRef": session_id,
+                    "memoryLoadPolicy": "bounded",
+                    "pendingStateScope": "fresh_turn",
+                },
+                "toolPolicy": {
+                    "allowedTools": ["answer.compose", "memory.write"],
+                    "deniedTools": [],
+                    "enabledToolsets": ["spark-harness-core", "domain-chip-memory"],
+                    "mutationClassesAllowed": ["none", "read_only", "writes_memory"],
+                    "requiresApprovalFor": [],
+                    "networkPolicy": "none",
+                    "elevatedAllowed": False,
+                },
+                "executionPolicy": {
+                    "canMutateFiles": False,
+                    "canLaunchMission": False,
+                    "canWriteMemory": True,
+                    "canDeleteSchedule": False,
+                    "canCreateChip": False,
+                    "canPublish": False,
+                    "canUseExternalNetwork": False,
+                },
+                "threatDefense": {
+                    "reasonCodes": [
+                        "fresh_user_turn_is_authority",
+                        "telegram_memory_adapter_explicit_intent",
+                    ]
+                },
+            }
+        )
+    except ValueError:
+        return None
+
+
+def _authorize_researcher_memory_write(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    source_kind: str,
+    operation: str,
+    allow_adapter_envelope: bool,
+) -> bool:
+    authority_envelope = turn_intent_envelope
+    adapter_envelope_used = False
+    if authority_envelope is None and allow_adapter_envelope:
+        authority_envelope = _build_researcher_memory_turn_intent_envelope(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_envelope_used = authority_envelope is not None
+    verdict, reasons = authorize_tool_call(
+        authority_envelope,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    if verdict == "allowed":
+        return True
+    reason_codes = list(reasons)
+    if turn_intent_envelope is not None and "provided_envelope_not_memory_authority" not in reason_codes:
+        reason_codes.append("provided_envelope_not_memory_authority")
+    if turn_intent_envelope is None and allow_adapter_envelope and not adapter_envelope_used:
+        reason_codes.append("telegram_memory_adapter_boundary")
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.memory_write",
+            source_kind="turn_intent_envelope",
+            source_ref=authority_envelope.turn_id if authority_envelope is not None else None,
+            summary="Researcher bridge blocked memory promotion without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="memory_write_authority_blocked",
+            blocked_stage="memory_write",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "domain-chip-memory",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "memory.write",
+                "operation": operation,
+                "source_kind": source_kind,
+                "reason_codes": reason_codes,
+                "authority_state": (
+                    "adapter_envelope"
+                    if adapter_envelope_used
+                    else ("present" if turn_intent_envelope is not None else "missing")
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return False
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -9592,20 +9771,37 @@ def build_researcher_reply(
 
     plan_transition = _detect_current_plan_transition_command(memory_user_message)
     if plan_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
-        write_result = write_profile_fact_to_memory(
-            config_manager=config_manager,
+        write_result = None
+        if _authorize_researcher_memory_write(
             state_db=state_db,
-            human_id=human_id,
-            predicate="profile.current_plan",
-            value=plan_transition,
-            evidence_text=str(user_message or "").strip(),
-            fact_name="profile_current_plan",
-            session_id=session_id,
-            turn_id=request_id,
+            turn_intent_envelope=turn_intent_envelope,
+            run_id=run_id,
+            request_id=request_id,
             channel_kind=channel_kind,
-            actor_id="current_plan_transition_command",
-        )
-        if write_result.accepted_count > 0:
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind="current_plan_transition",
+            operation="update",
+            allow_adapter_envelope=True,
+        ):
+            write_result = write_profile_fact_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate="profile.current_plan",
+                value=plan_transition,
+                evidence_text=str(user_message or "").strip(),
+                fact_name="profile_current_plan",
+                session_id=session_id,
+                turn_id=request_id,
+                channel_kind=channel_kind,
+                actor_id="current_plan_transition_command",
+            )
+        if write_result is None:
+            plan_transition = None
+        elif write_result.accepted_count > 0:
             output_keepability, promotion_disposition = _bridge_output_classification(
                 mode="current_plan_transition",
                 routing_decision="current_plan_transition",
@@ -9664,20 +9860,37 @@ def build_researcher_reply(
     focus_transition = _detect_current_focus_transition_command(memory_user_message)
     if focus_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
         closed_focus, new_focus = focus_transition
-        write_result = write_profile_fact_to_memory(
-            config_manager=config_manager,
+        write_result = None
+        if _authorize_researcher_memory_write(
             state_db=state_db,
-            human_id=human_id,
-            predicate="profile.current_focus",
-            value=new_focus,
-            evidence_text=str(user_message or "").strip(),
-            fact_name="profile_current_focus",
-            session_id=session_id,
-            turn_id=request_id,
+            turn_intent_envelope=turn_intent_envelope,
+            run_id=run_id,
+            request_id=request_id,
             channel_kind=channel_kind,
-            actor_id="current_focus_transition_command",
-        )
-        if write_result.accepted_count > 0:
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind="current_focus_transition",
+            operation="update",
+            allow_adapter_envelope=True,
+        ):
+            write_result = write_profile_fact_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate="profile.current_focus",
+                value=new_focus,
+                evidence_text=str(user_message or "").strip(),
+                fact_name="profile_current_focus",
+                session_id=session_id,
+                turn_id=request_id,
+                channel_kind=channel_kind,
+                actor_id="current_focus_transition_command",
+            )
+        if write_result is None:
+            focus_transition = None
+        elif write_result.accepted_count > 0:
             output_keepability, promotion_disposition = _bridge_output_classification(
                 mode="current_focus_transition",
                 routing_decision="current_focus_transition",
@@ -9968,38 +10181,55 @@ def build_researcher_reply(
         ).strip("_")
         if config_manager.get_path("spark.memory.enabled", default=False):
             try:
-                write_result = write_structured_evidence_to_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_write(
                     state_db=state_db,
-                    human_id=human_id,
-                    evidence_text=explicit_decision_statement.evidence_text,
-                    domain_pack=domain_pack or "decision_general",
-                    evidence_kind="explicit_decision",
-                    session_id=session_id,
-                    turn_id=request_id,
+                    turn_intent_envelope=turn_intent_envelope,
+                    run_id=run_id,
+                    request_id=request_id,
                     channel_kind=channel_kind,
-                    actor_id="telegram_explicit_decision_loader",
-                )
-                accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
-                rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
-                skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
-                write_reason = str(getattr(write_result, "reason", "") or "").strip()
-                current_state_result = write_profile_fact_to_memory(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    human_id=human_id,
-                    predicate="profile.current_decision",
-                    value=explicit_decision_statement.decision_text,
-                    evidence_text=explicit_decision_statement.evidence_text,
-                    fact_name="profile_current_decision",
                     session_id=session_id,
-                    turn_id=request_id,
-                    channel_kind=channel_kind,
-                    actor_id="telegram_explicit_decision_loader",
-                )
-                current_state_accepted_count = int(
-                    getattr(current_state_result, "accepted_count", 0) or 0
-                )
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=memory_user_message,
+                    source_kind="explicit_decision",
+                    operation="update",
+                    allow_adapter_envelope=True,
+                ):
+                    write_result = write_structured_evidence_to_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        evidence_text=explicit_decision_statement.evidence_text,
+                        domain_pack=domain_pack or "decision_general",
+                        evidence_kind="explicit_decision",
+                        session_id=session_id,
+                        turn_id=request_id,
+                        channel_kind=channel_kind,
+                        actor_id="telegram_explicit_decision_loader",
+                    )
+                    accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
+                    rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
+                    skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
+                    write_reason = str(getattr(write_result, "reason", "") or "").strip()
+                    current_state_result = write_profile_fact_to_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        predicate="profile.current_decision",
+                        value=explicit_decision_statement.decision_text,
+                        evidence_text=explicit_decision_statement.evidence_text,
+                        fact_name="profile_current_decision",
+                        session_id=session_id,
+                        turn_id=request_id,
+                        channel_kind=channel_kind,
+                        actor_id="telegram_explicit_decision_loader",
+                    )
+                    current_state_accepted_count = int(
+                        getattr(current_state_result, "accepted_count", 0) or 0
+                    )
+                else:
+                    skipped_count = 1
+                    write_reason = "memory_authority_blocked"
             except Exception as exc:
                 rejected_count = 1
                 write_reason = exc.__class__.__name__
@@ -10285,85 +10515,151 @@ def build_researcher_reply(
         try:
             detected_profile_fact = detect_profile_fact_observation(memory_user_message)
             if detected_profile_fact is not None:
-                write_profile_fact_to_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_write(
                     state_db=state_db,
-                    human_id=human_id,
-                    predicate=detected_profile_fact.predicate,
-                    value=detected_profile_fact.value,
-                    evidence_text=detected_profile_fact.evidence_text,
-                    fact_name=detected_profile_fact.fact_name,
-                    session_id=session_id,
-                    turn_id=request_id,
+                    turn_intent_envelope=turn_intent_envelope,
+                    run_id=run_id,
+                    request_id=request_id,
                     channel_kind=channel_kind,
-                )
-            elif config_manager.get_path("spark.memory.enabled", default=False):
-                detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
-                if detected_memory_event is not None:
-                    write_telegram_event_to_memory(
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=memory_user_message,
+                    source_kind="profile_fact_observation",
+                    operation="update",
+                    allow_adapter_envelope=True,
+                ):
+                    write_profile_fact_to_memory(
                         config_manager=config_manager,
                         state_db=state_db,
                         human_id=human_id,
-                        predicate=detected_memory_event.predicate,
-                        value=detected_memory_event.value,
-                        evidence_text=detected_memory_event.evidence_text,
-                        event_name=detected_memory_event.event_name,
+                        predicate=detected_profile_fact.predicate,
+                        value=detected_profile_fact.value,
+                        evidence_text=detected_profile_fact.evidence_text,
+                        fact_name=detected_profile_fact.fact_name,
                         session_id=session_id,
                         turn_id=request_id,
                         channel_kind=channel_kind,
                     )
                 else:
+                    detected_profile_fact = None
+            elif config_manager.get_path("spark.memory.enabled", default=False):
+                detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
+                if detected_memory_event is not None:
+                    if _authorize_researcher_memory_write(
+                        state_db=state_db,
+                        turn_intent_envelope=turn_intent_envelope,
+                        run_id=run_id,
+                        request_id=request_id,
+                        channel_kind=channel_kind,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        user_message=memory_user_message,
+                        source_kind="telegram_event_observation",
+                        operation="update",
+                        allow_adapter_envelope=True,
+                    ):
+                        write_telegram_event_to_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=detected_memory_event.predicate,
+                            value=detected_memory_event.value,
+                            evidence_text=detected_memory_event.evidence_text,
+                            event_name=detected_memory_event.event_name,
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                        )
+                    else:
+                        detected_memory_event = None
+                else:
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
-                            accepted_generic_memory_deletions = []
-                            for deletion_index, generic_memory_deletion in enumerate(
-                                detected_generic_memory_deletions,
-                                start=1,
+                            if _authorize_researcher_memory_write(
+                                state_db=state_db,
+                                turn_intent_envelope=turn_intent_envelope,
+                                run_id=run_id,
+                                request_id=request_id,
+                                channel_kind=channel_kind,
+                                session_id=session_id,
+                                human_id=human_id,
+                                agent_id=agent_id,
+                                user_message=memory_user_message,
+                                source_kind="generic_memory_deletion",
+                                operation="delete",
+                                allow_adapter_envelope=True,
                             ):
-                                deletion_turn_id = request_id
-                                if len(detected_generic_memory_deletions) > 1:
-                                    deletion_turn_id = f"{request_id}:delete-{deletion_index}"
-                                generic_delete_result = delete_profile_fact_from_memory(
-                                    config_manager=config_manager,
-                                    state_db=state_db,
-                                    human_id=human_id,
-                                    predicate=generic_memory_deletion.predicate,
-                                    evidence_text=generic_memory_deletion.evidence_text,
-                                    fact_name=generic_memory_deletion.fact_name,
-                                    session_id=session_id,
-                                    turn_id=deletion_turn_id,
-                                    channel_kind=channel_kind,
-                                    actor_id="telegram_generic_observation_loader",
+                                detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
+                                accepted_generic_memory_deletions = []
+                                for deletion_index, generic_memory_deletion in enumerate(
+                                    detected_generic_memory_deletions,
+                                    start=1,
+                                ):
+                                    deletion_turn_id = request_id
+                                    if len(detected_generic_memory_deletions) > 1:
+                                        deletion_turn_id = f"{request_id}:delete-{deletion_index}"
+                                    generic_delete_result = delete_profile_fact_from_memory(
+                                        config_manager=config_manager,
+                                        state_db=state_db,
+                                        human_id=human_id,
+                                        predicate=generic_memory_deletion.predicate,
+                                        evidence_text=generic_memory_deletion.evidence_text,
+                                        fact_name=generic_memory_deletion.fact_name,
+                                        session_id=session_id,
+                                        turn_id=deletion_turn_id,
+                                        channel_kind=channel_kind,
+                                        actor_id="telegram_generic_observation_loader",
+                                    )
+                                    if generic_delete_result.accepted_count > 0:
+                                        accepted_generic_memory_deletions.append(generic_memory_deletion)
+                                detected_generic_memory_deletions = accepted_generic_memory_deletions
+                                detected_generic_memory_deletion = (
+                                    detected_generic_memory_deletions[0]
+                                    if detected_generic_memory_deletions
+                                    else None
                                 )
-                                if generic_delete_result.accepted_count > 0:
-                                    accepted_generic_memory_deletions.append(generic_memory_deletion)
-                            detected_generic_memory_deletions = accepted_generic_memory_deletions
-                            detected_generic_memory_deletion = (
-                                detected_generic_memory_deletions[0]
-                                if detected_generic_memory_deletions
-                                else None
-                            )
-                            if detected_generic_memory_deletion is None:
+                                if detected_generic_memory_deletion is None:
+                                    detected_generic_memory_candidate = None
+                            else:
                                 detected_generic_memory_candidate = None
+                                detected_generic_memory_deletions = []
+                                detected_generic_memory_deletion = None
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
-                                generic_write_result = write_profile_fact_to_memory(
-                                    config_manager=config_manager,
+                                if _authorize_researcher_memory_write(
                                     state_db=state_db,
-                                    human_id=human_id,
-                                    predicate=detected_generic_memory_observation.predicate,
-                                    value=detected_generic_memory_observation.value,
-                                    evidence_text=detected_generic_memory_observation.evidence_text,
-                                    fact_name=detected_generic_memory_observation.fact_name,
-                                    session_id=session_id,
-                                    turn_id=request_id,
+                                    turn_intent_envelope=turn_intent_envelope,
+                                    run_id=run_id,
+                                    request_id=request_id,
                                     channel_kind=channel_kind,
-                                    actor_id="telegram_generic_observation_loader",
-                                )
-                                if generic_write_result.accepted_count <= 0:
+                                    session_id=session_id,
+                                    human_id=human_id,
+                                    agent_id=agent_id,
+                                    user_message=memory_user_message,
+                                    source_kind="generic_memory_observation",
+                                    operation="update",
+                                    allow_adapter_envelope=True,
+                                ):
+                                    generic_write_result = write_profile_fact_to_memory(
+                                        config_manager=config_manager,
+                                        state_db=state_db,
+                                        human_id=human_id,
+                                        predicate=detected_generic_memory_observation.predicate,
+                                        value=detected_generic_memory_observation.value,
+                                        evidence_text=detected_generic_memory_observation.evidence_text,
+                                        fact_name=detected_generic_memory_observation.fact_name,
+                                        session_id=session_id,
+                                        turn_id=request_id,
+                                        channel_kind=channel_kind,
+                                        actor_id="telegram_generic_observation_loader",
+                                    )
+                                else:
+                                    generic_write_result = None
+                                if generic_write_result is None or generic_write_result.accepted_count <= 0:
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_observation = None
                     if (
@@ -10441,7 +10737,23 @@ def build_researcher_reply(
             pass
 
     if assessed_generic_memory_candidate is not None:
-        if assessed_generic_memory_candidate.outcome == "structured_evidence":
+        memory_candidate_authorized = _authorize_researcher_memory_write(
+            state_db=state_db,
+            turn_intent_envelope=turn_intent_envelope,
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind=f"generic_memory_candidate_{assessed_generic_memory_candidate.outcome}",
+            operation=str(assessed_generic_memory_candidate.operation or "update"),
+            allow_adapter_envelope=True,
+        )
+        if not memory_candidate_authorized:
+            assessed_generic_memory_candidate = None
+        elif assessed_generic_memory_candidate.outcome == "structured_evidence":
             try:
                 write_structured_evidence_to_memory(
                     config_manager=config_manager,
@@ -10491,34 +10803,35 @@ def build_researcher_reply(
                 )
             except Exception:
                 pass
-        record_event(
-            state_db,
-            event_type="memory_candidate_assessed",
-            component="researcher_bridge",
-            summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
-            run_id=run_id,
-            request_id=request_id,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
-            facts={
-                "message_text": str(user_message or "").strip(),
-                "outcome": assessed_generic_memory_candidate.outcome,
-                "reason": assessed_generic_memory_candidate.reason,
-                "memory_role": assessed_generic_memory_candidate.memory_role,
-                "retention_class": assessed_generic_memory_candidate.retention_class,
-                "domain_pack": assessed_generic_memory_candidate.domain_pack,
-                "predicate": assessed_generic_memory_candidate.predicate,
-                "value": assessed_generic_memory_candidate.value,
-                "operation": assessed_generic_memory_candidate.operation,
-                "fact_name": assessed_generic_memory_candidate.fact_name,
-                "label": assessed_generic_memory_candidate.label,
-                **assessed_generic_memory_candidate.salience_metadata(),
-            },
-        )
+        if assessed_generic_memory_candidate is not None:
+            record_event(
+                state_db,
+                event_type="memory_candidate_assessed",
+                component="researcher_bridge",
+                summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
+                run_id=run_id,
+                request_id=request_id,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
+                facts={
+                    "message_text": str(user_message or "").strip(),
+                    "outcome": assessed_generic_memory_candidate.outcome,
+                    "reason": assessed_generic_memory_candidate.reason,
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "predicate": assessed_generic_memory_candidate.predicate,
+                    "value": assessed_generic_memory_candidate.value,
+                    "operation": assessed_generic_memory_candidate.operation,
+                    "fact_name": assessed_generic_memory_candidate.fact_name,
+                    "label": assessed_generic_memory_candidate.label,
+                    **assessed_generic_memory_candidate.salience_metadata(),
+                },
+            )
 
     memory_write_should_reply_via_persona = (
         bool(config_manager.get_path("spark.researcher.enabled", default=True))
