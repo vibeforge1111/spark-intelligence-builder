@@ -221,7 +221,10 @@ def set_channel_status(
     records = config.setdefault("channels", {}).setdefault("records", {})
     record = records.get(channel_id)
     if not isinstance(record, dict):
-        raise ValueError(f"Unknown channel '{channel_id}'.")
+        known = ", ".join(sorted(records.keys())) if records else "none configured"
+        raise ValueError(
+            f"Unknown channel '{channel_id}'. Known channels: {known}."
+        )
     record["status"] = status
     config_manager.save(
         config,
