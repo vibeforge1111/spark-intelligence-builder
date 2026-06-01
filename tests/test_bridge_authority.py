@@ -4,6 +4,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    extract_turn_intent_envelope_vnext,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
@@ -83,6 +84,23 @@ def test_extracts_turn_intent_from_message_payload() -> None:
     assert envelope.selected_intent.action == "memory.write"
 
 
+def test_extracts_vnext_turn_intent_from_message_payload() -> None:
+    legacy_verdict = authorize_builder_bridge_action(
+        {"spark_turn_intent": _envelope(route="memory.write")},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert legacy_verdict.harness_core_envelope is not None
+    update = {"message": {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope}}
+
+    envelope = extract_turn_intent_envelope_vnext(update)
+
+    assert envelope is not None
+    assert envelope["schema_version"] == "turn-intent-envelope-vnext"
+    assert envelope["selected_move"] == "execute_action"
+
+
 def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
     update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
 
@@ -103,6 +121,53 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
     assert verdict.tool_call_ledger is not None
     assert verdict.tool_call_ledger["schema_version"] == "tool-call-ledger-v1"
     assert verdict.tool_call_ledger["authorization"]["decision_id"] == verdict.authorization_decision["decision_id"]
+
+
+def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
+    legacy_verdict = authorize_builder_bridge_action(
+        {"spark_turn_intent": _envelope(route="memory.write")},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert legacy_verdict.harness_core_envelope is not None
+
+    verdict = authorize_builder_bridge_action(
+        {"message": {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope}},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.envelope is None
+    assert verdict.harness_core_envelope is not None
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["result"]["status"] == "not_started"
+
+
+def test_blocks_native_vnext_when_action_is_not_proposed() -> None:
+    legacy_verdict = authorize_builder_bridge_action(
+        {"spark_turn_intent": _envelope(route="memory.write")},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert legacy_verdict.harness_core_envelope is not None
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope},
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+
+    assert verdict.allowed is False
+    assert "proposed_action_not_authorized" in verdict.reason_codes
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "deny"
 
 
 def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:

@@ -60,6 +60,7 @@ try:
         TurnIntentEnvelope,
         authorize_legacy_tool_call,
         authorize_tool_call,
+        authorize_vnext_tool_call,
         finalize_legacy_tool_call_ledger,
         parse_turn_intent_envelope,
     )
@@ -131,6 +132,17 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
     ) -> dict[str, Any]:
         return dict(ledger or {})
 
+    def authorize_vnext_tool_call(
+        envelope_payload: dict[str, Any] | None,
+        *,
+        tool_name: str,
+        owner_system: str,
+        mutation_class: MutationClass,
+        publishes: bool = False,
+        external_network: bool = False,
+    ) -> LegacyToolAuthorization:
+        return LegacyToolAuthorization("blocked", ("spark_harness_core_unavailable",))
+
 
 __all__ = [
     "HARNESS_CORE_AVAILABLE",
@@ -145,6 +157,7 @@ __all__ = [
     "TurnIntentEnvelope",
     "authorize_legacy_tool_call",
     "authorize_tool_call",
+    "authorize_vnext_tool_call",
     "finalize_legacy_tool_call_ledger",
     "parse_turn_intent_envelope",
 ]
