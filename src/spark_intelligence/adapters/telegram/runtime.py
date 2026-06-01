@@ -4184,6 +4184,9 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
+            tool_name="voice.status",
+            mutation_class="read_only",
         )
     if lowered in {"/voice reply", "/voice reply status"} or natural_voice_command == ("/voice reply", None):
         enabled = _voice_reply_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -4235,6 +4238,9 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
+            tool_name="voice.plan",
+            mutation_class="read_only",
         )
     if lowered in {"/voice map", "/voice architecture"} or natural_voice_command == ("/voice map", None):
         return {
