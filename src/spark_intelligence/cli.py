@@ -198,6 +198,7 @@ from spark_intelligence.harness_runtime import (
     build_harness_task_envelope,
     execute_harness_chain,
     execute_harness_task,
+    with_harness_local_operator_turn_intent,
 )
 from spark_intelligence.mission_control import build_mission_control_plan, build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
@@ -7936,6 +7937,7 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
         human_id=args.human_id,
         agent_id=args.agent_id,
     )
+    envelope = with_harness_local_operator_turn_intent(envelope)
     if follow_up_harness_ids:
         result = execute_harness_chain(
             config_manager=config_manager,
