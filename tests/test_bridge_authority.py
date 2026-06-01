@@ -111,7 +111,12 @@ def test_authorizes_schedule_delete_and_pending_confirmation() -> None:
         owner_system="spark-intelligence-builder",
         mutation_class="deletes_schedule",
     )
-    confirmation_verdict = authorize_pending_confirmation(update)
+    confirmation_verdict = authorize_pending_confirmation(
+        update,
+        tool_name="schedule.delete",
+        owner_system="spark-intelligence-builder",
+        mutation_class="deletes_schedule",
+    )
 
     assert delete_verdict.allowed is True
     assert confirmation_verdict.allowed is True
@@ -120,7 +125,28 @@ def test_authorizes_schedule_delete_and_pending_confirmation() -> None:
 def test_blocks_pending_confirmation_when_turn_is_meta_language() -> None:
     update = {"spark_turn_intent": _envelope(route="schedule.delete", no_execution=True)}
 
-    verdict = authorize_pending_confirmation(update)
+    verdict = authorize_pending_confirmation(
+        update,
+        tool_name="schedule.delete",
+        owner_system="spark-intelligence-builder",
+        mutation_class="deletes_schedule",
+    )
 
     assert verdict.allowed is False
     assert "no_execution_boundary" in verdict.reason_codes
+
+
+def test_blocks_pending_confirmation_for_unrelated_executable_envelope() -> None:
+    update = {"spark_turn_intent": _envelope(route="memory.write")}
+
+    verdict = authorize_pending_confirmation(
+        update,
+        tool_name="schedule.delete",
+        owner_system="spark-intelligence-builder",
+        mutation_class="deletes_schedule",
+    )
+
+    assert verdict.allowed is False
+    assert "tool_not_allowed_by_policy" in verdict.reason_codes
+    assert "mutation_class_not_authorized" in verdict.reason_codes
+    assert "owner_mismatch" in verdict.reason_codes

@@ -1387,7 +1387,12 @@ def simulate_telegram_update(
                     _shortcircuited = True
                     if _confirmation_yes:
                         sid = str(_pending_delete.get("schedule_id") or "")
-                        confirmation_authority = authorize_pending_confirmation(update_payload)
+                        confirmation_authority = authorize_pending_confirmation(
+                            update_payload,
+                            tool_name="schedule.delete",
+                            owner_system="spark-intelligence-builder",
+                            mutation_class="deletes_schedule",
+                        )
                         pending_authorized = _pending_delete.get("authority") == "schedule.delete"
                         if not pending_authorized or not confirmation_authority.allowed:
                             ok = False
