@@ -109,6 +109,75 @@ def _with_swarm_turn_intent(
     return enriched
 
 
+def _with_voice_turn_intent(
+    update: dict,
+    *,
+    tool_name: str,
+    mutation_class: str = "writes_files",
+    external_network: bool = True,
+    no_execution: bool = False,
+) -> dict:
+    message = dict(update.get("message") or {})
+    allowed_tools = ["answer.compose"]
+    mutation_classes = ["none", "read_only"]
+    if not no_execution:
+        allowed_tools.append(tool_name)
+        mutation_classes.append(mutation_class)
+    message["spark_turn_intent"] = {
+        "schema": "spark.turn_intent.v1",
+        "turnId": "turn:voice-test",
+        "traceId": "trace:voice-test",
+        "surface": "telegram",
+        "directive": {
+            "mode": "answer" if no_execution else "execute",
+            "noExecution": no_execution,
+            "noPublish": False,
+            "localOnly": False,
+            "explanationOnly": no_execution,
+            "quotedOrMetaLanguage": no_execution,
+        },
+        "selectedIntent": {
+            "kind": "voice_action",
+            "ownerSystem": "spark-voice-comms",
+            "action": tool_name,
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": "explicit",
+        },
+        "sessionScope": {
+            "sessionKey": "telegram:dm:111",
+            "surface": "telegram",
+            "conversationKind": "dm",
+            "userRef": "user:111",
+            "chatRef": "chat:111",
+            "memoryLoadPolicy": "evidence_only",
+            "pendingStateScope": "same_session_only",
+        },
+        "toolPolicy": {
+            "allowedTools": allowed_tools,
+            "deniedTools": [],
+            "enabledToolsets": ["telegram.reply", "spark-voice-comms"],
+            "mutationClassesAllowed": mutation_classes,
+            "requiresApprovalFor": [],
+            "networkPolicy": "external" if external_network else "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": mutation_class == "writes_files" and not no_execution,
+            "canLaunchMission": False,
+            "canWriteMemory": False,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": external_network and not no_execution,
+        },
+        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+    }
+    enriched = dict(update)
+    enriched["message"] = message
+    return enriched
+
+
 class OperatorPairingFlowTests(SparkTestCase):
     def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
         record_pairing_context(
@@ -6582,17 +6651,43 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118157,
-                    user_id="111",
-                    username="alice",
-                    text="I care more about local/private",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118157,
+                        user_id="111",
+                        username="alice",
+                        text="I care more about local/private",
+                    ),
+                    tool_name="voice.onboard",
                 ),
             )
 
         self.assertEqual(captured_payload["route"], "local")
         self.assertIn("/voice install local", result.detail["response_text"])
         self.assertIn("/voice self-test", result.detail["response_text"])
+
+    def test_voice_onboard_no_execution_envelope_does_not_call_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting") as hook_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118158,
+                        user_id="111",
+                        username="alice",
+                        text="I care more about local/private",
+                    ),
+                    tool_name="voice.onboard",
+                    no_execution=True,
+                ),
+            )
+
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("no_execution_boundary", result.detail["response_text"])
+        hook_mock.assert_not_called()
 
     def test_natural_language_install_faster_whisper_routes_to_voice_install(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6616,16 +6711,38 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118153,
+                        user_id="111",
+                        username="alice",
+                        text="Install faster whisper",
+                    ),
+                    tool_name="voice.install",
+                ),
+            )
+
+        self.assertEqual(captured_payload["target"], "faster-whisper")
+        self.assertIn("faster-whisper is installed", result.detail["response_text"])
+
+    def test_natural_language_install_faster_whisper_without_turn_intent_does_not_call_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting") as hook_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
                 update_payload=make_telegram_update(
-                    update_id=118153,
+                    update_id=118159,
                     user_id="111",
                     username="alice",
                     text="Install faster whisper",
                 ),
             )
 
-        self.assertEqual(captured_payload["target"], "faster-whisper")
-        self.assertIn("faster-whisper is installed", result.detail["response_text"])
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", result.detail["response_text"])
+        hook_mock.assert_not_called()
 
     def test_natural_language_install_elevenlabs_opens_provider_guide(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

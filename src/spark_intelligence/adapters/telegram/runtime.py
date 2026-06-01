@@ -4375,6 +4375,10 @@ def _handle_runtime_command(
             agent_id=agent_id,
             external_user_id=external_user_id,
             payload_extra={"target": target},
+            update_payload=update_payload,
+            tool_name="voice.install",
+            mutation_class="writes_files",
+            external_network=True,
         )
     if (
         lowered in {"/voice onboard", "/voice onboarding", "/voice setup"}
@@ -4401,6 +4405,10 @@ def _handle_runtime_command(
             agent_id=agent_id,
             external_user_id=external_user_id,
             payload_extra=payload_extra,
+            update_payload=update_payload,
+            tool_name="voice.onboard",
+            mutation_class="writes_files",
+            external_network=True,
         )
     if lowered in {"/voice ask", "/voice answer"}:
         return {
@@ -7406,7 +7414,21 @@ def _run_voice_runtime_command(
     agent_id: str | None,
     external_user_id: str | None = None,
     payload_extra: dict[str, Any] | None = None,
+    update_payload: dict[str, Any] | None = None,
+    tool_name: str | None = None,
+    mutation_class: str = "read_only",
+    external_network: bool = False,
 ) -> dict[str, Any]:
+    if tool_name:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name=tool_name,
+            owner_system="spark-voice-comms",
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        if not authority.allowed:
+            return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
@@ -7453,6 +7475,19 @@ def _run_voice_runtime_command(
     return {
         "command": command,
         "reply_text": f"{fallback_reply}\nReason: {reason}" if reason else fallback_reply,
+    }
+
+
+def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help set up voice, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
     }
 
 
