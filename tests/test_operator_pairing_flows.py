@@ -322,6 +322,7 @@ def _with_probe_turn_intent(
     *,
     tool_name: str = "route.probe.run",
     no_execution: bool = False,
+    external_network: bool = False,
 ) -> dict:
     message = dict(update.get("message") or {})
     allowed_tools = ["answer.compose"]
@@ -365,7 +366,7 @@ def _with_probe_turn_intent(
             "enabledToolsets": ["telegram.reply", "spark-intelligence-builder"],
             "mutationClassesAllowed": mutation_classes,
             "requiresApprovalFor": [],
-            "networkPolicy": "none",
+            "networkPolicy": "external_allowed" if external_network else "none",
             "elevatedAllowed": False,
         },
         "executionPolicy": {
@@ -375,7 +376,7 @@ def _with_probe_turn_intent(
             "canDeleteSchedule": False,
             "canCreateChip": False,
             "canPublish": False,
-            "canUseExternalNetwork": False,
+            "canUseExternalNetwork": external_network,
         },
         "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
     }
@@ -3230,6 +3231,63 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Status: success", str(result.detail["response_text"]))
         self.assertIn("Latency: 7ms", str(result.detail["response_text"]))
         self.assertIn("Evidence: registry status=ready.", str(result.detail["response_text"]))
+
+    def test_probe_browser_without_external_network_turn_intent_does_not_run_probe(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_route_probe_and_record") as probe_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_probe_turn_intent(
+                    make_telegram_update(
+                        update_id=8454,
+                        user_id="111",
+                        username="alice",
+                        text="/probe browser",
+                    ),
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        probe_mock.assert_not_called()
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("external_network_not_authorized", str(result.detail["response_text"]))
+
+    def test_probe_browser_with_external_network_turn_intent_records_route_evidence(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_route_probe_and_record",
+            return_value=SimpleNamespace(
+                status="success",
+                capability_key="spark_browser",
+                route_latency_ms=11,
+                failure_reason="",
+                probe_summary="browser-use status=ready",
+            ),
+        ) as probe_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_probe_turn_intent(
+                    make_telegram_update(
+                        update_id=8455,
+                        user_id="111",
+                        username="alice",
+                        text="/probe browser",
+                    ),
+                    external_network=True,
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        probe_mock.assert_called_once()
+        self.assertEqual(probe_mock.call_args.kwargs["capability_key"], "spark_browser")
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Route probe: spark_browser", str(result.detail["response_text"]))
+        self.assertIn("Status: success", str(result.detail["response_text"]))
+        self.assertIn("Evidence: browser-use status=ready.", str(result.detail["response_text"]))
 
 
     def test_chip_autoloop_explains_specialization_path_requirement(self) -> None:

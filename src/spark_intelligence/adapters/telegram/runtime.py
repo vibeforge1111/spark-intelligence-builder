@@ -4076,6 +4076,10 @@ def _telegram_route_probe_key(route_name: str) -> str | None:
     }.get(normalized)
 
 
+def _route_probe_requires_external_network(capability_key: str) -> bool:
+    return str(capability_key or "").strip() == "spark_browser"
+
+
 def _render_telegram_route_probe_help(*, route_name: str) -> str:
     if route_name:
         prefix = f"Unknown route `{route_name}`.\n"
@@ -4329,6 +4333,7 @@ def _handle_runtime_command(
             tool_name="route.probe.run",
             owner_system="spark-intelligence-builder",
             mutation_class="writes_memory",
+            external_network=_route_probe_requires_external_network(capability_key),
         )
         if not authority.allowed:
             return {
