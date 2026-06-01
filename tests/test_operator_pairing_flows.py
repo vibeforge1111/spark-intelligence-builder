@@ -379,7 +379,150 @@ def _with_probe_turn_intent(
     return enriched
 
 
+def _with_schedule_turn_intent(
+    update: dict,
+    *,
+    tool_name: str = "schedule.delete",
+    no_execution: bool = False,
+) -> dict:
+    message = dict(update.get("message") or {})
+    allowed_tools = ["answer.compose"]
+    mutation_classes = ["none", "read_only"]
+    if not no_execution:
+        allowed_tools.append(tool_name)
+        mutation_classes.append("deletes_schedule")
+    message["spark_turn_intent"] = {
+        "schema": "spark.turn_intent.v1",
+        "turnId": "turn:schedule-test",
+        "traceId": "trace:schedule-test",
+        "surface": "telegram",
+        "directive": {
+            "mode": "answer" if no_execution else "execute",
+            "noExecution": no_execution,
+            "noPublish": False,
+            "localOnly": False,
+            "explanationOnly": no_execution,
+            "quotedOrMetaLanguage": no_execution,
+        },
+        "selectedIntent": {
+            "kind": "schedule_action",
+            "ownerSystem": "spark-intelligence-builder",
+            "action": tool_name,
+            "confidence": "explicit",
+            "requiresConfirmation": True,
+            "source": "explicit",
+        },
+        "sessionScope": {
+            "sessionKey": "telegram:dm:111",
+            "surface": "telegram",
+            "conversationKind": "dm",
+            "userRef": "user:111",
+            "chatRef": "chat:111",
+            "memoryLoadPolicy": "evidence_only",
+            "pendingStateScope": "same_session_only",
+        },
+        "toolPolicy": {
+            "allowedTools": allowed_tools,
+            "deniedTools": [],
+            "enabledToolsets": ["telegram.reply", "spark-intelligence-builder"],
+            "mutationClassesAllowed": mutation_classes,
+            "requiresApprovalFor": ["deletes_schedule"],
+            "networkPolicy": "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": False,
+            "canLaunchMission": False,
+            "canWriteMemory": False,
+            "canDeleteSchedule": not no_execution,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": False,
+        },
+        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+    }
+    enriched = dict(update)
+    enriched["message"] = message
+    return enriched
+
+
 class OperatorPairingFlowTests(SparkTestCase):
+
+
+    def test_pending_schedule_delete_confirmation_rejects_unrelated_executable_envelope(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        pending_home = self.home / "pending-schedule-delete"
+
+        with patch.dict("os.environ", {"SPARK_INTELLIGENCE_HOME": str(pending_home)}, clear=False):
+            from spark_intelligence.schedule_bridge.service import arm_pending_delete
+
+            arm_pending_delete(
+                "111",
+                {
+                    "id": "sched-startup-review",
+                    "cron": "0 9 * * *",
+                    "action": "mission",
+                    "payload": {"goal": "Review startup metrics"},
+                    "authority": "schedule.delete",
+                },
+            )
+            with patch("spark_intelligence.schedule_bridge.delete_schedule_via_spawner") as delete_mock:
+                result = simulate_telegram_update(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    update_payload=_with_style_turn_intent(
+                        make_telegram_update(
+                            update_id=8461,
+                            user_id="111",
+                            username="alice",
+                            text="yes cancel",
+                        ),
+                        tool_name="style.train",
+                    ),
+                )
+
+        self.assertTrue(result.ok)
+        delete_mock.assert_not_called()
+        self.assertIn("not authorized to delete", str(result.detail["response_text"]))
+
+    def test_pending_schedule_delete_confirmation_accepts_matching_schedule_envelope(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        pending_home = self.home / "pending-schedule-delete-ok"
+
+        with patch.dict("os.environ", {"SPARK_INTELLIGENCE_HOME": str(pending_home)}, clear=False):
+            from spark_intelligence.schedule_bridge.service import arm_pending_delete
+
+            arm_pending_delete(
+                "111",
+                {
+                    "id": "sched-startup-review",
+                    "cron": "0 9 * * *",
+                    "action": "mission",
+                    "payload": {"goal": "Review startup metrics"},
+                    "authority": "schedule.delete",
+                },
+            )
+            with patch(
+                "spark_intelligence.schedule_bridge.delete_schedule_via_spawner",
+                return_value=True,
+            ) as delete_mock:
+                result = simulate_telegram_update(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    update_payload=_with_schedule_turn_intent(
+                        make_telegram_update(
+                            update_id=8462,
+                            user_id="111",
+                            username="alice",
+                            text="yes cancel",
+                        ),
+                    ),
+                )
+
+        self.assertTrue(result.ok)
+        delete_mock.assert_called_once_with("sched-startup-review")
+        self.assertIn("Review startup metrics is off the schedule", str(result.detail["response_text"]))
+
     def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
         record_pairing_context(
             state_db=self.state_db,

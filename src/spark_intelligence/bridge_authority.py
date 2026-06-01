@@ -74,15 +74,29 @@ def authorize_builder_bridge_action(
     )
 
 
-def authorize_pending_confirmation(update_payload: dict[str, Any] | None) -> BridgeAuthorityVerdict:
+def authorize_pending_confirmation(
+    update_payload: dict[str, Any] | None,
+    *,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+    publishes: bool = False,
+    external_network: bool = False,
+) -> BridgeAuthorityVerdict:
     envelope = extract_turn_intent_envelope(update_payload)
     if envelope is None:
         return BridgeAuthorityVerdict(False, ("missing_or_invalid_envelope",), None)
-    reasons: list[str] = []
-    if envelope.directive.no_execution:
-        reasons.append("no_execution_boundary")
-    if envelope.directive.quoted_or_meta_language:
-        reasons.append("quoted_or_meta_language")
-    if envelope.directive.explanation_only:
-        reasons.append("explanation_only_boundary")
-    return BridgeAuthorityVerdict(not reasons, tuple(reasons), envelope)
+    verdict, reasons = authorize_tool_call(
+        envelope,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        publishes=publishes,
+        external_network=external_network,
+    )
+    extra_reasons = list(reasons)
+    if envelope.directive.quoted_or_meta_language and "quoted_or_meta_language" not in extra_reasons:
+        extra_reasons.append("quoted_or_meta_language")
+    if envelope.directive.explanation_only and "explanation_only_boundary" not in extra_reasons:
+        extra_reasons.append("explanation_only_boundary")
+    return BridgeAuthorityVerdict(verdict == "allowed" and not extra_reasons, tuple(extra_reasons), envelope)
