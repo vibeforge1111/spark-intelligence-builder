@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2037,7 +2048,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_set_channel_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
     operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
+    operator_history_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of events to show (must be a positive integer)")
     operator_history_parser.add_argument("--action", help="Filter history to one action")
     operator_history_parser.add_argument("--target-kind", help="Filter history to one target kind")
     operator_history_parser.add_argument("--contains", help="Filter history by target, reason, or details substring")
@@ -2063,7 +2074,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show persisted observer packet records",
     )
     operator_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_packets_parser.add_argument("--limit", type=int, default=50, help="Number of packet rows to show")
+    operator_observer_packets_parser.add_argument("--limit", type=_positive_int, default=50, help="Number of packet rows to show (must be a positive integer)")
     operator_observer_packets_parser.add_argument("--kind", help="Filter to one packet kind")
     operator_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2072,7 +2083,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write an observer packet handoff bundle for external consumption",
     )
     operator_export_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_export_observer_packets_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to export")
+    operator_export_observer_packets_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to export (must be a positive integer)")
     operator_export_observer_packets_parser.add_argument("--kind", help="Filter export to one packet kind")
     operator_export_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_export_observer_packets_parser.add_argument("--write", help="Explicit path for the exported JSON bundle")
@@ -2084,7 +2095,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_handoff_observer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_handoff_observer_parser.add_argument("--chip-key", help="Explicit chip key to run. Defaults to the first active chip exposing packets.")
-    operator_handoff_observer_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to hand off")
+    operator_handoff_observer_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to hand off (must be a positive integer)")
     operator_handoff_observer_parser.add_argument("--kind", help="Filter handoff to one packet kind")
     operator_handoff_observer_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_handoff_observer_parser.add_argument("--write-bundle", help="Explicit path for the handoff bundle JSON")
@@ -2096,7 +2107,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show typed observer handoff records",
     )
     operator_observer_handoffs_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_handoffs_parser.add_argument("--limit", type=int, default=20, help="Number of handoff rows to show")
+    operator_observer_handoffs_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of handoff rows to show (must be a positive integer)")
     operator_observer_handoffs_parser.add_argument("--chip-key", help="Filter to one chip key")
     operator_observer_handoffs_parser.add_argument("--status", help="Filter to one handoff status")
     operator_observer_handoffs_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2105,7 +2116,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Temporarily suppress one webhook alert family from operator surfaces",
     )
     operator_snooze_webhook_parser.add_argument("event", choices=list_webhook_alert_events())
-    operator_snooze_webhook_parser.add_argument("--minutes", type=int, default=60, help="Snooze duration in minutes")
+    operator_snooze_webhook_parser.add_argument("--minutes", type=_positive_int, default=60, help="Snooze duration in minutes (must be a positive integer)")
     operator_snooze_webhook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_snooze_webhook_parser.add_argument("--reason", help="Short audit reason for this snooze")
     operator_list_webhook_snoozes_parser = operator_subparsers.add_parser(
