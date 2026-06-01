@@ -11,6 +11,7 @@ from spark_intelligence.harness_contract import (
     TurnIntentEnvelope,
     authorize_legacy_tool_call,
     authorize_vnext_tool_call,
+    build_vnext_tool_intent_envelope,
     finalize_legacy_tool_call_ledger,
     parse_turn_intent_envelope,
 )
@@ -202,6 +203,38 @@ def memory_write_boundary_blocks_adapter_authority(user_message: str) -> bool:
     return False
 
 
+def _build_telegram_tool_vnext_payload(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    source_kind: str,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+    intent_summary: str,
+    raw_turn_summary: str,
+) -> dict[str, Any] | None:
+    if channel_kind != "telegram":
+        return None
+    try:
+        return build_vnext_tool_intent_envelope(
+            surface=channel_kind,
+            actor_id_ref=human_id,
+            request_id=request_id,
+            source_kind=source_kind,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            intent_summary=intent_summary,
+            raw_turn_summary=raw_turn_summary,
+            confidence=0.95,
+        )
+    except Exception:
+        return None
+
+
 def build_telegram_memory_turn_intent_payload(
     *,
     request_id: str,
@@ -270,6 +303,31 @@ def build_telegram_memory_turn_intent_payload(
             ]
         },
     }
+
+
+def build_telegram_memory_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> dict[str, Any] | None:
+    if memory_write_boundary_blocks_adapter_authority(user_message):
+        return None
+    return _build_telegram_tool_vnext_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary="User explicitly asked Spark to remember information from this Telegram turn.",
+        raw_turn_summary=f"Telegram memory write intent matched {source_kind}; raw text remains offloaded.",
+    )
 
 
 def memory_read_boundary_blocks_adapter_authority(user_message: str) -> bool:
@@ -423,6 +481,31 @@ def build_telegram_memory_read_turn_intent_payload(
     }
 
 
+def build_telegram_memory_read_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> dict[str, Any] | None:
+    if memory_read_boundary_blocks_adapter_authority(user_message):
+        return None
+    return _build_telegram_tool_vnext_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+        intent_summary="User explicitly asked Spark to inspect bounded saved memory for this Telegram turn.",
+        raw_turn_summary=f"Telegram memory read intent matched {source_kind}; raw text remains offloaded.",
+    )
+
+
 def build_telegram_memory_diagnostic_turn_intent_payload(
     *,
     request_id: str,
@@ -488,6 +571,28 @@ def build_telegram_memory_diagnostic_turn_intent_payload(
             ]
         },
     }
+
+
+def build_telegram_memory_diagnostic_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    source_kind: str,
+) -> dict[str, Any] | None:
+    return _build_telegram_tool_vnext_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        tool_name="memory.diagnose",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+        intent_summary="User explicitly asked Spark to inspect memory health from this Telegram turn.",
+        raw_turn_summary=f"Telegram memory diagnostic intent matched {source_kind}; raw text remains offloaded.",
+    )
 
 
 def record_bridge_tool_call_ledger(

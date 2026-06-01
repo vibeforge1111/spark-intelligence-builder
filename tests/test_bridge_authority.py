@@ -2,6 +2,9 @@ from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
+    build_telegram_memory_diagnostic_turn_intent_payload_vnext,
+    build_telegram_memory_turn_intent_payload_vnext,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
@@ -198,6 +201,92 @@ def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:
     )
     assert verdict.allowed is True
     assert verdict.reason_codes == ()
+
+
+def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> None:
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-vnext",
+        channel_kind="telegram",
+        session_id="session-write-vnext",
+        human_id="human-write-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+
+    assert payload is not None
+    assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["selected_move"] == "execute_action"
+    assert payload["action_authority"]["state"] == "executable"
+    assert payload["proposed_actions"][0]["action_type"] == "write_memory"
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.envelope is None
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "allow"
+
+
+def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-read-vnext",
+        channel_kind="telegram",
+        session_id="session-read-vnext",
+        human_id="human-read-vnext",
+        user_message="What is my current plan?",
+        source_kind=detect_telegram_memory_read_authority_source_kind("What is my current plan?") or "test",
+    )
+
+    assert payload is not None
+    assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["selected_move"] == "read_current_state"
+    assert payload["action_authority"]["state"] == "read_only"
+    assert payload["proposed_actions"][0]["action_type"] == "read"
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.envelope is None
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "allow"
+
+
+def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
+    payload = build_telegram_memory_diagnostic_turn_intent_payload_vnext(
+        request_id="req-doctor-vnext",
+        channel_kind="telegram",
+        session_id="session-doctor-vnext",
+        human_id="human-doctor-vnext",
+        source_kind="telegram_runtime_memory_doctor",
+    )
+
+    assert payload is not None
+    assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["selected_move"] == "read_current_state"
+    assert payload["action_authority"]["state"] == "read_only"
+    assert payload["proposed_actions"][0]["action_type"] == "read"
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.diagnose",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.envelope is None
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "allow"
 
 
 def test_blocks_memory_read_turn_intent_for_meta_examples() -> None:

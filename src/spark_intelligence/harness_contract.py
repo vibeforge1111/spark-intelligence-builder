@@ -61,6 +61,7 @@ try:
         authorize_legacy_tool_call,
         authorize_tool_call,
         authorize_vnext_tool_call,
+        build_vnext_tool_intent_envelope,
         finalize_legacy_tool_call_ledger,
         parse_turn_intent_envelope,
     )
@@ -143,6 +144,25 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
     ) -> LegacyToolAuthorization:
         return LegacyToolAuthorization("blocked", ("spark_harness_core_unavailable",))
 
+    def build_vnext_tool_intent_envelope(
+        *,
+        surface: str,
+        actor_id_ref: str,
+        request_id: str,
+        source_kind: str,
+        tool_name: str,
+        owner_system: str,
+        mutation_class: MutationClass,
+        intent_summary: str,
+        raw_turn_summary: str,
+        publishes: bool = False,
+        external_network: bool = False,
+        confidence: float = 0.95,
+        requires_confirmation: bool | None = None,
+        args_path: str | None = None,
+    ) -> dict[str, Any] | None:
+        return None
+
 
 __all__ = [
     "HARNESS_CORE_AVAILABLE",
@@ -158,6 +178,7 @@ __all__ = [
     "authorize_legacy_tool_call",
     "authorize_tool_call",
     "authorize_vnext_tool_call",
+    "build_vnext_tool_intent_envelope",
     "finalize_legacy_tool_call_ledger",
     "parse_turn_intent_envelope",
 ]
