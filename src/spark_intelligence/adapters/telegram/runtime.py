@@ -1183,6 +1183,7 @@ def simulate_telegram_update(
     transcript_text = None
     bridge_voice_media: dict[str, Any] | None = None
     bridge_voice_error: str | None = None
+    runtime_command_metadata: dict[str, Any] | None = None
     respect_voice_reply_state_for_bridge = True
     voice_answer_requested_for_bridge = False
     media_input: dict[str, Any] = {}
@@ -1244,6 +1245,11 @@ def simulate_telegram_update(
         if media_input.get("reply_text"):
             pass
         elif command_result is not None:
+            runtime_command_metadata = (
+                dict(command_result.get("runtime_command_metadata"))
+                if isinstance(command_result.get("runtime_command_metadata"), dict)
+                else None
+            )
             outbound_text = _apply_saved_telegram_surface_style(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -1853,36 +1859,41 @@ def simulate_telegram_update(
         detail["voice_error"] = bridge_voice_error
     if voice_timing:
         detail["voice_timing"] = voice_timing
+    if runtime_command_metadata is not None:
+        detail["runtime_command_metadata"] = runtime_command_metadata
     if resolution.allowed:
+        trace_payload = {
+            "event": "telegram_update_processed",
+            "channel_id": "telegram",
+            "update_id": normalized.update_id,
+            "telegram_user_id": normalized.telegram_user_id,
+            "chat_id": normalized.chat_id,
+            "session_id": resolution.session_id,
+            "trace_ref": trace_ref,
+            "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            **delivery_primary_route,
+            "evidence_summary": evidence_summary,
+            "attachment_context": attachment_context,
+            "active_chip_key": active_chip_key,
+            "active_chip_task_type": active_chip_task_type,
+            "active_chip_evaluate_used": active_chip_evaluate_used,
+            "response_preview": _preview_text(sanitized_outbound_text),
+            "response_length": len(sanitized_outbound_text),
+            "user_message_preview": _preview_text(effective_text) if effective_text else None,
+            "user_message_length": len(effective_text) if effective_text else None,
+            "delivery_ok": True,
+            "delivery_error": None,
+            "guardrail_actions": _outbound_actions,
+            "simulation": simulation,
+            "origin_surface": origin_surface,
+            "request_id": request_id,
+        }
+        if runtime_command_metadata is not None:
+            trace_payload["runtime_command_metadata"] = runtime_command_metadata
         append_gateway_trace(
             config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "update_id": normalized.update_id,
-                "telegram_user_id": normalized.telegram_user_id,
-                "chat_id": normalized.chat_id,
-                "session_id": resolution.session_id,
-                "trace_ref": trace_ref,
-                "bridge_mode": bridge_mode,
-                "routing_decision": routing_decision,
-                **delivery_primary_route,
-                "evidence_summary": evidence_summary,
-                "attachment_context": attachment_context,
-                "active_chip_key": active_chip_key,
-                "active_chip_task_type": active_chip_task_type,
-                "active_chip_evaluate_used": active_chip_evaluate_used,
-                "response_preview": _preview_text(sanitized_outbound_text),
-                "response_length": len(sanitized_outbound_text),
-                "user_message_preview": _preview_text(effective_text) if effective_text else None,
-                "user_message_length": len(effective_text) if effective_text else None,
-                "delivery_ok": True,
-                "delivery_error": None,
-                "guardrail_actions": _outbound_actions,
-                "simulation": simulation,
-                "origin_surface": origin_surface,
-                "request_id": request_id,
-            },
+            trace_payload,
         )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
@@ -2259,6 +2270,18 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
         )
         if command_result is not None:
+            runtime_command_metadata = (
+                dict(command_result.get("runtime_command_metadata"))
+                if isinstance(command_result.get("runtime_command_metadata"), dict)
+                else None
+            )
+            runtime_command_facts: dict[str, Any] = {
+                "command": command_result["command"],
+                "update_id": normalized.update_id,
+                "message_text": normalized.text,
+            }
+            if runtime_command_metadata is not None:
+                runtime_command_facts["runtime_command_metadata"] = runtime_command_metadata
             record_event(
                 state_db,
                 event_type="intent_committed",
@@ -2272,11 +2295,7 @@ def poll_telegram_updates_once(
                 agent_id=resolution.agent_id,
                 actor_id="telegram_runtime",
                 reason_code="runtime_command",
-                facts={
-                    "command": command_result["command"],
-                    "update_id": normalized.update_id,
-                    "message_text": normalized.text,
-                },
+                facts=runtime_command_facts,
             )
             outbound_text = _apply_think_visibility(
                 state_db=state_db,
@@ -2331,26 +2350,49 @@ def poll_telegram_updates_once(
                 facts={
                     "command": command_result["command"],
                     "delivery_ok": send_result["ok"],
+                    **({"runtime_command_metadata": runtime_command_metadata} if runtime_command_metadata is not None else {}),
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
-            append_gateway_trace(
-                config_manager,
-                {
-                    "event": "telegram_runtime_command_processed",
-                    "channel_id": "telegram",
-                    "update_id": normalized.update_id,
-                    "telegram_user_id": normalized.telegram_user_id,
-                    "chat_id": normalized.chat_id,
-                    "session_id": resolution.session_id,
-                    "command": command_result["command"],
-                    "delivery_ok": send_result["ok"],
-                    "delivery_error": send_result["error"],
-                    "guardrail_actions": send_result["guardrail_actions"],
-                    "response_preview": _preview_text(outbound_text),
-                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
-                },
-            )
+            command_trace = {
+                "event": "telegram_runtime_command_processed",
+                "channel_id": "telegram",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "request_id": run.request_id,
+                "command": command_result["command"],
+                "delivery_ok": send_result["ok"],
+                "delivery_error": send_result["error"],
+                "guardrail_actions": send_result["guardrail_actions"],
+                "response_preview": _preview_text(outbound_text),
+                **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
+            }
+            if runtime_command_metadata is not None:
+                command_trace["runtime_command_metadata"] = runtime_command_metadata
+            append_gateway_trace(config_manager, command_trace)
+            update_trace = {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "bridge_mode": "runtime_command",
+                "routing_decision": "runtime_command",
+                "request_id": run.request_id,
+                "response_preview": _preview_text(outbound_text),
+                "response_length": len(outbound_text),
+                "user_message_preview": _preview_text(effective_text) if effective_text else None,
+                "user_message_length": len(effective_text) if effective_text else None,
+                "delivery_ok": send_result["ok"],
+                "delivery_error": send_result["error"],
+                "guardrail_actions": send_result["guardrail_actions"],
+            }
+            if runtime_command_metadata is not None:
+                update_trace["runtime_command_metadata"] = runtime_command_metadata
+            append_gateway_trace(config_manager, update_trace)
             continue
 
         # P2-13: enter the v2 onboarding state machine whenever the
@@ -4059,6 +4101,65 @@ def _handle_runtime_command(
         return {
             "command": "/aoc" if lowered.startswith("/aoc") else "/context",
             "reply_text": reply_text,
+            "respect_voice_reply_state": True,
+        }
+    if lowered.startswith("/memory doctor") or natural_memory_doctor_command is not None:
+        target = (
+            _memory_doctor_target_from_slash_command(normalized)
+            if lowered.startswith("/memory doctor")
+            else dict(natural_memory_doctor_command or {})
+        )
+        if bool(target.get("help_requested")):
+            return {
+                "command": "/memory doctor",
+                "reply_text": _render_memory_doctor_help(),
+                "respect_voice_reply_state": True,
+            }
+        if (
+            str(target.get("request_selector") or "").strip() == "previous_gateway_turn"
+            and "contextual_trigger_signals" not in target
+        ):
+            target.update(
+                _memory_doctor_contextual_metadata_for_previous_turn(
+                    inbound_text=normalized,
+                    config_manager=config_manager,
+                    external_user_id=external_user_id,
+                    session_id=session_id or "",
+                    current_request_id=request_id or "",
+                )
+            )
+        selected_request_id = str(target.get("request_id") or "").strip() or None
+        request_selector = str(target.get("request_selector") or "").strip() or None
+        if request_selector == "previous_gateway_turn" and not selected_request_id:
+            selected_request_id = _memory_doctor_previous_gateway_request_id(
+                config_manager=config_manager,
+                external_user_id=external_user_id,
+                session_id=session_id or "",
+                current_request_id=request_id or "",
+            )
+        from spark_intelligence.memory.doctor import run_memory_doctor
+
+        report = run_memory_doctor(
+            state_db,
+            config_manager=config_manager,
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            topic=str(target.get("topic") or "").strip() or None,
+            request_id=selected_request_id,
+            repair_requested=bool(target.get("repair_requested")),
+        )
+        metadata = _build_memory_doctor_runtime_metadata(
+            target=target,
+            diagnosed_request_id=selected_request_id,
+            report_ok=report.ok,
+        )
+        reply_text = _render_memory_doctor_runtime_reply(
+            report_text=report.to_telegram_text(),
+            metadata=metadata,
+        )
+        return {
+            "command": "/memory doctor",
+            "reply_text": reply_text,
+            "runtime_command_metadata": metadata,
             "respect_voice_reply_state": True,
         }
     if lowered == "/probe" or lowered.startswith("/probe "):
@@ -5900,6 +6001,21 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
     lowered = normalized.lower()
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
     if simplified in {
+        "memory doctor help",
+        "help memory doctor",
+        "how do i use memory doctor",
+        "how to use memory doctor",
+        "what is memory doctor",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": None,
+            "repair_requested": False,
+            "help_requested": True,
+        }
+    if simplified in {
         "memory doctor",
         "show memory doctor",
         "show me memory doctor",
@@ -5940,10 +6056,6 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
         "check previous request memory",
         "check last turn memory",
         "check previous turn memory",
-        "why did you go blank",
-        "why did spark go blank",
-        "why did memory go blank",
-        "why did context go blank",
     }:
         return {
             "command": "/memory doctor",
@@ -6002,10 +6114,24 @@ def _match_contextual_memory_doctor_command(
     )
     if previous_record is None:
         return None
-    score = _memory_doctor_distress_score(simplified)
-    if _previous_gateway_turn_looks_like_memory_failure(previous_record):
+    current_signals = _memory_doctor_distress_signals(simplified)
+    signal_names = [str(signal["name"]) for signal in current_signals]
+    score = sum(int(signal["weight"]) for signal in current_signals)
+    previous_failure_signals = _memory_doctor_previous_failure_signals(previous_record)
+    previous_failure_signal = bool(previous_failure_signals)
+    identity_signal = _memory_doctor_identity_correction_signal(
+        simplified_text=simplified,
+        previous_record=previous_record,
+    )
+    if identity_signal and identity_signal not in signal_names:
+        signal_names.append(identity_signal)
+        score += 4
+    if previous_failure_signal:
         score += 2
-    if score < 3:
+        if "previous_turn_memory_failure_signal" not in signal_names:
+            signal_names.append("previous_turn_memory_failure_signal")
+    threshold = 3 if previous_failure_signal else 4
+    if score < threshold:
         return None
     return {
         "command": "/memory doctor",
@@ -6014,7 +6140,87 @@ def _match_contextual_memory_doctor_command(
         "request_selector": "previous_gateway_turn",
         "repair_requested": False,
         "contextual_trigger_score": score,
+        "contextual_trigger_threshold": threshold,
+        "contextual_trigger_signals": signal_names,
+        "previous_failure_signal": previous_failure_signal,
+        "previous_failure_signals": previous_failure_signals,
     }
+
+
+def _memory_doctor_contextual_metadata_for_previous_turn(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object]:
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
+    current_signals = _memory_doctor_distress_signals(simplified)
+    signal_names = [str(signal["name"]) for signal in current_signals]
+    score = sum(int(signal["weight"]) for signal in current_signals)
+    previous_record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    previous_failure_signals = (
+        _memory_doctor_previous_failure_signals(previous_record)
+        if previous_record is not None
+        else []
+    )
+    previous_failure_signal = bool(previous_failure_signals)
+    if previous_record is not None:
+        identity_signal = _memory_doctor_identity_correction_signal(
+            simplified_text=simplified,
+            previous_record=previous_record,
+        )
+        if identity_signal and identity_signal not in signal_names:
+            signal_names.append(identity_signal)
+            score += 4
+    if previous_failure_signal:
+        score += 2
+        if "previous_turn_memory_failure_signal" not in signal_names:
+            signal_names.append("previous_turn_memory_failure_signal")
+    threshold = 3 if previous_failure_signal else 4
+    if not signal_names and not previous_failure_signal:
+        return {}
+    if _memory_doctor_previous_turn_request_is_operational(simplified) and (
+        not signal_names or set(signal_names).issubset({"memory_context_reference", "previous_turn_memory_failure_signal"})
+    ):
+        return {}
+    if score < threshold:
+        return {}
+    return {
+        "contextual_trigger_score": score,
+        "contextual_trigger_threshold": threshold,
+        "contextual_trigger_signals": signal_names,
+        "previous_failure_signal": previous_failure_signal,
+        "previous_failure_signals": previous_failure_signals,
+    }
+
+
+def _memory_doctor_previous_turn_request_is_operational(simplified_text: str) -> bool:
+    text = str(simplified_text or "").strip().lower()
+    if not text:
+        return False
+    if text.startswith("/memory doctor"):
+        return True
+    return bool(
+        re.match(
+            (
+                r"^(?:run|show|check|diagnose|audit)\s+"
+                r"(?:(?:memory\s+doctor|memory)\s+(?:for\s+)?)?"
+                r"(?:last|latest|previous)\s+(?:request|turn|message|telegram\s+turn)$"
+            ),
+            text,
+        )
+        or re.match(
+            r"^memory\s+doctor\s+(?:for\s+)?(?:last|latest|previous)\s+(?:request|turn|message|telegram\s+turn)$",
+            text,
+        )
+    )
 
 
 def _memory_doctor_distress_score(simplified_text: str) -> int:
@@ -6066,9 +6272,16 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
 
 
 def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) -> bool:
+    return bool(_memory_doctor_previous_failure_signals(record))
+
+
+def _memory_doctor_previous_failure_signals(record: dict[str, object]) -> list[str]:
     user_preview = str(record.get("user_message_preview") or "").lower()
     response_preview = str(record.get("response_preview") or "").lower()
     route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
+    signals: list[str] = []
+    if bool(record.get("_memory_doctor_prior_diagnostic_failed")):
+        signals.append("previous_memory_doctor_needs_attention")
     close_turn_markers = (
         "what did i just",
         "what phrase did i",
@@ -6089,10 +6302,106 @@ def _previous_gateway_turn_looks_like_memory_failure(record: dict[str, object]) 
         "what did you just tell me",
     )
     if any(marker in user_preview for marker in close_turn_markers):
-        return True
+        signals.append("previous_user_close_turn_probe")
     if any(marker in response_preview for marker in blank_response_markers):
-        return True
-    return "researcher_advisory" in route_text and "previous" in user_preview
+        signals.append("previous_response_context_gap")
+    if (
+        "researcher_advisory" in route_text
+        and "previous" in user_preview
+        and "previous_response_context_gap" not in signals
+    ):
+        signals.append("previous_response_context_gap")
+    response_has_wrong_name = "maya" in response_preview and (
+        "not maya" in user_preview
+        or " cem" in user_preview
+        or "written name" in user_preview
+        or "pronounced" in user_preview
+    )
+    response_repeated_identity_question = "what should i call you" in response_preview and user_preview.startswith("not ")
+    if response_has_wrong_name or response_repeated_identity_question:
+        signals.append("previous_response_identity_conflict")
+        if response_repeated_identity_question and "previous_response_context_gap" not in signals:
+            signals.append("previous_response_context_gap")
+    return list(dict.fromkeys(signals))
+
+
+def _memory_doctor_identity_correction_signal(
+    *,
+    simplified_text: str,
+    previous_record: dict[str, object],
+) -> str | None:
+    previous_signals = _memory_doctor_previous_failure_signals(previous_record)
+    if "previous_response_identity_conflict" not in previous_signals:
+        return None
+    text = str(simplified_text or "").strip().lower()
+    if re.match(r"^not\s+[a-z][a-z0-9_-]{1,40}$", text):
+        return "identity_correction_after_wrong_name"
+    if "wrong name" in text or "not my name" in text:
+        return "identity_correction_after_wrong_name"
+    return None
+
+
+def _render_memory_doctor_help() -> str:
+    return "\n".join(
+        [
+            "Memory Doctor helps when memory or close context feels wrong.",
+            "Try: run memory doctor for last request",
+            "Try: you lost the thread",
+            "Try: run memory doctor for <topic>",
+        ]
+    )
+
+
+def _build_memory_doctor_runtime_metadata(
+    *,
+    target: dict[str, object],
+    diagnosed_request_id: str | None,
+    report_ok: bool,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "command": "/memory doctor",
+        "topic": str(target.get("topic") or "").strip() or None,
+        "diagnosed_request_id": diagnosed_request_id,
+        "request_selector": str(target.get("request_selector") or "").strip() or None,
+        "repair_requested": bool(target.get("repair_requested")),
+        "memory_doctor_ok": bool(report_ok),
+    }
+    for key in (
+        "contextual_trigger_score",
+        "contextual_trigger_threshold",
+        "contextual_trigger_signals",
+        "previous_failure_signal",
+        "previous_failure_signals",
+    ):
+        if key in target:
+            metadata[key] = target[key]
+    return metadata
+
+
+def _render_memory_doctor_runtime_reply(*, report_text: str, metadata: dict[str, object]) -> str:
+    trigger_line = _memory_doctor_trigger_line(metadata)
+    if not trigger_line:
+        return report_text
+    lines = str(report_text or "").splitlines()
+    if not lines:
+        return trigger_line
+    return "\n".join([lines[0], trigger_line, *lines[1:]])
+
+
+def _memory_doctor_trigger_line(metadata: dict[str, object]) -> str | None:
+    signals = [str(item) for item in (metadata.get("contextual_trigger_signals") or [])]
+    previous_failure = bool(metadata.get("previous_failure_signal"))
+    if "identity_correction_after_wrong_name" in signals:
+        return "Trigger: identity correction complaint; previous turn looked like memory failure."
+    if "close_turn_repeat_frustration" in signals:
+        suffix = "; previous turn looked like memory failure" if previous_failure else ""
+        return f"Trigger: close-turn repeat complaint{suffix}."
+    if "memory_context_reference" in signals or "memory_distress_verb" in signals:
+        suffix = "; previous turn looked like memory failure" if previous_failure else ""
+        return f"Trigger: memory/context loss complaint{suffix}."
+    if "operator_frustration" in signals and previous_failure:
+        return "Trigger: operator frustration; previous turn looked like memory failure."
+    return None
 
 
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
@@ -6162,6 +6471,7 @@ def _memory_doctor_previous_gateway_record(
     normalized_user_id = str(external_user_id or "").strip()
     normalized_session_id = str(session_id or "").strip()
     normalized_current_request_id = str(current_request_id or "").strip()
+    failed_diagnostic_request_ids: set[str] = set()
     for record in reversed(traces):
         if str(record.get("event") or "") != "telegram_update_processed":
             continue
@@ -6174,8 +6484,24 @@ def _memory_doctor_previous_gateway_record(
             continue
         preview = str(record.get("user_message_preview") or "").strip()
         preview_lower = preview.lower()
-        if preview_lower.startswith("/memory doctor") or _match_natural_memory_doctor_command(preview):
+        metadata = record.get("runtime_command_metadata") if isinstance(record.get("runtime_command_metadata"), dict) else {}
+        diagnosed_request_id = str(metadata.get("diagnosed_request_id") or "").strip()
+        if str(metadata.get("command") or "") == "/memory doctor" and diagnosed_request_id:
+            if metadata.get("memory_doctor_ok") is False:
+                failed_diagnostic_request_ids.add(diagnosed_request_id)
             continue
+        if (
+            preview_lower.startswith("/memory doctor")
+            or _match_natural_memory_doctor_command(preview)
+            or str(record.get("bridge_mode") or "") == "runtime_command"
+            or str(record.get("routing_decision") or "") == "runtime_command"
+            or str(record.get("command") or "") == "/memory doctor"
+        ):
+            continue
+        if request_id in failed_diagnostic_request_ids:
+            enriched = dict(record)
+            enriched["_memory_doctor_prior_diagnostic_failed"] = True
+            return enriched
         return record
     return None
 
