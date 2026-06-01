@@ -142,6 +142,157 @@ def build_telegram_memory_turn_intent_payload(
     }
 
 
+def memory_read_boundary_blocks_adapter_authority(user_message: str) -> bool:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text:
+        return True
+    lowered = text.casefold()
+    if re.search(
+        r"\b(?:do\s+not|don't|dont|please\s+don't|no\s+need\s+to|without)\s+"
+        r"(?:use|using|read|recall|retrieve|search|load|check|look\s+at)\s+(?:memory|memories|history|context)\b",
+        lowered,
+    ):
+        return True
+    if re.search(r"\bwithout\s+(?:using\s+)?(?:memory|memories|history|saved\s+context)\b", lowered):
+        return True
+    if re.search(
+        r"\b(?:not\s+a\s+(?:command|request|instruction)|just\s+(?:an?\s+)?example|"
+        r"example\s+only|quoted\s+example|bug\s+report|hypothetical|for\s+example|just\s+explain)\b",
+        lowered,
+    ) and re.search(
+        r"\b(?:memory|remember|recall|saved|current\s+(?:plan|focus)|what\s+did\s+(?:i|we)|what\s+do\s+you\s+remember)\b",
+        lowered,
+    ):
+        return True
+    if re.match(r"^\s*(?:example|quote|quoted\s+text)\s*:", lowered):
+        return True
+    return False
+
+
+def detect_telegram_memory_read_authority_source_kind(user_message: str) -> str | None:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text or memory_read_boundary_blocks_adapter_authority(text):
+        return None
+    lowered = text.casefold()
+    source_patterns: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "telegram_runtime_current_plan_read",
+            (
+                r"\b(?:what(?:'s|\s+is)|show|tell|remind)\s+(?:me\s+)?(?:my\s+|the\s+)?current\s+plan\b",
+                r"\buse\s+(?:my\s+|the\s+)?current\s+plan\b",
+            ),
+        ),
+        (
+            "telegram_runtime_current_focus_read",
+            (
+                r"\b(?:what(?:'s|\s+is)|show|tell|remind)\s+(?:me\s+)?(?:my\s+|the\s+)?current\s+focus\b",
+                r"\buse\s+(?:my\s+|the\s+)?current\s+focus\b",
+            ),
+        ),
+        (
+            "telegram_runtime_explicit_memory_recall",
+            (
+                r"\b(?:what|which|who|when|where|why|how)\s+.*\b(?:remember|recall|saved|memory|memories)\b",
+                r"\b(?:what\s+do\s+you|do\s+you|can\s+you)\s+(?:remember|recall)\b",
+                r"\bwhat\s+(?:evidence|context|history)\s+do\s+you\s+have\s+about\b",
+                r"\bwhat\s+do\s+you\s+know\s+about\b",
+            ),
+        ),
+        (
+            "telegram_runtime_prior_turn_recall",
+            (
+                r"\bwhat\s+did\s+(?:i|we)\s+(?:tell|say|mention|share|decide|agree|do|build|change)\b",
+                r"\bwhat\s+(?:have\s+we|did\s+we)\s+(?:decided|decide|discuss|do|build|change|work\s+on)\b",
+                r"\bwhat\s+(?:is|are)(?:\s+still)?\s+(?:next|remaining|left|open)\b",
+                r"\bwhat\s+happened\s+(?:during|in|with)\b",
+                r"\bwhat\s+changed\s+(?:in|during|from)\b",
+            ),
+        ),
+        (
+            "telegram_runtime_profile_fact_read",
+            (
+                r"\bwhat(?:'s|\s+is)\s+my\s+(?:favorite|preferred|name|timezone|location|role|company|email|phone|pronouns)\b",
+                r"\bwhere\s+(?:is|are)\s+my\b",
+                r"\bwho\s+(?:owns|is\s+responsible\s+for)\b",
+            ),
+        ),
+    )
+    for source_kind, patterns in source_patterns:
+        if any(re.search(pattern, lowered) for pattern in patterns):
+            return source_kind
+    return None
+
+
+def build_telegram_memory_read_turn_intent_payload(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> dict[str, Any] | None:
+    if channel_kind != "telegram":
+        return None
+    if memory_read_boundary_blocks_adapter_authority(user_message):
+        return None
+    return {
+        "schema": "spark.turn_intent.v1",
+        "turnId": f"turn:telegram-memory-read:{request_id}",
+        "traceId": f"trace:telegram-memory-read:{request_id}",
+        "surface": channel_kind,
+        "directive": {
+            "mode": "execute",
+            "noExecution": False,
+            "noPublish": True,
+            "localOnly": True,
+            "explanationOnly": False,
+            "quotedOrMetaLanguage": False,
+        },
+        "selectedIntent": {
+            "kind": "memory_read",
+            "ownerSystem": "domain-chip-memory",
+            "action": "memory.read",
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": source_kind,
+        },
+        "sessionScope": {
+            "sessionKey": session_id,
+            "surface": channel_kind,
+            "conversationKind": "telegram_dm",
+            "userRef": human_id,
+            "chatRef": session_id,
+            "memoryLoadPolicy": "bounded",
+            "pendingStateScope": "fresh_turn",
+        },
+        "toolPolicy": {
+            "allowedTools": ["answer.compose", "memory.read"],
+            "deniedTools": [],
+            "enabledToolsets": ["spark-harness-core", "domain-chip-memory"],
+            "mutationClassesAllowed": ["none", "read_only"],
+            "requiresApprovalFor": [],
+            "networkPolicy": "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": False,
+            "canLaunchMission": False,
+            "canWriteMemory": False,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": False,
+        },
+        "threatDefense": {
+            "reasonCodes": [
+                "fresh_user_turn_is_authority",
+                "telegram_memory_read_explicit_intent",
+            ]
+        },
+    }
+
+
 def build_telegram_memory_diagnostic_turn_intent_payload(
     *,
     request_id: str,

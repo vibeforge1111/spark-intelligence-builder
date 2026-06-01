@@ -44,7 +44,10 @@ from spark_intelligence.build_quality_review import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
-from spark_intelligence.bridge_authority import build_telegram_memory_turn_intent_payload
+from spark_intelligence.bridge_authority import (
+    build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload,
+)
 from spark_intelligence.harness_contract import TurnIntentEnvelope, authorize_tool_call, parse_turn_intent_envelope
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
@@ -4357,6 +4360,113 @@ def _build_researcher_memory_turn_intent_envelope(
         return parse_turn_intent_envelope(payload)
     except ValueError:
         return None
+
+
+def _build_researcher_memory_read_turn_intent_envelope(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> TurnIntentEnvelope | None:
+    payload = build_telegram_memory_read_turn_intent_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if payload is None:
+        return None
+    try:
+        return parse_turn_intent_envelope(payload)
+    except ValueError:
+        return None
+
+
+def _authorize_researcher_memory_read(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    source_kind: str,
+    read_kind: str,
+    allow_missing_envelope: bool = True,
+) -> bool:
+    if turn_intent_envelope is None and allow_missing_envelope:
+        return True
+    authority_envelope = turn_intent_envelope
+    adapter_envelope_used = False
+    if authority_envelope is None and channel_kind == "telegram":
+        authority_envelope = _build_researcher_memory_read_turn_intent_envelope(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_envelope_used = authority_envelope is not None
+    verdict, reasons = authorize_tool_call(
+        authority_envelope,
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+    if verdict == "allowed":
+        return True
+    reason_codes = list(reasons)
+    if turn_intent_envelope is not None and "provided_envelope_not_memory_read_authority" not in reason_codes:
+        reason_codes.append("provided_envelope_not_memory_read_authority")
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.memory_read",
+            source_kind="turn_intent_envelope",
+            source_ref=authority_envelope.turn_id if authority_envelope is not None else None,
+            summary="Researcher bridge blocked memory read without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="memory_read_authority_blocked",
+            blocked_stage="memory_read",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "domain-chip-memory",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "memory.read",
+                "read_kind": read_kind,
+                "source_kind": source_kind,
+                "reason_codes": reason_codes,
+                "authority_state": (
+                    "adapter_envelope"
+                    if adapter_envelope_used
+                    else ("present" if turn_intent_envelope is not None else "missing")
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return False
 
 
 def _authorize_researcher_memory_write(
@@ -10364,21 +10474,36 @@ def build_researcher_reply(
                 None if detected_open_memory_recall_query is not None else detect_profile_fact_query(user_message)
             )
             if detected_profile_fact_query is not None:
-                profile_fact_lookup = lookup_current_state_in_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_read(
                     state_db=state_db,
-                    subject=f"human:{human_id}",
-                    predicate=detected_profile_fact_query.predicate,
-                    actor_id="researcher_bridge",
-                )
-                fact_value = None
-                if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
-                    fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
-                personality_context_extra = build_profile_fact_query_context(
-                    query=detected_profile_fact_query,
-                    value=fact_value,
-                )
-            elif detected_memory_event_query is None:
+                    turn_intent_envelope=turn_intent_envelope,
+                    run_id=run_id,
+                    request_id=request_id,
+                    channel_kind=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=user_message,
+                    source_kind="profile_fact_query_context",
+                    read_kind="profile_fact_query_context",
+                ):
+                    profile_fact_lookup = lookup_current_state_in_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        subject=f"human:{human_id}",
+                        predicate=detected_profile_fact_query.predicate,
+                        actor_id="researcher_bridge",
+                    )
+                    fact_value = None
+                    if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
+                        fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
+                    personality_context_extra = build_profile_fact_query_context(
+                        query=detected_profile_fact_query,
+                        value=fact_value,
+                    )
+                else:
+                    detected_profile_fact_query = None
+            if detected_profile_fact_query is None and detected_memory_event_query is None:
                 detected_memory_event_query = detect_telegram_memory_event_query(user_message)
             if (
                 detected_profile_fact_query is None
@@ -10428,6 +10553,36 @@ def build_researcher_reply(
                 and detected_belief_recall_query is None
             ):
                 detected_belief_recall_query = _detect_belief_recall_query(user_message)
+            memory_read_query_kind = None
+            if detected_memory_event_query is not None:
+                memory_read_query_kind = f"memory_event_{detected_memory_event_query.query_kind}"
+            elif detected_entity_state_history_query is not None:
+                memory_read_query_kind = "entity_state_history"
+            elif detected_entity_state_summary_query is not None:
+                memory_read_query_kind = "entity_state_summary"
+            elif detected_open_memory_recall_query is not None:
+                memory_read_query_kind = f"open_memory_{detected_open_memory_recall_query.query_kind}"
+            elif detected_belief_recall_query is not None:
+                memory_read_query_kind = f"belief_memory_{detected_belief_recall_query.query_kind}"
+            if memory_read_query_kind is not None and not _authorize_researcher_memory_read(
+                state_db=state_db,
+                turn_intent_envelope=turn_intent_envelope,
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                user_message=user_message,
+                source_kind="researcher_memory_read_query",
+                read_kind=memory_read_query_kind,
+            ):
+                detected_memory_event_query = None
+                detected_entity_state_history_query = None
+                detected_entity_state_history_followup = None
+                detected_entity_state_summary_query = None
+                detected_open_memory_recall_query = None
+                detected_belief_recall_query = None
         except Exception:
             pass
 
@@ -11740,6 +11895,19 @@ def build_researcher_reply(
     if (
         config_manager.get_path("spark.memory.enabled", default=False)
         and _detect_current_focus_plan_query(user_message)
+        and _authorize_researcher_memory_read(
+            state_db=state_db,
+            turn_intent_envelope=turn_intent_envelope,
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            source_kind="current_focus_plan_query",
+            read_kind="memory_current_focus_plan",
+        )
     ):
         reply_text, focus_plan_facts = _build_current_focus_plan_reply(
             config_manager=config_manager,

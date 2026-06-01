@@ -769,6 +769,77 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsNone(captured.get("turn_intent_envelope"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
+    def test_simulate_telegram_update_supplies_memory_read_turn_intent_to_researcher(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("spark.memory.enabled", True)
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98705,
+                    "message": {
+                        "message_id": 105,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "What is my current plan?",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        envelope = captured.get("turn_intent_envelope")
+        self.assertIsNotNone(envelope)
+        self.assertEqual(getattr(getattr(envelope, "selected_intent", None), "action", None), "memory.read")
+        self.assertEqual(
+            getattr(getattr(envelope, "selected_intent", None), "owner_system", None),
+            "domain-chip-memory",
+        )
+        self.assertFalse(getattr(getattr(envelope, "execution_policy", None), "can_write_memory", True))
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulate_telegram_update_keeps_meta_memory_read_example_chat_only_for_researcher(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98706,
+                    "message": {
+                        "message_id": 106,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": (
+                            "For example: 'what do you remember about my plan?' is not "
+                            "a request to use memory."
+                        ),
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(captured.get("turn_intent_envelope"))
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
     def test_simulated_dm_supplies_memory_turn_intent_without_researcher_fallback(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured: dict[str, object] = {}
@@ -795,6 +866,35 @@ class GatewayAskTelegramTests(SparkTestCase):
         payload = captured.get("turn_intent_payload")
         self.assertIsInstance(payload, dict)
         self.assertEqual(payload["selectedIntent"]["action"], "memory.write")
+        self.assertEqual(payload["selectedIntent"]["ownerSystem"], "domain-chip-memory")
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulated_dm_supplies_memory_read_turn_intent_without_researcher_fallback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.gateway.simulated_dm.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = resolve_simulated_dm(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                channel_id="telegram",
+                request_id="req-simulated-dm-memory-read-authority",
+                external_user_id="111",
+                display_name="operator",
+                user_message="What did we decide about onboarding?",
+            )
+
+        self.assertTrue(result.ok)
+        payload = captured.get("turn_intent_payload")
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["selectedIntent"]["action"], "memory.read")
         self.assertEqual(payload["selectedIntent"]["ownerSystem"], "domain-chip-memory")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
