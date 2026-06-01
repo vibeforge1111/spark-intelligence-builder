@@ -25,7 +25,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     build_researcher_reply,
 )
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, make_turn_intent_envelope
 
 
 class TelegramGenericMemoryTests(SparkTestCase):
@@ -740,6 +740,92 @@ class TelegramGenericMemoryTests(SparkTestCase):
         facts = next(event["facts_json"] for event in tool_events if event.get("reason_code") == "memory_generic_observation")
         self.assertEqual(facts.get("domain_pack"), "preferences")
         self.assertEqual(facts.get("retention_class"), "durable_profile")
+
+    def test_build_researcher_reply_blocks_memory_write_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-chat-only-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+
+        self.assertNotEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertFalse(write_events)
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
+    def test_build_researcher_reply_blocks_memory_delete_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        update = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-authority-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+        )
+        deletion = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="Forget my favorite color.",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+        query = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-authority-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="What is my favorite color?",
+        )
+
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertNotEqual(deletion.mode, "memory_generic_observation_delete")
+        self.assertEqual(query.reply_text, "Your favorite color is cobalt blue.")
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
 
     def test_build_researcher_reply_handles_favorite_food_preference_phrase(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
