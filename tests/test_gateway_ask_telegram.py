@@ -393,6 +393,97 @@ class GatewayAskTelegramTests(SparkTestCase):
             latest_result["facts_json"]["tool_call_ledger"]["result"]["summary"],
         )
 
+    def test_simulate_telegram_update_records_schedule_list_result_ledger(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        vnext = self.vnext_tool_intent_payload(
+            request_id="sim:98709",
+            tool_name="schedule.list",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            source_kind="telegram_schedule_list_test",
+        )
+
+        with patch(
+            "spark_intelligence.schedule_bridge.format_schedule_list_from_spawner",
+            return_value="No schedules are running.",
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98709,
+                    "turn_intent_envelope_vnext": vnext,
+                    "message": {
+                        "message_id": 109,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "show my schedules",
+                        "turn_intent_envelope_vnext": vnext,
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["bridge_mode"], "schedule_list_shortcircuit")
+        self.assertIn("No schedules are running.", result.detail["response_text"])
+        ledger_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_recorded", limit=5)
+        self.assertTrue(ledger_events)
+        latest_ledger = ledger_events[0]
+        self.assertEqual(latest_ledger["component"], "telegram_runtime")
+        self.assertEqual(latest_ledger["request_id"], "sim:98709")
+        self.assertEqual(latest_ledger["facts_json"]["tool_name"], "schedule.list")
+        result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+        self.assertTrue(result_events)
+        latest_result = result_events[0]
+        self.assertEqual(latest_result["component"], "telegram_runtime")
+        self.assertEqual(latest_result["request_id"], "sim:98709")
+        self.assertEqual(latest_result["parent_event_id"], latest_ledger["event_id"])
+        self.assertEqual(latest_result["facts_json"]["tool_name"], "schedule.list")
+        self.assertEqual(latest_result["facts_json"]["result_status"], "success")
+        self.assertIn(
+            "Schedule list was fetched",
+            latest_result["facts_json"]["tool_call_ledger"]["result"]["summary"],
+        )
+
+    def test_simulate_telegram_update_records_voice_reply_state_result_ledger(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        vnext = self.vnext_tool_intent_payload(
+            request_id="sim:98710",
+            tool_name="voice.reply.set",
+            owner_system="spark-voice-comms",
+            mutation_class="writes_memory",
+            source_kind="telegram_voice_reply_state_test",
+        )
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98710,
+                "turn_intent_envelope_vnext": vnext,
+                "message": {
+                    "message_id": 110,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "/voice reply on",
+                    "turn_intent_envelope_vnext": vnext,
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Voice replies enabled", result.detail["response_text"])
+        result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+        self.assertTrue(result_events)
+        latest_result = result_events[0]
+        self.assertEqual(latest_result["facts_json"]["tool_name"], "voice.reply.set")
+        self.assertEqual(latest_result["facts_json"]["result_status"], "success")
+        self.assertIn(
+            "voice reply state set to enabled",
+            latest_result["facts_json"]["tool_call_ledger"]["result"]["summary"],
+        )
+
     def test_gateway_ask_telegram_shows_memory_doctor_help(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
