@@ -181,6 +181,8 @@ def _collect_git_evidence(repo: Path) -> dict[str, Any]:
     if not (repo / ".git").exists():
         return {"status": "not_git_repo", "path": str(repo)}
     status = _run_git(repo, ["status", "--short"])
+    if status is None:
+        return {"status": "git_unavailable", "path": str(repo)}
     diff_stat = _run_git(repo, ["diff", "--stat"])
     staged_diff_stat = _run_git(repo, ["diff", "--cached", "--stat"])
     branch = _run_git(repo, ["branch", "--show-current"])
@@ -188,11 +190,11 @@ def _collect_git_evidence(repo: Path) -> dict[str, Any]:
     return {
         "status": "dirty" if status_lines else "clean",
         "path": str(repo),
-        "branch": branch.strip() or None,
+        "branch": str(branch or "").strip() or None,
         "changed_file_count": len(status_lines),
         "status_preview": status_lines[:8],
-        "diff_stat": diff_stat.strip(),
-        "staged_diff_stat": staged_diff_stat.strip(),
+        "diff_stat": str(diff_stat or "").strip(),
+        "staged_diff_stat": str(staged_diff_stat or "").strip(),
     }
 
 
@@ -206,7 +208,7 @@ def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
     return str(desktop_path) if desktop_path.exists() else None
 
 
-def _run_git(repo: Path, args: list[str]) -> str:
+def _run_git(repo: Path, args: list[str]) -> str | None:
     try:
         completed = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -216,9 +218,9 @@ def _run_git(repo: Path, args: list[str]) -> str:
             timeout=2.0,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return ""
+        return None
     if completed.returncode != 0:
-        return ""
+        return None
     return str(completed.stdout or "").strip()
 
 
@@ -324,7 +326,7 @@ def _missing_evidence(
     missing: list[str] = []
     if blockers:
         missing.append("confirmed target repo")
-    if str(git.get("status") or "") in {"missing_target_repo", "missing_repo_path", "not_git_repo"}:
+    if str(git.get("status") or "") in {"missing_target_repo", "missing_repo_path", "not_git_repo", "git_unavailable"}:
         missing.append("git repo evidence")
     if str(route.get("status") or "") == "missing_route":
         missing.append("route exists")

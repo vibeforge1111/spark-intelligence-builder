@@ -69,6 +69,19 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertIn("route/demo evidence", result.facts["missing_evidence"])
         self.assertIn("I should not rate the build yet", result.reply_text)
 
+    def test_build_quality_review_marks_git_unavailable_as_missing_evidence(self) -> None:
+        with patch("spark_intelligence.build_quality_review.subprocess.run", side_effect=OSError("git unavailable")):
+            result = build_build_quality_review_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="How would you rate the quality of the /memory-quality build in spawner-ui?",
+            )
+
+        self.assertEqual(result.facts["git"]["status"], "git_unavailable")
+        self.assertIn("git repo evidence", result.facts["missing_evidence"])
+        self.assertIn("Git state: git_unavailable", result.reply_text)
+        self.assertNotIn("git unavailable", result.reply_text)
+
     def test_build_quality_review_accepts_recorded_test_and_demo_evidence(self) -> None:
         set_runtime_state_value(
             state_db=self.state_db,
