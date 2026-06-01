@@ -2174,11 +2174,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         enable_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=111,
-                user_id="111",
-                username="alice",
-                text="/think on",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=111,
+                    user_id="111",
+                    username="alice",
+                    text="/think on",
+                ),
+                tool_name="think.visibility.set",
             ),
         )
         self.assertTrue(enable_result.ok)
@@ -2223,11 +2226,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         disable_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=113,
-                user_id="111",
-                username="alice",
-                text="/think off",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=113,
+                    user_id="111",
+                    username="alice",
+                    text="/think off",
+                ),
+                tool_name="think.visibility.set",
             ),
         )
         self.assertTrue(disable_result.ok)
@@ -2239,11 +2245,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         enable_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=1131,
-                user_id="111",
-                username="alice",
-                text="Turn thinking on",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=1131,
+                    user_id="111",
+                    username="alice",
+                    text="Turn thinking on",
+                ),
+                tool_name="think.visibility.set",
             ),
         )
         self.assertTrue(enable_result.ok)
@@ -2265,15 +2274,77 @@ class OperatorPairingFlowTests(SparkTestCase):
         disable_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=1133,
-                user_id="111",
-                username="alice",
-                text="Turn thinking off",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=1133,
+                    user_id="111",
+                    username="alice",
+                    text="Turn thinking off",
+                ),
+                tool_name="think.visibility.set",
             ),
         )
         self.assertTrue(disable_result.ok)
         self.assertIn("Thinking visibility disabled", str(disable_result.detail["response_text"]))
+
+    def test_natural_language_think_toggle_without_turn_intent_does_not_steal_chat_or_write(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1134,
+                user_id="111",
+                username="alice",
+                text="Turn thinking on",
+            ),
+        )
+        self.assertTrue(result.ok)
+        self.assertNotIn("Thinking visibility enabled", str(result.detail["response_text"]))
+        self.assertNotEqual(result.detail.get("bridge_mode"), "runtime_command")
+
+        status_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1135,
+                user_id="111",
+                username="alice",
+                text="/think",
+            ),
+        )
+        self.assertTrue(status_result.ok)
+        self.assertIn("currently off", str(status_result.detail["response_text"]))
+
+    def test_think_toggle_without_turn_intent_does_not_write_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1136,
+                user_id="111",
+                username="alice",
+                text="/think on",
+            ),
+        )
+        self.assertTrue(result.ok)
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
+
+        status_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1137,
+                user_id="111",
+                username="alice",
+                text="/think",
+            ),
+        )
+        self.assertTrue(status_result.ok)
+        self.assertIn("currently off", str(status_result.detail["response_text"]))
 
     def test_swarm_status_command_returns_live_bridge_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
