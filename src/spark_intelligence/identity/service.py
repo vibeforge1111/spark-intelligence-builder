@@ -1847,7 +1847,10 @@ def review_pairings(
         params.append(channel_id)
     if status:
         if status not in allowed_statuses:
-            raise ValueError(f"Unsupported review pairing status '{status}'.")
+            allowed = ", ".join(allowed_statuses)
+            raise ValueError(
+                f"Unsupported review pairing status '{status}'. Allowed statuses: {allowed}."
+            )
         filters.append("status = ?")
         params.append(status)
     limit_clause = ""

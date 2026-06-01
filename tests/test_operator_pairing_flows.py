@@ -9514,3 +9514,12 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Voice transcription is unavailable right now.", result.detail["response_text"])
         self.assertIn("Telegram bot token is not available", result.detail["response_text"])
+
+    def test_review_pairings_rejects_unsupported_status_with_allowed_set_named(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            review_pairings(self.state_db, status="approved")
+        message = str(ctx.exception)
+        self.assertIn("'approved'", message)
+        self.assertIn("Allowed statuses:", message)
+        self.assertIn("pending", message)
+        self.assertIn("held", message)
