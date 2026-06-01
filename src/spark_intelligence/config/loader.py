@@ -460,7 +460,7 @@ class ConfigManager:
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
                 return principal
-        except Exception:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             pass
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
