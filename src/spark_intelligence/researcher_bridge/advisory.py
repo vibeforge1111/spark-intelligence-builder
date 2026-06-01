@@ -8869,9 +8869,16 @@ def build_researcher_reply(
     run_id: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
-    allow_memory_adapter_envelope: bool = True,
+    allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
+    if allow_memory_adapter_envelope is None:
+        allow_memory_adapter_envelope = bool(
+            config_manager.get_path(
+                "spark.testing.allow_researcher_memory_adapter",
+                default=False,
+            )
+        )
     attachment_context = build_attachment_context(config_manager)
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (

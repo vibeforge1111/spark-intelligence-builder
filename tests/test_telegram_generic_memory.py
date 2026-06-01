@@ -774,6 +774,31 @@ class TelegramGenericMemoryTests(SparkTestCase):
             gate_records,
         )
 
+    def test_build_researcher_reply_does_not_mint_memory_authority_by_default(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.config_manager.set_path("spark.testing.allow_researcher_memory_adapter", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-default-no-local-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-default-no-local-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+        )
+
+        self.assertNotEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertFalse(write_events)
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
     def test_build_researcher_reply_blocks_memory_delete_with_chat_only_turn_intent(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

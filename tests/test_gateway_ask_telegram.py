@@ -10,6 +10,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     build_telegram_runtime_summary,
     simulate_telegram_update,
 )
+from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.observability.store import record_event
@@ -648,6 +649,35 @@ class GatewayAskTelegramTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIsNone(captured.get("turn_intent_envelope"))
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulated_dm_supplies_memory_turn_intent_without_researcher_fallback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.gateway.simulated_dm.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = resolve_simulated_dm(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                channel_id="telegram",
+                request_id="req-simulated-dm-memory-authority",
+                external_user_id="111",
+                display_name="operator",
+                user_message="My favorite color is cobalt blue.",
+            )
+
+        self.assertTrue(result.ok)
+        payload = captured.get("turn_intent_payload")
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload["selectedIntent"]["action"], "memory.write")
+        self.assertEqual(payload["selectedIntent"]["ownerSystem"], "domain-chip-memory")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:
