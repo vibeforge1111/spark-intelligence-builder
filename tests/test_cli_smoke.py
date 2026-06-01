@@ -385,6 +385,46 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
         self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
 
+    def test_memory_export_movement_status_writes_compiler_artifact(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:movement-cli:test",
+            "--predicate",
+            "system.memory.movement_cli",
+            "--value",
+            "ok",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "export-movement-status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        result = json.loads(stdout)
+        path = self.home / "artifacts" / "memory-movement-index" / "memory-movement-status.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        encoded = json.dumps(payload)
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(result["path"], str(path))
+        self.assertEqual(payload["schema_version"], "spark.memory_movement_status_export.v1")
+        self.assertEqual(payload["status"], "supported")
+        self.assertGreaterEqual(payload["row_count"], 1)
+        self.assertNotIn("rows", payload)
+        self.assertNotIn("human:movement-cli:test", encoded)
+        self.assertNotIn("system.memory.movement_cli", encoded)
+
     def test_memory_status_reports_runtime_counts_and_last_smoke(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

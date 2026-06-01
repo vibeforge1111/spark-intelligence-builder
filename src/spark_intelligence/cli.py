@@ -123,6 +123,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_acceptance,
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
+    write_memory_movement_status_export,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
@@ -2520,6 +2521,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_movement_status_export_parser = memory_subparsers.add_parser(
+        "export-movement-status",
+        help="Write the redacted memory movement status artifact consumed by Spark OS compile",
+    )
+    memory_movement_status_export_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_movement_status_export_parser.add_argument("--sdk-module", help="Override the SDK module for this export")
+    memory_movement_status_export_parser.add_argument("--write", help="Optional output path for the status artifact")
+    memory_movement_status_export_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_lookup_parser = memory_subparsers.add_parser(
         "lookup-current-state",
         help="Read one structured current-state fact directly through the Domain Chip Memory bridge",
@@ -7052,6 +7061,27 @@ def handle_memory_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_export_movement_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = write_memory_movement_status_export(
+        config_manager=config_manager,
+        sdk_module=args.sdk_module,
+        write_path=args.write,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+    print("Spark memory movement status export")
+    print(f"- status: {payload.get('status') or 'unknown'}")
+    print(f"- rows: {payload.get('row_count') or 0}")
+    print(f"- path: {result.get('path') or 'unknown'}")
+    print("- redaction: allowlisted movement status only; memory rows and bodies omitted")
+    return 0
+
+
 def handle_memory_lookup_current_state(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9147,6 +9177,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_researcher_status(args)
     if args.command == "memory" and args.memory_command == "status":
         return handle_memory_status(args)
+    if args.command == "memory" and args.memory_command == "export-movement-status":
+        return handle_memory_export_movement_status(args)
     if args.command == "memory" and args.memory_command == "lookup-current-state":
         return handle_memory_lookup_current_state(args)
     if args.command == "memory" and args.memory_command == "inspect-human":
