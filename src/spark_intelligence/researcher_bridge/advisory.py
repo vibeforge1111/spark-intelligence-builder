@@ -4441,6 +4441,16 @@ def _authorize_researcher_memory_write(
     return False
 
 
+def _researcher_memory_read_side_effects_authorized(turn_intent_envelope: TurnIntentEnvelope | None) -> bool:
+    verdict, _ = authorize_tool_call(
+        turn_intent_envelope,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    return verdict == "allowed"
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -12681,6 +12691,7 @@ def build_researcher_reply(
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         archived_raw_episode_count = 0
         archived_structured_evidence_count = 0
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(turn_intent_envelope)
         direct_inspection = None
         recall_records: list[dict[str, Any]] = []
         read_method = "get_current_state"
@@ -12811,27 +12822,28 @@ def build_researcher_reply(
                         for candidate in older_evidence_records
                     ):
                         continue
-                    try:
-                        archive_structured_evidence_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=str(record.get("predicate") or ""),
-                            evidence_text=_memory_record_text(record),
-                            evidence_observation_id=record_id,
-                            archive_reason="eclipsed_by_newer_structured_evidence",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_structured_evidence_archiver",
-                        )
-                        archived_structured_evidence_count += 1
-                        if record_id:
-                            archived_structured_evidence_ids.add(record_id)
-                        if record_text:
-                            archived_structured_evidence_texts.add(record_text)
-                    except Exception:
-                        pass
+                    if record_id:
+                        archived_structured_evidence_ids.add(record_id)
+                    if record_text:
+                        archived_structured_evidence_texts.add(record_text)
+                    if memory_read_side_effects_allowed:
+                        try:
+                            archive_structured_evidence_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                evidence_text=_memory_record_text(record),
+                                evidence_observation_id=record_id,
+                                archive_reason="eclipsed_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_structured_evidence_archiver",
+                            )
+                            archived_structured_evidence_count += 1
+                        except Exception:
+                            pass
                 if archived_structured_evidence_ids or archived_structured_evidence_texts:
                     recall_records = [
                         record
@@ -12867,30 +12879,28 @@ def build_researcher_reply(
                     record_timestamp = _memory_record_timestamp(record)
                     if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
                         continue
-                    try:
-                        archive_raw_episode_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            episode_text=_memory_record_text(record),
-                            raw_episode_observation_id=str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            or None,
-                            archive_reason="covered_by_newer_structured_evidence",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_raw_episode_archiver",
-                        )
-                        archived_raw_episode_count += 1
-                        record_id = str(
-                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                        ).strip()
-                        if record_id:
-                            archived_raw_episode_ids.add(record_id)
-                    except Exception:
-                        pass
+                    record_id = str(
+                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                    ).strip()
+                    if record_id:
+                        archived_raw_episode_ids.add(record_id)
+                    if memory_read_side_effects_allowed:
+                        try:
+                            archive_raw_episode_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                episode_text=_memory_record_text(record),
+                                raw_episode_observation_id=record_id or None,
+                                archive_reason="covered_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_raw_episode_archiver",
+                            )
+                            archived_raw_episode_count += 1
+                        except Exception:
+                            pass
                 if archived_raw_episode_ids:
                     recall_records = [
                         record
@@ -12943,27 +12953,28 @@ def build_researcher_reply(
                             for candidate in older_evidence_records
                         ):
                             continue
-                        try:
-                            archive_structured_evidence_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                predicate=str(record.get("predicate") or ""),
-                                evidence_text=_memory_record_text(record),
-                                evidence_observation_id=record_id,
-                                archive_reason="eclipsed_by_newer_structured_evidence",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_structured_evidence_archiver",
-                            )
-                            archived_structured_evidence_count += 1
-                            if record_id:
-                                archived_structured_evidence_ids.add(record_id)
-                            if record_text:
-                                archived_structured_evidence_texts.add(record_text)
-                        except Exception:
-                            pass
+                        if record_id:
+                            archived_structured_evidence_ids.add(record_id)
+                        if record_text:
+                            archived_structured_evidence_texts.add(record_text)
+                        if memory_read_side_effects_allowed:
+                            try:
+                                archive_structured_evidence_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=str(record.get("predicate") or ""),
+                                    evidence_text=_memory_record_text(record),
+                                    evidence_observation_id=record_id,
+                                    archive_reason="eclipsed_by_newer_structured_evidence",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_structured_evidence_archiver",
+                                )
+                                archived_structured_evidence_count += 1
+                            except Exception:
+                                pass
                     if archived_structured_evidence_ids or archived_structured_evidence_texts:
                         recall_records = [
                             record
@@ -12999,30 +13010,28 @@ def build_researcher_reply(
                         record_timestamp = _memory_record_timestamp(record)
                         if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
                             continue
-                        try:
-                            archive_raw_episode_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                episode_text=_memory_record_text(record),
-                                raw_episode_observation_id=str(
-                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                                ).strip()
-                                or None,
-                                archive_reason="covered_by_newer_structured_evidence",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_raw_episode_archiver",
-                            )
-                            archived_raw_episode_count += 1
-                            record_id = str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            if record_id:
-                                archived_raw_episode_ids.add(record_id)
-                        except Exception:
-                            pass
+                        record_id = str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        if record_id:
+                            archived_raw_episode_ids.add(record_id)
+                        if memory_read_side_effects_allowed:
+                            try:
+                                archive_raw_episode_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    episode_text=_memory_record_text(record),
+                                    raw_episode_observation_id=record_id or None,
+                                    archive_reason="covered_by_newer_structured_evidence",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_raw_episode_archiver",
+                                )
+                                archived_raw_episode_count += 1
+                            except Exception:
+                                pass
                     if archived_raw_episode_ids:
                         recall_records = [
                             record
@@ -13147,6 +13156,7 @@ def build_researcher_reply(
                     "candidate_record_count": len(recall_records),
                     "archived_structured_evidence_count": archived_structured_evidence_count,
                     "archived_raw_episode_count": archived_raw_episode_count,
+                    "memory_read_side_effects_allowed": memory_read_side_effects_allowed,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                     "candidate_memory_roles": candidate_memory_roles,
@@ -13173,6 +13183,7 @@ def build_researcher_reply(
         )
     if detected_belief_recall_query is not None:
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(turn_intent_envelope)
         evidence_lookup = retrieve_memory_evidence_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -13195,27 +13206,28 @@ def build_researcher_reply(
                     _belief_records_past_revalidation(belief_records),
                     invalidated_belief_ids,
                 )
-                for record in archivable_belief_records:
-                    try:
-                        archive_belief_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=str(record.get("predicate") or ""),
-                            belief_text=_memory_record_text(record),
-                            belief_observation_id=str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            or None,
-                            archive_reason="invalidated_and_past_revalidation",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_belief_archiver",
-                        )
-                        archived_belief_count += 1
-                    except Exception:
-                        pass
+                if memory_read_side_effects_allowed:
+                    for record in archivable_belief_records:
+                        try:
+                            archive_belief_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                belief_text=_memory_record_text(record),
+                                belief_observation_id=str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                or None,
+                                archive_reason="invalidated_and_past_revalidation",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_belief_archiver",
+                            )
+                            archived_belief_count += 1
+                        except Exception:
+                            pass
                 evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
                 newer_evidence_records = [
                     record
@@ -13251,27 +13263,28 @@ def build_researcher_reply(
                         _belief_records_past_revalidation(belief_records),
                         invalidated_belief_ids,
                     )
-                    for record in archivable_belief_records:
-                        try:
-                            archive_belief_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                predicate=str(record.get("predicate") or ""),
-                                belief_text=_memory_record_text(record),
-                                belief_observation_id=str(
-                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                                ).strip()
-                                or None,
-                                archive_reason="invalidated_and_past_revalidation",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_belief_archiver",
-                            )
-                            archived_belief_count += 1
-                        except Exception:
-                            pass
+                    if memory_read_side_effects_allowed:
+                        for record in archivable_belief_records:
+                            try:
+                                archive_belief_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=str(record.get("predicate") or ""),
+                                    belief_text=_memory_record_text(record),
+                                    belief_observation_id=str(
+                                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                    ).strip()
+                                    or None,
+                                    archive_reason="invalidated_and_past_revalidation",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_belief_archiver",
+                                )
+                                archived_belief_count += 1
+                            except Exception:
+                                pass
                     evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
                     newer_evidence_records = [
                         record
@@ -13467,6 +13480,7 @@ def build_researcher_reply(
                     "belief_stale_due_to_age": bool(stale_belief_records),
                     "stale_belief_count": len(stale_belief_records),
                     "archived_belief_count": archived_belief_count,
+                    "memory_read_side_effects_allowed": memory_read_side_effects_allowed,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                 },

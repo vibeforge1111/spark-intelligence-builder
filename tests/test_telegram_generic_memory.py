@@ -2511,7 +2511,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("active_state_maintenance_actions"), ["stale_preserved"])
         self.assertTrue(facts.get("stale_current_fact"))
 
-    def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
+    def test_build_researcher_reply_does_not_archive_structured_evidence_during_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -2578,7 +2578,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_open_recall")
         self.assertIn("identity retry flow is confusing", result.reply_text.lower())
         self.assertNotIn("users keep dropping during onboarding because stripe verification fails.", result.reply_text.lower())
-        mocked_archive.assert_called_once()
+        mocked_archive.assert_not_called()
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         facts = next(
@@ -2589,7 +2589,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ),
             {},
         )
-        self.assertEqual(facts.get("archived_structured_evidence_count"), 1)
+        self.assertEqual(facts.get("archived_structured_evidence_count"), 0)
+        self.assertFalse(facts.get("memory_read_side_effects_allowed"))
 
     def test_build_researcher_reply_answers_open_raw_episode_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2641,7 +2642,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("episodic", facts.get("retrieved_memory_roles") or [])
 
-    def test_build_researcher_reply_archives_stale_raw_episode_when_newer_evidence_exists(self) -> None:
+    def test_build_researcher_reply_does_not_archive_raw_episode_during_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -2701,7 +2702,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ),
             {},
         )
-        self.assertEqual(facts.get("archived_raw_episode_count"), 1)
+        self.assertEqual(facts.get("archived_raw_episode_count"), 0)
+        self.assertFalse(facts.get("memory_read_side_effects_allowed"))
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
         archive_write = next(
             (
@@ -2713,8 +2715,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
             {},
         )
         archive_observations = archive_write.get("observations") or []
-        self.assertTrue(archive_observations)
-        self.assertEqual(archive_observations[0].get("raw_episode_lifecycle_action"), "archived")
+        self.assertFalse(archive_observations)
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
