@@ -13,6 +13,7 @@ from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
     _normalize_collective_payload,
     _normalize_runtime_source,
+    _read_local_swarm_env_map,
     _record_swarm_sync_state,
     _record_swarm_failure_state,
     evaluate_swarm_escalation,
@@ -91,6 +92,36 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(
             payload["runtimeSource"]["sourceRunId"],
             "spark-researcher:2026-03-27T10:00:00+00:00",
+        )
+
+    def test_read_local_swarm_env_map_strips_matching_outer_quotes(self) -> None:
+        runtime_root = self.home / "spark-swarm"
+        api_env = runtime_root / "apps" / "api" / ".env"
+        api_env.parent.mkdir(parents=True)
+        api_env.write_text(
+            "\n".join(
+                [
+                    'DOUBLE_QUOTED="double-value"',
+                    "SINGLE_QUOTED='single-value'",
+                    "UNQUOTED=plain-value",
+                    'UNMATCHED="keep-leading-quote',
+                    'INNER_QUOTES=prefix"inner"suffix',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.config_manager.set_path("spark.swarm.runtime_root", str(runtime_root))
+
+        self.assertEqual(
+            _read_local_swarm_env_map(self.config_manager),
+            {
+                "DOUBLE_QUOTED": "double-value",
+                "SINGLE_QUOTED": "single-value",
+                "UNQUOTED": "plain-value",
+                "UNMATCHED": '"keep-leading-quote',
+                "INNER_QUOTES": 'prefix"inner"suffix',
+            },
         )
 
     def test_normalize_runtime_source_preserves_existing_values(self) -> None:
