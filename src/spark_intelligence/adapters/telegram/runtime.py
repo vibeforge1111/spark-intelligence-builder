@@ -4102,6 +4102,13 @@ def _handle_runtime_command(
         ("/voice reply off", None),
     }:
         enabled = lowered == "/voice reply on" or natural_voice_command == ("/voice reply on", None)
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice reply",
+            tool_name="voice.reply.set",
+        )
+        if authority_block is not None:
+            return authority_block
         _set_voice_reply_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -4184,6 +4191,13 @@ def _handle_runtime_command(
             "respect_voice_reply_state": False,
         }
     if lowered in {"/voice undo", "/voice rollback"} or natural_voice_command == ("/voice undo", None):
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice undo",
+            tool_name="voice.profile.undo",
+        )
+        if authority_block is not None:
+            return authority_block
         return {
             "command": "/voice undo",
             "reply_text": _restore_telegram_voice_profile_undo(
@@ -4226,6 +4240,13 @@ def _handle_runtime_command(
                 "reply_text": _render_telegram_voice_provider_help(),
                 "respect_voice_reply_state": False,
             }
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice provider",
+            tool_name="voice.provider.set",
+        )
+        if authority_block is not None:
+            return authority_block
         _push_telegram_voice_profile_undo(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -4278,6 +4299,14 @@ def _handle_runtime_command(
             target = normalized[len("/voice select") :].strip()
         else:
             target = str(natural_voice_command[1] or "").strip()
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice voice",
+            tool_name="voice.profile.select",
+            external_network=True,
+        )
+        if authority_block is not None:
+            return authority_block
         return {
             "command": "/voice voice",
             "reply_text": _select_elevenlabs_voice_for_telegram_dm(
@@ -4306,6 +4335,13 @@ def _handle_runtime_command(
             style = str(natural_voice_command[1] or "").strip()
         else:
             style = "warmer, natural, clear"
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice mutate",
+            tool_name="voice.profile.tune",
+        )
+        if authority_block is not None:
+            return authority_block
         return {
             "command": "/voice mutate",
             "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
@@ -7489,6 +7525,25 @@ def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ..
         ),
         "respect_voice_reply_state": False,
     }
+
+
+def _authorize_voice_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    external_network: bool = False,
+) -> dict[str, Any] | None:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class="writes_memory",
+        external_network=external_network,
+    )
+    if authority.allowed:
+        return None
+    return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
 
 
 def _run_voice_doctor_command(

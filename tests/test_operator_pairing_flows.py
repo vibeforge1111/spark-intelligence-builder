@@ -12,6 +12,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     _select_elevenlabs_voice_for_telegram_dm,
     _synthesize_telegram_voice_reply,
     _telegram_voice_runtime_state_with_delivery,
+    _voice_tts_provider_write_state_key,
     _voice_tts_profile_write_state_key,
     poll_telegram_updates_once,
     simulate_telegram_update,
@@ -6533,11 +6534,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         enabled = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11812,
-                user_id="111",
-                username="alice",
-                text="/voice reply on",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=11812,
+                    user_id="111",
+                    username="alice",
+                    text="/voice reply on",
+                ),
+                tool_name="voice.reply.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
         after_enable = simulate_telegram_update(
@@ -6553,11 +6559,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         disabled = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11814,
-                user_id="111",
-                username="alice",
-                text="/voice reply off",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=11814,
+                    user_id="111",
+                    username="alice",
+                    text="/voice reply off",
+                ),
+                tool_name="voice.reply.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
 
@@ -6572,11 +6583,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         enabled = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11815,
-                user_id="111",
-                username="alice",
-                text="Turn voice replies on",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=11815,
+                    user_id="111",
+                    username="alice",
+                    text="Turn voice replies on",
+                ),
+                tool_name="voice.reply.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
         status = simulate_telegram_update(
@@ -6592,6 +6608,34 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertIn("Voice replies enabled", enabled.detail["response_text"])
         self.assertIn("currently on", status.detail["response_text"])
+
+    def test_natural_language_voice_reply_enable_without_turn_intent_does_not_write_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118150,
+                user_id="111",
+                username="alice",
+                text="Turn voice replies on",
+            ),
+        )
+        status = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1181510,
+                user_id="111",
+                username="alice",
+                text="/voice reply",
+            ),
+        )
+
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", result.detail["response_text"])
+        self.assertIn("currently off", status.detail["response_text"])
 
     def test_natural_language_install_voice_opens_onboarding_without_enabling_replies(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6799,11 +6843,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         switched = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118161,
-                user_id="111",
-                username="alice",
-                text="Can you switch my voice to ElevenLabs?",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118161,
+                    user_id="111",
+                    username="alice",
+                    text="Can you switch my voice to ElevenLabs?",
+                ),
+                tool_name="voice.provider.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
         status = simulate_telegram_update(
@@ -6820,6 +6869,29 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("I will use ElevenLabs", switched.detail["response_text"])
         self.assertIn("Voice is set to ElevenLabs", status.detail["response_text"])
         self.assertIn("Missing local config", status.detail["response_text"])
+
+    def test_natural_language_voice_provider_switch_without_turn_intent_does_not_write_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        switched = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1181611,
+                user_id="111",
+                username="alice",
+                text="Can you switch my voice to ElevenLabs?",
+            ),
+        )
+        self.assertIn("missing Spark authority", switched.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", switched.detail["response_text"])
+        scoped_key = _voice_tts_provider_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        self.assertIsNone(row)
 
     def test_natural_language_voice_provider_guide_is_conversational(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -6898,11 +6970,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118167,
-                    user_id="111",
-                    username="alice",
-                    text="Use voice Elise",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118167,
+                        user_id="111",
+                        username="alice",
+                        text="Use voice Elise",
+                    ),
+                    tool_name="voice.profile.select",
+                    mutation_class="writes_memory",
+                    external_network=True,
                 ),
             )
 
@@ -6928,6 +7005,44 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(profile["voice_name"], "Elise")
         self.assertEqual(profile["secret_env_ref"], "ELEVENLABS_API_KEY")
         self.assertEqual(profile["scope"], "this agent, Telegram profile, and DM")
+
+    def test_natural_language_voice_pick_without_turn_intent_does_not_save_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ) as voices_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1181671,
+                    user_id="111",
+                    username="alice",
+                    text="Use voice Elise",
+                ),
+            )
+
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", result.detail["response_text"])
+        voices_mock.assert_not_called()
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        self.assertIsNone(row)
 
     def test_natural_language_voice_pick_requires_explicit_voice_anchor(self) -> None:
         self.assertIsNone(_match_natural_voice_command("Set my current plan to launch and keep it current."))
@@ -6955,21 +7070,31 @@ class OperatorPairingFlowTests(SparkTestCase):
             simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118168,
-                    user_id="111",
-                    username="alice",
-                    text="Use voice Elise",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118168,
+                        user_id="111",
+                        username="alice",
+                        text="Use voice Elise",
+                    ),
+                    tool_name="voice.profile.select",
+                    mutation_class="writes_memory",
+                    external_network=True,
                 ),
             )
         mutated = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118169,
-                user_id="111",
-                username="alice",
-                text="Make it warmer and more geeky",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118169,
+                    user_id="111",
+                    username="alice",
+                    text="Make it warmer and more geeky",
+                ),
+                tool_name="voice.profile.tune",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
 
@@ -6986,6 +7111,62 @@ class OperatorPairingFlowTests(SparkTestCase):
         profile = json.loads(row["value"])
         self.assertEqual(profile["voice_settings"]["speed"], 1.04)
         self.assertEqual(profile["voice_settings"]["similarity_boost"], 0.8)
+
+    def test_natural_language_voice_mutation_without_turn_intent_does_not_change_profile(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        fake_voices = [
+            {
+                "voice_id": "voice-elise",
+                "name": "Elise",
+                "category": "professional",
+                "description": "Warm natural conversational voice for explainers.",
+                "labels": {"gender": "female", "age": "young", "accent": "american", "use_case": "conversational"},
+            }
+        ]
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices",
+            return_value=(fake_voices, None),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=1181691,
+                        user_id="111",
+                        username="alice",
+                        text="Use voice Elise",
+                    ),
+                    tool_name="voice.profile.select",
+                    mutation_class="writes_memory",
+                    external_network=True,
+                ),
+            )
+        scoped_key = _voice_tts_profile_write_state_key(
+            external_user_id="111",
+            agent_id="agent:human:telegram:111",
+        )
+        with self.state_db.connect() as conn:
+            before_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        before_profile = json.loads(before_row["value"])
+
+        mutated = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1181692,
+                user_id="111",
+                username="alice",
+                text="Make it warmer and more geeky",
+            ),
+        )
+
+        self.assertIn("missing Spark authority", mutated.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", mutated.detail["response_text"])
+        with self.state_db.connect() as conn:
+            after_row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (scoped_key,)).fetchone()
+        self.assertEqual(json.loads(after_row["value"]), before_profile)
 
     def test_short_voice_mutation_followup_updates_saved_profile_settings(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -7006,21 +7187,31 @@ class OperatorPairingFlowTests(SparkTestCase):
             simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118170,
-                    user_id="111",
-                    username="alice",
-                    text="Use voice Elise",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118170,
+                        user_id="111",
+                        username="alice",
+                        text="Use voice Elise",
+                    ),
+                    tool_name="voice.profile.select",
+                    mutation_class="writes_memory",
+                    external_network=True,
                 ),
             )
         mutated = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118171,
-                user_id="111",
-                username="alice",
-                text="a little faster",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118171,
+                    user_id="111",
+                    username="alice",
+                    text="a little faster",
+                ),
+                tool_name="voice.profile.tune",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
 
@@ -7046,11 +7237,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118172,
-                    user_id="111",
-                    username="alice",
-                    text="Use voice Elise",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118172,
+                        user_id="111",
+                        username="alice",
+                        text="Use voice Elise",
+                    ),
+                    tool_name="voice.profile.select",
+                    mutation_class="writes_memory",
+                    external_network=True,
                 ),
             )
         scoped_key = _voice_tts_profile_write_state_key(
@@ -7064,21 +7260,31 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118173,
-                user_id="111",
-                username="alice",
-                text="a little faster",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118173,
+                    user_id="111",
+                    username="alice",
+                    text="a little faster",
+                ),
+                tool_name="voice.profile.tune",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
         undone = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118174,
-                user_id="111",
-                username="alice",
-                text="go back to the previous voice",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118174,
+                    user_id="111",
+                    username="alice",
+                    text="go back to the previous voice",
+                ),
+                tool_name="voice.profile.undo",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
 
@@ -7093,11 +7299,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118163,
-                user_id="111",
-                username="alice",
-                text="Use ElevenLabs for voice",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=118163,
+                    user_id="111",
+                    username="alice",
+                    text="Use ElevenLabs for voice",
+                ),
+                tool_name="voice.provider.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
         captured_payload: dict[str, object] = {}
@@ -7692,11 +7903,16 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11831,
-                user_id="111",
-                username="alice",
-                text="/voice reply on",
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=11831,
+                    user_id="111",
+                    username="alice",
+                    text="/voice reply on",
+                ),
+                tool_name="voice.reply.set",
+                mutation_class="writes_memory",
+                external_network=False,
             ),
         )
 
