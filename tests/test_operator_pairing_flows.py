@@ -39,6 +39,76 @@ from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 from tests.test_support import SparkTestCase, make_telegram_update
 
 
+def _with_swarm_turn_intent(
+    update: dict,
+    *,
+    tool_name: str,
+    mutation_class: str = "launches_mission",
+    external_network: bool = False,
+    publishes: bool = False,
+    no_execution: bool = False,
+) -> dict:
+    message = dict(update.get("message") or {})
+    allowed_tools = ["answer.compose"]
+    mutation_classes = ["none", "read_only"]
+    if not no_execution:
+        allowed_tools.append(tool_name)
+        mutation_classes.append(mutation_class)
+    message["spark_turn_intent"] = {
+        "schema": "spark.turn_intent.v1",
+        "turnId": "turn:swarm-test",
+        "traceId": "trace:swarm-test",
+        "surface": "telegram",
+        "directive": {
+            "mode": "answer" if no_execution else "execute",
+            "noExecution": no_execution,
+            "noPublish": publishes and no_execution,
+            "localOnly": False,
+            "explanationOnly": no_execution,
+            "quotedOrMetaLanguage": no_execution,
+        },
+        "selectedIntent": {
+            "kind": "swarm_action",
+            "ownerSystem": "spark-swarm",
+            "action": tool_name,
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": "explicit",
+        },
+        "sessionScope": {
+            "sessionKey": "telegram:dm:111",
+            "surface": "telegram",
+            "conversationKind": "dm",
+            "userRef": "user:111",
+            "chatRef": "chat:111",
+            "memoryLoadPolicy": "evidence_only",
+            "pendingStateScope": "same_session_only",
+        },
+        "toolPolicy": {
+            "allowedTools": allowed_tools,
+            "deniedTools": [],
+            "enabledToolsets": ["telegram.reply", "spark-swarm"],
+            "mutationClassesAllowed": mutation_classes,
+            "requiresApprovalFor": [],
+            "networkPolicy": "external" if external_network else "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": False,
+            "canLaunchMission": mutation_class == "launches_mission" and not no_execution,
+            "canWriteMemory": False,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": publishes and not no_execution,
+            "canUseExternalNetwork": external_network and not no_execution,
+        },
+        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+    }
+    enriched = dict(update)
+    enriched["message"] = message
+    return enriched
+
+
 class OperatorPairingFlowTests(SparkTestCase):
     def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
         record_pairing_context(
@@ -2632,11 +2702,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=116,
-                    user_id="111",
-                    username="alice",
-                    text="/swarm sync",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=116,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm sync",
+                    ),
+                    tool_name="swarm.collective.sync",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -2660,11 +2735,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=216,
-                    user_id="111",
-                    username="alice",
-                    text="Please sync with swarm",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=216,
+                        user_id="111",
+                        username="alice",
+                        text="Please sync with swarm",
+                    ),
+                    tool_name="swarm.collective.sync",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -2947,11 +3027,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=224,
-                    user_id="111",
-                    username="alice",
-                    text="/swarm absorb insight-1 because this is repeatable",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=224,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm absorb insight-1 because this is repeatable",
+                    ),
+                    tool_name="swarm.insight.absorb",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3001,11 +3086,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2241,
-                    user_id="111",
-                    username="alice",
-                    text="absorb the latest Startup Operator insight",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2241,
+                        user_id="111",
+                        username="alice",
+                        text="absorb the latest Startup Operator insight",
+                    ),
+                    tool_name="swarm.insight.absorb",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3027,11 +3117,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=225,
-                    user_id="111",
-                    username="alice",
-                    text="review mastery mastery-7 approve in swarm because it held up under testing",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=225,
+                        user_id="111",
+                        username="alice",
+                        text="review mastery mastery-7 approve in swarm because it held up under testing",
+                    ),
+                    tool_name="swarm.mastery.review",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3070,11 +3165,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2261,
-                    user_id="111",
-                    username="alice",
-                    text="/swarm absorb insight-1",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2261,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm absorb insight-1",
+                    ),
+                    tool_name="swarm.insight.absorb",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3096,11 +3196,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=227,
-                    user_id="111",
-                    username="alice",
-                    text="set specialization spec-2 to checked auto merge in swarm",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=227,
+                        user_id="111",
+                        username="alice",
+                        text="set specialization spec-2 to checked auto merge in swarm",
+                    ),
+                    tool_name="swarm.mode.set",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3128,11 +3233,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2271,
-                    user_id="111",
-                    username="alice",
-                    text="set Startup Operator to checked auto merge in swarm",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2271,
+                        user_id="111",
+                        username="alice",
+                        text="set Startup Operator to checked auto merge in swarm",
+                    ),
+                    tool_name="swarm.mode.set",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3182,11 +3292,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2272,
-                    user_id="111",
-                    username="alice",
-                    text="approve the latest Startup Operator mastery",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2272,
+                        user_id="111",
+                        username="alice",
+                        text="approve the latest Startup Operator mastery",
+                    ),
+                    tool_name="swarm.mastery.review",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3236,11 +3351,17 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=228,
-                    user_id="111",
-                    username="alice",
-                    text="/swarm deliver upgrade-2",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=228,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm deliver upgrade-2",
+                    ),
+                    tool_name="swarm.upgrade.deliver",
+                    mutation_class="external_network",
+                    external_network=True,
+                    publishes=True,
                 ),
             )
 
@@ -3301,11 +3422,17 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2281,
-                    user_id="111",
-                    username="alice",
-                    text="deliver the latest Startup Operator upgrade",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2281,
+                        user_id="111",
+                        username="alice",
+                        text="deliver the latest Startup Operator upgrade",
+                    ),
+                    tool_name="swarm.upgrade.deliver",
+                    mutation_class="external_network",
+                    external_network=True,
+                    publishes=True,
                 ),
             )
 
@@ -3362,11 +3489,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=229,
-                    user_id="111",
-                    username="alice",
-                    text="sync delivery status for upgrade upgrade-2 in swarm",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=229,
+                        user_id="111",
+                        username="alice",
+                        text="sync delivery status for upgrade upgrade-2 in swarm",
+                    ),
+                    tool_name="swarm.delivery.sync",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3427,11 +3559,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2291,
-                    user_id="111",
-                    username="alice",
-                    text="sync delivery status for the latest Startup Operator upgrade",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2291,
+                        user_id="111",
+                        username="alice",
+                        text="sync delivery status for the latest Startup Operator upgrade",
+                    ),
+                    tool_name="swarm.delivery.sync",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -3550,11 +3687,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2302,
-                    user_id="111",
-                    username="alice",
-                    text="/swarm run startup-operator",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2302,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm run startup-operator",
+                    ),
+                    tool_name="swarm.path.run",
                 ),
             )
 
@@ -3562,6 +3702,26 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Startup Operator run completed.", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm autoloop startup-operator` or `/swarm session startup-operator`.", str(result.detail["response_text"]))
         self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
+
+    def test_swarm_run_command_without_turn_intent_does_not_execute(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.swarm_bridge_run_specialization_path") as run_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=23021,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm run startup-operator",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("missing the Spark authority envelope", str(result.detail["response_text"]))
+        self.assertIn("missing_or_invalid_envelope", str(result.detail["response_text"]))
+        run_mock.assert_not_called()
 
     def test_natural_language_swarm_autoloop_command_runs_local_loop(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3629,11 +3789,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2303,
-                    user_id="111",
-                    username="alice",
-                    text="start autoloop for Startup Operator in swarm for 2 rounds",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2303,
+                        user_id="111",
+                        username="alice",
+                        text="start autoloop for Startup Operator in swarm for 2 rounds",
+                    ),
+                    tool_name="swarm.autoloop.run",
                 ),
             )
 
@@ -3655,6 +3818,40 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Promotion readiness: ready (benchmark_proof_passed).", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
+
+    def test_natural_language_swarm_autoloop_no_execution_envelope_does_not_execute(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch("spark_intelligence.adapters.telegram.runtime.swarm_bridge_autoloop") as autoloop_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=23031,
+                        user_id="111",
+                        username="alice",
+                        text="start autoloop for Startup Operator in swarm",
+                    ),
+                    tool_name="swarm.autoloop.run",
+                    no_execution=True,
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("missing the Spark authority envelope", str(result.detail["response_text"]))
+        self.assertIn("no_execution_boundary", str(result.detail["response_text"]))
+        autoloop_mock.assert_not_called()
 
     def test_natural_language_swarm_continue_uses_latest_session_when_unspecified(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3700,11 +3897,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2304,
-                    user_id="111",
-                    username="alice",
-                    text="continue the Startup Operator autoloop in swarm for 1 more round",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2304,
+                        user_id="111",
+                        username="alice",
+                        text="continue the Startup Operator autoloop in swarm for 1 more round",
+                    ),
+                    tool_name="swarm.autoloop.run",
                 ),
             )
 
@@ -3756,11 +3956,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=23041,
-                    user_id="111",
-                    username="alice",
-                    text="continue the Startup Operator autoloop in swarm for 1 more round anyway",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=23041,
+                        user_id="111",
+                        username="alice",
+                        text="continue the Startup Operator autoloop in swarm for 1 more round anyway",
+                    ),
+                    tool_name="swarm.autoloop.run",
                 ),
             )
 
@@ -3896,11 +4099,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=23042,
-                    user_id="111",
-                    username="alice",
-                    text="start autoloop for Startup Operator in swarm for 1 round",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=23042,
+                        user_id="111",
+                        username="alice",
+                        text="start autoloop for Startup Operator in swarm for 1 round",
+                    ),
+                    tool_name="swarm.autoloop.run",
                 ),
             )
 
@@ -3934,11 +4140,14 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=2306,
-                    user_id="111",
-                    username="alice",
-                    text="execute the latest Startup Operator rerun request in swarm",
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=2306,
+                        user_id="111",
+                        username="alice",
+                        text="execute the latest Startup Operator rerun request in swarm",
+                    ),
+                    tool_name="swarm.rerun.execute",
                 ),
             )
 
