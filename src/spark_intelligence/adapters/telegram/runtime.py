@@ -32,6 +32,7 @@ from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    build_telegram_memory_diagnostic_turn_intent_payload,
     build_telegram_memory_turn_intent_payload,
     extract_turn_intent_envelope,
 )
@@ -320,16 +321,42 @@ def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | No
 
 def _with_telegram_memory_turn_intent(
     *,
+    config_manager: ConfigManager | None = None,
     update_payload: dict[str, Any] | None,
     request_id: str,
     session_id: str,
     human_id: str,
+    external_user_id: str = "",
     user_message: str,
 ) -> dict[str, Any] | None:
     if not isinstance(update_payload, dict):
         return update_payload
     if extract_turn_intent_envelope(update_payload) is not None:
         return update_payload
+    diagnostic_source_kind = _detect_telegram_memory_diagnostic_authority_source_kind(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        request_id=request_id,
+        user_message=user_message,
+    )
+    if diagnostic_source_kind is not None:
+        turn_intent_payload = build_telegram_memory_diagnostic_turn_intent_payload(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            source_kind=diagnostic_source_kind,
+        )
+        if turn_intent_payload is not None:
+            enriched = dict(update_payload)
+            enriched["spark_turn_intent"] = turn_intent_payload
+            message = enriched.get("message")
+            if isinstance(message, dict):
+                enriched_message = dict(message)
+                enriched_message["spark_turn_intent"] = turn_intent_payload
+                enriched["message"] = enriched_message
+            return enriched
     source_kind = _detect_telegram_memory_authority_source_kind(user_message)
     if source_kind is None:
         return update_payload
@@ -352,6 +379,51 @@ def _with_telegram_memory_turn_intent(
         enriched_message["spark_turn_intent"] = turn_intent_payload
         enriched["message"] = enriched_message
     return enriched
+
+
+def _detect_telegram_memory_diagnostic_authority_source_kind(
+    *,
+    config_manager: ConfigManager | None,
+    external_user_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    lowered = " ".join(text.split()).lower()
+    if lowered.startswith("/memory doctor"):
+        try:
+            target = _memory_doctor_target_from_slash_command(text)
+            if bool(target.get("help_requested")):
+                return None
+        except Exception:
+            pass
+        return "telegram_runtime_memory_doctor_slash"
+    try:
+        target = _match_natural_memory_doctor_command(text)
+    except Exception:
+        target = None
+    if isinstance(target, dict):
+        if bool(target.get("help_requested")):
+            return None
+        return "telegram_runtime_memory_doctor_natural"
+    if config_manager is None:
+        return None
+    try:
+        target = _match_contextual_memory_doctor_command(
+            inbound_text=text,
+            config_manager=config_manager,
+            external_user_id=external_user_id,
+            session_id=session_id,
+            current_request_id=request_id,
+        )
+    except Exception:
+        target = None
+    if isinstance(target, dict):
+        return "telegram_runtime_memory_doctor_contextual"
+    return None
 
 
 def _format_chip_metric_value(value: object) -> str:
@@ -1302,10 +1374,12 @@ def simulate_telegram_update(
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
             researcher_update_payload = _with_telegram_memory_turn_intent(
+                config_manager=config_manager,
                 update_payload=update_payload,
                 request_id=request_id,
                 session_id=resolution.session_id,
                 human_id=resolution.human_id,
+                external_user_id=normalized.telegram_user_id,
                 user_message=effective_text,
             ) or update_payload
         voice_answer_request = _extract_voice_answer_request(effective_text)
@@ -2331,10 +2405,12 @@ def poll_telegram_updates_once(
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
         voice_answer_requested_for_bridge = False
         researcher_update_payload = _with_telegram_memory_turn_intent(
+            config_manager=config_manager,
             update_payload=update,
             request_id=run.request_id,
             session_id=resolution.session_id,
             human_id=resolution.human_id,
+            external_user_id=normalized.telegram_user_id,
             user_message=effective_text,
         ) or update
         voice_answer_request = _extract_voice_answer_request(effective_text)
@@ -4140,6 +4216,20 @@ def _handle_runtime_command(
     elif natural_memory_doctor_command is not None:
         memory_doctor_command = dict(natural_memory_doctor_command)
     if memory_doctor_command is not None:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="memory.diagnose",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+        )
+        if not authority.allowed:
+            return {
+                "command": "/memory doctor",
+                "reply_text": _render_memory_doctor_authority_blocked_reply(
+                    reason_codes=authority.reason_codes,
+                ),
+                "respect_voice_reply_state": True,
+            }
         return _handle_memory_doctor_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -6063,6 +6153,15 @@ def _render_memory_doctor_help_reply() -> str:
     )
 
 
+def _render_memory_doctor_authority_blocked_reply(*, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return (
+        "I can run Memory Doctor, but this turn is missing Spark authority for memory diagnostics.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized memory diagnostic and I will inspect the trace."
+    )
+
+
 def _handle_memory_doctor_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -6410,7 +6509,6 @@ def _memory_doctor_previous_failure_signals(record: dict[str, object] | None) ->
     if "researcher_advisory" in route_text and "previous" in user_preview:
         signals.append("previous_researcher_previous_turn_route")
     return list(dict.fromkeys(signals))
-
 
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()

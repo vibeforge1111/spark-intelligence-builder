@@ -142,6 +142,73 @@ def build_telegram_memory_turn_intent_payload(
     }
 
 
+def build_telegram_memory_diagnostic_turn_intent_payload(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    source_kind: str,
+) -> dict[str, Any] | None:
+    if channel_kind != "telegram":
+        return None
+    return {
+        "schema": "spark.turn_intent.v1",
+        "turnId": f"turn:telegram-memory-diagnostic:{request_id}",
+        "traceId": f"trace:telegram-memory-diagnostic:{request_id}",
+        "surface": channel_kind,
+        "directive": {
+            "mode": "execute",
+            "noExecution": False,
+            "noPublish": True,
+            "localOnly": True,
+            "explanationOnly": False,
+            "quotedOrMetaLanguage": False,
+        },
+        "selectedIntent": {
+            "kind": "memory_diagnostic",
+            "ownerSystem": "spark-intelligence-builder",
+            "action": "memory.diagnose",
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": source_kind,
+        },
+        "sessionScope": {
+            "sessionKey": session_id,
+            "surface": channel_kind,
+            "conversationKind": "telegram_dm",
+            "userRef": human_id,
+            "chatRef": session_id,
+            "memoryLoadPolicy": "bounded",
+            "pendingStateScope": "fresh_turn",
+        },
+        "toolPolicy": {
+            "allowedTools": ["answer.compose", "memory.diagnose"],
+            "deniedTools": [],
+            "enabledToolsets": ["spark-harness-core", "spark-intelligence-builder"],
+            "mutationClassesAllowed": ["none", "read_only"],
+            "requiresApprovalFor": [],
+            "networkPolicy": "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": False,
+            "canLaunchMission": False,
+            "canWriteMemory": False,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": False,
+        },
+        "threatDefense": {
+            "reasonCodes": [
+                "fresh_user_turn_is_authority",
+                "telegram_memory_diagnostic_explicit_intent",
+            ]
+        },
+    }
+
+
 def authorize_builder_bridge_action(
     update_payload: dict[str, Any] | None,
     *,
