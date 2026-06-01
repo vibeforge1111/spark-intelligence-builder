@@ -918,6 +918,21 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
     return audio_bytes, filename
 
 
+def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "effective_text": None,
+        "transcript_text": None,
+        "routing_decision": "voice_transcription_authority_blocked",
+        "reply_text": (
+            "I can transcribe that voice message, but this turn is missing Spark authority for voice transcription.\n"
+            f"Reason: {reason_text}.\n"
+            "Send the voice note as a fresh authorized Spark media turn and I will process it."
+        ),
+        "error": reason_text,
+    }
+
+
 def _transcribe_telegram_audio_bytes(
     *,
     config_manager: ConfigManager,
@@ -1012,6 +1027,7 @@ def _prepare_telegram_media_input(
     config_manager: ConfigManager,
     state_db: StateDB,
     normalized: Any,
+    update_payload: dict[str, Any] | None,
     client: TelegramBotApiClient | None,
 ) -> dict[str, Any]:
     if normalized.message_kind not in {"voice", "audio"}:
@@ -1020,6 +1036,15 @@ def _prepare_telegram_media_input(
             "transcript_text": None,
             "routing_decision": None,
         }
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.transcribe",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if not authority.allowed:
+        return _voice_transcription_authority_blocked_input(authority.reason_codes)
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
         if embedded_audio is not None:
@@ -1165,6 +1190,7 @@ def simulate_telegram_update(
             config_manager=config_manager,
             state_db=state_db,
             normalized=normalized,
+            update_payload=update_payload,
             client=client,
         )
         if media_input.get("reply_text"):
@@ -2131,6 +2157,7 @@ def poll_telegram_updates_once(
             config_manager=config_manager,
             state_db=state_db,
             normalized=normalized,
+            update_payload=update,
             client=client,
         )
         if media_input.get("reply_text"):
