@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2353,8 +2364,8 @@ def build_parser() -> argparse.ArgumentParser:
     loops_subparsers = loops_parser.add_subparsers(dest="loops_command", required=True)
     loops_run_parser = loops_subparsers.add_parser("run", help="Run N rounds of suggest/evaluate against a chip")
     loops_run_parser.add_argument("--chip", required=True, help="Chip key (e.g. domain-chip-brand-sentiment-tracking)")
-    loops_run_parser.add_argument("--rounds", type=int, default=3, help="Number of rounds (default 3)")
-    loops_run_parser.add_argument("--suggest-limit", type=int, default=3, help="Max candidates per round (default 3)")
+    loops_run_parser.add_argument("--rounds", type=_positive_int, default=3, help="Number of rounds (default 3, must be a positive integer)")
+    loops_run_parser.add_argument("--suggest-limit", type=_positive_int, default=3, help="Max candidates per round (default 3, must be a positive integer)")
     loops_run_parser.add_argument("--pause-seconds", type=float, default=0.0, help="Sleep between rounds")
     loops_run_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     loops_run_parser.add_argument("--json", action="store_true", help="Emit JSON result")
