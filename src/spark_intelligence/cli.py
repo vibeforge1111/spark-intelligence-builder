@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1452,7 +1463,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
-    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum black-box events to show (must be a positive integer)")
     self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_source_used_parser = self_subparsers.add_parser(
         "source-used",
@@ -1489,7 +1500,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="pending",
         help="Memory approval inbox filter",
     )
-    self_memory_inbox_parser.add_argument("--limit", type=int, default=20, help="Maximum inbox items to show")
+    self_memory_inbox_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum inbox items to show (must be a positive integer)")
     self_memory_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_decision_parser = self_subparsers.add_parser(
         "memory-decision",
@@ -1668,7 +1679,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
     self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
-    self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to use (must be a positive integer)")
     self_improve_parser.add_argument("--record-ledger", action="store_true", help="Record the capability proposal in the durable proposal/activation ledger")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_ledger_parser = self_subparsers.add_parser(
