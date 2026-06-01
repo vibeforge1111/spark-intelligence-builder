@@ -7812,8 +7812,31 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=11817,
+                    user_id="111",
+                    username="alice",
+                    text="Please speak this out loud: hello from voice",
+                ),
+                tool_name="voice.speak",
+                mutation_class="external_network",
+                external_network=True,
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
+        self.assertIn("/voice ask <question>", result.detail["response_text"])
+
+    def test_natural_language_voice_speak_without_turn_intent_does_not_steal_chat(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
             update_payload=make_telegram_update(
-                update_id=11817,
+                update_id=118171,
                 user_id="111",
                 username="alice",
                 text="Please speak this out loud: hello from voice",
@@ -7821,8 +7844,26 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertIn("Reading that exact text as a voice reply now", result.detail["response_text"])
-        self.assertIn("/voice ask <question>", result.detail["response_text"])
+        self.assertNotIn("Reading that exact text as a voice reply now", result.detail["response_text"])
+        self.assertNotEqual(result.detail.get("bridge_mode"), "runtime_command")
+
+    def test_voice_speak_without_turn_intent_does_not_force_voice(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118172,
+                user_id="111",
+                username="alice",
+                text="/voice speak hello from voice",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertNotIn("force_voice", result.detail)
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
@@ -7883,11 +7924,16 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         client = FakeVoicePollingClient(
             [
-                make_telegram_update(
-                    update_id=11821,
-                    user_id="111",
-                    username="alice",
-                    text="/voice speak Hello from audio",
+                _with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=11821,
+                        user_id="111",
+                        username="alice",
+                        text="/voice speak Hello from audio",
+                    ),
+                    tool_name="voice.speak",
+                    mutation_class="external_network",
+                    external_network=True,
                 )
             ]
         )
