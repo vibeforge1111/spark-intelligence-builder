@@ -33,7 +33,9 @@ from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_telegram_memory_diagnostic_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload,
     build_telegram_memory_turn_intent_payload,
+    detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
 )
 from spark_intelligence.config.loader import ConfigManager
@@ -347,6 +349,25 @@ def _with_telegram_memory_turn_intent(
             session_id=session_id,
             human_id=human_id,
             source_kind=diagnostic_source_kind,
+        )
+        if turn_intent_payload is not None:
+            enriched = dict(update_payload)
+            enriched["spark_turn_intent"] = turn_intent_payload
+            message = enriched.get("message")
+            if isinstance(message, dict):
+                enriched_message = dict(message)
+                enriched_message["spark_turn_intent"] = turn_intent_payload
+                enriched["message"] = enriched_message
+            return enriched
+    read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+    if read_source_kind is not None:
+        turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=read_source_kind,
         )
         if turn_intent_payload is not None:
             enriched = dict(update_payload)

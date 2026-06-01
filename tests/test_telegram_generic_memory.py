@@ -774,6 +774,49 @@ class TelegramGenericMemoryTests(SparkTestCase):
             gate_records,
         )
 
+    def test_build_researcher_reply_blocks_memory_read_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        seed = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-read-authority-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-read-authority",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+        self.config_manager.set_path("spark.researcher.enabled", False)
+        blocked = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-read-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-read-authority",
+            channel_kind="telegram",
+            user_message="What evidence do you have about onboarding?",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+
+        self.assertIn(seed.mode, {"memory_generic_observation_update", "memory_structured_evidence_update"})
+        self.assertNotEqual(blocked.mode, "memory_open_recall")
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_read_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
     def test_build_researcher_reply_does_not_mint_memory_authority_by_default(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -1,6 +1,8 @@
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    build_telegram_memory_read_turn_intent_payload,
+    detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
 )
 
@@ -88,6 +90,55 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
 
     assert verdict.allowed is True
     assert verdict.reason_codes == ()
+
+
+def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:
+    payload = build_telegram_memory_read_turn_intent_payload(
+        request_id="req-read",
+        channel_kind="telegram",
+        session_id="session-read",
+        human_id="human-read",
+        user_message="What is my current plan?",
+        source_kind=detect_telegram_memory_read_authority_source_kind("What is my current plan?") or "test",
+    )
+
+    assert payload is not None
+    update = {"spark_turn_intent": payload}
+    envelope = extract_turn_intent_envelope(update)
+
+    assert envelope is not None
+    assert envelope.selected_intent.action == "memory.read"
+    assert envelope.selected_intent.owner_system == "domain-chip-memory"
+    assert "memory.read" in envelope.tool_policy.allowed_tools
+    assert "read_only" in envelope.tool_policy.mutation_classes_allowed
+    assert envelope.execution_policy.can_write_memory is False
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+    assert verdict.allowed is True
+    assert verdict.reason_codes == ()
+
+
+def test_blocks_memory_read_turn_intent_for_meta_examples() -> None:
+    source_kind = detect_telegram_memory_read_authority_source_kind(
+        "For example: 'what do you remember about my plan?' is not a request to use memory."
+    )
+
+    assert source_kind is None
+    assert (
+        build_telegram_memory_read_turn_intent_payload(
+            request_id="req-meta",
+            channel_kind="telegram",
+            session_id="session-meta",
+            human_id="human-meta",
+            user_message="For example: 'what do you remember about my plan?' is not a request to use memory.",
+            source_kind="test",
+        )
+        is None
+    )
 
 
 def test_blocks_builder_memory_write_without_envelope() -> None:
