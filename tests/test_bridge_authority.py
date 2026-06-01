@@ -4,6 +4,8 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    reset_bridge_authority_ledger_context,
+    set_bridge_authority_ledger_context,
 )
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.state.db import StateDB
@@ -210,6 +212,41 @@ def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> Non
     assert event["facts_json"]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
     assert event["facts_json"]["authorization_verdict"] == "allow"
     assert event["facts_json"]["tool_call_ledger"]["schema_version"] == "tool-call-ledger-v1"
+
+
+def test_records_bridge_tool_call_ledger_from_scoped_context(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+    token = set_bridge_authority_ledger_context(
+        state_db=state_db,
+        component="telegram_runtime",
+        request_id="req:context-ledger",
+        channel_id="telegram",
+        session_id="session:context",
+        human_id="human:context",
+        agent_id="agent:context",
+        actor_id="telegram_runtime",
+    )
+    try:
+        verdict = authorize_builder_bridge_action(
+            update,
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+        )
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+    assert verdict.allowed is True
+    assert verdict.ledger_event_id
+    events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(events) == 1
+    event = events[0]
+    assert event["component"] == "telegram_runtime"
+    assert event["request_id"] == "req:context-ledger"
+    assert event["session_id"] == "session:context"
+    assert event["agent_id"] == "agent:context"
 
 
 def test_authorizes_schedule_delete_and_pending_confirmation() -> None:

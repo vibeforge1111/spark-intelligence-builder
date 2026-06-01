@@ -37,6 +37,8 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_turn_intent_payload,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    reset_bridge_authority_ledger_context,
+    set_bridge_authority_ledger_context,
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
@@ -526,6 +528,10 @@ def _maybe_save_reply_as_draft(
             tool_name="memory.write",
             owner_system="domain-chip-memory",
             mutation_class="writes_memory",
+            state_db=state_db,
+            channel_id="telegram",
+            session_id=session_id,
+            component="telegram_bridge",
         )
         if not authority.allowed:
             return reply_text
@@ -1221,6 +1227,10 @@ def _prepare_telegram_media_input(
         owner_system="spark-voice-comms",
         mutation_class="external_network",
         external_network=True,
+        state_db=state_db,
+        request_id=f"telegram:{normalized.update_id}",
+        channel_id="telegram",
+        component="telegram_runtime",
     )
     if not authority.allowed:
         return _voice_transcription_authority_blocked_input(authority.reason_codes)
@@ -1411,6 +1421,11 @@ def simulate_telegram_update(
                 command="/voice ask",
                 tool_name="voice.speak",
                 natural_command=False,
+                state_db=state_db,
+                request_id=request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
             )
             if authorized:
                 effective_text = voice_answer_request
@@ -2442,6 +2457,12 @@ def poll_telegram_updates_once(
                 command="/voice ask",
                 tool_name="voice.speak",
                 natural_command=False,
+                state_db=state_db,
+                run_id=run.run_id,
+                request_id=run.request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
             )
             if authorized:
                 effective_text = voice_answer_request
@@ -4193,6 +4214,47 @@ def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, 
 
 
 def _handle_runtime_command(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    external_user_id: str,
+    inbound_text: str,
+    update_payload: dict[str, Any] | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any] | None:
+    token = set_bridge_authority_ledger_context(
+        state_db=state_db,
+        component="telegram_runtime",
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+    )
+    try:
+        return _handle_runtime_command_impl(
+            config_manager=config_manager,
+            state_db=state_db,
+            external_user_id=external_user_id,
+            inbound_text=inbound_text,
+            update_payload=update_payload,
+            run_id=run_id,
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+
+def _handle_runtime_command_impl(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -8094,6 +8156,12 @@ def _authorize_voice_delivery_action(
     command: str,
     tool_name: str,
     natural_command: bool,
+    state_db: StateDB | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
 ) -> tuple[bool, dict[str, Any] | None]:
     authority = authorize_builder_bridge_action(
         update_payload,
@@ -8101,6 +8169,15 @@ def _authorize_voice_delivery_action(
         owner_system="spark-voice-comms",
         mutation_class="external_network",
         external_network=True,
+        state_db=state_db,
+        run_id=run_id,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
     )
     if authority.allowed:
         return True, None

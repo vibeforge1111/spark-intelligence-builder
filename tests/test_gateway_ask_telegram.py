@@ -17,7 +17,7 @@ from spark_intelligence.bridge_authority import (
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
@@ -224,6 +224,13 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("memory.diagnose", envelope.tool_policy.allowed_tools)
         self.assertIn("read_only", envelope.tool_policy.mutation_classes_allowed)
         self.assertFalse(envelope.execution_policy.can_write_memory)
+        ledger_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_recorded", limit=5)
+        self.assertTrue(ledger_events)
+        latest_ledger = ledger_events[0]
+        self.assertEqual(latest_ledger["component"], "telegram_runtime")
+        self.assertEqual(latest_ledger["request_id"], "sim:98703")
+        self.assertEqual(latest_ledger["facts_json"]["tool_name"], "memory.diagnose")
+        self.assertEqual(latest_ledger["facts_json"]["authorization_verdict"], "allow")
 
     def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
