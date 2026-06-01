@@ -822,6 +822,8 @@ def _build_voice_hook_payload(
         payload["provider"] = build_runtime_provider_reference_payload(config_manager=config_manager, state_db=state_db)
     except Exception as exc:
         payload["provider_error"] = str(exc)
+    if isinstance(envelope.turn_intent_payload, dict):
+        payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
     if text is not None:
         payload["text"] = text
     return payload
