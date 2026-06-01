@@ -8911,6 +8911,35 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_messages), 0)
         self.assertIn("Swarm is", str(client.sent_voices[0]["caption"]))
 
+    def test_voice_message_without_turn_intent_does_not_download_or_transcribe(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        class FakeVoiceClient:
+            def get_file(self, *, file_id: str) -> dict[str, object]:
+                raise AssertionError("voice download should not start without authority")
+
+            def download_file(self, *, file_path: str) -> bytes:
+                raise AssertionError("voice download should not start without authority")
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting") as hook_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118199,
+                    user_id="111",
+                    username="alice",
+                    text=None,
+                    voice={"file_id": "voice-no-authority", "duration": 3, "mime_type": "audio/ogg"},
+                ),
+                client=FakeVoiceClient(),
+            )
+
+        self.assertTrue(result.ok)
+        hook_mock.assert_not_called()
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
+        self.assertIn("missing_or_invalid_envelope", str(result.detail["response_text"]))
+
     def test_voice_message_uses_transcript_as_runtime_command(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -8962,12 +8991,17 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=1182,
-                    user_id="111",
-                    username="alice",
-                    text=None,
-                    voice={"file_id": "voice-1", "duration": 3, "mime_type": "audio/ogg"},
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=1182,
+                        user_id="111",
+                        username="alice",
+                        text=None,
+                        voice={"file_id": "voice-1", "duration": 3, "mime_type": "audio/ogg"},
+                    ),
+                    tool_name="voice.transcribe",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
                 client=FakeVoiceClient(),
             )
@@ -9000,12 +9034,17 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         client = FakeVoicePollingClient(
             [
-                make_telegram_update(
-                    update_id=11841,
-                    user_id="111",
-                    username="alice",
-                    text=None,
-                    voice={"file_id": "voice-telemetry", "duration": 3, "mime_type": "audio/ogg"},
+                _with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=11841,
+                        user_id="111",
+                        username="alice",
+                        text=None,
+                        voice={"file_id": "voice-telemetry", "duration": 3, "mime_type": "audio/ogg"},
+                    ),
+                    tool_name="voice.transcribe",
+                    mutation_class="external_network",
+                    external_network=True,
                 )
             ]
         )
@@ -9141,12 +9180,17 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         client = FakeVoicePollingClient(
             [
-                make_telegram_update(
-                    update_id=11842,
-                    user_id="111",
-                    username="alice",
-                    text=None,
-                    voice={"file_id": "voice-auto-reply", "duration": 3, "mime_type": "audio/ogg"},
+                _with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=11842,
+                        user_id="111",
+                        username="alice",
+                        text=None,
+                        voice={"file_id": "voice-auto-reply", "duration": 3, "mime_type": "audio/ogg"},
+                    ),
+                    tool_name="voice.transcribe",
+                    mutation_class="external_network",
+                    external_network=True,
                 )
             ]
         )
@@ -9270,12 +9314,17 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=1183,
-                    user_id="111",
-                    username="alice",
-                    text=None,
-                    voice={"file_id": "voice-2", "duration": 3, "mime_type": "audio/ogg"},
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=1183,
+                        user_id="111",
+                        username="alice",
+                        text=None,
+                        voice={"file_id": "voice-2", "duration": 3, "mime_type": "audio/ogg"},
+                    ),
+                    tool_name="voice.transcribe",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
                 client=FakeVoiceClient(),
             )
@@ -9290,12 +9339,17 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=119,
-                user_id="111",
-                username="alice",
-                text=None,
-                voice={"file_id": "voice-1", "duration": 3},
+            update_payload=_with_voice_turn_intent(
+                make_telegram_update(
+                    update_id=119,
+                    user_id="111",
+                    username="alice",
+                    text=None,
+                    voice={"file_id": "voice-1", "duration": 3},
+                ),
+                tool_name="voice.transcribe",
+                mutation_class="external_network",
+                external_network=True,
             ),
         )
 
