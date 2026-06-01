@@ -18,6 +18,7 @@ from spark_intelligence.bridge_authority import (
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
@@ -27,6 +28,31 @@ from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 class GatewayAskTelegramTests(SparkTestCase):
     def _install_fake_configured_researcher(self) -> None:
         self.enable_fake_researcher_runtime()
+
+    def vnext_tool_intent_payload(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        owner_system: str,
+        mutation_class: str,
+        source_kind: str = "test",
+        external_network: bool = False,
+    ) -> dict[str, object]:
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human:test",
+            request_id=request_id,
+            source_kind=source_kind,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,  # type: ignore[arg-type]
+            intent_summary=f"Test authorized {tool_name}.",
+            raw_turn_summary="Test Telegram runtime command.",
+            external_network=external_network,
+        )
+        assert payload is not None
+        return payload
 
     def chat_only_turn_intent_payload(self) -> dict[str, object]:
         return {
@@ -274,6 +300,99 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotEqual(response_text.splitlines()[0], "Memory Doctor: healthy.")
         self.assertIn("missing Spark authority for memory diagnostics", response_text)
         self.assertIn("tool_not_allowed_by_policy", response_text)
+
+    def test_simulate_telegram_update_records_route_probe_result_ledger(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        vnext = self.vnext_tool_intent_payload(
+            request_id="sim:98707",
+            tool_name="route.probe.run",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            source_kind="telegram_route_probe_test",
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_route_probe_and_record",
+            return_value=SimpleNamespace(
+                capability_key="spark_memory",
+                status="success",
+                route_latency_ms=7,
+                failure_reason="",
+                probe_summary="memory route probe ok",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98707,
+                    "turn_intent_envelope_vnext": vnext,
+                    "message": {
+                        "message_id": 107,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "/probe memory",
+                        "turn_intent_envelope_vnext": vnext,
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Route probe: spark_memory", result.detail["response_text"])
+        result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+        self.assertTrue(result_events)
+        latest_result = result_events[0]
+        self.assertEqual(latest_result["facts_json"]["tool_name"], "route.probe.run")
+        self.assertEqual(latest_result["facts_json"]["result_status"], "success")
+        self.assertIn("spark_memory", latest_result["facts_json"]["tool_call_ledger"]["result"]["summary"])
+
+    def test_simulate_telegram_update_records_voice_status_result_ledger(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        vnext = self.vnext_tool_intent_payload(
+            request_id="sim:98708",
+            tool_name="voice.status",
+            owner_system="spark-voice-comms",
+            mutation_class="read_only",
+            source_kind="telegram_voice_status_test",
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                output={"result": {"reply_text": "Voice chip is ready."}},
+                chip_key="spark-voice-comms",
+                stderr="",
+                stdout="",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98708,
+                    "turn_intent_envelope_vnext": vnext,
+                    "message": {
+                        "message_id": 108,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "/voice",
+                        "turn_intent_envelope_vnext": vnext,
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Voice chip is ready.", result.detail["response_text"])
+        result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+        self.assertTrue(result_events)
+        latest_result = result_events[0]
+        self.assertEqual(latest_result["facts_json"]["tool_name"], "voice.status")
+        self.assertEqual(latest_result["facts_json"]["result_status"], "success")
+        self.assertIn(
+            "Voice hook voice.status completed",
+            latest_result["facts_json"]["tool_call_ledger"]["result"]["summary"],
+        )
 
     def test_gateway_ask_telegram_shows_memory_doctor_help(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
