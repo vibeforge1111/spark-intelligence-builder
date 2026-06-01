@@ -49,7 +49,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     researcher_bridge_status,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_intent_envelope
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
@@ -1381,6 +1381,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             session_id="session:test",
             channel_kind="telegram",
             user_message="What should this startup focus on next?",
+            turn_intent_envelope=make_turn_intent_envelope(
+                turn_id="turn:provenance",
+                trace_id="trace:provenance",
+            ),
         )
 
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
