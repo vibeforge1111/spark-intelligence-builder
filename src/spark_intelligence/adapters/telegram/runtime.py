@@ -3964,6 +3964,7 @@ def _handle_runtime_command(
             human_id=human_id,
             command=memory_doctor_command,
         )
+    explicit_think_command = lowered if lowered in {"/think", "/think on", "/think off"} else None
     if style_command is not None:
         return _handle_style_command(
             config_manager=config_manager,
@@ -4479,12 +4480,13 @@ def _handle_runtime_command(
             "voice_tts": _voice_tts_override_from_text(speak_text),
             "respect_voice_reply_state": False,
         }
-    if lowered in {"/think", "/think on", "/think off"} or natural_think_command in {
+    if explicit_think_command in {"/think", "/think on", "/think off"} or natural_think_command in {
         "/think",
         "/think on",
         "/think off",
     }:
-        if lowered == "/think" or natural_think_command == "/think":
+        think_command = explicit_think_command or natural_think_command
+        if think_command == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
             state_text = "on" if enabled else "off"
             return {
@@ -4494,7 +4496,16 @@ def _handle_runtime_command(
                     "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
                 ),
             }
-        enabled = lowered == "/think on" or natural_think_command == "/think on"
+        authorized, blocked = _authorize_builder_runtime_state_action(
+            update_payload=update_payload,
+            command=think_command or "/think",
+            tool_name="think.visibility.set",
+            natural_command=explicit_think_command is None,
+            action_label="update this setting",
+        )
+        if not authorized:
+            return blocked
+        enabled = think_command == "/think on"
         _set_think_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -4502,7 +4513,7 @@ def _handle_runtime_command(
         )
         state_text = "enabled" if enabled else "disabled"
         return {
-            "command": natural_think_command or lowered,
+            "command": think_command or "/think",
             "reply_text": (
                 f"Thinking visibility {state_text} for this Telegram DM. "
                 "This only affects `<think>` blocks in future replies."
@@ -7611,6 +7622,49 @@ def _authorize_style_state_action(
     if natural_command:
         return False, None
     return False, _blocked_style_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _blocked_builder_runtime_state_authority_result(
+    *,
+    command: str,
+    reason_codes: tuple[str, ...],
+    action_label: str,
+) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    label = str(action_label or "update this setting").strip()
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help {label}, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark action and I will run it."
+        ),
+    }
+
+
+def _authorize_builder_runtime_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+    action_label: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_builder_runtime_state_authority_result(
+        command=command,
+        reason_codes=authority.reason_codes,
+        action_label=action_label,
+    )
 
 
 def _authorize_voice_state_action(
