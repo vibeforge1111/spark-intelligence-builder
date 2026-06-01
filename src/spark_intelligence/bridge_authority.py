@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,7 @@ _ENVELOPE_KEYS = (
     "turnIntentEnvelope",
     "turn_intent_envelope",
 )
+_BRIDGE_LEDGER_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("spark_bridge_ledger_context", default={})
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,63 @@ class BridgeAuthorityVerdict:
     authorization_decision: dict[str, Any] | None = None
     tool_call_ledger: dict[str, Any] | None = None
     ledger_event_id: str | None = None
+
+
+def set_bridge_authority_ledger_context(
+    *,
+    state_db: Any,
+    component: str = "bridge_authority",
+    request_id: str | None = None,
+    run_id: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str | None = None,
+) -> Any:
+    return _BRIDGE_LEDGER_CONTEXT.set(
+        {
+            "state_db": state_db,
+            "component": component,
+            "request_id": request_id,
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "session_id": session_id,
+            "human_id": human_id,
+            "agent_id": agent_id,
+            "actor_id": actor_id,
+        }
+    )
+
+
+def reset_bridge_authority_ledger_context(token: Any) -> None:
+    _BRIDGE_LEDGER_CONTEXT.reset(token)
+
+
+def _ledger_context(
+    *,
+    state_db: Any | None,
+    component: str,
+    request_id: str | None,
+    run_id: str | None,
+    channel_id: str | None,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    actor_id: str | None,
+) -> dict[str, Any]:
+    context = _BRIDGE_LEDGER_CONTEXT.get() or {}
+    return {
+        "state_db": state_db if state_db is not None else context.get("state_db"),
+        "component": component if component != "bridge_authority" else str(context.get("component") or component),
+        "request_id": request_id if request_id is not None else context.get("request_id"),
+        "run_id": run_id if run_id is not None else context.get("run_id"),
+        "channel_id": channel_id if channel_id is not None else context.get("channel_id"),
+        "session_id": session_id if session_id is not None else context.get("session_id"),
+        "human_id": human_id if human_id is not None else context.get("human_id"),
+        "agent_id": agent_id if agent_id is not None else context.get("agent_id"),
+        "actor_id": actor_id if actor_id is not None else context.get("actor_id"),
+    }
 
 
 def extract_turn_intent_envelope(update_payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
@@ -376,6 +435,7 @@ def record_bridge_tool_call_ledger(
     channel_id: str | None = None,
     session_id: str | None = None,
     human_id: str | None = None,
+    agent_id: str | None = None,
     actor_id: str | None = None,
 ) -> str | None:
     ledger = verdict.tool_call_ledger
@@ -415,6 +475,7 @@ def record_bridge_tool_call_ledger(
         channel_id=channel_id,
         session_id=resolved_session_id,
         human_id=resolved_human_id,
+        agent_id=agent_id,
         actor_id=resolved_actor_id,
         reason_code=reason_code,
         severity="high" if not verdict.allowed else "medium",
@@ -452,6 +513,7 @@ def authorize_builder_bridge_action(
     channel_id: str | None = None,
     session_id: str | None = None,
     human_id: str | None = None,
+    agent_id: str | None = None,
     actor_id: str | None = None,
     component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
@@ -473,19 +535,31 @@ def authorize_builder_bridge_action(
         authorization_decision=authorization.authorization_decision,
         tool_call_ledger=authorization.tool_call_ledger,
     )
+    ledger_context = _ledger_context(
+        state_db=state_db,
+        component=component,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+    )
     ledger_event_id = (
         record_bridge_tool_call_ledger(
-            state_db,
+            ledger_context["state_db"],
             verdict,
-            component=component,
-            request_id=request_id,
-            run_id=run_id,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            actor_id=actor_id,
+            component=str(ledger_context["component"] or component),
+            request_id=ledger_context["request_id"],
+            run_id=ledger_context["run_id"],
+            channel_id=ledger_context["channel_id"],
+            session_id=ledger_context["session_id"],
+            human_id=ledger_context["human_id"],
+            agent_id=ledger_context["agent_id"],
+            actor_id=ledger_context["actor_id"],
         )
-        if state_db is not None
+        if ledger_context["state_db"] is not None
         else None
     )
     if ledger_event_id is None:
@@ -516,6 +590,7 @@ def authorize_pending_confirmation(
     channel_id: str | None = None,
     session_id: str | None = None,
     human_id: str | None = None,
+    agent_id: str | None = None,
     actor_id: str | None = None,
     component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
@@ -544,19 +619,31 @@ def authorize_pending_confirmation(
         authorization.authorization_decision,
         authorization.tool_call_ledger,
     )
+    ledger_context = _ledger_context(
+        state_db=state_db,
+        component=component,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+    )
     ledger_event_id = (
         record_bridge_tool_call_ledger(
-            state_db,
+            ledger_context["state_db"],
             verdict,
-            component=component,
-            request_id=request_id,
-            run_id=run_id,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            actor_id=actor_id,
+            component=str(ledger_context["component"] or component),
+            request_id=ledger_context["request_id"],
+            run_id=ledger_context["run_id"],
+            channel_id=ledger_context["channel_id"],
+            session_id=ledger_context["session_id"],
+            human_id=ledger_context["human_id"],
+            agent_id=ledger_context["agent_id"],
+            actor_id=ledger_context["actor_id"],
         )
-        if state_db is not None
+        if ledger_context["state_db"] is not None
         else None
     )
     if ledger_event_id is None:
