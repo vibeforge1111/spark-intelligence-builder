@@ -231,6 +231,15 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(latest_ledger["request_id"], "sim:98703")
         self.assertEqual(latest_ledger["facts_json"]["tool_name"], "memory.diagnose")
         self.assertEqual(latest_ledger["facts_json"]["authorization_verdict"], "allow")
+        result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+        self.assertTrue(result_events)
+        latest_result = result_events[0]
+        self.assertEqual(latest_result["component"], "telegram_runtime")
+        self.assertEqual(latest_result["request_id"], "sim:98703")
+        self.assertEqual(latest_result["parent_event_id"], latest_ledger["event_id"])
+        self.assertEqual(latest_result["facts_json"]["tool_name"], "memory.diagnose")
+        self.assertEqual(latest_result["facts_json"]["result_status"], "success")
+        self.assertEqual(latest_result["facts_json"]["tool_call_ledger"]["result"]["status"], "success")
 
     def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

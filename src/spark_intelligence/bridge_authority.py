@@ -10,6 +10,7 @@ from spark_intelligence.harness_contract import (
     MutationClass,
     TurnIntentEnvelope,
     authorize_legacy_tool_call,
+    finalize_legacy_tool_call_ledger,
     parse_turn_intent_envelope,
 )
 
@@ -58,6 +59,7 @@ def set_bridge_authority_ledger_context(
             "human_id": human_id,
             "agent_id": agent_id,
             "actor_id": actor_id,
+            "ledger_records": [],
         }
     )
 
@@ -90,6 +92,43 @@ def _ledger_context(
         "agent_id": agent_id if agent_id is not None else context.get("agent_id"),
         "actor_id": actor_id if actor_id is not None else context.get("actor_id"),
     }
+
+
+def _remember_context_ledger_event(
+    *,
+    state_db: Any,
+    event_id: str,
+    verdict: BridgeAuthorityVerdict,
+    component: str,
+    request_id: str | None,
+    run_id: str | None,
+    channel_id: str | None,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    actor_id: str | None,
+) -> None:
+    context = _BRIDGE_LEDGER_CONTEXT.get() or {}
+    if context.get("state_db") is not state_db:
+        return
+    records = context.get("ledger_records")
+    if not isinstance(records, list):
+        return
+    records.append(
+        {
+            "event_id": event_id,
+            "verdict": verdict,
+            "component": component,
+            "request_id": request_id,
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "session_id": session_id,
+            "human_id": human_id,
+            "agent_id": agent_id,
+            "actor_id": actor_id,
+            "result_event_id": None,
+        }
+    )
 
 
 def extract_turn_intent_envelope(update_payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
@@ -464,7 +503,7 @@ def record_bridge_tool_call_ledger(
         else str(authorization.get("verdict") or "harness_core_authorized")
     )
 
-    return record_event(
+    event_id = record_event(
         state_db,
         event_type="tool_call_ledger_recorded",
         component=component,
@@ -497,6 +536,154 @@ def record_bridge_tool_call_ledger(
             "tool_call_ledger": ledger,
         },
     )
+    _remember_context_ledger_event(
+        state_db=state_db,
+        event_id=event_id,
+        verdict=verdict,
+        component=component,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=resolved_session_id,
+        human_id=resolved_human_id,
+        agent_id=agent_id,
+        actor_id=resolved_actor_id,
+    )
+    return event_id
+
+
+def record_bridge_tool_call_result_ledger(
+    state_db: Any,
+    verdict: BridgeAuthorityVerdict,
+    *,
+    status: str,
+    summary: str,
+    output_path: str | None = None,
+    error_path: str | None = None,
+    rollback_path: str | None = None,
+    component: str = "bridge_authority",
+    request_id: str | None = None,
+    run_id: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str | None = None,
+    initial_ledger_event_id: str | None = None,
+) -> str | None:
+    ledger = verdict.tool_call_ledger
+    if not verdict.allowed or not isinstance(ledger, dict):
+        return None
+
+    from spark_intelligence.observability.store import record_event
+
+    envelope = verdict.envelope
+    resolved_session_id = session_id
+    resolved_human_id = human_id
+    resolved_actor_id = actor_id
+    surface = "builder"
+    if envelope is not None:
+        resolved_session_id = resolved_session_id or envelope.session_scope.session_key
+        resolved_human_id = resolved_human_id or envelope.session_scope.user_ref
+        resolved_actor_id = resolved_actor_id or envelope.session_scope.user_ref
+        surface = envelope.surface
+
+    ledger_id = str(ledger.get("ledger_id") or "")
+    tool_name = str(ledger.get("tool_name") or "unknown_tool")
+    resolved_output_path = output_path or f"builder://requests/{request_id or 'unknown'}/tool-results/{ledger_id}"
+    final_ledger = finalize_legacy_tool_call_ledger(
+        ledger,
+        status=status,
+        output_path=resolved_output_path,
+        summary=summary,
+        surface=surface,
+        error_path=error_path,
+        rollback_path=rollback_path,
+    )
+    trace = final_ledger.get("trace") if isinstance(final_ledger.get("trace"), dict) else {}
+    result = final_ledger.get("result") if isinstance(final_ledger.get("result"), dict) else {}
+    return record_event(
+        state_db,
+        event_type="tool_call_ledger_result_recorded",
+        component=component,
+        summary=f"Harness Core ToolCallLedger result recorded for {tool_name}.",
+        run_id=run_id,
+        parent_event_id=initial_ledger_event_id,
+        request_id=request_id,
+        trace_ref=str(trace.get("id") or final_ledger.get("turn_id") or ""),
+        channel_id=channel_id,
+        session_id=resolved_session_id,
+        human_id=resolved_human_id,
+        agent_id=agent_id,
+        actor_id=resolved_actor_id,
+        reason_code=f"tool_result_{status}",
+        severity="high" if status in {"failure", "rolled_back"} else "medium",
+        status=status,
+        provenance={
+            "source_kind": "spark_harness_core_tool_call_ledger_result",
+            "source_ref": ledger_id,
+            "component": component,
+            "initial_ledger_event_id": initial_ledger_event_id,
+        },
+        facts={
+            "ledger_id": ledger_id,
+            "turn_id": final_ledger.get("turn_id"),
+            "action_id": final_ledger.get("action_id"),
+            "capability_id": final_ledger.get("capability_id"),
+            "tool_name": tool_name,
+            "authorization_verdict": (final_ledger.get("authorization") or {}).get("verdict")
+            if isinstance(final_ledger.get("authorization"), dict)
+            else None,
+            "result_status": result.get("status"),
+            "initial_ledger_event_id": initial_ledger_event_id,
+            "tool_call_ledger": final_ledger,
+        },
+    )
+
+
+def record_scoped_bridge_tool_call_results(
+    *,
+    status: str,
+    summary: str,
+    output_path: str | None = None,
+    error_path: str | None = None,
+    rollback_path: str | None = None,
+) -> tuple[str, ...]:
+    context = _BRIDGE_LEDGER_CONTEXT.get() or {}
+    state_db = context.get("state_db")
+    records = context.get("ledger_records")
+    if state_db is None or not isinstance(records, list):
+        return ()
+
+    event_ids: list[str] = []
+    for record in records:
+        if not isinstance(record, dict) or record.get("result_event_id"):
+            continue
+        verdict = record.get("verdict")
+        if not isinstance(verdict, BridgeAuthorityVerdict) or not verdict.allowed:
+            continue
+        event_id = record_bridge_tool_call_result_ledger(
+            state_db,
+            verdict,
+            status=status,
+            summary=summary,
+            output_path=output_path,
+            error_path=error_path,
+            rollback_path=rollback_path,
+            component=str(record.get("component") or context.get("component") or "bridge_authority"),
+            request_id=record.get("request_id") or context.get("request_id"),
+            run_id=record.get("run_id") or context.get("run_id"),
+            channel_id=record.get("channel_id") or context.get("channel_id"),
+            session_id=record.get("session_id") or context.get("session_id"),
+            human_id=record.get("human_id") or context.get("human_id"),
+            agent_id=record.get("agent_id") or context.get("agent_id"),
+            actor_id=record.get("actor_id") or context.get("actor_id"),
+            initial_ledger_event_id=str(record.get("event_id") or ""),
+        )
+        if event_id:
+            record["result_event_id"] = event_id
+            event_ids.append(event_id)
+    return tuple(event_ids)
 
 
 def authorize_builder_bridge_action(

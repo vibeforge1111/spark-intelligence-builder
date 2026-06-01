@@ -4,6 +4,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
 )
@@ -247,6 +248,49 @@ def test_records_bridge_tool_call_ledger_from_scoped_context(tmp_path) -> None:
     assert event["request_id"] == "req:context-ledger"
     assert event["session_id"] == "session:context"
     assert event["agent_id"] == "agent:context"
+
+
+def test_records_final_bridge_tool_call_result_from_scoped_context(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+    token = set_bridge_authority_ledger_context(
+        state_db=state_db,
+        component="telegram_runtime",
+        request_id="req:final-ledger",
+        channel_id="telegram",
+        session_id="session:final",
+        human_id="human:final",
+        agent_id="agent:final",
+        actor_id="telegram_runtime",
+    )
+    try:
+        verdict = authorize_builder_bridge_action(
+            update,
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+        )
+        result_events = record_scoped_bridge_tool_call_results(
+            status="success",
+            summary="Memory write completed.",
+            output_path="builder://test/final-ledger",
+        )
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+    assert verdict.allowed is True
+    assert len(result_events) == 1
+    events = latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5)
+    assert len(events) == 1
+    event = events[0]
+    assert event["event_id"] == result_events[0]
+    assert event["component"] == "telegram_runtime"
+    assert event["status"] == "success"
+    assert event["parent_event_id"] == verdict.ledger_event_id
+    assert event["facts_json"]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
+    assert event["facts_json"]["result_status"] == "success"
+    assert event["facts_json"]["tool_call_ledger"]["result"]["status"] == "success"
 
 
 def test_authorizes_schedule_delete_and_pending_confirmation() -> None:
