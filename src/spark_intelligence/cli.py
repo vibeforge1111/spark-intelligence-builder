@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1315,8 +1326,8 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_scan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     diagnostics_scan_parser.add_argument("--logs-root", help="Override or add an explicit logs root/file to scan")
     diagnostics_scan_parser.add_argument("--output-dir", help="Directory for Obsidian-flavored markdown output")
-    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
-    diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
+    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=_positive_int, default=2000, help="Tail window per log source (must be a positive integer)")
+    diagnostics_scan_parser.add_argument("--recurring-threshold", type=_positive_int, default=2, help="Count needed to mark a signature recurring (must be a positive integer)")
     diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
     diagnostics_scan_parser.add_argument("--record-aoc-events", action="store_true", help="Record diagnostic capability evidence in the AOC black box")
     diagnostics_scan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
