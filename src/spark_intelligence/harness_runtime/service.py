@@ -610,6 +610,7 @@ def _run_researcher_bridge_reply(
         channel_kind=envelope.channel_kind or "cli",
         user_message=envelope.task,
         turn_intent_payload=envelope.turn_intent_payload,
+        allow_memory_adapter_envelope=False,
     )
 
 

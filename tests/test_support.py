@@ -743,6 +743,7 @@ class SparkTestCase(unittest.TestCase):
         self.state_db = StateDB(self.config_manager.paths.state_db)
         self.state_db.initialize()
         self.config_manager.set_path("spark.researcher.enabled", False)
+        self.config_manager.set_path("spark.testing.allow_researcher_memory_adapter", True)
 
     def tearDown(self) -> None:
         self._tempdir.cleanup()
