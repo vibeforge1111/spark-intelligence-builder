@@ -44,6 +44,7 @@ from spark_intelligence.build_quality_review import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
+from spark_intelligence.harness_contract import TurnIntentEnvelope, authorize_tool_call, parse_turn_intent_envelope
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -4212,6 +4213,69 @@ def _is_search_engine_url(url: str) -> bool:
     return _is_search_engine_host(host)
 
 
+def _parse_optional_turn_intent_payload(payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return parse_turn_intent_envelope(payload)
+    except ValueError:
+        return None
+
+
+def _authorize_researcher_browser_hook(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    hook: str,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    blocked_stage: str,
+) -> bool:
+    verdict, reasons = authorize_tool_call(
+        turn_intent_envelope,
+        tool_name=hook,
+        owner_system="spark-browser",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if verdict == "allowed":
+        return True
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.browser_hook",
+            source_kind="turn_intent_envelope",
+            source_ref=turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
+            summary="Researcher bridge blocked browser chip execution without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="browser_hook_authority_blocked",
+            blocked_stage=blocked_stage,
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={"owner_system": "spark-browser", "human_id": human_id, "agent_id": agent_id},
+            facts={
+                "hook": hook,
+                "reason_codes": list(reasons),
+                "authority_state": "present" if turn_intent_envelope is not None else "missing",
+            },
+        )
+    except Exception:
+        pass
+    return False
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -4224,7 +4288,21 @@ def _execute_browser_hook(
     session_id: str,
     human_id: str,
     agent_id: str,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    if not _authorize_researcher_browser_hook(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        hook=hook,
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        blocked_stage="browser_hook_execution",
+    ):
+        return None, None
     try:
         execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
     except Exception:
@@ -4508,6 +4586,7 @@ def _build_direct_browser_snapshot_context(
     human_id: str,
     session_id: str,
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
 ) -> dict[str, str | None]:
     direct_target_host = str(urlparse(direct_target_url).hostname or "").strip().lower()
     navigate_output, chip_key = _execute_browser_hook(
@@ -4526,6 +4605,7 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output or {})
     if blocked_reply:
@@ -4556,6 +4636,7 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -4580,6 +4661,7 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
     if blocked_reply:
@@ -4640,6 +4722,7 @@ def _build_browser_search_context(
     human_id: str,
     session_id: str,
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
 ) -> dict[str, str | None]:
     empty = {
         "context": "",
@@ -4647,6 +4730,19 @@ def _build_browser_search_context(
         "blocked_code": None,
     }
     if not _should_collect_browser_search_context(user_message):
+        return empty
+    if not _authorize_researcher_browser_hook(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        hook="browser.navigate",
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        blocked_stage="browser_context_collection",
+    ):
         return empty
 
     session_unavailable = {
@@ -4676,6 +4772,7 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     if not _browser_hook_succeeded(status_output):
         status_error_code = _browser_hook_error_code(status_output)
@@ -4696,6 +4793,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
             if retried_status_output:
                 status_output = retried_status_output
@@ -4728,6 +4826,7 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     if not navigate_output:
         if direct_target_url:
@@ -4742,6 +4841,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
         return empty
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output)
@@ -4760,6 +4860,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
         return empty
     navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
@@ -4780,6 +4881,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
         return empty
 
@@ -4800,6 +4902,7 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -4837,6 +4940,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output or {})
         if blocked_reply:
@@ -4862,6 +4966,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
         if blocked_reply:
@@ -4890,6 +4995,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
         if not dom_output:
             return empty
@@ -4924,6 +5030,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
             if blocked_reply:
@@ -4954,6 +5061,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
             if blocked_reply:
@@ -4985,6 +5093,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
     if source_navigate_output:
         source_navigate_result = (
@@ -5018,6 +5127,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
             if blocked_reply:
@@ -5044,6 +5154,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
     snapshot_output = None
     if text_output:
@@ -5071,6 +5182,7 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
         if blocked_reply:
@@ -5088,6 +5200,7 @@ def _build_browser_search_context(
                     human_id=human_id,
                     session_id=session_id,
                     run_id=run_id,
+                    turn_intent_envelope=turn_intent_envelope,
                 )
             return empty
         snapshot_result = snapshot_output.get("result") if isinstance(snapshot_output.get("result"), dict) else {}
@@ -8575,7 +8688,10 @@ def build_researcher_reply(
     channel_kind: str,
     user_message: str,
     run_id: str | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
 ) -> ResearcherBridgeResult:
+    turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
     attachment_context = build_attachment_context(config_manager)
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
@@ -13343,6 +13459,7 @@ def build_researcher_reply(
         human_id=human_id,
         session_id=session_id,
         run_id=run_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     browser_search_context_extra = str(browser_search_support.get("context") or "")
     browser_search_blocked_reply = str(browser_search_support.get("blocked_reply") or "") or None

@@ -608,6 +608,7 @@ def _run_researcher_bridge_reply(
         session_id=envelope.session_id or f"session:{envelope.envelope_id}",
         channel_kind=envelope.channel_kind or "cli",
         user_message=envelope.task,
+        turn_intent_payload=envelope.turn_intent_payload,
     )
 
 

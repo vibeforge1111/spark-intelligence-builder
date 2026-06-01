@@ -15,6 +15,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _build_browser_search_context,
     _browser_reply_denies_browsing,
     _build_contextual_task,
+    _execute_browser_hook,
     _build_open_memory_recall_answer,
     _detect_open_memory_recall_query,
     _detect_explicit_decision_statement,
@@ -38,6 +39,71 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def _browser_turn_intent(self, *, allowed_tools: list[str] | None = None) -> object:
+        from spark_intelligence.harness_contract import parse_turn_intent_envelope
+
+        return parse_turn_intent_envelope(
+            {
+                "schema": "spark.turn_intent.v1",
+                "turnId": "turn-browser-test",
+                "traceId": "trace-browser-test",
+                "surface": "telegram",
+                "directive": {
+                    "mode": "execute",
+                    "noExecution": False,
+                    "noPublish": True,
+                    "localOnly": False,
+                    "explanationOnly": False,
+                    "quotedOrMetaLanguage": False,
+                },
+                "selectedIntent": {
+                    "kind": "tool_call",
+                    "ownerSystem": "spark-browser",
+                    "action": "browser.search",
+                    "confidence": "high",
+                    "requiresConfirmation": False,
+                    "source": "test",
+                },
+                "sessionScope": {
+                    "sessionKey": "session:telegram:dm:111",
+                    "surface": "telegram",
+                    "conversationKind": "dm",
+                    "userRef": "human:telegram:111",
+                    "chatRef": "111",
+                    "memoryLoadPolicy": "fresh",
+                    "pendingStateScope": "turn",
+                },
+                "toolPolicy": {
+                    "allowedTools": allowed_tools
+                    or [
+                        "browser.status",
+                        "browser.navigate",
+                        "browser.tab.wait",
+                        "browser.page.dom_extract",
+                        "browser.page.interactives.list",
+                        "browser.page.text_extract",
+                        "browser.page.snapshot",
+                    ],
+                    "deniedTools": [],
+                    "enabledToolsets": ["browser"],
+                    "mutationClassesAllowed": ["external_network"],
+                    "requiresApprovalFor": [],
+                    "networkPolicy": "allowed",
+                    "elevatedAllowed": False,
+                },
+                "executionPolicy": {
+                    "canMutateFiles": False,
+                    "canLaunchMission": False,
+                    "canWriteMemory": False,
+                    "canDeleteSchedule": False,
+                    "canCreateChip": False,
+                    "canPublish": False,
+                    "canUseExternalNetwork": True,
+                },
+                "threatDefense": {"reasonCodes": []},
+            }
+        )
+
     def test_build_contextual_task_sanitizes_untrusted_prompt_blocks(self) -> None:
         prompt = _build_contextual_task(
             user_message="Can you help?\u200b",
@@ -76,6 +142,66 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(query, "official IANA page about reserved example domains")
+
+    def test_build_browser_search_context_without_turn_intent_does_not_execute_browser_hooks(self) -> None:
+        with patch("spark_intelligence.researcher_bridge.advisory._execute_browser_hook") as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Search the web for BTC and cite the source.",
+                request_id="req-browser-no-authority",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertEqual(result, {"context": "", "blocked_reply": None, "blocked_code": None})
+        hook_mock.assert_not_called()
+
+    def test_execute_browser_hook_without_turn_intent_does_not_call_chip_hook(self) -> None:
+        with patch("spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting") as hook_mock:
+            result = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-no-authority",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+            )
+
+        self.assertEqual(result, (None, None))
+        hook_mock.assert_not_called()
+
+    def test_execute_browser_hook_with_turn_intent_calls_chip_hook(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                output={"status": "succeeded", "result": {"extension": {"running": True}}},
+                chip_key="spark-browser",
+            ),
+        ) as hook_mock:
+            result = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-authorized",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+            )
+
+        self.assertEqual(result, ({"status": "succeeded", "result": {"extension": {"running": True}}}, "spark-browser"))
+        hook_mock.assert_called_once()
 
     def test_memory_source_quality_plan_does_not_trigger_browser_search(self) -> None:
         self.assertFalse(
@@ -936,6 +1062,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
             )
 
         self.assertEqual(result, {"context": "", "blocked_reply": None, "blocked_code": None})
@@ -1044,6 +1171,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
             )
 
         self.assertIn("source_url=https://coinmarketcap.com/currencies/bitcoin/", str(result["context"]))
@@ -1153,6 +1281,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
             )
 
         self.assertIn("browser_mode=direct_open", str(result["context"]))
@@ -1285,6 +1414,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
             )
 
         self.assertIn("source_title=IANA-managed Reserved Domains", str(result["context"]))
@@ -1424,6 +1554,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
             )
 
         self.assertIn("browser_mode=direct_open", str(result["context"]))

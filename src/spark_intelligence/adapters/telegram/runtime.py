@@ -29,7 +29,11 @@ from spark_intelligence.attachments import (
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
-from spark_intelligence.bridge_authority import authorize_builder_bridge_action, authorize_pending_confirmation
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    authorize_pending_confirmation,
+    extract_turn_intent_envelope,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
@@ -1677,6 +1681,7 @@ def simulate_telegram_update(
                         session_id=resolution.session_id,
                         channel_kind="telegram",
                         user_message=effective_text,
+                        turn_intent_envelope=extract_turn_intent_envelope(update_payload),
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
                     spark_character_reply = _maybe_spark_character_reply(
@@ -2500,6 +2505,7 @@ def poll_telegram_updates_once(
             channel_kind="telegram",
             user_message=effective_text,
             run_id=run.run_id,
+            turn_intent_envelope=extract_turn_intent_envelope(update),
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         spark_character_reply = _maybe_spark_character_reply(
