@@ -7769,7 +7769,7 @@ def _build_active_context_status_reply(
             next_steps.append(
                 f'If the sample looks right, mark "{current_focus}" closed and set the next focus.'
             )
-        if (current_focus or transition_new_focus) == "persistent memory quality evaluation":
+        if current_focus == "persistent memory quality evaluation" or transition_new_focus == "persistent memory quality evaluation":
             next_steps = [
                 "Evaluate whether current focus updates survive across a new turn.",
                 "Test open-ended recall against the same facts without triggering deterministic helper routes.",
