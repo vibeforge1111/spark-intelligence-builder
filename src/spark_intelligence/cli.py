@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2132,7 +2143,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep polling in the foreground until interrupted or --max-cycles is reached",
     )
-    gateway_start_parser.add_argument("--max-cycles", type=int, help="Limit gateway poll cycles")
+    gateway_start_parser.add_argument("--max-cycles", type=_positive_int, help="Limit gateway poll cycles (must be a positive integer)")
     gateway_start_parser.add_argument(
         "--poll-timeout-seconds",
         type=int,
