@@ -1186,10 +1186,20 @@ def simulate_telegram_update(
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
         voice_answer_request = _extract_voice_answer_request(effective_text)
+        command_result_override = None
         if voice_answer_request:
-            effective_text = voice_answer_request
-            voice_answer_requested_for_bridge = True
-        command_result = _handle_runtime_command(
+            authorized, blocked = _authorize_voice_delivery_action(
+                update_payload=update_payload,
+                command="/voice ask",
+                tool_name="voice.speak",
+                natural_command=False,
+            )
+            if authorized:
+                effective_text = voice_answer_request
+                voice_answer_requested_for_bridge = True
+            else:
+                command_result_override = blocked
+        command_result = command_result_override or _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
@@ -2167,11 +2177,21 @@ def poll_telegram_updates_once(
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
         voice_answer_requested_for_bridge = False
         voice_answer_request = _extract_voice_answer_request(effective_text)
+        command_result_override = None
         if voice_answer_request:
-            effective_text = voice_answer_request
-            voice_answer_requested_for_bridge = True
+            authorized, blocked = _authorize_voice_delivery_action(
+                update_payload=update,
+                command="/voice ask",
+                tool_name="voice.speak",
+                natural_command=False,
+            )
+            if authorized:
+                effective_text = voice_answer_request
+                voice_answer_requested_for_bridge = True
+            else:
+                command_result_override = blocked
 
-        command_result = _handle_runtime_command(
+        command_result = command_result_override or _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,

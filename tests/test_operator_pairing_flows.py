@@ -7686,11 +7686,16 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         client = FakeVoicePollingClient(
             [
-                make_telegram_update(
-                    update_id=118165,
-                    user_id="111",
-                    username="alice",
-                    text="/voice ask Say one warm thing",
+                _with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118165,
+                        user_id="111",
+                        username="alice",
+                        text="/voice ask Say one warm thing",
+                    ),
+                    tool_name="voice.speak",
+                    mutation_class="external_network",
+                    external_network=True,
                 )
             ]
         )
@@ -7788,11 +7793,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118166,
-                    user_id="111",
-                    username="alice",
-                    text="/voice ask Say one warm thing",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118166,
+                        user_id="111",
+                        username="alice",
+                        text="/voice ask Say one warm thing",
+                    ),
+                    tool_name="voice.speak",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
                 simulation=False,
             )
@@ -7805,6 +7815,27 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertNotIn("invalid_api_key", result.detail["response_text"])
         self.assertIn("ElevenLabs rejected the local API key", result.detail["voice_error"])
         self.assertNotIn("invalid_api_key", result.detail["voice_error"])
+
+    def test_voice_ask_without_turn_intent_does_not_force_voice_or_call_provider(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.build_researcher_reply") as provider_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118167,
+                    user_id="111",
+                    username="alice",
+                    text="/voice ask Say one warm thing",
+                ),
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        provider_mock.assert_not_called()
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertNotIn("voice_media", result.detail)
 
     def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
