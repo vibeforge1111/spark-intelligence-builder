@@ -38,6 +38,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload,
     build_telegram_memory_turn_intent_payload_vnext,
+    build_telegram_voice_delivery_turn_intent_payload_vnext,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
@@ -1054,19 +1055,13 @@ def _build_voice_chip_payload(
     normalized: Any | None = None,
     audio_bytes: bytes | None = None,
     file_path: str | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": "telegram",
         "human_id": human_id,
         "agent_id": agent_id,
         "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
-        "spark_machine_origin_policy": {
-            "schema": "spark.machine_origin_policy.v1",
-            "ownerSystem": "spark-intelligence-builder",
-            "allowedTools": ["voice.install", "voice.transcribe", "voice.speak"],
-            "mutationClassesAllowed": ["read_only", "writes_files", "external_network"],
-            "networkPolicy": "provider_allowed",
-        },
         "advisor_context": {
             "runtime": {
                 "os": platform.system() or "unknown",
@@ -1082,6 +1077,8 @@ def _build_voice_chip_payload(
             ],
         },
     }
+    if isinstance(turn_intent_payload, dict):
+        payload["turn_intent_envelope_vnext"] = turn_intent_payload
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
         secret_ref = getattr(provider, "secret_ref", None)
@@ -1163,6 +1160,7 @@ def _transcribe_telegram_audio_bytes(
     normalized: Any,
     audio_bytes: bytes,
     file_path: str,
+    turn_intent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     transcribe_started = perf_counter()
     execution = run_first_chip_hook_supporting(
@@ -1174,6 +1172,7 @@ def _transcribe_telegram_audio_bytes(
             normalized=normalized,
             audio_bytes=audio_bytes,
             file_path=file_path,
+            turn_intent_payload=turn_intent_payload,
         ),
     )
     transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
@@ -1282,6 +1281,7 @@ def _prepare_telegram_media_input(
                 normalized=normalized,
                 audio_bytes=audio_bytes,
                 file_path=file_path,
+                turn_intent_payload=authority.harness_core_envelope,
             )
     except Exception as exc:
         return {
@@ -1322,6 +1322,7 @@ def _prepare_telegram_media_input(
             normalized=normalized,
             audio_bytes=audio_bytes,
             file_path=file_path,
+            turn_intent_payload=authority.harness_core_envelope,
         )
     except Exception as exc:
         return {
@@ -1511,6 +1512,17 @@ def simulate_telegram_update(
                 spoken_source = str(command_result.get("voice_text") or outbound_text)
                 spoken_text = _prepare_voice_reply_text(spoken_source)
                 try:
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                        update_payload=researcher_update_payload,
+                        existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        state_db=state_db,
+                        request_id=request_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        user_message=effective_text,
+                        source_kind="telegram_voice_command_delivery",
+                    )
                     voice_payload = _synthesize_telegram_voice_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -1520,6 +1532,7 @@ def simulate_telegram_update(
                         text=spoken_text,
                         tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -2106,6 +2119,17 @@ def simulate_telegram_update(
             spoken_text = _prepare_voice_reply_text(outbound_text)
             if spoken_text:
                 try:
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                        update_payload=researcher_update_payload,
+                        existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        state_db=state_db,
+                        request_id=request_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        user_message=effective_text,
+                        source_kind="telegram_voice_bridge_delivery",
+                    )
                     voice_payload = _synthesize_telegram_voice_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -2114,6 +2138,7 @@ def simulate_telegram_update(
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -2672,6 +2697,8 @@ def poll_telegram_updates_once(
                     else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
                 ),
                 voice_input_runtime_state=voice_input_runtime_state,
+                turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                turn_intent_update_payload=researcher_update_payload,
                 respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
                 user_message=effective_text,
             )
@@ -2815,6 +2842,8 @@ def poll_telegram_updates_once(
                 force_voice=voice_origin_reply,
                 voice_text=outbound_text if voice_origin_reply else None,
                 voice_input_runtime_state=voice_input_runtime_state,
+                turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                turn_intent_update_payload=researcher_update_payload,
                 user_message=effective_text,
             )
             processed_count += 1
@@ -2970,6 +2999,8 @@ def poll_telegram_updates_once(
             force_voice=voice_origin_reply or voice_answer_requested_for_bridge,
             voice_text=outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None,
             voice_input_runtime_state=voice_input_runtime_state,
+            turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+            turn_intent_update_payload=researcher_update_payload,
             user_message=effective_text,
         )
         processed_count += 1
@@ -3071,6 +3102,78 @@ def _describe_telegram_delivery_exception(exc: Exception) -> str:
     return str(exc)
 
 
+def _telegram_voice_speak_turn_intent_payload(
+    *,
+    update_payload: dict[str, Any] | None,
+    existing_turn_intent_payload: dict[str, Any] | None = None,
+    state_db: StateDB | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    user_message: str | None = None,
+    source_kind: str = "telegram_voice_delivery",
+) -> dict[str, Any] | None:
+    if isinstance(existing_turn_intent_payload, dict):
+        existing_authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": existing_turn_intent_payload},
+            tool_name="voice.speak",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        if existing_authority.allowed:
+            return existing_authority.harness_core_envelope or existing_turn_intent_payload
+    legacy_authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
+    )
+    if legacy_authority.allowed:
+        return legacy_authority.harness_core_envelope
+    clean_message = " ".join(str(user_message or "").split())
+    if not human_id or not session_id or not clean_message:
+        return None
+    vnext_payload = build_telegram_voice_delivery_turn_intent_payload_vnext(
+        request_id=request_id or f"telegram-voice-delivery:{uuid4().hex}",
+        channel_kind="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        user_message=clean_message,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None
+    vnext_authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
+    )
+    if not vnext_authority.allowed:
+        return None
+    return vnext_authority.harness_core_envelope or vnext_payload
+
+
 def _synthesize_telegram_voice_reply(
     *,
     config_manager: ConfigManager,
@@ -3083,6 +3186,7 @@ def _synthesize_telegram_voice_reply(
     caption_text: str | None = None,
     coherence_mode: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         **_build_voice_chip_payload(
@@ -3090,6 +3194,7 @@ def _synthesize_telegram_voice_reply(
             state_db=state_db,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_payload=turn_intent_payload,
         ),
         "text": text,
         "surface": "telegram",
@@ -3743,6 +3848,8 @@ def _send_telegram_reply(
     force_voice: bool = False,
     voice_text: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
+    turn_intent_update_payload: dict[str, Any] | None = None,
     respect_voice_reply_state: bool = True,
     user_message: str | None = None,
 ) -> dict[str, Any]:
@@ -3773,6 +3880,20 @@ def _send_telegram_reply(
         respect_voice_reply_state
         and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
     )
+    if voice_requested:
+        turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+            update_payload=turn_intent_update_payload,
+            existing_turn_intent_payload=turn_intent_payload,
+            state_db=state_db,
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message or text,
+            source_kind="telegram_reply_voice_delivery",
+        )
+        if not isinstance(turn_intent_payload, dict):
+            voice_requested = False
     if voice_requested:
         filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
     guarded = prepare_outbound_text(
@@ -3819,6 +3940,7 @@ def _send_telegram_reply(
                     caption_text=voice_caption_text,
                     coherence_mode="caption_preview" if voice_text is not None else "exact",
                     voice_input_runtime_state=voice_input_runtime_state,
+                    turn_intent_payload=turn_intent_payload,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
@@ -8292,6 +8414,7 @@ def _run_voice_runtime_command(
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_payload=authority.harness_core_envelope,
     )
     if payload_extra:
         payload.update(payload_extra)

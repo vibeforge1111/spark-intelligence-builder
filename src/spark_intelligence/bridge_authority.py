@@ -235,6 +235,32 @@ def _build_telegram_tool_vnext_payload(
         return None
 
 
+def build_telegram_voice_delivery_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    source_kind: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    return _build_telegram_tool_vnext_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        intent_summary="Fresh Telegram turn selected voice delivery for the assistant reply.",
+        raw_turn_summary=(
+            "Fresh Telegram user turn plus explicit voice request or saved voice delivery "
+            f"preference selected voice output. User message: {user_message[:160]}"
+        ),
+    )
+
+
 def build_telegram_memory_turn_intent_payload(
     *,
     request_id: str,

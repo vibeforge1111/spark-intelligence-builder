@@ -816,6 +816,8 @@ def _build_voice_hook_payload(
         "human_id": envelope.human_id,
         "agent_id": envelope.agent_id,
     }
+    if isinstance(envelope.turn_intent_payload, dict):
+        payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
     if text is not None:
         payload["text"] = text
     return payload
