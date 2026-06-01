@@ -10,6 +10,10 @@ from spark_intelligence.adapters.telegram.runtime import (
     build_telegram_runtime_summary,
     simulate_telegram_update,
 )
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action as real_authorize_builder_bridge_action,
+    extract_turn_intent_envelope,
+)
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
@@ -20,6 +24,58 @@ from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def chat_only_turn_intent_payload(self) -> dict[str, object]:
+        return {
+            "schema": "spark.turn_intent.v1",
+            "turnId": "turn:test-chat-only",
+            "traceId": "trace:test-chat-only",
+            "surface": "telegram",
+            "directive": {
+                "mode": "answer",
+                "noExecution": True,
+                "noPublish": True,
+                "localOnly": True,
+                "explanationOnly": True,
+                "quotedOrMetaLanguage": False,
+            },
+            "selectedIntent": {
+                "kind": "chat_only",
+                "ownerSystem": "spark-intelligence-builder",
+                "action": "answer.compose",
+                "confidence": "explicit",
+                "requiresConfirmation": False,
+                "source": "test",
+            },
+            "sessionScope": {
+                "sessionKey": "session:test",
+                "surface": "telegram",
+                "conversationKind": "telegram_dm",
+                "userRef": "human:test",
+                "chatRef": "chat:test",
+                "memoryLoadPolicy": "bounded",
+                "pendingStateScope": "fresh_turn",
+            },
+            "toolPolicy": {
+                "allowedTools": ["answer.compose"],
+                "deniedTools": [],
+                "enabledToolsets": ["spark-harness-core"],
+                "mutationClassesAllowed": ["none", "read_only"],
+                "requiresApprovalFor": [],
+                "networkPolicy": "none",
+                "elevatedAllowed": False,
+            },
+            "executionPolicy": {
+                "canMutateFiles": False,
+                "canLaunchMission": False,
+                "canWriteMemory": False,
+                "canDeleteSchedule": False,
+                "canCreateChip": False,
+                "canPublish": False,
+                "canUseExternalNetwork": False,
+            },
+            "threatDefense": {"reasonCodes": ["chat_only_test"]},
+        }
+
     def fake_researcher_bridge_result(self, request_id: str = "req-test") -> ResearcherBridgeResult:
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -129,6 +185,68 @@ class GatewayAskTelegramTests(SparkTestCase):
         )
 
         self.assertEqual(output["result"]["detail"]["response_text"].splitlines()[0], "Memory Doctor: healthy.")
+
+    def test_simulate_telegram_update_supplies_memory_doctor_turn_intent_to_runtime_command(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured_payloads: list[dict[str, object] | None] = []
+
+        def spy_authorize(update_payload: dict[str, object] | None, **kwargs: object):
+            if kwargs.get("tool_name") == "memory.diagnose":
+                captured_payloads.append(update_payload)
+            return real_authorize_builder_bridge_action(update_payload, **kwargs)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.authorize_builder_bridge_action",
+            side_effect=spy_authorize,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98703,
+                    "message": {
+                        "message_id": 103,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "check memory deletes",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"].splitlines()[0], "Memory Doctor: healthy.")
+        self.assertTrue(captured_payloads)
+        envelope = extract_turn_intent_envelope(captured_payloads[0])
+        self.assertIsNotNone(envelope)
+        self.assertEqual(envelope.selected_intent.action, "memory.diagnose")
+        self.assertEqual(envelope.selected_intent.owner_system, "spark-intelligence-builder")
+        self.assertIn("memory.diagnose", envelope.tool_policy.allowed_tools)
+        self.assertIn("read_only", envelope.tool_policy.mutation_classes_allowed)
+        self.assertFalse(envelope.execution_policy.can_write_memory)
+
+    def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98704,
+                "spark_turn_intent": self.chat_only_turn_intent_payload(),
+                "message": {
+                    "message_id": 104,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "check memory deletes",
+                },
+            },
+        )
+
+        response_text = result.detail["response_text"]
+        self.assertTrue(result.ok)
+        self.assertNotEqual(response_text.splitlines()[0], "Memory Doctor: healthy.")
+        self.assertIn("missing Spark authority for memory diagnostics", response_text)
+        self.assertIn("tool_not_allowed_by_policy", response_text)
 
     def test_gateway_ask_telegram_shows_memory_doctor_help(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
