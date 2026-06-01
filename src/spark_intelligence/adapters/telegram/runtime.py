@@ -3931,7 +3931,9 @@ def _handle_runtime_command(
             session_id=session_id or "",
             current_request_id=request_id or "",
         )
-    style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
+    explicit_style_command = _parse_style_command(normalized)
+    natural_style_command = None if explicit_style_command is not None else _match_natural_style_command(normalized)
+    style_command = explicit_style_command or natural_style_command
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
     if _is_memory_doctor_help_request(normalized):
@@ -3970,6 +3972,8 @@ def _handle_runtime_command(
             agent_id=agent_id,
             command=style_command["command"],
             payload=style_command.get("payload"),
+            update_payload=update_payload,
+            natural_command=natural_style_command is not None,
         )
     if lowered in {"/self", "/introspect"}:
         capsule = build_self_awareness_capsule(
@@ -6276,7 +6280,9 @@ def _handle_style_command(
     agent_id: str | None,
     command: str,
     payload: str | None,
-) -> dict[str, str]:
+    update_payload: dict[str, Any] | None = None,
+    natural_command: bool = False,
+) -> dict[str, str] | None:
     if command == "/style":
         return {
             "command": "/style",
@@ -6389,6 +6395,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.undo",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         restored_profile = pop_agent_persona_undo_snapshot(
             agent_id=agent_id,
             human_id=human_id,
@@ -6461,6 +6475,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.savepoint.create",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         create_agent_persona_savepoint(
             agent_id=agent_id,
             human_id=human_id,
@@ -6491,6 +6513,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.savepoint.restore",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         restored_profile = restore_agent_persona_savepoint(
             agent_id=agent_id,
             human_id=human_id,
@@ -6539,6 +6569,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.preset.apply",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         preset = _STYLE_PRESETS[preset_name]
         training_message = _build_style_training_message(str(preset.get("instruction") or ""))
         mutation = detect_and_persist_agent_persona_preferences(
@@ -6602,6 +6640,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.train",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         training_message = _build_style_training_message(instruction)
         mutation = detect_and_persist_agent_persona_preferences(
             agent_id=agent_id,
@@ -6663,6 +6709,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.feedback.record",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         training_message = _build_style_feedback_training_message(
             feedback=feedback,
             sentiment="positive" if command == "/style good" else ("negative" if command == "/style bad" else "neutral"),
@@ -7525,6 +7579,38 @@ def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ..
         ),
         "respect_voice_reply_state": False,
     }
+
+
+def _blocked_style_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help update style, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark style action and I will run it."
+        ),
+    }
+
+
+def _authorize_style_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_style_authority_result(command=command, reason_codes=authority.reason_codes)
 
 
 def _authorize_voice_state_action(

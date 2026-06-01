@@ -179,6 +179,73 @@ def _with_voice_turn_intent(
     return enriched
 
 
+def _with_style_turn_intent(
+    update: dict,
+    *,
+    tool_name: str,
+    no_execution: bool = False,
+) -> dict:
+    message = dict(update.get("message") or {})
+    allowed_tools = ["answer.compose"]
+    mutation_classes = ["none", "read_only"]
+    if not no_execution:
+        allowed_tools.append(tool_name)
+        mutation_classes.append("writes_memory")
+    message["spark_turn_intent"] = {
+        "schema": "spark.turn_intent.v1",
+        "turnId": "turn:style-test",
+        "traceId": "trace:style-test",
+        "surface": "telegram",
+        "directive": {
+            "mode": "answer" if no_execution else "execute",
+            "noExecution": no_execution,
+            "noPublish": False,
+            "localOnly": False,
+            "explanationOnly": no_execution,
+            "quotedOrMetaLanguage": no_execution,
+        },
+        "selectedIntent": {
+            "kind": "style_action",
+            "ownerSystem": "spark-intelligence-builder",
+            "action": tool_name,
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": "explicit",
+        },
+        "sessionScope": {
+            "sessionKey": "telegram:dm:111",
+            "surface": "telegram",
+            "conversationKind": "dm",
+            "userRef": "user:111",
+            "chatRef": "chat:111",
+            "memoryLoadPolicy": "evidence_only",
+            "pendingStateScope": "same_session_only",
+        },
+        "toolPolicy": {
+            "allowedTools": allowed_tools,
+            "deniedTools": [],
+            "enabledToolsets": ["telegram.reply", "spark-intelligence-builder"],
+            "mutationClassesAllowed": mutation_classes,
+            "requiresApprovalFor": [],
+            "networkPolicy": "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": False,
+            "canLaunchMission": False,
+            "canWriteMemory": not no_execution,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": False,
+        },
+        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+    }
+    enriched = dict(update)
+    enriched["message"] = message
+    return enriched
+
+
 class OperatorPairingFlowTests(SparkTestCase):
     def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
         record_pairing_context(
@@ -4952,11 +5019,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=117,
-                user_id="111",
-                username="alice",
-                text="/style train be more direct and keep replies short",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=117,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
             ),
         )
 
@@ -4977,11 +5047,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11705,
-                user_id="111",
-                username="alice",
-                text="/style train be more Claude-like in conversation continuity",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11705,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more Claude-like in conversation continuity",
+                ),
+                tool_name="style.train",
             ),
         )
 
@@ -5002,6 +5075,30 @@ class OperatorPairingFlowTests(SparkTestCase):
             "Avoid generic opener questions and canned assistant greetings",
             profile["agent_behavioral_rules"],
         )
+
+    def test_style_train_without_turn_intent_does_not_write_persona_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117051,
+                user_id="111",
+                username="alice",
+                text="/style train be more direct and keep replies short",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertNotIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
 
     def test_natural_language_style_status_command_returns_saved_style_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -5210,11 +5307,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=1171,
-                user_id="111",
-                username="alice",
-                text="/style feedback too verbose",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=1171,
+                    user_id="111",
+                    username="alice",
+                    text="/style feedback too verbose",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5241,11 +5341,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11711,
-                user_id="111",
-                username="alice",
-                text="/style feedback less canned and more grounded follow-up questions",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11711,
+                    user_id="111",
+                    username="alice",
+                    text="/style feedback less canned and more grounded follow-up questions",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5269,11 +5372,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=117115,
-                user_id="111",
-                username="alice",
-                text="/style feedback Be less polished and less performative.",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=117115,
+                    user_id="111",
+                    username="alice",
+                    text="/style feedback Be less polished and less performative.",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5297,11 +5403,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=117116,
-                user_id="111",
-                username="alice",
-                text="/style feedback In Telegram DM, give the answer first and skip meta commentary.",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=117116,
+                    user_id="111",
+                    username="alice",
+                    text="/style feedback In Telegram DM, give the answer first and skip meta commentary.",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5326,11 +5435,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=117117,
-                user_id="111",
-                username="alice",
-                text="/style feedback When I ask about my previous message, answer the immediately previous turn, not the broader conversation.",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=117117,
+                    user_id="111",
+                    username="alice",
+                    text="/style feedback When I ask about my previous message, answer the immediately previous turn, not the broader conversation.",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5354,11 +5466,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11712,
-                user_id="111",
-                username="alice",
-                text="That was too verbose",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11712,
+                    user_id="111",
+                    username="alice",
+                    text="That was too verbose",
+                ),
+                tool_name="style.feedback.record",
             ),
         )
 
@@ -5371,6 +5486,31 @@ class OperatorPairingFlowTests(SparkTestCase):
             config_manager=self.config_manager,
         )
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
+
+    def test_natural_language_style_feedback_without_turn_intent_does_not_steal_chat_or_write(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117121,
+                user_id="111",
+                username="alice",
+                text="That was too verbose",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("Saved style feedback", result.detail["response_text"])
+        self.assertNotEqual(result.detail.get("bridge_mode"), "runtime_command")
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertNotIn("Be less verbose and keep replies short", profile["agent_behavioral_rules"])
 
     def test_style_history_reports_empty_when_no_saved_mutations_exist(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -5396,11 +5536,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11716,
-                user_id="111",
-                username="alice",
-                text="/style train be more direct and keep replies short",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11716,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
             ),
         )
         result = simulate_telegram_update(
@@ -5444,11 +5587,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11721,
-                user_id="111",
-                username="alice",
-                text="/style preset concise",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11721,
+                    user_id="111",
+                    username="alice",
+                    text="/style preset concise",
+                ),
+                tool_name="style.preset.apply",
             ),
         )
 
@@ -5469,11 +5615,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11722,
-                user_id="111",
-                username="alice",
-                text="Set style preset to claude-like",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11722,
+                    user_id="111",
+                    username="alice",
+                    text="Set style preset to claude-like",
+                ),
+                tool_name="style.preset.apply",
             ),
         )
 
@@ -5497,21 +5646,27 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11723,
-                user_id="111",
-                username="alice",
-                text="/style train be more direct and keep replies short",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11723,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
             ),
         )
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11724,
-                user_id="111",
-                username="alice",
-                text="/style undo",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11724,
+                    user_id="111",
+                    username="alice",
+                    text="/style undo",
+                ),
+                tool_name="style.undo",
             ),
         )
 
@@ -5531,21 +5686,27 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11725,
-                user_id="111",
-                username="alice",
-                text="/style preset concise",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11725,
+                    user_id="111",
+                    username="alice",
+                    text="/style preset concise",
+                ),
+                tool_name="style.preset.apply",
             ),
         )
         result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11726,
-                user_id="111",
-                username="alice",
-                text="Undo the last style change",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11726,
+                    user_id="111",
+                    username="alice",
+                    text="Undo the last style change",
+                ),
+                tool_name="style.undo",
             ),
         )
 
@@ -5553,47 +5714,96 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Reverted last style change for", result.detail["response_text"])
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_style_undo_without_turn_intent_does_not_revert_persona_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=117261,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117262,
+                user_id="111",
+                username="alice",
+                text="/style undo",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
+
     def test_style_savepoint_and_restore_round_trip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11727,
-                user_id="111",
-                username="alice",
-                text="/style train be more direct and keep replies short",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11727,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
             ),
         )
         savepoint_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11728,
-                user_id="111",
-                username="alice",
-                text="/style savepoint concise baseline",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11728,
+                    user_id="111",
+                    username="alice",
+                    text="/style savepoint concise baseline",
+                ),
+                tool_name="style.savepoint.create",
             ),
         )
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11729,
-                user_id="111",
-                username="alice",
-                text="/style preset warm",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11729,
+                    user_id="111",
+                    username="alice",
+                    text="/style preset warm",
+                ),
+                tool_name="style.preset.apply",
             ),
         )
         restore_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11730,
-                user_id="111",
-                username="alice",
-                text="/style restore concise baseline",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11730,
+                    user_id="111",
+                    username="alice",
+                    text="/style restore concise baseline",
+                ),
+                tool_name="style.savepoint.restore",
             ),
         )
 
@@ -5615,11 +5825,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11731,
-                user_id="111",
-                username="alice",
-                text="/style savepoint alpha voice",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11731,
+                    user_id="111",
+                    username="alice",
+                    text="/style savepoint alpha voice",
+                ),
+                tool_name="style.savepoint.create",
             ),
         )
         result = simulate_telegram_update(
@@ -5643,21 +5856,27 @@ class OperatorPairingFlowTests(SparkTestCase):
         savepoint_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11733,
-                user_id="111",
-                username="alice",
-                text="Save style savepoint named checkpoint one",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11733,
+                    user_id="111",
+                    username="alice",
+                    text="Save style savepoint named checkpoint one",
+                ),
+                tool_name="style.savepoint.create",
             ),
         )
         restore_result = simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11734,
-                user_id="111",
-                username="alice",
-                text="Restore style savepoint named checkpoint one",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11734,
+                    user_id="111",
+                    username="alice",
+                    text="Restore style savepoint named checkpoint one",
+                ),
+                tool_name="style.savepoint.restore",
             ),
         )
 
@@ -5672,21 +5891,27 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11735,
-                user_id="111",
-                username="alice",
-                text="/style savepoint baseline one",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11735,
+                    user_id="111",
+                    username="alice",
+                    text="/style savepoint baseline one",
+                ),
+                tool_name="style.savepoint.create",
             ),
         )
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11736,
-                user_id="111",
-                username="alice",
-                text="/style train be more direct and keep replies short",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11736,
+                    user_id="111",
+                    username="alice",
+                    text="/style train be more direct and keep replies short",
+                ),
+                tool_name="style.train",
             ),
         )
         result = simulate_telegram_update(
@@ -5712,11 +5937,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         simulate_telegram_update(
             config_manager=self.config_manager,
             state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=11738,
-                user_id="111",
-                username="alice",
-                text="/style savepoint baseline two",
+            update_payload=_with_style_turn_intent(
+                make_telegram_update(
+                    update_id=11738,
+                    user_id="111",
+                    username="alice",
+                    text="/style savepoint baseline two",
+                ),
+                tool_name="style.savepoint.create",
             ),
         )
         result = simulate_telegram_update(
