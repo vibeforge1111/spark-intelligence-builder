@@ -4362,12 +4362,23 @@ def _handle_runtime_command(
         or lowered.startswith("/voice audition ")
         or (natural_voice_command and natural_voice_command[0] == "/voice audition")
     ):
+        natural_audition_command = bool(natural_voice_command and natural_voice_command[0] == "/voice audition") and not (
+            lowered == "/voice audition" or lowered.startswith("/voice audition ")
+        )
         if lowered.startswith("/voice audition "):
             prompt = normalized[len("/voice audition") :].strip()
         elif natural_voice_command and natural_voice_command[0] == "/voice audition":
             prompt = str(natural_voice_command[1] or "").strip()
         else:
             prompt = ""
+        authorized, blocked = _authorize_voice_delivery_action(
+            update_payload=update_payload,
+            command="/voice audition",
+            tool_name="voice.speak",
+            natural_command=natural_audition_command,
+        )
+        if not authorized:
+            return blocked
         voice_text = _elevenlabs_audition_text(prompt)
         return {
             "command": "/voice audition",
@@ -4458,6 +4469,7 @@ def _handle_runtime_command(
             "respect_voice_reply_state": False,
         }
     if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
+        natural_speak_command = bool(natural_voice_command and natural_voice_command[0] == "/voice speak") and not lowered.startswith("/voice speak")
         speak_text = (
             normalized[len("/voice speak") :].strip()
             if lowered.startswith("/voice speak")
@@ -4472,6 +4484,14 @@ def _handle_runtime_command(
                 ),
                 "respect_voice_reply_state": False,
             }
+        authorized, blocked = _authorize_voice_delivery_action(
+            update_payload=update_payload,
+            command="/voice speak",
+            tool_name="voice.speak",
+            natural_command=natural_speak_command,
+        )
+        if not authorized:
+            return blocked
         return {
             "command": "/voice speak",
             "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
@@ -7684,6 +7704,40 @@ def _authorize_voice_state_action(
     if authority.allowed:
         return None
     return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _blocked_voice_delivery_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help with voice delivery, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
+def _authorize_voice_delivery_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_voice_delivery_authority_result(command=command, reason_codes=authority.reason_codes)
 
 
 def _run_voice_doctor_command(
