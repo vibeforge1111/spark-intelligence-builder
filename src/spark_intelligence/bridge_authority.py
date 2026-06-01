@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.harness_contract import (
+    LegacyToolAuthorization,
     MutationClass,
     TurnIntentEnvelope,
-    authorize_tool_call,
+    authorize_legacy_tool_call,
     parse_turn_intent_envelope,
 )
 
@@ -25,6 +26,9 @@ class BridgeAuthorityVerdict:
     allowed: bool
     reason_codes: tuple[str, ...]
     envelope: TurnIntentEnvelope | None
+    harness_core_envelope: dict[str, Any] | None = None
+    proposed_action: dict[str, Any] | None = None
+    authorization_decision: dict[str, Any] | None = None
 
 
 def extract_turn_intent_envelope(update_payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
@@ -370,7 +374,7 @@ def authorize_builder_bridge_action(
     external_network: bool = False,
 ) -> BridgeAuthorityVerdict:
     envelope = extract_turn_intent_envelope(update_payload)
-    verdict, reasons = authorize_tool_call(
+    authorization: LegacyToolAuthorization = authorize_legacy_tool_call(
         envelope,
         tool_name=tool_name,
         owner_system=owner_system,
@@ -379,9 +383,12 @@ def authorize_builder_bridge_action(
         external_network=external_network,
     )
     return BridgeAuthorityVerdict(
-        allowed=verdict == "allowed",
-        reason_codes=reasons,
+        allowed=authorization.verdict == "allowed",
+        reason_codes=authorization.reason_codes,
         envelope=envelope,
+        harness_core_envelope=authorization.turn_intent_envelope_vnext,
+        proposed_action=authorization.proposed_action,
+        authorization_decision=authorization.authorization_decision,
     )
 
 
@@ -397,7 +404,7 @@ def authorize_pending_confirmation(
     envelope = extract_turn_intent_envelope(update_payload)
     if envelope is None:
         return BridgeAuthorityVerdict(False, ("missing_or_invalid_envelope",), None)
-    verdict, reasons = authorize_tool_call(
+    authorization: LegacyToolAuthorization = authorize_legacy_tool_call(
         envelope,
         tool_name=tool_name,
         owner_system=owner_system,
@@ -405,9 +412,16 @@ def authorize_pending_confirmation(
         publishes=publishes,
         external_network=external_network,
     )
-    extra_reasons = list(reasons)
+    extra_reasons = list(authorization.reason_codes)
     if envelope.directive.quoted_or_meta_language and "quoted_or_meta_language" not in extra_reasons:
         extra_reasons.append("quoted_or_meta_language")
     if envelope.directive.explanation_only and "explanation_only_boundary" not in extra_reasons:
         extra_reasons.append("explanation_only_boundary")
-    return BridgeAuthorityVerdict(verdict == "allowed" and not extra_reasons, tuple(extra_reasons), envelope)
+    return BridgeAuthorityVerdict(
+        authorization.verdict == "allowed" and not extra_reasons,
+        tuple(extra_reasons),
+        envelope,
+        authorization.turn_intent_envelope_vnext,
+        authorization.proposed_action,
+        authorization.authorization_decision,
+    )
