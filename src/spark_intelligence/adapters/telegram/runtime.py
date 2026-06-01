@@ -3840,6 +3840,16 @@ def _render_telegram_route_probe_reply(probe: Any) -> str:
     return "\n".join(lines)
 
 
+def _render_telegram_route_probe_authority_blocked_reply(*, route_name: str, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    route_label = str(route_name or "").strip() or "that route"
+    return (
+        f"I can inspect route health for `{route_label}`, but this turn is missing Spark authority to run the probe.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized Spark route probe and I will record the evidence."
+    )
+
+
 _TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
 
 
@@ -4002,6 +4012,21 @@ def _handle_runtime_command(
             return {
                 "command": "/probe",
                 "reply_text": _render_telegram_route_probe_help(route_name=route_name),
+                "respect_voice_reply_state": True,
+            }
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="route.probe.run",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+        )
+        if not authority.allowed:
+            return {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_authority_blocked_reply(
+                    route_name=route_name,
+                    reason_codes=authority.reason_codes,
+                ),
                 "respect_voice_reply_state": True,
             }
         probe = run_route_probe_and_record(
