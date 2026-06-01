@@ -384,6 +384,7 @@ def _with_schedule_turn_intent(
     update: dict,
     *,
     tool_name: str = "schedule.delete",
+    mutation_class: str = "deletes_schedule",
     no_execution: bool = False,
 ) -> dict:
     message = dict(update.get("message") or {})
@@ -391,7 +392,8 @@ def _with_schedule_turn_intent(
     mutation_classes = ["none", "read_only"]
     if not no_execution:
         allowed_tools.append(tool_name)
-        mutation_classes.append("deletes_schedule")
+        if mutation_class not in mutation_classes:
+            mutation_classes.append(mutation_class)
     message["spark_turn_intent"] = {
         "schema": "spark.turn_intent.v1",
         "turnId": "turn:schedule-test",
@@ -427,7 +429,7 @@ def _with_schedule_turn_intent(
             "deniedTools": [],
             "enabledToolsets": ["telegram.reply", "spark-intelligence-builder"],
             "mutationClassesAllowed": mutation_classes,
-            "requiresApprovalFor": ["deletes_schedule"],
+            "requiresApprovalFor": ["deletes_schedule"] if mutation_class == "deletes_schedule" else [],
             "networkPolicy": "none",
             "elevatedAllowed": False,
         },
@@ -435,7 +437,7 @@ def _with_schedule_turn_intent(
             "canMutateFiles": False,
             "canLaunchMission": False,
             "canWriteMemory": False,
-            "canDeleteSchedule": not no_execution,
+            "canDeleteSchedule": mutation_class == "deletes_schedule" and not no_execution,
             "canCreateChip": False,
             "canPublish": False,
             "canUseExternalNetwork": False,
@@ -448,6 +450,52 @@ def _with_schedule_turn_intent(
 
 
 class OperatorPairingFlowTests(SparkTestCase):
+
+    def test_schedule_list_without_turn_intent_does_not_fetch_spawner(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.schedule_bridge.format_schedule_list_from_spawner") as schedule_list_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=11870,
+                    user_id="111",
+                    username="alice",
+                    text="show my schedules",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        schedule_list_mock.assert_not_called()
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
+        self.assertIn("missing_or_invalid_envelope", str(result.detail["response_text"]))
+
+    def test_schedule_list_with_read_authority_fetches_spawner(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.schedule_bridge.format_schedule_list_from_spawner",
+            return_value="No schedules are active.",
+        ) as schedule_list_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_schedule_turn_intent(
+                    make_telegram_update(
+                        update_id=11871,
+                        user_id="111",
+                        username="alice",
+                        text="show my schedules",
+                    ),
+                    tool_name="schedule.list",
+                    mutation_class="read_only",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        schedule_list_mock.assert_called_once()
+        self.assertIn("No schedules are active.", str(result.detail["response_text"]))
 
 
     def test_pending_schedule_delete_confirmation_rejects_unrelated_executable_envelope(self) -> None:
