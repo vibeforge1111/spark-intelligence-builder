@@ -8,6 +8,7 @@ from spark_intelligence.harness_runtime import (
     build_harness_task_envelope,
     execute_harness_chain,
     execute_harness_task,
+    with_harness_local_operator_turn_intent,
 )
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
@@ -35,7 +36,7 @@ class HarnessRuntimeTests(SparkTestCase):
         )
 
         self.assertEqual(envelope.harness_id, "browser.grounded")
-        self.assertEqual(envelope.backend_kind, "browser_bridge")
+        self.assertEqual(envelope.backend_kind, "browser_use_adapter")
         self.assertEqual(envelope.session_id, "session-1")
 
     def test_execute_builder_direct_harness_records_runtime_run(self) -> None:
@@ -168,6 +169,7 @@ class HarnessRuntimeTests(SparkTestCase):
             task="Say: Hello from Spark voice.",
             forced_harness_id="voice.io",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         def fake_voice_hook(*, hook, **kwargs):
             if hook == "voice.status":
@@ -211,6 +213,25 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["spoken_audio"]["filename"], "voice-reply-test.ogg")
         self.assertEqual(result.artifacts["spoken_audio"]["audio_bytes"], 5)
 
+    def test_execute_voice_io_harness_without_authority_does_not_run_chip_hook(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting") as hook_mock:
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        hook_mock.assert_not_called()
+        self.assertIn("missing", result.artifacts["voice_status"]["reason"])
+
     def test_execute_voice_io_harness_requests_input_without_explicit_text(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
@@ -218,6 +239,7 @@ class HarnessRuntimeTests(SparkTestCase):
             task="Use voice for this.",
             forced_harness_id="voice.io",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         with patch(
             "spark_intelligence.harness_runtime.service._run_voice_hook",
@@ -330,6 +352,7 @@ class HarnessRuntimeTests(SparkTestCase):
             task="What is the difference between Spark Researcher and Builder?",
             forced_harness_id="researcher.advisory",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         class FakeResearcherResult:
             reply_text = "Spark Researcher thinks.\nBuilder delivers."
