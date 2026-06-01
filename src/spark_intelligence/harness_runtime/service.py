@@ -188,77 +188,51 @@ def build_harness_task_envelope(
 
 
 def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
-    allowed_tools = ["answer.compose"]
-    mutation_classes = ["none", "read_only"]
-    owner_system = str(envelope.owner_system or "spark-intelligence-builder")
-    selected_action = str(envelope.harness_id or "harness.execute")
-    external_network = False
-
-    if envelope.harness_id == "voice.io":
-        owner_system = "spark-voice-comms"
-        task_mode, _ = _classify_voice_task(envelope.task)
-        allowed_tools.append("voice.status")
-        if task_mode == "speak":
-            allowed_tools.append("voice.speak")
-            mutation_classes.append("external_network")
-            external_network = True
-        elif task_mode == "transcribe":
-            allowed_tools.append("voice.transcribe")
-            mutation_classes.append("external_network")
-            external_network = True
-    else:
+    if envelope.harness_id != "voice.io":
         return None
 
-    return {
-        "schema": "spark.turn_intent.v1",
-        "turnId": f"turn:{envelope.envelope_id}",
-        "traceId": f"trace:harness-runtime:{envelope.envelope_id}",
-        "surface": envelope.channel_kind or "cli",
-        "directive": {
-            "mode": "execute",
-            "noExecution": False,
-            "noPublish": False,
-            "localOnly": False,
-            "explanationOnly": False,
-            "quotedOrMetaLanguage": False,
-        },
-        "selectedIntent": {
-            "kind": "harness_action",
-            "ownerSystem": owner_system,
-            "action": selected_action,
-            "confidence": "explicit",
-            "requiresConfirmation": False,
-            "source": "local_operator_harness_execute",
-        },
-        "sessionScope": {
-            "sessionKey": envelope.session_id or f"harness:{envelope.envelope_id}",
-            "surface": envelope.channel_kind or "cli",
-            "conversationKind": "local_operator",
-            "userRef": envelope.human_id or "human:local-operator",
-            "chatRef": None,
-            "memoryLoadPolicy": "evidence_only",
-            "pendingStateScope": "same_session_only",
-        },
-        "toolPolicy": {
-            "allowedTools": allowed_tools,
-            "deniedTools": [],
-            "enabledToolsets": ["spark-harness-core", owner_system],
-            "mutationClassesAllowed": mutation_classes,
-            "requiresApprovalFor": [],
-            "networkPolicy": "external" if external_network else "none",
-            "elevatedAllowed": False,
-        },
-        "executionPolicy": {
-            "canMutateFiles": False,
-            "canLaunchMission": False,
-            "canWriteMemory": False,
-            "canDeleteSchedule": False,
-            "canCreateChip": False,
-            "canPublish": False,
-            "canUseExternalNetwork": external_network,
-        },
-        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority", "local_operator_explicit_execute"]},
-    }
+    from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+    task_mode, _ = _classify_voice_task(envelope.task)
+    actions: list[dict[str, Any]] = [
+        {
+            "tool_name": "voice.status",
+            "owner_system": "spark-voice-comms",
+            "mutation_class": "read_only",
+            "summary": "Local operator requested voice status before any voice I/O action.",
+        }
+    ]
+    if task_mode == "speak":
+        actions.append(
+            {
+                "tool_name": "voice.speak",
+                "owner_system": "spark-voice-comms",
+                "mutation_class": "external_network",
+                "external_network": True,
+                "summary": "Local operator explicitly requested speech synthesis through voice I/O.",
+            }
+        )
+    elif task_mode == "transcribe":
+        actions.append(
+            {
+                "tool_name": "voice.transcribe",
+                "owner_system": "spark-voice-comms",
+                "mutation_class": "external_network",
+                "external_network": True,
+                "summary": "Local operator explicitly requested transcription through voice I/O.",
+            }
+        )
+
+    return build_vnext_action_intent_envelope(
+        surface=envelope.channel_kind or "cli",
+        actor_id_ref=envelope.human_id or "human:local-operator",
+        request_id=envelope.envelope_id,
+        source_kind="local_operator_harness_execute",
+        intent_summary="Local operator explicitly requested governed voice I/O through the Builder harness runtime.",
+        raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+        actions=actions,
+        confidence=0.95,
+    )
 
 
 def with_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> HarnessTaskEnvelope:
@@ -884,17 +858,35 @@ def _run_voice_hook(
 
 
 def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -> None:
-    from spark_intelligence.harness_contract import authorize_tool_call, parse_turn_intent_envelope
+    from spark_intelligence.harness_contract import (
+        authorize_tool_call,
+        authorize_vnext_tool_call,
+        parse_turn_intent_envelope,
+    )
 
     payload = envelope.turn_intent_payload
-    parsed_envelope = None
+    mutation_class = "external_network" if hook in {"voice.speak", "voice.transcribe"} else "read_only"
+    external_network = hook in {"voice.speak", "voice.transcribe"}
+    if isinstance(payload, dict) and payload.get("schema_version") == "turn-intent-envelope-vnext":
+        authorization = authorize_vnext_tool_call(
+            payload,
+            tool_name=hook,
+            owner_system="spark-voice-comms",
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        if authorization.verdict == "allowed":
+            return
+        reason_text = ", ".join(authorization.reason_codes) if authorization.reason_codes else "turn_not_authorized"
+        raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+
     if isinstance(payload, dict):
         try:
             parsed_envelope = parse_turn_intent_envelope(payload)
         except ValueError:
             parsed_envelope = None
-    mutation_class = "external_network" if hook in {"voice.speak", "voice.transcribe"} else "read_only"
-    external_network = hook in {"voice.speak", "voice.transcribe"}
+    else:
+        parsed_envelope = None
     verdict, reasons = authorize_tool_call(
         parsed_envelope,
         tool_name=hook,
