@@ -151,3 +151,33 @@ class ProceduralLessonMemoryTests(SparkTestCase):
         rows = recent_procedural_lesson_records(self.state_db, limit=10)
         self.assertEqual(len(rows), 2)
         self.assertIn(rows[0]["lesson_kind"], {"wrong_build_target", "timeout_recovery"})
+
+    def test_retire_unknown_lesson_names_recent_active_keys(self) -> None:
+        upsert_procedural_lesson(
+            self.state_db,
+            lesson_key="self-review:strong",
+            lesson_kind="bad_self_review",
+            trigger_pattern="trigger",
+            corrective_action="correction",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            retire_procedural_lesson(
+                self.state_db,
+                lesson_key="self-review:does-not-exist",
+                reason="typo",
+            )
+        message = str(ctx.exception)
+        self.assertIn("unknown_procedural_lesson:self-review:does-not-exist", message)
+        self.assertIn("recent active keys:", message)
+        self.assertIn("self-review:strong", message)
+
+    def test_retire_unknown_lesson_says_none_active_when_table_empty(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            retire_procedural_lesson(
+                self.state_db,
+                lesson_key="self-review:missing",
+                reason="typo",
+            )
+        message = str(ctx.exception)
+        self.assertIn("recent active keys: none active", message)
