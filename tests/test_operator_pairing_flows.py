@@ -7672,11 +7672,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118166,
-                    user_id="111",
-                    username="alice",
-                    text="Find me a natural geeky QA tester girl voice",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118166,
+                        user_id="111",
+                        username="alice",
+                        text="Find me a natural geeky QA tester girl voice",
+                    ),
+                    tool_name="voice.search.run",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -7685,6 +7690,46 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Elise", reply)
         self.assertIn("use voice Elise", reply)
         self.assertNotIn("voice-elise", reply)
+
+    def test_voice_search_without_turn_intent_does_not_query_elevenlabs(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices") as voice_list_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1181661,
+                    user_id="111",
+                    username="alice",
+                    text="/voice voices natural geeky QA tester",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        voice_list_mock.assert_not_called()
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", result.detail["response_text"])
+
+    def test_natural_language_voice_search_without_turn_intent_does_not_query_elevenlabs(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime._list_elevenlabs_voices") as voice_list_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1181662,
+                    user_id="111",
+                    username="alice",
+                    text="Find me a natural geeky QA tester girl voice",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        voice_list_mock.assert_not_called()
+        self.assertIn("missing Spark authority", result.detail["response_text"])
+        self.assertIn("missing_or_invalid_envelope", result.detail["response_text"])
 
     def test_natural_language_voice_pick_saves_dm_elevenlabs_profile(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
