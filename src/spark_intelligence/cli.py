@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2211,7 +2222,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_whatsapp_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
+    gateway_traces_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of trace events to show (must be a positive integer)")
     gateway_traces_parser.add_argument("--channel-id", help="Filter trace events by channel id")
     gateway_traces_parser.add_argument("--event", help="Filter trace events by event name")
     gateway_traces_parser.add_argument("--user", help="Filter trace events by user id or chat id")
@@ -2219,7 +2230,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
+    gateway_outbound_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of outbound events to show (must be a positive integer)")
     gateway_outbound_parser.add_argument("--channel-id", help="Filter outbound events by channel id")
     gateway_outbound_parser.add_argument("--event", help="Filter outbound events by event name")
     gateway_outbound_parser.add_argument("--user", help="Filter outbound events by user id or chat id")
