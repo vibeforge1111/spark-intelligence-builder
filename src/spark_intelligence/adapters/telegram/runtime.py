@@ -1926,6 +1926,7 @@ def simulate_telegram_update(
                         channel_kind="telegram",
                         user_message=effective_text,
                         turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+                        turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
                         allow_memory_adapter_envelope=False,
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
@@ -2773,6 +2774,7 @@ def poll_telegram_updates_once(
             user_message=effective_text,
             run_id=run.run_id,
             turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+            turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
             allow_memory_adapter_envelope=False,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
