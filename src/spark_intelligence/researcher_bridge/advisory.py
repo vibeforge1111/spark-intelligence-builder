@@ -4276,6 +4276,63 @@ def _authorize_researcher_browser_hook(
     return False
 
 
+def _authorize_researcher_active_chip_evaluate(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    selected_chip_keys: list[str],
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> bool:
+    verdict, reasons = authorize_tool_call(
+        turn_intent_envelope,
+        tool_name="chip.evaluate",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_files",
+    )
+    if verdict == "allowed":
+        return True
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.active_chip_evaluate",
+            source_kind="turn_intent_envelope",
+            source_ref=turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
+            summary="Researcher bridge blocked active chip evaluation without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="active_chip_evaluate_authority_blocked",
+            blocked_stage="active_chip_evaluate",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "spark-intelligence-builder",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "chip.evaluate",
+                "selected_chip_keys": selected_chip_keys,
+                "reason_codes": list(reasons),
+                "authority_state": "present" if turn_intent_envelope is not None else "missing",
+            },
+        )
+    except Exception:
+        pass
+    return False
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -6295,6 +6352,7 @@ def _run_active_chip_evaluate(
     conversation_history: str,
     attachment_context: dict[str, object],
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
 ) -> dict[str, Any] | None:
     trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     payload = {
@@ -6330,6 +6388,19 @@ def _run_active_chip_evaluate(
     selected_keys = [s.chip_key for s in decision.selected]
     selected_records = [r for r in active_records if r.key in selected_keys and "evaluate" in r.commands]
     if not selected_records:
+        return None
+    selected_record_keys = [record.key for record in selected_records]
+    if not _authorize_researcher_active_chip_evaluate(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        selected_chip_keys=selected_record_keys,
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    ):
         return None
 
     analyses: list[str] = []
@@ -13420,6 +13491,7 @@ def build_researcher_reply(
         conversation_history=recent_conversation_context,
         attachment_context=attachment_context,
         run_id=run_id,
+        turn_intent_envelope=turn_intent_envelope,
     )
     if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
         record_event(
