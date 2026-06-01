@@ -1,6 +1,8 @@
 import pytest
 
 from spark_intelligence.harness_contract import (
+    HARNESS_CORE_AVAILABLE,
+    authorize_legacy_tool_call,
     authorize_tool_call,
     parse_turn_intent_envelope,
 )
@@ -62,6 +64,7 @@ def _base_envelope() -> dict:
 
 
 def test_parses_answer_only_envelope() -> None:
+    assert HARNESS_CORE_AVAILABLE is True
     envelope = parse_turn_intent_envelope(_base_envelope())
 
     assert envelope.schema == "spark.turn_intent.v1"
@@ -126,6 +129,37 @@ def test_allows_benchmark_led_startup_execution() -> None:
     assert verdict == "allowed"
     assert reasons == ()
     assert envelope.directive.local_only is True
+
+
+def test_shared_harness_core_returns_vnext_authorization_decision() -> None:
+    payload = _base_envelope()
+    payload["directive"]["mode"] = "execute"
+    payload["directive"]["noExecution"] = False
+    payload["directive"]["explanationOnly"] = False
+    payload["directive"]["quotedOrMetaLanguage"] = False
+    payload["selectedIntent"]["ownerSystem"] = "domain-chip-memory"
+    payload["selectedIntent"]["kind"] = "memory_action"
+    payload["selectedIntent"]["action"] = "memory.write"
+    payload["toolPolicy"]["allowedTools"] = ["answer.compose", "memory.write"]
+    payload["toolPolicy"]["deniedTools"] = []
+    payload["toolPolicy"]["enabledToolsets"] = ["spark-harness-core", "domain-chip-memory"]
+    payload["toolPolicy"]["mutationClassesAllowed"] = ["none", "read_only", "writes_memory"]
+    payload["executionPolicy"]["canWriteMemory"] = True
+
+    envelope = parse_turn_intent_envelope(payload)
+    authorization = authorize_legacy_tool_call(
+        envelope,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+
+    assert authorization.verdict == "allowed"
+    assert authorization.turn_intent_envelope_vnext is not None
+    assert authorization.authorization_decision is not None
+    assert authorization.turn_intent_envelope_vnext["schema_version"] == "turn-intent-envelope-vnext"
+    assert authorization.authorization_decision["schema_version"] == "authorization-decision-v1"
+    assert authorization.authorization_decision["verdict"] == "allow"
 
 
 def test_rejects_invalid_schema() -> None:

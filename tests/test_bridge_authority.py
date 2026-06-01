@@ -90,6 +90,11 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
 
     assert verdict.allowed is True
     assert verdict.reason_codes == ()
+    assert verdict.harness_core_envelope is not None
+    assert verdict.authorization_decision is not None
+    assert verdict.harness_core_envelope["schema_version"] == "turn-intent-envelope-vnext"
+    assert verdict.authorization_decision["schema_version"] == "authorization-decision-v1"
+    assert verdict.authorization_decision["verdict"] == "allow"
 
 
 def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:
@@ -151,6 +156,25 @@ def test_blocks_builder_memory_write_without_envelope() -> None:
 
     assert verdict.allowed is False
     assert "missing_or_invalid_envelope" in verdict.reason_codes
+    assert verdict.authorization_decision is None
+
+
+def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
+    payload = _envelope(route="memory.write")
+    payload["executionPolicy"]["canWriteMemory"] = False
+    update = {"message": {"spark_turn_intent": payload}}
+
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+
+    assert verdict.allowed is False
+    assert "write_memory_not_authorized" in verdict.reason_codes
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "deny"
 
 
 def test_authorizes_schedule_delete_and_pending_confirmation() -> None:
@@ -185,6 +209,8 @@ def test_blocks_pending_confirmation_when_turn_is_meta_language() -> None:
 
     assert verdict.allowed is False
     assert "no_execution_boundary" in verdict.reason_codes
+    assert verdict.authorization_decision is not None
+    assert verdict.authorization_decision["verdict"] == "deny"
 
 
 def test_blocks_pending_confirmation_for_unrelated_executable_envelope() -> None:

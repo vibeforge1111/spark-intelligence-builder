@@ -170,7 +170,7 @@ def _with_voice_turn_intent(
         "executionPolicy": {
             "canMutateFiles": mutation_class == "writes_files" and not no_execution,
             "canLaunchMission": False,
-            "canWriteMemory": False,
+            "canWriteMemory": mutation_class == "writes_memory" and not no_execution,
             "canDeleteSchedule": False,
             "canCreateChip": False,
             "canPublish": False,
