@@ -6863,11 +6863,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118111,
-                    user_id="111",
-                    username="alice",
-                    text="Diagnose voice",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118111,
+                        user_id="111",
+                        username="alice",
+                        text="Diagnose voice",
+                    ),
+                    tool_name="voice.diagnostics.run",
+                    mutation_class="read_only",
+                    external_network=False,
                 ),
             )
 
@@ -6937,11 +6942,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118113,
-                    user_id="111",
-                    username="alice",
-                    text="/voice doctor",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118113,
+                        user_id="111",
+                        username="alice",
+                        text="/voice doctor",
+                    ),
+                    tool_name="voice.diagnostics.run",
+                    mutation_class="read_only",
+                    external_network=False,
                 ),
             )
 
@@ -6961,11 +6971,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118112,
-                    user_id="111",
-                    username="alice",
-                    text="/voice doctor",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118112,
+                        user_id="111",
+                        username="alice",
+                        text="/voice doctor",
+                    ),
+                    tool_name="voice.diagnostics.run",
+                    mutation_class="read_only",
+                    external_network=False,
                 ),
             )
 
@@ -7038,11 +7053,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=118114,
-                    user_id="111",
-                    username="alice",
-                    text="test voice system",
+                update_payload=_with_voice_turn_intent(
+                    make_telegram_update(
+                        update_id=118114,
+                        user_id="111",
+                        username="alice",
+                        text="test voice system",
+                    ),
+                    tool_name="voice.self_test.run",
+                    mutation_class="external_network",
+                    external_network=True,
                 ),
             )
 
@@ -7053,6 +7073,47 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Last Telegram delivery: proven via `sendVoice`", reply)
         self.assertIn("Conversation proof: yes", reply)
         self.assertIn("does not spend TTS or send a new voice note", reply)
+
+    def test_voice_doctor_without_turn_intent_does_not_run_chip_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting") as hook_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118115,
+                    user_id="111",
+                    username="alice",
+                    text="/voice doctor",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        hook_mock.assert_not_called()
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
+
+    def test_voice_self_test_without_turn_intent_does_not_run_chip_hook_or_bot_probe(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting") as hook_mock, patch(
+            "spark_intelligence.adapters.telegram.runtime._telegram_voice_bot_update_probe"
+        ) as bot_probe_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118116,
+                    user_id="111",
+                    username="alice",
+                    text="/voice self-test",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        hook_mock.assert_not_called()
+        bot_probe_mock.assert_not_called()
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
 
     def test_voice_reply_command_tracks_telegram_dm_voice_state(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

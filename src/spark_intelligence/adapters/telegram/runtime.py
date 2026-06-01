@@ -4215,6 +4215,7 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
         )
     if lowered in {"/voice self-test", "/voice selftest", "/voice test", "/voice verify"} or natural_voice_command == (
         "/voice self-test",
@@ -4226,6 +4227,7 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
         )
     if (
         lowered in {"/voice provider", "/voice providers", "/voice tts"}
@@ -7765,6 +7767,19 @@ def _blocked_voice_delivery_authority_result(*, command: str, reason_codes: tupl
     }
 
 
+def _blocked_voice_diagnostic_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can inspect voice diagnostics, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice diagnostic action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
 def _authorize_voice_delivery_action(
     *,
     update_payload: dict[str, Any] | None,
@@ -7793,7 +7808,19 @@ def _run_voice_doctor_command(
     human_id: str | None,
     agent_id: str | None,
     external_user_id: str,
+    update_payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.diagnostics.run",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+    )
+    if not authority.allowed:
+        return _blocked_voice_diagnostic_authority_result(
+            command="/voice doctor",
+            reason_codes=authority.reason_codes,
+        )
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
@@ -7977,7 +8004,20 @@ def _run_voice_self_test_command(
     human_id: str | None,
     agent_id: str | None,
     external_user_id: str,
+    update_payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.self_test.run",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if not authority.allowed:
+        return _blocked_voice_diagnostic_authority_result(
+            command="/voice self-test",
+            reason_codes=authority.reason_codes,
+        )
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
