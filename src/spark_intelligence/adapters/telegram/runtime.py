@@ -1194,6 +1194,7 @@ def simulate_telegram_update(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
+            update_payload=update_payload,
             run_id=None,
             request_id=request_id,
             session_id=resolution.session_id,
@@ -2175,6 +2176,7 @@ def poll_telegram_updates_once(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
+            update_payload=update,
             run_id=run.run_id,
             request_id=run.request_id,
             session_id=resolution.session_id,
@@ -2477,7 +2479,7 @@ def poll_telegram_updates_once(
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
-            update_payload=update_payload,
+            update_payload=update,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
             chip_used=bridge_result.active_chip_key,
@@ -3894,6 +3896,7 @@ def _handle_runtime_command(
     state_db: StateDB,
     external_user_id: str,
     inbound_text: str,
+    update_payload: dict[str, Any] | None = None,
     run_id: str | None = None,
     request_id: str | None = None,
     session_id: str | None = None,
@@ -4612,6 +4615,15 @@ def _handle_runtime_command(
             renderer=_render_swarm_paths_reply,
         )
     if lowered == "/swarm sync" or natural_swarm_command == ("/swarm sync", None):
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="swarm.collective.sync",
+            owner_system="spark-swarm",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        if not authority.allowed:
+            return _blocked_swarm_authority_result(command="/swarm sync", reason_codes=authority.reason_codes)
         result = sync_swarm_collective(
             config_manager=config_manager,
             state_db=state_db,
@@ -4642,6 +4654,8 @@ def _handle_runtime_command(
                 path_key=run_args["path_key"],
             ),
             renderer=_render_swarm_bridge_run_reply,
+            update_payload=update_payload,
+            tool_name="swarm.path.run",
         )
     run_resolution = _resolve_natural_swarm_run_target(
         inbound_text=normalized,
@@ -4657,6 +4671,8 @@ def _handle_runtime_command(
                 path_key=str(run_resolution["path_key"]),
             ),
             renderer=_render_swarm_bridge_run_reply,
+            update_payload=update_payload,
+            tool_name="swarm.path.run",
         )
     autoloop_args = _parse_swarm_autoloop_command(normalized)
     if autoloop_args:
@@ -4677,6 +4693,8 @@ def _handle_runtime_command(
                 force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
+            update_payload=update_payload,
+            tool_name="swarm.autoloop.run",
         )
     autoloop_resolution = _resolve_natural_swarm_autoloop_target(
         inbound_text=normalized,
@@ -4702,6 +4720,8 @@ def _handle_runtime_command(
                 force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
+            update_payload=update_payload,
+            tool_name="swarm.autoloop.run",
         )
     sessions_args = _parse_swarm_sessions_command(normalized)
     if sessions_args:
@@ -4764,6 +4784,8 @@ def _handle_runtime_command(
                 path_key=rerun_args.get("path_key"),
             ),
             renderer=_render_swarm_bridge_rerun_reply,
+            update_payload=update_payload,
+            tool_name="swarm.rerun.execute",
         )
     rerun_resolution = _resolve_natural_swarm_rerun_target(
         inbound_text=normalized,
@@ -4779,6 +4801,8 @@ def _handle_runtime_command(
                 path_key=str(rerun_resolution.get("path_key") or "") or None,
             ),
             renderer=_render_swarm_bridge_rerun_reply,
+            update_payload=update_payload,
+            tool_name="swarm.rerun.execute",
         )
     absorb_args = _parse_swarm_absorb_command(normalized)
     if absorb_args:
@@ -4791,6 +4815,9 @@ def _handle_runtime_command(
                 reason=absorb_args.get("reason"),
             ),
             renderer=_render_swarm_absorb_reply,
+            update_payload=update_payload,
+            tool_name="swarm.insight.absorb",
+            mutation_class="external_network",
         )
     absorb_resolution = _resolve_natural_swarm_absorb_target(
         inbound_text=normalized,
@@ -4812,6 +4839,9 @@ def _handle_runtime_command(
                 reason=str(absorb_resolution["reason"]) if absorb_resolution.get("reason") else None,
             ),
             renderer=_render_swarm_absorb_reply,
+            update_payload=update_payload,
+            tool_name="swarm.insight.absorb",
+            mutation_class="external_network",
         )
     review_args = _parse_swarm_review_command(normalized)
     if review_args:
@@ -4830,6 +4860,9 @@ def _handle_runtime_command(
                 reason=review_args["reason"],
             ),
             renderer=_render_swarm_review_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mastery.review",
+            mutation_class="external_network",
         )
     review_resolution = _resolve_natural_swarm_review_target(
         inbound_text=normalized,
@@ -4852,6 +4885,9 @@ def _handle_runtime_command(
                 reason=str(review_resolution["reason"]),
             ),
             renderer=_render_swarm_review_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mastery.review",
+            mutation_class="external_network",
         )
     mode_args = _parse_swarm_mode_command(normalized)
     if mode_args:
@@ -4864,6 +4900,9 @@ def _handle_runtime_command(
                 evolution_mode=mode_args["evolution_mode"],
             ),
             renderer=_render_swarm_mode_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mode.set",
+            mutation_class="external_network",
         )
     mode_resolution = _resolve_natural_swarm_mode_target(
         inbound_text=normalized,
@@ -4885,6 +4924,9 @@ def _handle_runtime_command(
                 evolution_mode=str(mode_resolution["evolution_mode"]),
             ),
             renderer=_render_swarm_mode_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mode.set",
+            mutation_class="external_network",
         )
     deliver_args = _parse_swarm_deliver_command(normalized)
     if deliver_args:
@@ -4898,6 +4940,10 @@ def _handle_runtime_command(
                 pr_url=deliver_args.get("pr_url"),
             ),
             renderer=_render_swarm_delivery_reply,
+            update_payload=update_payload,
+            tool_name="swarm.upgrade.deliver",
+            mutation_class="external_network",
+            publishes=True,
         )
     deliver_resolution = _resolve_natural_swarm_deliver_target(
         inbound_text=normalized,
@@ -4918,6 +4964,10 @@ def _handle_runtime_command(
                 upgrade_id=str(deliver_resolution["upgrade_id"]),
             ),
             renderer=_render_swarm_delivery_reply,
+            update_payload=update_payload,
+            tool_name="swarm.upgrade.deliver",
+            mutation_class="external_network",
+            publishes=True,
         )
     sync_delivery_args = _parse_swarm_sync_delivery_command(normalized)
     if sync_delivery_args:
@@ -4930,6 +4980,9 @@ def _handle_runtime_command(
                 pr_url=sync_delivery_args.get("pr_url"),
             ),
             renderer=_render_swarm_delivery_sync_reply,
+            update_payload=update_payload,
+            tool_name="swarm.delivery.sync",
+            mutation_class="external_network",
         )
     sync_delivery_resolution = _resolve_natural_swarm_sync_delivery_target(
         inbound_text=normalized,
@@ -4950,6 +5003,9 @@ def _handle_runtime_command(
                 upgrade_id=str(sync_delivery_resolution["upgrade_id"]),
             ),
             renderer=_render_swarm_delivery_sync_reply,
+            update_payload=update_payload,
+            tool_name="swarm.delivery.sync",
+            mutation_class="external_network",
         )
     if lowered.startswith("/swarm evaluate") or (natural_swarm_command and natural_swarm_command[0] == "/swarm evaluate"):
         task = normalized[len("/swarm evaluate") :].strip() if lowered.startswith("/swarm evaluate") else str(natural_swarm_command[1] or "").strip()
@@ -8182,7 +8238,7 @@ def _render_telegram_voice_install_reply(target: str | None) -> str:
 def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
     suffix = f" for `{route}`" if route else ""
     return (
-        f"I can guide voice setup{suffix}, but the voice chip is not attached to this Spark yet.\n"
+        f"I can help set up voice{suffix}, but the voice chip is not attached to this Spark yet.\n"
         "Once `spark-voice-comms` is active, I can recommend the right path from inside Telegram: local/private with Kokoro, or hosted/high-quality with a paid provider.\n"
         "Attach the chip, then run `/voice onboard local` or `/voice onboard paid`."
     )
@@ -9074,7 +9130,22 @@ def _run_swarm_action_command(
     command: str,
     runner: Any,
     renderer: Any,
+    update_payload: dict[str, Any] | None,
+    tool_name: str,
+    mutation_class: str,
+    publishes: bool = False,
+    external_network: bool = True,
 ) -> dict[str, str]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-swarm",
+        mutation_class=mutation_class,
+        publishes=publishes,
+        external_network=external_network,
+    )
+    if not authority.allowed:
+        return _blocked_swarm_authority_result(command=command, reason_codes=authority.reason_codes)
     try:
         payload = runner()
         reply_text = renderer(payload)
@@ -9091,7 +9162,18 @@ def _run_swarm_bridge_command(
     command: str,
     runner: Any,
     renderer: Any,
+    update_payload: dict[str, Any] | None,
+    tool_name: str,
+    mutation_class: str = "launches_mission",
 ) -> dict[str, str]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-swarm",
+        mutation_class=mutation_class,
+    )
+    if not authority.allowed:
+        return _blocked_swarm_authority_result(command=command, reason_codes=authority.reason_codes)
     try:
         result = runner()
         reply_text = renderer(result)
@@ -9100,6 +9182,18 @@ def _run_swarm_bridge_command(
     return {
         "command": command,
         "reply_text": reply_text,
+    }
+
+
+def _blocked_swarm_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, str]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            "I can help with that swarm action, but this turn is missing the Spark authority envelope "
+            f"for `{command}`.\nReason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark action and I will run it."
+        ),
     }
 
 
