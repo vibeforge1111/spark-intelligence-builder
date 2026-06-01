@@ -41,6 +41,7 @@ from spark_intelligence.bridge_authority import (
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
+    record_bridge_tool_call_result_ledger,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
@@ -1661,6 +1662,14 @@ def simulate_telegram_update(
                             tool_name="schedule.delete",
                             owner_system="spark-intelligence-builder",
                             mutation_class="deletes_schedule",
+                            state_db=state_db,
+                            request_id=request_id,
+                            channel_id="telegram",
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            actor_id="telegram_runtime",
+                            component="telegram_runtime",
                         )
                         pending_authorized = _pending_delete.get("authority") == "schedule.delete"
                         if not pending_authorized or not confirmation_authority.allowed:
@@ -1676,6 +1685,22 @@ def simulate_telegram_update(
                             outbound_text = "I can see the pending schedule delete, but this turn was not authorized to delete it. Send the delete request again plainly and I will ask for confirmation."
                         else:
                             outbound_text = f"Tried to kill {sid}, but the scheduler rejected it. Run 'show my schedules' to check."
+                        _record_telegram_direct_tool_result(
+                            state_db,
+                            confirmation_authority,
+                            status="success" if ok else "failure",
+                            summary=(
+                                f"Schedule delete confirmed and executed for {sid}."
+                                if ok
+                                else "Schedule delete confirmation did not execute."
+                            ),
+                            command="schedule.delete.confirm",
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                        )
                     else:
                         outbound_text = _fmt_delete_cancelled()
                     _clear_pending_delete(str(normalized.telegram_user_id))
@@ -1695,10 +1720,20 @@ def simulate_telegram_update(
                         tool_name="schedule.delete",
                         owner_system="spark-intelligence-builder",
                         mutation_class="deletes_schedule",
+                        state_db=state_db,
+                        request_id=request_id,
+                        channel_id="telegram",
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        actor_id="telegram_runtime",
+                        component="telegram_runtime",
                     )
                     if not delete_authority.allowed:
                         outbound_text = "I can talk through schedules, but I will not arm a delete from this turn. Send the delete request plainly if you want me to queue the confirmation."
                     else:
+                        delete_result_status = "failure"
+                        delete_result_summary = "Schedule delete was authorized, but no matching schedule was found."
                         try:
                             existing = _fetch_schedules()
                         except Exception:
@@ -1711,8 +1746,24 @@ def simulate_telegram_update(
                             pending_schedule["authority"] = "schedule.delete"
                             _arm_pending_delete(str(normalized.telegram_user_id), pending_schedule)
                             outbound_text = _fmt_delete_prompt(matches[0])
+                            delete_result_status = "partial"
+                            delete_result_summary = "Schedule delete confirmation was armed; delete not executed yet."
                         else:
                             outbound_text = _fmt_delete_ambiguous(matches)
+                            delete_result_status = "partial"
+                            delete_result_summary = "Schedule delete matched multiple schedules and asked for clarification."
+                        _record_telegram_direct_tool_result(
+                            state_db,
+                            delete_authority,
+                            status=delete_result_status,
+                            summary=delete_result_summary,
+                            command="schedule.delete",
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                        )
                     trace_ref = None
                     bridge_mode = "schedule_delete_shortcircuit"
                     attachment_context = None
@@ -1838,6 +1889,14 @@ def simulate_telegram_update(
                                 tool_name="schedule.list",
                                 owner_system="spark-intelligence-builder",
                                 mutation_class="read_only",
+                                state_db=state_db,
+                                request_id=request_id,
+                                channel_id="telegram",
+                                session_id=resolution.session_id,
+                                human_id=resolution.human_id,
+                                agent_id=resolution.agent_id,
+                                actor_id="telegram_runtime",
+                                component="telegram_runtime",
                             )
                             if not schedule_list_authority.allowed:
                                 reason_text = (
@@ -1853,8 +1912,32 @@ def simulate_telegram_update(
                             else:
                                 try:
                                     outbound_text = _fmt_schedules()
+                                    _record_telegram_direct_tool_result(
+                                        state_db,
+                                        schedule_list_authority,
+                                        status="success",
+                                        summary="Schedule list was fetched from Telegram schedule shortcut.",
+                                        command="schedule.list",
+                                        request_id=request_id,
+                                        run_id=None,
+                                        session_id=resolution.session_id,
+                                        human_id=resolution.human_id,
+                                        agent_id=resolution.agent_id,
+                                    )
                                 except Exception as exc:
                                     outbound_text = f"Could not reach scheduler: {exc}"
+                                    _record_telegram_direct_tool_result(
+                                        state_db,
+                                        schedule_list_authority,
+                                        status="failure",
+                                        summary=f"Schedule list failed: {exc}",
+                                        command="schedule.list",
+                                        request_id=request_id,
+                                        run_id=None,
+                                        session_id=resolution.session_id,
+                                        human_id=resolution.human_id,
+                                        agent_id=resolution.agent_id,
+                                    )
                             bridge_mode = "schedule_list_shortcircuit"
                             routing_decision = "schedule_list_shortcircuit"
                         trace_ref = None
@@ -4269,6 +4352,46 @@ def _with_tool_result_metadata(
     return enriched
 
 
+def _record_telegram_direct_tool_result(
+    state_db: StateDB,
+    verdict: Any,
+    *,
+    status: str,
+    summary: str,
+    command: str,
+    request_id: str | None,
+    run_id: str | None,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+) -> str | None:
+    normalized_status = str(status or "").strip()
+    if normalized_status not in {"success", "failure", "partial", "rolled_back"}:
+        normalized_status = "partial"
+    if not bool(getattr(verdict, "allowed", False)):
+        return None
+    ledger = getattr(verdict, "tool_call_ledger", None)
+    if not isinstance(ledger, dict):
+        return None
+    command_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(command or ledger.get("tool_name") or "tool").strip()).strip("-")
+    return record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=normalized_status,
+        summary=str(summary or "").strip() or "Telegram direct route returned.",
+        output_path=f"builder://telegram/runtime/{request_id or 'unknown'}/tool-results/{command_slug or 'tool'}",
+        component="telegram_runtime",
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -4573,17 +4696,22 @@ def _handle_runtime_command_impl(
             external_user_id=external_user_id,
             enabled=enabled,
         )
-        return {
-            "command": lowered,
-            "reply_text": (
-                "Voice replies enabled for this Telegram DM. "
-                "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
-                "or `/voice speak <text>` to read exact text."
-                if enabled
-                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
-            ),
-            "respect_voice_reply_state": False,
-        }
+        voice_reply_command = "/voice reply on" if enabled else "/voice reply off"
+        return _with_tool_result_metadata(
+            {
+                "command": voice_reply_command,
+                "reply_text": (
+                    "Voice replies enabled for this Telegram DM. "
+                    "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
+                    "or `/voice speak <text>` to read exact text."
+                    if enabled
+                    else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary=f"Telegram voice reply state set to {'enabled' if enabled else 'disabled'}.",
+        )
     if lowered == "/voice plan" or natural_voice_command == ("/voice plan", None):
         return _run_voice_runtime_command(
             config_manager=config_manager,
@@ -4662,15 +4790,19 @@ def _handle_runtime_command_impl(
         )
         if authority_block is not None:
             return authority_block
-        return {
-            "command": "/voice undo",
-            "reply_text": _restore_telegram_voice_profile_undo(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice undo",
+                "reply_text": _restore_telegram_voice_profile_undo(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile undo route completed.",
+        )
     if lowered.startswith("/voice guide ") or (natural_voice_command and natural_voice_command[0] == "/voice guide"):
         provider_target = (
             normalized[len("/voice guide") :].strip()
@@ -4722,11 +4854,15 @@ def _handle_runtime_command_impl(
             agent_id=agent_id,
             provider_id=provider_id,
         )
-        return {
-            "command": "/voice provider",
-            "reply_text": _render_telegram_voice_provider_switched(provider_id=provider_id),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice provider",
+                "reply_text": _render_telegram_voice_provider_switched(provider_id=provider_id),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary=f"Telegram voice provider set to {provider_id}.",
+        )
     if (
         lowered == "/voice voices"
         or lowered.startswith("/voice voices ")
@@ -4750,11 +4886,15 @@ def _handle_runtime_command_impl(
         )
         if authority_block is not None:
             return authority_block
-        return {
-            "command": "/voice voices",
-            "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice voices",
+                "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice search route completed.",
+        )
     if (
         lowered.startswith("/voice voice ")
         or lowered.startswith("/voice choose ")
@@ -4777,17 +4917,21 @@ def _handle_runtime_command_impl(
         )
         if authority_block is not None:
             return authority_block
-        return {
-            "command": "/voice voice",
-            "reply_text": _select_elevenlabs_voice_for_telegram_dm(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-                target=target,
-                config_manager=config_manager,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice voice",
+                "reply_text": _select_elevenlabs_voice_for_telegram_dm(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                    target=target,
+                    config_manager=config_manager,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile selection route completed.",
+        )
     if (
         lowered == "/voice mutate"
         or lowered.startswith("/voice mutate ")
@@ -4812,16 +4956,20 @@ def _handle_runtime_command_impl(
         )
         if authority_block is not None:
             return authority_block
-        return {
-            "command": "/voice mutate",
-            "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-                style=style,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice mutate",
+                "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                    style=style,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile tuning route completed.",
+        )
     if (
         lowered == "/voice audition"
         or lowered.startswith("/voice audition ")
@@ -4845,13 +4993,17 @@ def _handle_runtime_command_impl(
         if not authorized:
             return blocked
         voice_text = _elevenlabs_audition_text(prompt)
-        return {
-            "command": "/voice audition",
-            "reply_text": "I’m auditioning the current voice now.\n\nIf it feels close, say `make it warmer`, `make it clearer`, or `make it more geeky`.",
-            "force_voice": True,
-            "voice_text": voice_text,
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice audition",
+                "reply_text": "I’m auditioning the current voice now.\n\nIf it feels close, say `make it warmer`, `make it clearer`, or `make it more geeky`.",
+                "force_voice": True,
+                "voice_text": voice_text,
+                "respect_voice_reply_state": False,
+            },
+            status="partial",
+            summary="Telegram voice audition was authorized and queued for voice delivery.",
+        )
     if (
         lowered == "/voice install"
         or lowered.startswith("/voice install ")
@@ -4957,14 +5109,18 @@ def _handle_runtime_command_impl(
         )
         if not authorized:
             return blocked
-        return {
-            "command": "/voice speak",
-            "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
-            "force_voice": True,
-            "voice_text": speak_text,
-            "voice_tts": _voice_tts_override_from_text(speak_text),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice speak",
+                "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
+                "force_voice": True,
+                "voice_text": speak_text,
+                "voice_tts": _voice_tts_override_from_text(speak_text),
+                "respect_voice_reply_state": False,
+            },
+            status="partial",
+            summary="Telegram voice speak was authorized and queued for voice delivery.",
+        )
     if explicit_think_command in {"/think", "/think on", "/think off"} or natural_think_command in {
         "/think",
         "/think on",
@@ -4997,13 +5153,17 @@ def _handle_runtime_command_impl(
             enabled=enabled,
         )
         state_text = "enabled" if enabled else "disabled"
-        return {
-            "command": think_command or "/think",
-            "reply_text": (
-                f"Thinking visibility {state_text} for this Telegram DM. "
-                "This only affects `<think>` blocks in future replies."
-            ),
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": think_command or "/think",
+                "reply_text": (
+                    f"Thinking visibility {state_text} for this Telegram DM. "
+                    "This only affects `<think>` blocks in future replies."
+                ),
+            },
+            status="success",
+            summary=f"Telegram thinking visibility set to {state_text}.",
+        )
     chip_command = _parse_chip_command(normalized)
     if chip_command is not None:
         return _handle_telegram_chip_command(
