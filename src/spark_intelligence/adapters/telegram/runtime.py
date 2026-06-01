@@ -4337,6 +4337,12 @@ def _handle_runtime_command(
             prompt = str(natural_voice_command[1] or "").strip()
         else:
             prompt = ""
+        authority_block = _authorize_voice_search_action(
+            update_payload=update_payload,
+            command="/voice voices",
+        )
+        if authority_block is not None:
+            return authority_block
         return {
             "command": "/voice voices",
             "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
@@ -7753,6 +7759,23 @@ def _authorize_voice_state_action(
         owner_system="spark-voice-comms",
         mutation_class="writes_memory",
         external_network=external_network,
+    )
+    if authority.allowed:
+        return None
+    return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _authorize_voice_search_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+) -> dict[str, Any] | None:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.search.run",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
     )
     if authority.allowed:
         return None
