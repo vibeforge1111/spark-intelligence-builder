@@ -29,6 +29,8 @@ class BridgeAuthorityVerdict:
     harness_core_envelope: dict[str, Any] | None = None
     proposed_action: dict[str, Any] | None = None
     authorization_decision: dict[str, Any] | None = None
+    tool_call_ledger: dict[str, Any] | None = None
+    ledger_event_id: str | None = None
 
 
 def extract_turn_intent_envelope(update_payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
@@ -364,6 +366,78 @@ def build_telegram_memory_diagnostic_turn_intent_payload(
     }
 
 
+def record_bridge_tool_call_ledger(
+    state_db: Any,
+    verdict: BridgeAuthorityVerdict,
+    *,
+    component: str = "bridge_authority",
+    request_id: str | None = None,
+    run_id: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    actor_id: str | None = None,
+) -> str | None:
+    ledger = verdict.tool_call_ledger
+    if not isinstance(ledger, dict):
+        return None
+
+    from spark_intelligence.observability.store import record_event
+
+    envelope = verdict.envelope
+    resolved_session_id = session_id
+    resolved_human_id = human_id
+    resolved_actor_id = actor_id
+    if envelope is not None:
+        resolved_session_id = resolved_session_id or envelope.session_scope.session_key
+        resolved_human_id = resolved_human_id or envelope.session_scope.user_ref
+        resolved_actor_id = resolved_actor_id or envelope.session_scope.user_ref
+
+    authorization = verdict.authorization_decision or ledger.get("authorization") or {}
+    trace = ledger.get("trace") if isinstance(ledger.get("trace"), dict) else {}
+    ledger_id = str(ledger.get("ledger_id") or "")
+    tool_name = str(ledger.get("tool_name") or "unknown_tool")
+    result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
+    reason_code = (
+        verdict.reason_codes[0]
+        if verdict.reason_codes
+        else str(authorization.get("verdict") or "harness_core_authorized")
+    )
+
+    return record_event(
+        state_db,
+        event_type="tool_call_ledger_recorded",
+        component=component,
+        summary=f"Harness Core ToolCallLedger recorded for {tool_name}.",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=str(trace.get("id") or ledger.get("turn_id") or ""),
+        channel_id=channel_id,
+        session_id=resolved_session_id,
+        human_id=resolved_human_id,
+        actor_id=resolved_actor_id,
+        reason_code=reason_code,
+        severity="high" if not verdict.allowed else "medium",
+        status="authorized" if verdict.allowed else "blocked",
+        provenance={
+            "source_kind": "spark_harness_core_tool_call_ledger",
+            "source_ref": ledger_id,
+            "component": component,
+        },
+        facts={
+            "ledger_id": ledger_id,
+            "turn_id": ledger.get("turn_id"),
+            "action_id": ledger.get("action_id"),
+            "capability_id": ledger.get("capability_id"),
+            "tool_name": tool_name,
+            "authorization_verdict": authorization.get("verdict"),
+            "result_status": result.get("status"),
+            "reason_codes": list(verdict.reason_codes),
+            "tool_call_ledger": ledger,
+        },
+    )
+
+
 def authorize_builder_bridge_action(
     update_payload: dict[str, Any] | None,
     *,
@@ -372,6 +446,14 @@ def authorize_builder_bridge_action(
     mutation_class: MutationClass,
     publishes: bool = False,
     external_network: bool = False,
+    state_db: Any | None = None,
+    request_id: str | None = None,
+    run_id: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    actor_id: str | None = None,
+    component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
     envelope = extract_turn_intent_envelope(update_payload)
     authorization: LegacyToolAuthorization = authorize_legacy_tool_call(
@@ -382,13 +464,41 @@ def authorize_builder_bridge_action(
         publishes=publishes,
         external_network=external_network,
     )
-    return BridgeAuthorityVerdict(
+    verdict = BridgeAuthorityVerdict(
         allowed=authorization.verdict == "allowed",
         reason_codes=authorization.reason_codes,
         envelope=envelope,
         harness_core_envelope=authorization.turn_intent_envelope_vnext,
         proposed_action=authorization.proposed_action,
         authorization_decision=authorization.authorization_decision,
+        tool_call_ledger=authorization.tool_call_ledger,
+    )
+    ledger_event_id = (
+        record_bridge_tool_call_ledger(
+            state_db,
+            verdict,
+            component=component,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id=actor_id,
+        )
+        if state_db is not None
+        else None
+    )
+    if ledger_event_id is None:
+        return verdict
+    return BridgeAuthorityVerdict(
+        verdict.allowed,
+        verdict.reason_codes,
+        verdict.envelope,
+        verdict.harness_core_envelope,
+        verdict.proposed_action,
+        verdict.authorization_decision,
+        verdict.tool_call_ledger,
+        ledger_event_id,
     )
 
 
@@ -400,6 +510,14 @@ def authorize_pending_confirmation(
     mutation_class: MutationClass,
     publishes: bool = False,
     external_network: bool = False,
+    state_db: Any | None = None,
+    request_id: str | None = None,
+    run_id: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    actor_id: str | None = None,
+    component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
     envelope = extract_turn_intent_envelope(update_payload)
     if envelope is None:
@@ -417,11 +535,39 @@ def authorize_pending_confirmation(
         extra_reasons.append("quoted_or_meta_language")
     if envelope.directive.explanation_only and "explanation_only_boundary" not in extra_reasons:
         extra_reasons.append("explanation_only_boundary")
-    return BridgeAuthorityVerdict(
+    verdict = BridgeAuthorityVerdict(
         authorization.verdict == "allowed" and not extra_reasons,
         tuple(extra_reasons),
         envelope,
         authorization.turn_intent_envelope_vnext,
         authorization.proposed_action,
         authorization.authorization_decision,
+        authorization.tool_call_ledger,
+    )
+    ledger_event_id = (
+        record_bridge_tool_call_ledger(
+            state_db,
+            verdict,
+            component=component,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id=actor_id,
+        )
+        if state_db is not None
+        else None
+    )
+    if ledger_event_id is None:
+        return verdict
+    return BridgeAuthorityVerdict(
+        verdict.allowed,
+        verdict.reason_codes,
+        verdict.envelope,
+        verdict.harness_core_envelope,
+        verdict.proposed_action,
+        verdict.authorization_decision,
+        verdict.tool_call_ledger,
+        ledger_event_id,
     )

@@ -5,6 +5,8 @@ from spark_intelligence.bridge_authority import (
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
 )
+from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.state.db import StateDB
 
 
 def _envelope(*, route: str = "memory.write", no_execution: bool = False) -> dict:
@@ -95,6 +97,9 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
     assert verdict.harness_core_envelope["schema_version"] == "turn-intent-envelope-vnext"
     assert verdict.authorization_decision["schema_version"] == "authorization-decision-v1"
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["schema_version"] == "tool-call-ledger-v1"
+    assert verdict.tool_call_ledger["authorization"]["decision_id"] == verdict.authorization_decision["decision_id"]
 
 
 def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:
@@ -175,6 +180,36 @@ def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
     assert "write_memory_not_authorized" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
+
+
+def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req:test-ledger",
+        component="telegram_bridge",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.ledger_event_id
+    events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(events) == 1
+    event = events[0]
+    assert event["event_id"] == verdict.ledger_event_id
+    assert event["component"] == "telegram_bridge"
+    assert event["status"] == "authorized"
+    assert event["facts_json"]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
+    assert event["facts_json"]["authorization_verdict"] == "allow"
+    assert event["facts_json"]["tool_call_ledger"]["schema_version"] == "tool-call-ledger-v1"
 
 
 def test_authorizes_schedule_delete_and_pending_confirmation() -> None:

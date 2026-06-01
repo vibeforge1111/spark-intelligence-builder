@@ -76,6 +76,7 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
         turn_intent_envelope_vnext: dict[str, Any] | None = None
         proposed_action: dict[str, Any] | None = None
         authorization_decision: dict[str, Any] | None = None
+        tool_call_ledger: dict[str, Any] | None = None
 
     TurnIntentEnvelope = Any
     HarnessDirective = Any
