@@ -37,6 +37,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_turn_intent_payload,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
 )
@@ -4264,7 +4265,7 @@ def _handle_runtime_command(
         actor_id="telegram_runtime",
     )
     try:
-        return _handle_runtime_command_impl(
+        result = _handle_runtime_command_impl(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=external_user_id,
@@ -4276,6 +4277,18 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
+        if isinstance(result, dict):
+            command = str(result.get("command") or "telegram_runtime_command").strip()
+            result_status = str(result.get("tool_result_status") or "partial").strip()
+            if result_status not in {"success", "failure", "partial", "rolled_back"}:
+                result_status = "partial"
+            result_summary = str(result.get("tool_result_summary") or f"Telegram runtime command {command} returned.").strip()
+            record_scoped_bridge_tool_call_results(
+                status=result_status,
+                summary=result_summary,
+                output_path=f"builder://telegram/runtime/{request_id or 'unknown'}/tool-results/{command.strip('/').replace(' ', '-') or 'command'}",
+            )
+        return result
     finally:
         reset_bridge_authority_ledger_context(token)
 
@@ -4437,6 +4450,8 @@ def _handle_runtime_command_impl(
             "reply_text": reply_text,
             "runtime_command_metadata": metadata,
             "respect_voice_reply_state": True,
+            "tool_result_status": "success" if report.ok else "failure",
+            "tool_result_summary": "Memory Doctor completed with a healthy result." if report.ok else "Memory Doctor completed with findings.",
         }
     if lowered == "/probe" or lowered.startswith("/probe "):
         route_name = normalized[len("/probe") :].strip()

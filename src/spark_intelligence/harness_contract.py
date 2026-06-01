@@ -60,6 +60,7 @@ try:
         TurnIntentEnvelope,
         authorize_legacy_tool_call,
         authorize_tool_call,
+        finalize_legacy_tool_call_ledger,
         parse_turn_intent_envelope,
     )
 
@@ -118,6 +119,18 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
         )
         return authorization.verdict, authorization.reason_codes
 
+    def finalize_legacy_tool_call_ledger(
+        ledger: dict[str, Any],
+        *,
+        status: str,
+        output_path: str,
+        summary: str,
+        surface: str = "builder",
+        error_path: str | None = None,
+        rollback_path: str | None = None,
+    ) -> dict[str, Any]:
+        return dict(ledger or {})
+
 
 __all__ = [
     "HARNESS_CORE_AVAILABLE",
@@ -132,5 +145,6 @@ __all__ = [
     "TurnIntentEnvelope",
     "authorize_legacy_tool_call",
     "authorize_tool_call",
+    "finalize_legacy_tool_call_ledger",
     "parse_turn_intent_envelope",
 ]
