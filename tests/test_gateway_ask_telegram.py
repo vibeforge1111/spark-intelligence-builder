@@ -8,16 +8,35 @@ from spark_intelligence.adapters.telegram.runtime import (
     _memory_doctor_distress_score,
     _memory_doctor_distress_signals,
     build_telegram_runtime_summary,
+    simulate_telegram_update,
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.observability.store import record_event
+from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class GatewayAskTelegramTests(SparkTestCase):
     def _install_fake_configured_researcher(self) -> None:
+        self.enable_fake_researcher_runtime()
+
+    def fake_researcher_bridge_result(self, request_id: str = "req-test") -> ResearcherBridgeResult:
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text="Spark reply text",
+            evidence_summary="",
+            escalation_hint=None,
+            trace_ref="trace-test",
+            mode="researcher_advisory",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=None,
+            routing_decision="stay_builder",
+        )
+
+    def enable_fake_researcher_runtime(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
@@ -559,6 +578,77 @@ class GatewayAskTelegramTests(SparkTestCase):
             post_delete_query["result"]["detail"]["response_text"],
             "I don't currently have that saved.",
         )
+
+    def test_simulate_telegram_update_supplies_memory_turn_intent_to_researcher(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("spark.memory.enabled", True)
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98701,
+                    "message": {
+                        "message_id": 101,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "My favorite color is cobalt blue.",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        envelope = captured.get("turn_intent_envelope")
+        self.assertIsNotNone(envelope)
+        self.assertEqual(getattr(getattr(envelope, "selected_intent", None), "action", None), "memory.write")
+        self.assertEqual(
+            getattr(getattr(envelope, "selected_intent", None), "owner_system", None),
+            "domain-chip-memory",
+        )
+        self.assertTrue(getattr(getattr(envelope, "execution_policy", None), "can_write_memory", False))
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulate_telegram_update_keeps_meta_memory_example_chat_only_for_researcher(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98702,
+                    "message": {
+                        "message_id": 102,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": (
+                            "For example, my favorite color is cobalt blue is not a request "
+                            "to remember anything."
+                        ),
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(captured.get("turn_intent_envelope"))
+        self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:
         self._install_fake_configured_researcher()
