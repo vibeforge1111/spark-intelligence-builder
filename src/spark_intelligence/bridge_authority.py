@@ -10,6 +10,7 @@ from spark_intelligence.harness_contract import (
     MutationClass,
     TurnIntentEnvelope,
     authorize_legacy_tool_call,
+    authorize_vnext_tool_call,
     finalize_legacy_tool_call_ledger,
     parse_turn_intent_envelope,
 )
@@ -20,6 +21,12 @@ _ENVELOPE_KEYS = (
     "sparkTurnIntent",
     "turnIntentEnvelope",
     "turn_intent_envelope",
+)
+_VNEXT_ENVELOPE_KEYS = (
+    "turn_intent_envelope_vnext",
+    "turnIntentEnvelopeVNext",
+    "spark_turn_intent_vnext",
+    "sparkTurnIntentVNext",
 )
 _BRIDGE_LEDGER_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("spark_bridge_ledger_context", default={})
 
@@ -151,6 +158,25 @@ def extract_turn_intent_envelope(update_payload: dict[str, Any] | None) -> TurnI
             return parse_turn_intent_envelope(candidate)
         except ValueError:
             continue
+    return None
+
+
+def extract_turn_intent_envelope_vnext(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return None
+
+    candidates: list[Any] = []
+    for key in _VNEXT_ENVELOPE_KEYS:
+        candidates.append(update_payload.get(key))
+
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        for key in _VNEXT_ENVELOPE_KEYS:
+            candidates.append(message.get(key))
+
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("schema_version") == "turn-intent-envelope-vnext":
+            return candidate
     return None
 
 
@@ -704,15 +730,26 @@ def authorize_builder_bridge_action(
     actor_id: str | None = None,
     component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
-    envelope = extract_turn_intent_envelope(update_payload)
-    authorization: LegacyToolAuthorization = authorize_legacy_tool_call(
-        envelope,
-        tool_name=tool_name,
-        owner_system=owner_system,
-        mutation_class=mutation_class,
-        publishes=publishes,
-        external_network=external_network,
-    )
+    vnext_envelope = extract_turn_intent_envelope_vnext(update_payload)
+    envelope = None if vnext_envelope is not None else extract_turn_intent_envelope(update_payload)
+    if vnext_envelope is not None:
+        authorization: LegacyToolAuthorization = authorize_vnext_tool_call(
+            vnext_envelope,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            publishes=publishes,
+            external_network=external_network,
+        )
+    else:
+        authorization = authorize_legacy_tool_call(
+            envelope,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            publishes=publishes,
+            external_network=external_network,
+        )
     verdict = BridgeAuthorityVerdict(
         allowed=authorization.verdict == "allowed",
         reason_codes=authorization.reason_codes,
@@ -781,21 +818,32 @@ def authorize_pending_confirmation(
     actor_id: str | None = None,
     component: str = "bridge_authority",
 ) -> BridgeAuthorityVerdict:
-    envelope = extract_turn_intent_envelope(update_payload)
-    if envelope is None:
+    vnext_envelope = extract_turn_intent_envelope_vnext(update_payload)
+    envelope = None if vnext_envelope is not None else extract_turn_intent_envelope(update_payload)
+    if envelope is None and vnext_envelope is None:
         return BridgeAuthorityVerdict(False, ("missing_or_invalid_envelope",), None)
-    authorization: LegacyToolAuthorization = authorize_legacy_tool_call(
-        envelope,
-        tool_name=tool_name,
-        owner_system=owner_system,
-        mutation_class=mutation_class,
-        publishes=publishes,
-        external_network=external_network,
-    )
+    if vnext_envelope is not None:
+        authorization: LegacyToolAuthorization = authorize_vnext_tool_call(
+            vnext_envelope,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            publishes=publishes,
+            external_network=external_network,
+        )
+    else:
+        authorization = authorize_legacy_tool_call(
+            envelope,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            publishes=publishes,
+            external_network=external_network,
+        )
     extra_reasons = list(authorization.reason_codes)
-    if envelope.directive.quoted_or_meta_language and "quoted_or_meta_language" not in extra_reasons:
+    if envelope is not None and envelope.directive.quoted_or_meta_language and "quoted_or_meta_language" not in extra_reasons:
         extra_reasons.append("quoted_or_meta_language")
-    if envelope.directive.explanation_only and "explanation_only_boundary" not in extra_reasons:
+    if envelope is not None and envelope.directive.explanation_only and "explanation_only_boundary" not in extra_reasons:
         extra_reasons.append("explanation_only_boundary")
     verdict = BridgeAuthorityVerdict(
         authorization.verdict == "allowed" and not extra_reasons,
