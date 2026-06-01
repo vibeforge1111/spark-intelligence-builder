@@ -46,9 +46,17 @@ from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload_vnext,
 )
-from spark_intelligence.harness_contract import TurnIntentEnvelope, authorize_tool_call, parse_turn_intent_envelope
+from spark_intelligence.harness_contract import (
+    TurnIntentEnvelope,
+    MutationClass,
+    authorize_tool_call,
+    authorize_vnext_tool_call,
+    parse_turn_intent_envelope,
+)
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -4226,6 +4234,50 @@ def _parse_optional_turn_intent_payload(payload: dict[str, Any] | None) -> TurnI
         return None
 
 
+def _parse_optional_turn_intent_payload_vnext(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if isinstance(payload, dict) and payload.get("schema_version") == "turn-intent-envelope-vnext":
+        return payload
+    return None
+
+
+def _authorize_researcher_tool_call(
+    *,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+    external_network: bool = False,
+) -> tuple[str, tuple[str, ...], str, str | None]:
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authorization = authorize_vnext_tool_call(
+            turn_intent_envelope_vnext,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        return (
+            authorization.verdict,
+            authorization.reason_codes,
+            "turn_intent_envelope_vnext",
+            str(turn_intent_envelope_vnext.get("turn_id") or "") or None,
+        )
+    verdict, reasons = authorize_tool_call(
+        turn_intent_envelope,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        external_network=external_network,
+    )
+    return (
+        verdict,
+        reasons,
+        "turn_intent_envelope",
+        turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
+    )
+
+
 def _authorize_researcher_browser_hook(
     *,
     state_db: StateDB,
@@ -4390,7 +4442,8 @@ def _build_researcher_memory_read_turn_intent_envelope(
 def _authorize_researcher_memory_read(
     *,
     state_db: StateDB,
-    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
     run_id: str | None,
     request_id: str,
     channel_kind: str,
@@ -4402,11 +4455,23 @@ def _authorize_researcher_memory_read(
     read_kind: str,
     allow_missing_envelope: bool = True,
 ) -> bool:
-    if turn_intent_envelope is None and allow_missing_envelope:
+    if turn_intent_envelope_vnext is None and turn_intent_envelope is None and allow_missing_envelope:
         return True
+    authority_vnext = turn_intent_envelope_vnext
     authority_envelope = turn_intent_envelope
     adapter_envelope_used = False
-    if authority_envelope is None and channel_kind == "telegram":
+    adapter_vnext_used = False
+    if authority_vnext is None and authority_envelope is None and channel_kind == "telegram":
+        authority_vnext = build_telegram_memory_read_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_vnext_used = authority_vnext is not None
+    if authority_vnext is None and authority_envelope is None and channel_kind == "telegram":
         authority_envelope = _build_researcher_memory_read_turn_intent_envelope(
             request_id=request_id,
             channel_kind=channel_kind,
@@ -4416,8 +4481,9 @@ def _authorize_researcher_memory_read(
             source_kind=source_kind,
         )
         adapter_envelope_used = authority_envelope is not None
-    verdict, reasons = authorize_tool_call(
-        authority_envelope,
+    verdict, reasons, authority_source_kind, authority_source_ref = _authorize_researcher_tool_call(
+        turn_intent_envelope_vnext=authority_vnext,
+        turn_intent_envelope=authority_envelope,
         tool_name="memory.read",
         owner_system="domain-chip-memory",
         mutation_class="read_only",
@@ -4433,8 +4499,8 @@ def _authorize_researcher_memory_read(
             component="researcher_bridge",
             policy_domain="turn_intent",
             gate_name="researcher_bridge.memory_read",
-            source_kind="turn_intent_envelope",
-            source_ref=authority_envelope.turn_id if authority_envelope is not None else None,
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
             summary="Researcher bridge blocked memory read without matching TurnIntent authority.",
             action="blocked",
             reason_code="memory_read_authority_blocked",
@@ -4458,9 +4524,17 @@ def _authorize_researcher_memory_read(
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
                 "authority_state": (
-                    "adapter_envelope"
-                    if adapter_envelope_used
-                    else ("present" if turn_intent_envelope is not None else "missing")
+                    "adapter_vnext_envelope"
+                    if adapter_vnext_used
+                    else (
+                        "adapter_envelope"
+                        if adapter_envelope_used
+                        else (
+                            "vnext_present"
+                            if turn_intent_envelope_vnext is not None
+                            else ("present" if turn_intent_envelope is not None else "missing")
+                        )
+                    )
                 ),
             },
         )
@@ -4472,7 +4546,8 @@ def _authorize_researcher_memory_read(
 def _authorize_researcher_memory_write(
     *,
     state_db: StateDB,
-    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
     run_id: str | None,
     request_id: str,
     channel_kind: str,
@@ -4484,9 +4559,21 @@ def _authorize_researcher_memory_write(
     operation: str,
     allow_adapter_envelope: bool,
 ) -> bool:
+    authority_vnext = turn_intent_envelope_vnext
     authority_envelope = turn_intent_envelope
     adapter_envelope_used = False
-    if authority_envelope is None and allow_adapter_envelope:
+    adapter_vnext_used = False
+    if authority_vnext is None and authority_envelope is None and allow_adapter_envelope:
+        authority_vnext = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_vnext_used = authority_vnext is not None
+    if authority_vnext is None and authority_envelope is None and allow_adapter_envelope:
         authority_envelope = _build_researcher_memory_turn_intent_envelope(
             request_id=request_id,
             channel_kind=channel_kind,
@@ -4496,8 +4583,9 @@ def _authorize_researcher_memory_write(
             source_kind=source_kind,
         )
         adapter_envelope_used = authority_envelope is not None
-    verdict, reasons = authorize_tool_call(
-        authority_envelope,
+    verdict, reasons, authority_source_kind, authority_source_ref = _authorize_researcher_tool_call(
+        turn_intent_envelope_vnext=authority_vnext,
+        turn_intent_envelope=authority_envelope,
         tool_name="memory.write",
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
@@ -4515,8 +4603,8 @@ def _authorize_researcher_memory_write(
             component="researcher_bridge",
             policy_domain="turn_intent",
             gate_name="researcher_bridge.memory_write",
-            source_kind="turn_intent_envelope",
-            source_ref=authority_envelope.turn_id if authority_envelope is not None else None,
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
             summary="Researcher bridge blocked memory promotion without matching TurnIntent authority.",
             action="blocked",
             reason_code="memory_write_authority_blocked",
@@ -4540,9 +4628,17 @@ def _authorize_researcher_memory_write(
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
                 "authority_state": (
-                    "adapter_envelope"
-                    if adapter_envelope_used
-                    else ("present" if turn_intent_envelope is not None else "missing")
+                    "adapter_vnext_envelope"
+                    if adapter_vnext_used
+                    else (
+                        "adapter_envelope"
+                        if adapter_envelope_used
+                        else (
+                            "vnext_present"
+                            if turn_intent_envelope_vnext is not None
+                            else ("present" if turn_intent_envelope is not None else "missing")
+                        )
+                    )
                 ),
             },
         )
@@ -4551,9 +4647,13 @@ def _authorize_researcher_memory_write(
     return False
 
 
-def _researcher_memory_read_side_effects_authorized(turn_intent_envelope: TurnIntentEnvelope | None) -> bool:
-    verdict, _ = authorize_tool_call(
-        turn_intent_envelope,
+def _researcher_memory_read_side_effects_authorized(
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+) -> bool:
+    verdict, _, _, _ = _authorize_researcher_tool_call(
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        turn_intent_envelope=turn_intent_envelope,
         tool_name="memory.write",
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
@@ -8988,10 +9088,15 @@ def build_researcher_reply(
     user_message: str,
     run_id: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
+    turn_intent_payload_vnext: dict[str, Any] | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
     allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
+    turn_intent_envelope_vnext = turn_intent_envelope_vnext or _parse_optional_turn_intent_payload_vnext(
+        turn_intent_payload_vnext
+    )
     if allow_memory_adapter_envelope is None:
         allow_memory_adapter_envelope = bool(
             config_manager.get_path(
@@ -9832,6 +9937,7 @@ def build_researcher_reply(
         if _authorize_researcher_memory_write(
             state_db=state_db,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
             request_id=request_id,
             channel_kind=channel_kind,
@@ -9921,6 +10027,7 @@ def build_researcher_reply(
         if _authorize_researcher_memory_write(
             state_db=state_db,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
             request_id=request_id,
             channel_kind=channel_kind,
@@ -10241,6 +10348,7 @@ def build_researcher_reply(
                 if _authorize_researcher_memory_write(
                     state_db=state_db,
                     turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                     run_id=run_id,
                     request_id=request_id,
                     channel_kind=channel_kind,
@@ -10477,6 +10585,7 @@ def build_researcher_reply(
                 if _authorize_researcher_memory_read(
                     state_db=state_db,
                     turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                     run_id=run_id,
                     request_id=request_id,
                     channel_kind=channel_kind,
@@ -10567,6 +10676,7 @@ def build_researcher_reply(
             if memory_read_query_kind is not None and not _authorize_researcher_memory_read(
                 state_db=state_db,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                 run_id=run_id,
                 request_id=request_id,
                 channel_kind=channel_kind,
@@ -10620,6 +10730,7 @@ def build_researcher_reply(
                 if _authorize_researcher_memory_write(
                     state_db=state_db,
                     turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                     run_id=run_id,
                     request_id=request_id,
                     channel_kind=channel_kind,
@@ -10651,6 +10762,7 @@ def build_researcher_reply(
                     if _authorize_researcher_memory_write(
                         state_db=state_db,
                         turn_intent_envelope=turn_intent_envelope,
+                        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                         run_id=run_id,
                         request_id=request_id,
                         channel_kind=channel_kind,
@@ -10683,6 +10795,7 @@ def build_researcher_reply(
                             if _authorize_researcher_memory_write(
                                 state_db=state_db,
                                 turn_intent_envelope=turn_intent_envelope,
+                                turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                 run_id=run_id,
                                 request_id=request_id,
                                 channel_kind=channel_kind,
@@ -10735,6 +10848,7 @@ def build_researcher_reply(
                                 if _authorize_researcher_memory_write(
                                     state_db=state_db,
                                     turn_intent_envelope=turn_intent_envelope,
+                                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                     run_id=run_id,
                                     request_id=request_id,
                                     channel_kind=channel_kind,
@@ -10842,6 +10956,7 @@ def build_researcher_reply(
         memory_candidate_authorized = _authorize_researcher_memory_write(
             state_db=state_db,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
             request_id=request_id,
             channel_kind=channel_kind,
@@ -11898,6 +12013,7 @@ def build_researcher_reply(
         and _authorize_researcher_memory_read(
             state_db=state_db,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
             request_id=request_id,
             channel_kind=channel_kind,
@@ -12859,7 +12975,10 @@ def build_researcher_reply(
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         archived_raw_episode_count = 0
         archived_structured_evidence_count = 0
-        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(turn_intent_envelope)
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(
+            turn_intent_envelope,
+            turn_intent_envelope_vnext,
+        )
         direct_inspection = None
         recall_records: list[dict[str, Any]] = []
         read_method = "get_current_state"
@@ -13351,7 +13470,10 @@ def build_researcher_reply(
         )
     if detected_belief_recall_query is not None:
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
-        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(turn_intent_envelope)
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(
+            turn_intent_envelope,
+            turn_intent_envelope_vnext,
+        )
         evidence_lookup = retrieve_memory_evidence_in_memory(
             config_manager=config_manager,
             state_db=state_db,

@@ -760,6 +760,11 @@ class GatewayAskTelegramTests(SparkTestCase):
             "domain-chip-memory",
         )
         self.assertTrue(getattr(getattr(envelope, "execution_policy", None), "can_write_memory", False))
+        vnext = captured.get("turn_intent_envelope_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(vnext["selected_move"], "execute_action")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulate_telegram_update_keeps_meta_memory_example_chat_only_for_researcher(self) -> None:
@@ -831,6 +836,11 @@ class GatewayAskTelegramTests(SparkTestCase):
             "domain-chip-memory",
         )
         self.assertFalse(getattr(getattr(envelope, "execution_policy", None), "can_write_memory", True))
+        vnext = captured.get("turn_intent_envelope_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(vnext["selected_move"], "read_current_state")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulate_telegram_update_keeps_meta_memory_read_example_chat_only_for_researcher(self) -> None:
@@ -893,6 +903,10 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(payload, dict)
         self.assertEqual(payload["selectedIntent"]["action"], "memory.write")
         self.assertEqual(payload["selectedIntent"]["ownerSystem"], "domain-chip-memory")
+        vnext = captured.get("turn_intent_payload_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulated_dm_supplies_memory_read_turn_intent_without_researcher_fallback(self) -> None:
@@ -922,6 +936,10 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(payload, dict)
         self.assertEqual(payload["selectedIntent"]["action"], "memory.read")
         self.assertEqual(payload["selectedIntent"]["ownerSystem"], "domain-chip-memory")
+        vnext = captured.get("turn_intent_payload_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:

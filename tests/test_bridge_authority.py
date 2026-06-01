@@ -13,6 +13,10 @@ from spark_intelligence.bridge_authority import (
     set_bridge_authority_ledger_context,
 )
 from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.researcher_bridge.advisory import (
+    _authorize_researcher_memory_read,
+    _authorize_researcher_memory_write,
+)
 from spark_intelligence.state.db import StateDB
 
 
@@ -287,6 +291,70 @@ def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+
+
+def test_researcher_memory_write_authorizes_with_vnext_only(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-researcher-write-vnext",
+        channel_kind="telegram",
+        session_id="session-researcher-write-vnext",
+        human_id="human-researcher-write-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+
+    allowed = _authorize_researcher_memory_write(
+        state_db=state_db,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=payload,
+        run_id=None,
+        request_id="req-researcher-write-vnext",
+        channel_kind="telegram",
+        session_id="session-researcher-write-vnext",
+        human_id="human-researcher-write-vnext",
+        agent_id="agent:test",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+        operation="update",
+        allow_adapter_envelope=False,
+    )
+
+    assert allowed is True
+    assert latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5) == []
+
+
+def test_researcher_memory_read_authorizes_with_vnext_only(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-researcher-read-vnext",
+        channel_kind="telegram",
+        session_id="session-researcher-read-vnext",
+        human_id="human-researcher-read-vnext",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+    )
+
+    allowed = _authorize_researcher_memory_read(
+        state_db=state_db,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=payload,
+        run_id=None,
+        request_id="req-researcher-read-vnext",
+        channel_kind="telegram",
+        session_id="session-researcher-read-vnext",
+        human_id="human-researcher-read-vnext",
+        agent_id="agent:test",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+        read_kind="memory_current_plan",
+        allow_missing_envelope=False,
+    )
+
+    assert allowed is True
+    assert latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5) == []
 
 
 def test_blocks_memory_read_turn_intent_for_meta_examples() -> None:
