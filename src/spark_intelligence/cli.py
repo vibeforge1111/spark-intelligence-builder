@@ -1197,6 +1197,17 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse helper: accept only strictly positive integers."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2055,8 +2066,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_personality_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_personality_parser.add_argument("--human-id", help="Inspect one human id instead of the global overview")
-    operator_personality_parser.add_argument("--observation-limit", type=int, default=10, help="Observation rows to include for one human")
-    operator_personality_parser.add_argument("--evolution-limit", type=int, default=10, help="Evolution rows to include for one human")
+    operator_personality_parser.add_argument("--observation-limit", type=_positive_int, default=10, help="Observation rows to include for one human (must be a positive integer)")
+    operator_personality_parser.add_argument("--evolution-limit", type=_positive_int, default=10, help="Evolution rows to include for one human (must be a positive integer)")
     operator_personality_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_observer_packets_parser = operator_subparsers.add_parser(
         "observer-packets",
