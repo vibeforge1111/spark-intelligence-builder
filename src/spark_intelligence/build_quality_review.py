@@ -215,9 +215,12 @@ def _run_git(repo: Path, args: list[str]) -> str:
             text=True,
             timeout=2.0,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[build_quality_review] Git command failed: {e}")
         return ""
     if completed.returncode != 0:
+        err = completed.stderr.strip() if completed.stderr else "unknown error"
+        print(f"[build_quality_review] Git exited with code {completed.returncode}: {err}")
         return ""
     return str(completed.stdout or "").strip()
 
