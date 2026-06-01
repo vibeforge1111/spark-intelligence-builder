@@ -4565,6 +4565,7 @@ def _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             chip_command=chip_command,
+            update_payload=update_payload,
             run_id=run_id,
             request_id=request_id,
             session_id=session_id,
@@ -9265,6 +9266,7 @@ def _handle_telegram_chip_command(
     config_manager: ConfigManager,
     state_db: StateDB,
     chip_command: dict[str, Any],
+    update_payload: dict[str, Any] | None,
     run_id: str | None,
     request_id: str,
     session_id: str,
@@ -9313,6 +9315,21 @@ def _handle_telegram_chip_command(
         return {
             "command": command,
             "reply_text": f"Chip command payload is invalid.\nReason: {_with_terminal_period(str(exc))}",
+        }
+
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=f"chip.{hook}",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_files",
+    )
+    if not authority.allowed:
+        return {
+            "command": command,
+            "reply_text": _render_chip_authority_blocked_reply(
+                command=command,
+                reason_codes=authority.reason_codes,
+            ),
         }
 
     try:
@@ -9387,6 +9404,15 @@ def _render_chip_help_reply() -> str:
         "strategy_id=ema_pullback_long market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict`.\n"
         "Rule: direct chip commands run the chip hook locally in Telegram, but they do not create a Swarm insight, "
         "autoloop session, or GitHub delivery by themselves."
+    )
+
+
+def _render_chip_authority_blocked_reply(*, command: str, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return (
+        f"I can inspect chips, but this turn is missing Spark authority for `{command}`.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized Spark chip action and I will run it."
     )
 
 

@@ -246,6 +246,73 @@ def _with_style_turn_intent(
     return enriched
 
 
+def _with_chip_turn_intent(
+    update: dict,
+    *,
+    tool_name: str,
+    no_execution: bool = False,
+) -> dict:
+    message = dict(update.get("message") or {})
+    allowed_tools = ["answer.compose"]
+    mutation_classes = ["none", "read_only"]
+    if not no_execution:
+        allowed_tools.append(tool_name)
+        mutation_classes.append("writes_files")
+    message["spark_turn_intent"] = {
+        "schema": "spark.turn_intent.v1",
+        "turnId": "turn:chip-test",
+        "traceId": "trace:chip-test",
+        "surface": "telegram",
+        "directive": {
+            "mode": "answer" if no_execution else "execute",
+            "noExecution": no_execution,
+            "noPublish": False,
+            "localOnly": False,
+            "explanationOnly": no_execution,
+            "quotedOrMetaLanguage": no_execution,
+        },
+        "selectedIntent": {
+            "kind": "chip_action",
+            "ownerSystem": "spark-intelligence-builder",
+            "action": tool_name,
+            "confidence": "explicit",
+            "requiresConfirmation": False,
+            "source": "explicit",
+        },
+        "sessionScope": {
+            "sessionKey": "telegram:dm:111",
+            "surface": "telegram",
+            "conversationKind": "dm",
+            "userRef": "user:111",
+            "chatRef": "chat:111",
+            "memoryLoadPolicy": "evidence_only",
+            "pendingStateScope": "same_session_only",
+        },
+        "toolPolicy": {
+            "allowedTools": allowed_tools,
+            "deniedTools": [],
+            "enabledToolsets": ["telegram.reply", "spark-intelligence-builder"],
+            "mutationClassesAllowed": mutation_classes,
+            "requiresApprovalFor": [],
+            "networkPolicy": "none",
+            "elevatedAllowed": False,
+        },
+        "executionPolicy": {
+            "canMutateFiles": not no_execution,
+            "canLaunchMission": False,
+            "canWriteMemory": False,
+            "canDeleteSchedule": False,
+            "canCreateChip": False,
+            "canPublish": False,
+            "canUseExternalNetwork": False,
+        },
+        "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+    }
+    enriched = dict(update)
+    enriched["message"] = message
+    return enriched
+
+
 class OperatorPairingFlowTests(SparkTestCase):
     def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
         record_pairing_context(
@@ -2779,15 +2846,18 @@ class OperatorPairingFlowTests(SparkTestCase):
             result = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                update_payload=make_telegram_update(
-                    update_id=844,
-                    user_id="111",
-                    username="alice",
-                    text=(
-                        "/chip evaluate domain-chip-trading-crypto "
-                        "doctrine_id=trend_regime_following strategy_id=ema_pullback_long "
-                        "market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict"
+                update_payload=_with_chip_turn_intent(
+                    make_telegram_update(
+                        update_id=844,
+                        user_id="111",
+                        username="alice",
+                        text=(
+                            "/chip evaluate domain-chip-trading-crypto "
+                            "doctrine_id=trend_regime_following strategy_id=ema_pullback_long "
+                            "market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict"
+                        ),
                     ),
+                    tool_name="chip.evaluate",
                 ),
             )
 
@@ -2799,6 +2869,28 @@ class OperatorPairingFlowTests(SparkTestCase):
         payload = run_hook_mock.call_args.kwargs["payload"]
         self.assertEqual(payload["candidate"]["mutations"]["doctrine_id"], "trend_regime_following")
         self.assertEqual(payload["candidate"]["mutations"]["strategy_id"], "ema_pullback_long")
+
+    def test_chip_evaluate_without_turn_intent_does_not_run_hook(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch("spark_intelligence.adapters.telegram.runtime.run_chip_hook") as run_hook_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=8441,
+                    user_id="111",
+                    username="alice",
+                    text=(
+                        "/chip evaluate domain-chip-trading-crypto "
+                        "doctrine_id=trend_regime_following strategy_id=ema_pullback_long"
+                    ),
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        run_hook_mock.assert_not_called()
+        self.assertIn("missing Spark authority", str(result.detail["response_text"]))
 
     def test_chip_autoloop_explains_specialization_path_requirement(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
