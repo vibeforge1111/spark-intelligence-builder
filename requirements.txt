@@ -1,3 +1,5 @@
+jsonschema>=4.22.0
 PyNaCl==1.6.2
 PyYAML==6.0.3
+referencing>=0.35.0
 spark-character @ git+https://github.com/vibeforge1111/spark-character.git@9a6a3a637eda4641fafcf4335d5ba5b9f6919d46

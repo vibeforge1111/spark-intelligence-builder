@@ -165,7 +165,13 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["envelope"]["turn_intent_payload"]["selectedIntent"]["ownerSystem"], "spark-voice-comms")
+        authority = payload["envelope"]["turn_intent_payload"]
+        self.assertEqual(authority["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(authority["action_authority"]["state"], "executable")
+        self.assertIn(
+            "capability:spark-voice-comms:voice.speak",
+            {action["capability_id"] for action in authority["proposed_actions"]},
+        )
         self.assertEqual(seen_hooks, ["voice.status", "voice.speak"])
 
     def test_harness_status_returns_registry_and_runtime_payload(self) -> None:

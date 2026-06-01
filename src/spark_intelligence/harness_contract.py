@@ -61,6 +61,7 @@ try:
         authorize_legacy_tool_call,
         authorize_tool_call,
         authorize_vnext_tool_call,
+        build_vnext_action_intent_envelope,
         build_vnext_tool_intent_envelope,
         finalize_legacy_tool_call_ledger,
         parse_turn_intent_envelope,
@@ -163,6 +164,19 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
     ) -> dict[str, Any] | None:
         return None
 
+    def build_vnext_action_intent_envelope(
+        *,
+        surface: str,
+        actor_id_ref: str,
+        request_id: str,
+        source_kind: str,
+        intent_summary: str,
+        raw_turn_summary: str,
+        actions: list[dict[str, Any]],
+        confidence: float = 0.95,
+    ) -> dict[str, Any] | None:
+        return None
+
 
 __all__ = [
     "HARNESS_CORE_AVAILABLE",
@@ -178,6 +192,7 @@ __all__ = [
     "authorize_legacy_tool_call",
     "authorize_tool_call",
     "authorize_vnext_tool_call",
+    "build_vnext_action_intent_envelope",
     "build_vnext_tool_intent_envelope",
     "finalize_legacy_tool_call_ledger",
     "parse_turn_intent_envelope",
