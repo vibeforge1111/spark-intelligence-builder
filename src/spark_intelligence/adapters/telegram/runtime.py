@@ -33,10 +33,14 @@ from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_telegram_memory_diagnostic_turn_intent_payload,
+    build_telegram_memory_diagnostic_turn_intent_payload_vnext,
     build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload_vnext,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
+    extract_turn_intent_envelope_vnext,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
@@ -324,6 +328,26 @@ def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | No
     return None
 
 
+def _attach_telegram_turn_intent_payloads(
+    update_payload: dict[str, Any],
+    *,
+    legacy_payload: dict[str, Any],
+    vnext_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    enriched = dict(update_payload)
+    enriched["spark_turn_intent"] = legacy_payload
+    if vnext_payload is not None:
+        enriched["turn_intent_envelope_vnext"] = vnext_payload
+    message = enriched.get("message")
+    if isinstance(message, dict):
+        enriched_message = dict(message)
+        enriched_message["spark_turn_intent"] = legacy_payload
+        if vnext_payload is not None:
+            enriched_message["turn_intent_envelope_vnext"] = vnext_payload
+        enriched["message"] = enriched_message
+    return enriched
+
+
 def _with_telegram_memory_turn_intent(
     *,
     config_manager: ConfigManager | None = None,
@@ -336,7 +360,10 @@ def _with_telegram_memory_turn_intent(
 ) -> dict[str, Any] | None:
     if not isinstance(update_payload, dict):
         return update_payload
-    if extract_turn_intent_envelope(update_payload) is not None:
+    if (
+        extract_turn_intent_envelope(update_payload) is not None
+        or extract_turn_intent_envelope_vnext(update_payload) is not None
+    ):
         return update_payload
     diagnostic_source_kind = _detect_telegram_memory_diagnostic_authority_source_kind(
         config_manager=config_manager,
@@ -354,14 +381,17 @@ def _with_telegram_memory_turn_intent(
             source_kind=diagnostic_source_kind,
         )
         if turn_intent_payload is not None:
-            enriched = dict(update_payload)
-            enriched["spark_turn_intent"] = turn_intent_payload
-            message = enriched.get("message")
-            if isinstance(message, dict):
-                enriched_message = dict(message)
-                enriched_message["spark_turn_intent"] = turn_intent_payload
-                enriched["message"] = enriched_message
-            return enriched
+            return _attach_telegram_turn_intent_payloads(
+                update_payload,
+                legacy_payload=turn_intent_payload,
+                vnext_payload=build_telegram_memory_diagnostic_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind="telegram",
+                    session_id=session_id,
+                    human_id=human_id,
+                    source_kind=diagnostic_source_kind,
+                ),
+            )
     read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
     if read_source_kind is not None:
         turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
@@ -373,14 +403,18 @@ def _with_telegram_memory_turn_intent(
             source_kind=read_source_kind,
         )
         if turn_intent_payload is not None:
-            enriched = dict(update_payload)
-            enriched["spark_turn_intent"] = turn_intent_payload
-            message = enriched.get("message")
-            if isinstance(message, dict):
-                enriched_message = dict(message)
-                enriched_message["spark_turn_intent"] = turn_intent_payload
-                enriched["message"] = enriched_message
-            return enriched
+            return _attach_telegram_turn_intent_payloads(
+                update_payload,
+                legacy_payload=turn_intent_payload,
+                vnext_payload=build_telegram_memory_read_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind="telegram",
+                    session_id=session_id,
+                    human_id=human_id,
+                    user_message=user_message,
+                    source_kind=read_source_kind,
+                ),
+            )
     source_kind = _detect_telegram_memory_authority_source_kind(user_message)
     if source_kind is None:
         return update_payload
@@ -395,14 +429,18 @@ def _with_telegram_memory_turn_intent(
     if turn_intent_payload is None:
         return update_payload
 
-    enriched = dict(update_payload)
-    enriched["spark_turn_intent"] = turn_intent_payload
-    message = enriched.get("message")
-    if isinstance(message, dict):
-        enriched_message = dict(message)
-        enriched_message["spark_turn_intent"] = turn_intent_payload
-        enriched["message"] = enriched_message
-    return enriched
+    return _attach_telegram_turn_intent_payloads(
+        update_payload,
+        legacy_payload=turn_intent_payload,
+        vnext_payload=build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        ),
+    )
 
 
 def _detect_telegram_memory_diagnostic_authority_source_kind(

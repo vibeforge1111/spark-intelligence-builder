@@ -13,6 +13,7 @@ from spark_intelligence.adapters.telegram.runtime import (
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action as real_authorize_builder_bridge_action,
     extract_turn_intent_envelope,
+    extract_turn_intent_envelope_vnext,
 )
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
 from spark_intelligence.gateway.tracing import append_gateway_trace
@@ -224,6 +225,15 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("memory.diagnose", envelope.tool_policy.allowed_tools)
         self.assertIn("read_only", envelope.tool_policy.mutation_classes_allowed)
         self.assertFalse(envelope.execution_policy.can_write_memory)
+        vnext = extract_turn_intent_envelope_vnext(captured_payloads[0])
+        self.assertIsNotNone(vnext)
+        self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(vnext["selected_move"], "read_current_state")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
+        self.assertEqual(
+            vnext["proposed_actions"][0]["capability_id"],
+            "capability:spark-intelligence-builder:memory.diagnose",
+        )
         ledger_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_recorded", limit=5)
         self.assertTrue(ledger_events)
         latest_ledger = ledger_events[0]
