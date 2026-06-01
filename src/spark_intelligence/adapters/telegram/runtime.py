@@ -4280,6 +4280,21 @@ def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, 
     return "\n".join(lines)
 
 
+def _with_tool_result_metadata(
+    result: dict[str, Any],
+    *,
+    status: str,
+    summary: str,
+) -> dict[str, Any]:
+    normalized_status = str(status or "").strip()
+    if normalized_status not in {"success", "failure", "partial", "rolled_back"}:
+        normalized_status = "partial"
+    enriched = dict(result)
+    enriched.setdefault("tool_result_status", normalized_status)
+    enriched.setdefault("tool_result_summary", str(summary or "").strip() or "Telegram runtime command returned.")
+    return enriched
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -4527,11 +4542,16 @@ def _handle_runtime_command_impl(
             session_id=session_id or "",
             human_id=human_id or f"human:telegram:{external_user_id}",
         )
-        return {
-            "command": "/probe",
-            "reply_text": _render_telegram_route_probe_reply(probe),
-            "respect_voice_reply_state": True,
-        }
+        probe_status = str(getattr(probe, "status", "") or "").strip()
+        return _with_tool_result_metadata(
+            {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_reply(probe),
+                "respect_voice_reply_state": True,
+            },
+            status="success" if probe_status == "success" else "failure",
+            summary=f"Route probe {capability_key} recorded {probe_status or 'unknown'} evidence.",
+        )
     if _is_ledger_runtime_command(lowered):
         return {
             "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
@@ -5272,6 +5292,8 @@ def _handle_runtime_command_impl(
                 f"{result.message}\n"
                 "Next: `/swarm status` to confirm the current bridge state."
             ),
+            "tool_result_status": "success" if result.ok else "failure",
+            "tool_result_summary": f"Swarm collective sync {'completed' if result.ok else 'failed'} in {result.mode} mode.",
         }
     run_args = _parse_swarm_path_run_command(normalized)
     if run_args:
@@ -8119,7 +8141,11 @@ def _run_voice_runtime_command(
         payload=payload,
     )
     if execution is None:
-        return {"command": command, "reply_text": fallback_reply}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": fallback_reply},
+            status="failure",
+            summary=f"Voice hook {hook} was authorized but no active chip supported it.",
+        )
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     reply_text = str((result or {}).get("reply_text") or "").strip()
     if command in {"/voice", "/voice status"}:
@@ -8140,18 +8166,30 @@ def _run_voice_runtime_command(
                 agent_id=agent_id,
             )
     if reply_text:
-        return {"command": command, "reply_text": reply_text}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": reply_text},
+            status="success" if execution.ok else "failure",
+            summary=f"Voice hook {hook} {'completed' if execution.ok else 'failed'}.",
+        )
     if execution.ok:
-        return {"command": command, "reply_text": fallback_reply}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": fallback_reply},
+            status="success",
+            summary=f"Voice hook {hook} completed.",
+        )
     reason = ""
     if isinstance(execution.output, dict):
         reason = str(execution.output.get("error") or "").strip()
     if not reason:
         reason = str(execution.stderr or execution.stdout or "").strip()
-    return {
-        "command": command,
-        "reply_text": f"{fallback_reply}\nReason: {reason}" if reason else fallback_reply,
-    }
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": f"{fallback_reply}\nReason: {reason}" if reason else fallback_reply,
+        },
+        status="failure",
+        summary=f"Voice hook {hook} failed.",
+    )
 
 
 def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
@@ -8372,26 +8410,34 @@ def _run_voice_doctor_command(
         payload=payload,
     )
     if execution is None:
-        return {
-            "command": "/voice doctor",
-            "reply_text": _render_telegram_voice_doctor_missing_chip_reply(),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice doctor",
+                "reply_text": _render_telegram_voice_doctor_missing_chip_reply(),
+                "respect_voice_reply_state": False,
+            },
+            status="failure",
+            summary="Voice diagnostics could not run because no active voice status chip was available.",
+        )
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     if not isinstance(result, dict):
         result = {}
-    return {
-        "command": "/voice doctor",
-        "reply_text": _render_telegram_voice_doctor_reply(
-            result=result,
-            chip_key=str(execution.chip_key or ""),
-            state_db=state_db,
-            external_user_id=external_user_id,
-            agent_id=agent_id,
-            config_manager=config_manager,
-        ),
-        "respect_voice_reply_state": False,
-    }
+    return _with_tool_result_metadata(
+        {
+            "command": "/voice doctor",
+            "reply_text": _render_telegram_voice_doctor_reply(
+                result=result,
+                chip_key=str(execution.chip_key or ""),
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+                config_manager=config_manager,
+            ),
+            "respect_voice_reply_state": False,
+        },
+        status="success" if execution.ok else "failure",
+        summary=f"Voice diagnostics {'completed' if execution.ok else 'failed'}.",
+    )
 
 
 def _render_telegram_voice_doctor_missing_chip_reply() -> str:
@@ -8571,20 +8617,24 @@ def _run_voice_self_test_command(
     result = execution.output.get("result") if execution and isinstance(execution.output, dict) else {}
     if not isinstance(result, dict):
         result = {}
-    return {
-        "command": "/voice self-test",
-        "reply_text": _render_telegram_voice_self_test_reply(
-            result=result,
-            chip_key=str(execution.chip_key or "") if execution else "",
-            chip_ready=bool(execution),
-            bot_probe=_telegram_voice_bot_update_probe(config_manager),
-            state_db=state_db,
-            external_user_id=external_user_id,
-            agent_id=agent_id,
-            config_manager=config_manager,
-        ),
-        "respect_voice_reply_state": False,
-    }
+    return _with_tool_result_metadata(
+        {
+            "command": "/voice self-test",
+            "reply_text": _render_telegram_voice_self_test_reply(
+                result=result,
+                chip_key=str(execution.chip_key or "") if execution else "",
+                chip_ready=bool(execution),
+                bot_probe=_telegram_voice_bot_update_probe(config_manager),
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+                config_manager=config_manager,
+            ),
+            "respect_voice_reply_state": False,
+        },
+        status="success" if execution and execution.ok else "failure",
+        summary="Voice self-test completed." if execution and execution.ok else "Voice self-test could not complete.",
+    )
 
 
 def _telegram_voice_bot_update_probe(config_manager: ConfigManager) -> dict[str, Any]:
@@ -9944,15 +9994,23 @@ def _handle_telegram_chip_command(
             payload=payload,
         )
     except ValueError as exc:
-        return {
-            "command": command,
-            "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} could not run for {chip_key}.",
+        )
     except RuntimeError as exc:
-        return {
-            "command": command,
-            "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} failed before execution for {chip_key}.",
+        )
 
     record_chip_hook_execution(
         state_db,
@@ -9987,17 +10045,25 @@ def _handle_telegram_chip_command(
         trace_ref=f"trace:telegram:{request_id}",
     )
     if not screened["allowed"]:
-        return {
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": (
+                    "Chip output was blocked before Telegram delivery.\n"
+                    f"Reason: it contained secret-like material and was quarantined as {screened['quarantine_id']}."
+                ),
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} ran but output was blocked before delivery.",
+        )
+    return _with_tool_result_metadata(
+        {
             "command": command,
-            "reply_text": (
-                "Chip output was blocked before Telegram delivery.\n"
-                f"Reason: it contained secret-like material and was quarantined as {screened['quarantine_id']}."
-            ),
-        }
-    return {
-        "command": command,
-        "reply_text": str(screened["text"] or "").strip() or "Chip command completed with no displayable output.",
-    }
+            "reply_text": str(screened["text"] or "").strip() or "Chip command completed with no displayable output.",
+        },
+        status="success" if execution.ok else "failure",
+        summary=f"Direct chip hook {hook} {'completed' if execution.ok else 'failed'} for {chip_key}.",
+    )
 
 
 def _render_chip_help_reply() -> str:
@@ -10297,7 +10363,7 @@ def _run_swarm_action_command(
     mutation_class: str,
     publishes: bool = False,
     external_network: bool = True,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     authority = authorize_builder_bridge_action(
         update_payload,
         tool_name=tool_name,
@@ -10312,11 +10378,22 @@ def _run_swarm_action_command(
         payload = runner()
         reply_text = renderer(payload)
     except RuntimeError as exc:
-        reply_text = _render_swarm_unavailable_reply("Swarm action is unavailable.", exc)
-    return {
-        "command": command,
-        "reply_text": reply_text,
-    }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": _render_swarm_unavailable_reply("Swarm action is unavailable.", exc),
+            },
+            status="failure",
+            summary=f"Swarm action {tool_name} failed.",
+        )
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": reply_text,
+        },
+        status="success",
+        summary=f"Swarm action {tool_name} completed.",
+    )
 
 
 def _run_swarm_bridge_command(
@@ -10327,7 +10404,7 @@ def _run_swarm_bridge_command(
     update_payload: dict[str, Any] | None,
     tool_name: str,
     mutation_class: str = "launches_mission",
-) -> dict[str, str]:
+) -> dict[str, Any]:
     authority = authorize_builder_bridge_action(
         update_payload,
         tool_name=tool_name,
@@ -10340,11 +10417,22 @@ def _run_swarm_bridge_command(
         result = runner()
         reply_text = renderer(result)
     except RuntimeError as exc:
-        reply_text = _render_swarm_unavailable_reply("Swarm bridge action is unavailable.", exc)
-    return {
-        "command": command,
-        "reply_text": reply_text,
-    }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": _render_swarm_unavailable_reply("Swarm bridge action is unavailable.", exc),
+            },
+            status="failure",
+            summary=f"Swarm bridge action {tool_name} failed.",
+        )
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": reply_text,
+        },
+        status="success",
+        summary=f"Swarm bridge action {tool_name} completed.",
+    )
 
 
 def _blocked_swarm_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, str]:
