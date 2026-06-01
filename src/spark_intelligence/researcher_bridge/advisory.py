@@ -44,6 +44,7 @@ from spark_intelligence.build_quality_review import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
+from spark_intelligence.bridge_authority import build_telegram_memory_turn_intent_payload
 from spark_intelligence.harness_contract import TurnIntentEnvelope, authorize_tool_call, parse_turn_intent_envelope
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
@@ -4333,28 +4334,6 @@ def _authorize_researcher_active_chip_evaluate(
     return False
 
 
-def _memory_write_boundary_blocks_adapter_authority(user_message: str) -> bool:
-    text = " ".join(str(user_message or "").strip().split())
-    if not text:
-        return True
-    lowered = text.casefold()
-    if re.search(
-        r"\b(?:do\s+not|don't|dont|please\s+don't|no\s+need\s+to|without)\s+"
-        r"(?:save|remember|store|write|record|capture|persist|learn)\b",
-        lowered,
-    ):
-        return True
-    if re.search(
-        r"\b(?:not\s+a\s+(?:command|request|instruction)|just\s+(?:an?\s+)?example|"
-        r"example\s+only|quoted\s+example|bug\s+report|hypothetical|for\s+example)\b",
-        lowered,
-    ) and re.search(r"\b(?:memory|remember|save|forget|favorite|current|decision|plan|focus)\b", lowered):
-        return True
-    if re.match(r"^\s*(?:example|quote|quoted\s+text)\s*:", lowered):
-        return True
-    return False
-
-
 def _build_researcher_memory_turn_intent_envelope(
     *,
     request_id: str,
@@ -4364,68 +4343,18 @@ def _build_researcher_memory_turn_intent_envelope(
     user_message: str,
     source_kind: str,
 ) -> TurnIntentEnvelope | None:
-    if channel_kind != "telegram":
-        return None
-    if _memory_write_boundary_blocks_adapter_authority(user_message):
+    payload = build_telegram_memory_turn_intent_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if payload is None:
         return None
     try:
-        return parse_turn_intent_envelope(
-            {
-                "schema": "spark.turn_intent.v1",
-                "turnId": f"turn:researcher-memory:{request_id}",
-                "traceId": f"trace:researcher-memory:{request_id}",
-                "surface": channel_kind,
-                "directive": {
-                    "mode": "execute",
-                    "noExecution": False,
-                    "noPublish": True,
-                    "localOnly": True,
-                    "explanationOnly": False,
-                    "quotedOrMetaLanguage": False,
-                },
-                "selectedIntent": {
-                    "kind": "memory_action",
-                    "ownerSystem": "domain-chip-memory",
-                    "action": "memory.write",
-                    "confidence": "explicit",
-                    "requiresConfirmation": False,
-                    "source": source_kind,
-                },
-                "sessionScope": {
-                    "sessionKey": session_id,
-                    "surface": channel_kind,
-                    "conversationKind": "telegram_dm",
-                    "userRef": human_id,
-                    "chatRef": session_id,
-                    "memoryLoadPolicy": "bounded",
-                    "pendingStateScope": "fresh_turn",
-                },
-                "toolPolicy": {
-                    "allowedTools": ["answer.compose", "memory.write"],
-                    "deniedTools": [],
-                    "enabledToolsets": ["spark-harness-core", "domain-chip-memory"],
-                    "mutationClassesAllowed": ["none", "read_only", "writes_memory"],
-                    "requiresApprovalFor": [],
-                    "networkPolicy": "none",
-                    "elevatedAllowed": False,
-                },
-                "executionPolicy": {
-                    "canMutateFiles": False,
-                    "canLaunchMission": False,
-                    "canWriteMemory": True,
-                    "canDeleteSchedule": False,
-                    "canCreateChip": False,
-                    "canPublish": False,
-                    "canUseExternalNetwork": False,
-                },
-                "threatDefense": {
-                    "reasonCodes": [
-                        "fresh_user_turn_is_authority",
-                        "telegram_memory_adapter_explicit_intent",
-                    ]
-                },
-            }
-        )
+        return parse_turn_intent_envelope(payload)
     except ValueError:
         return None
 
@@ -8940,6 +8869,7 @@ def build_researcher_reply(
     run_id: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    allow_memory_adapter_envelope: bool = True,
 ) -> ResearcherBridgeResult:
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
     attachment_context = build_attachment_context(config_manager)
@@ -9784,7 +9714,7 @@ def build_researcher_reply(
             user_message=memory_user_message,
             source_kind="current_plan_transition",
             operation="update",
-            allow_adapter_envelope=True,
+            allow_adapter_envelope=allow_memory_adapter_envelope,
         ):
             write_result = write_profile_fact_to_memory(
                 config_manager=config_manager,
@@ -9873,7 +9803,7 @@ def build_researcher_reply(
             user_message=memory_user_message,
             source_kind="current_focus_transition",
             operation="update",
-            allow_adapter_envelope=True,
+            allow_adapter_envelope=allow_memory_adapter_envelope,
         ):
             write_result = write_profile_fact_to_memory(
                 config_manager=config_manager,
@@ -10193,7 +10123,7 @@ def build_researcher_reply(
                     user_message=memory_user_message,
                     source_kind="explicit_decision",
                     operation="update",
-                    allow_adapter_envelope=True,
+                    allow_adapter_envelope=allow_memory_adapter_envelope,
                 ):
                     write_result = write_structured_evidence_to_memory(
                         config_manager=config_manager,
@@ -10527,7 +10457,7 @@ def build_researcher_reply(
                     user_message=memory_user_message,
                     source_kind="profile_fact_observation",
                     operation="update",
-                    allow_adapter_envelope=True,
+                    allow_adapter_envelope=allow_memory_adapter_envelope,
                 ):
                     write_profile_fact_to_memory(
                         config_manager=config_manager,
@@ -10558,7 +10488,7 @@ def build_researcher_reply(
                         user_message=memory_user_message,
                         source_kind="telegram_event_observation",
                         operation="update",
-                        allow_adapter_envelope=True,
+                        allow_adapter_envelope=allow_memory_adapter_envelope,
                     ):
                         write_telegram_event_to_memory(
                             config_manager=config_manager,
@@ -10590,7 +10520,7 @@ def build_researcher_reply(
                                 user_message=memory_user_message,
                                 source_kind="generic_memory_deletion",
                                 operation="delete",
-                                allow_adapter_envelope=True,
+                                allow_adapter_envelope=allow_memory_adapter_envelope,
                             ):
                                 detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
                                 accepted_generic_memory_deletions = []
@@ -10642,7 +10572,7 @@ def build_researcher_reply(
                                     user_message=memory_user_message,
                                     source_kind="generic_memory_observation",
                                     operation="update",
-                                    allow_adapter_envelope=True,
+                                    allow_adapter_envelope=allow_memory_adapter_envelope,
                                 ):
                                     generic_write_result = write_profile_fact_to_memory(
                                         config_manager=config_manager,
@@ -10749,7 +10679,7 @@ def build_researcher_reply(
             user_message=memory_user_message,
             source_kind=f"generic_memory_candidate_{assessed_generic_memory_candidate.outcome}",
             operation=str(assessed_generic_memory_candidate.operation or "update"),
-            allow_adapter_envelope=True,
+            allow_adapter_envelope=allow_memory_adapter_envelope,
         )
         if not memory_candidate_authorized:
             assessed_generic_memory_candidate = None

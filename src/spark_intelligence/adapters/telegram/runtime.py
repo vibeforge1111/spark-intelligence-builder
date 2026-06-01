@@ -32,6 +32,7 @@ from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    build_telegram_memory_turn_intent_payload,
     extract_turn_intent_envelope,
 )
 from spark_intelligence.config.loader import ConfigManager
@@ -57,6 +58,9 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_inventory,
     build_llm_wiki_status,
 )
+from spark_intelligence.memory.episodic_events import detect_telegram_memory_event_observation
+from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
+from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
@@ -72,6 +76,9 @@ from spark_intelligence.personality import (
     restore_agent_persona_savepoint,
 )
 from spark_intelligence.researcher_bridge.advisory import (
+    _detect_current_focus_transition_command,
+    _detect_current_plan_transition_command,
+    _detect_explicit_decision_statement,
     build_researcher_reply,
     record_researcher_bridge_result,
     try_spark_character_fallback,
@@ -268,6 +275,81 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
         return False
     compact = " ".join(str(message).split())
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
+
+
+def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    try:
+        if _detect_current_plan_transition_command(text) is not None:
+            return "telegram_runtime_current_plan_transition"
+    except Exception:
+        pass
+    try:
+        if _detect_current_focus_transition_command(text) is not None:
+            return "telegram_runtime_current_focus_transition"
+    except Exception:
+        pass
+    try:
+        if _detect_explicit_decision_statement(text) is not None:
+            return "telegram_runtime_explicit_decision"
+    except Exception:
+        pass
+    try:
+        if detect_profile_fact_observation(text) is not None:
+            return "telegram_runtime_profile_fact_observation"
+    except Exception:
+        pass
+    try:
+        if detect_telegram_memory_event_observation(text) is not None:
+            return "telegram_runtime_event_observation"
+    except Exception:
+        pass
+    try:
+        candidate = classify_telegram_generic_memory_candidate(text)
+        if candidate is not None:
+            operation = str(getattr(candidate, "operation", "") or "candidate")
+            return f"telegram_runtime_generic_memory_{operation}"
+    except Exception:
+        pass
+    return None
+
+
+def _with_telegram_memory_turn_intent(
+    *,
+    update_payload: dict[str, Any] | None,
+    request_id: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return update_payload
+    if extract_turn_intent_envelope(update_payload) is not None:
+        return update_payload
+    source_kind = _detect_telegram_memory_authority_source_kind(user_message)
+    if source_kind is None:
+        return update_payload
+    turn_intent_payload = build_telegram_memory_turn_intent_payload(
+        request_id=request_id,
+        channel_kind="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if turn_intent_payload is None:
+        return update_payload
+
+    enriched = dict(update_payload)
+    enriched["spark_turn_intent"] = turn_intent_payload
+    message = enriched.get("message")
+    if isinstance(message, dict):
+        enriched_message = dict(message)
+        enriched_message["spark_turn_intent"] = turn_intent_payload
+        enriched["message"] = enriched_message
+    return enriched
 
 
 def _format_chip_metric_value(value: object) -> str:
@@ -1187,6 +1269,7 @@ def simulate_telegram_update(
     respect_voice_reply_state_for_bridge = True
     voice_answer_requested_for_bridge = False
     media_input: dict[str, Any] = {}
+    researcher_update_payload = update_payload
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
@@ -1216,11 +1299,18 @@ def simulate_telegram_update(
         else:
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
+            researcher_update_payload = _with_telegram_memory_turn_intent(
+                update_payload=update_payload,
+                request_id=request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                user_message=effective_text,
+            ) or update_payload
         voice_answer_request = _extract_voice_answer_request(effective_text)
         command_result_override = None
         if voice_answer_request:
             authorized, blocked = _authorize_voice_delivery_action(
-                update_payload=update_payload,
+                update_payload=researcher_update_payload,
                 command="/voice ask",
                 tool_name="voice.speak",
                 natural_command=False,
@@ -1235,7 +1325,7 @@ def simulate_telegram_update(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
-            update_payload=update_payload,
+            update_payload=researcher_update_payload,
             run_id=None,
             request_id=request_id,
             session_id=resolution.session_id,
@@ -1687,7 +1777,8 @@ def simulate_telegram_update(
                         session_id=resolution.session_id,
                         channel_kind="telegram",
                         user_message=effective_text,
-                        turn_intent_envelope=extract_turn_intent_envelope(update_payload),
+                        turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+                        allow_memory_adapter_envelope=False,
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
                     spark_character_reply = _maybe_spark_character_reply(
@@ -1745,7 +1836,7 @@ def simulate_telegram_update(
                     )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
-                        update_payload=update_payload,
+                        update_payload=researcher_update_payload,
                         external_user_id=normalized.telegram_user_id,
                         session_id=resolution.session_id,
                         chip_used=bridge_result.active_chip_key,
@@ -2242,11 +2333,18 @@ def poll_telegram_updates_once(
         voice_input_runtime_state = media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
         voice_answer_requested_for_bridge = False
+        researcher_update_payload = _with_telegram_memory_turn_intent(
+            update_payload=update,
+            request_id=run.request_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            user_message=effective_text,
+        ) or update
         voice_answer_request = _extract_voice_answer_request(effective_text)
         command_result_override = None
         if voice_answer_request:
             authorized, blocked = _authorize_voice_delivery_action(
-                update_payload=update,
+                update_payload=researcher_update_payload,
                 command="/voice ask",
                 tool_name="voice.speak",
                 natural_command=False,
@@ -2262,7 +2360,7 @@ def poll_telegram_updates_once(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
-            update_payload=update,
+            update_payload=researcher_update_payload,
             run_id=run.run_id,
             request_id=run.request_id,
             session_id=resolution.session_id,
@@ -2547,7 +2645,8 @@ def poll_telegram_updates_once(
             channel_kind="telegram",
             user_message=effective_text,
             run_id=run.run_id,
-            turn_intent_envelope=extract_turn_intent_envelope(update),
+            turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+            allow_memory_adapter_envelope=False,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         spark_character_reply = _maybe_spark_character_reply(
@@ -2597,7 +2696,7 @@ def poll_telegram_updates_once(
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
-            update_payload=update,
+            update_payload=researcher_update_payload,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
             chip_used=bridge_result.active_chip_key,
