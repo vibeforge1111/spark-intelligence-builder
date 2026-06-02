@@ -2239,7 +2239,7 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         if row and row["deltas_json"]:
             data = json.loads(row["deltas_json"])
             return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
-    except Exception:
+    except (json.JSONDecodeError, KeyError, ValueError):
         pass
     try:
         with state_db.connect() as conn:
