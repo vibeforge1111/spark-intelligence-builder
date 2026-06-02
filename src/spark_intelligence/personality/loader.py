@@ -1007,7 +1007,9 @@ def load_agent_persona_profile(
                     "updated_at": row["updated_at"],
                 }
         return {}
-    except Exception:
+    except (json.JSONDecodeError, ValueError, KeyError, sqlite3.Error) as exc:
+        import logging
+        logging.debug("persona profile load failed: %s", exc)
         return {}
 
 
