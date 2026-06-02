@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +15,17 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
+
+_BLOCKED_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
 
 
 @dataclass(frozen=True)
@@ -247,7 +261,33 @@ def _execute_anthropic_messages(
     }
 
 
+def _validate_provider_url(url: str) -> None:
+    """Reject URLs that resolve to loopback, private, or cloud-metadata addresses."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("https", "http"):
+        raise RuntimeError(
+            f"Provider URL scheme '{parsed.scheme}' is not allowed. Use http or https."
+        )
+    hostname = parsed.hostname
+    if not hostname:
+        raise RuntimeError("Provider URL has no hostname.")
+    if hostname.lower() in ("localhost", "metadata.google.internal"):
+        raise RuntimeError(f"Provider URL hostname '{hostname}' is blocked.")
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise RuntimeError(f"Provider URL hostname '{hostname}' could not be resolved: {exc}") from exc
+    for _family, _type, _proto, _canonname, sockaddr in resolved:
+        ip = ipaddress.ip_address(sockaddr[0])
+        for blocked in _BLOCKED_NETWORKS:
+            if ip in blocked:
+                raise RuntimeError(
+                    f"Provider URL '{url}' resolves to blocked address {ip}."
+                )
+
+
 def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
+    _validate_provider_url(url)
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
