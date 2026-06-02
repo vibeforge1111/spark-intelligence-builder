@@ -8,6 +8,7 @@ from spark_intelligence.bridge_authority import (
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
+    record_bridge_tool_call_result_ledger,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
@@ -476,6 +477,75 @@ def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
     assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "deny"
+
+
+def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = _envelope(route="memory.write")
+    payload["executionPolicy"]["canWriteMemory"] = False
+    update = {"message": {"spark_turn_intent": payload}}
+
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req:blocked-result",
+        component="telegram_bridge",
+    )
+    event_id = record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status="success",
+        summary="This blocked action must not be finalizable as execution.",
+        output_path="builder://test/blocked-result",
+        component="telegram_bridge",
+        request_id="req:blocked-result",
+    )
+
+    assert verdict.allowed is False
+    assert event_id is None
+    assert len(latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)) == 1
+    assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
+
+
+def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = _envelope(route="memory.write")
+    payload["executionPolicy"]["canWriteMemory"] = False
+    update = {"message": {"spark_turn_intent": payload}}
+    token = set_bridge_authority_ledger_context(
+        state_db=state_db,
+        component="telegram_runtime",
+        request_id="req:blocked-scoped-result",
+        channel_id="telegram",
+        session_id="session:blocked-scoped",
+        human_id="human:blocked-scoped",
+        agent_id="agent:blocked-scoped",
+        actor_id="telegram_runtime",
+    )
+    try:
+        verdict = authorize_builder_bridge_action(
+            update,
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+        )
+        result_events = record_scoped_bridge_tool_call_results(
+            status="success",
+            summary="This blocked scoped action must not be finalizable as execution.",
+            output_path="builder://test/blocked-scoped-result",
+        )
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+    assert verdict.allowed is False
+    assert result_events == ()
+    assert len(latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)) == 1
+    assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 
 def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> None:
