@@ -1555,7 +1555,8 @@ def _researcher_has_ledger(config_path: Path) -> bool:
         ledger_path = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "ledger_path")
         runtime_root = resolve_runtime_root(config_path)
         return ledger_path(runtime_root).exists()
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return False
 
 
