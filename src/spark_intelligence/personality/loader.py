@@ -2112,8 +2112,9 @@ def detect_and_persist_nl_preferences(
                 turn_id=turn_id,
                 channel_kind=channel_kind,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+        import logging
+        logging.warning("memory write failed: %s", exc)
 
     return deltas
 
