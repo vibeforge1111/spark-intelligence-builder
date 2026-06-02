@@ -3640,7 +3640,7 @@ def _read_sib_active_personality_id() -> str | None:
         db = Path(home) / "state.db"
         if not db.exists():
             return None
-        con = sqlite3.connect(str(db))
+        con = sqlite3.connect(str(db), timeout=5)
         try:
             cur = con.cursor()
             cur.execute(
