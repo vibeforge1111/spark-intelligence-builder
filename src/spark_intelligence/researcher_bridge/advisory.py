@@ -1,3 +1,4 @@
+import threading
 from __future__ import annotations
 
 import importlib
@@ -14779,6 +14780,9 @@ def _command_override_for_provider(selection: ResearcherProviderSelection) -> li
     ]
 
 
+_provider_env_lock = threading.Lock()
+
+
 @contextmanager
 def _temporary_provider_env(
     provider: RuntimeProviderResolution,
@@ -14806,17 +14810,19 @@ def _temporary_provider_env(
         values["SPARK_INTELLIGENCE_REQUEST_ID"] = request_id
     if trace_ref:
         values["SPARK_INTELLIGENCE_TRACE_REF"] = trace_ref
-    original = {key: os.environ.get(key) for key in values}
-    try:
+    with _provider_env_lock:
+        original = {key: os.environ.get(key) for key in values}
         for key, value in values.items():
             os.environ[key] = value
+    try:
         yield
     finally:
-        for key, value in original.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        with _provider_env_lock:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def _read_runtime_state(state_db: StateDB) -> dict[str, str]:
