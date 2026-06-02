@@ -1229,6 +1229,14 @@ def evaluate_swarm_escalation(
     actor_id: str = "swarm_bridge",
 ) -> SwarmDecisionResult:
     status = swarm_status(config_manager, state_db)
+    configured_active_chip_keys = [
+        str(item).strip()
+        for item in (config_manager.get_path("spark.chips.active_keys", default=[]) or [])
+        if str(item).strip()
+    ]
+    configured_active_path_key = str(
+        config_manager.get_path("spark.specialization_paths.active_path_key", default="") or ""
+    ).strip()
     record_environment_snapshot(
         state_db,
         surface="swarm_bridge",
@@ -1310,53 +1318,40 @@ def evaluate_swarm_escalation(
         triggers.append("multi_chip_context")
     recommendation_triggers = [trigger for trigger in triggers if trigger != "multi_chip_context"]
 
-    if not status.payload_ready:
-        result = SwarmDecisionResult(
-            ok=False,
-            escalate=False,
-            mode="unavailable",
-            reason="Spark Swarm cannot be recommended because the local payload path is not ready.",
-            triggers=triggers,
-            task=task,
-            attachment_context=status.attachment_context,
-            swarm_available=False,
-            api_ready=status.api_ready,
-        )
-        _record_swarm_failure_state(
-            state_db,
-            kind="decision",
-            result=result,
-            run_id=run_id,
-            request_id=request_id,
-            trace_ref=trace_ref,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id=actor_id,
-        )
-    elif recommendation_triggers and auto_recommend_enabled:
+    if recommendation_triggers and auto_recommend_enabled:
+        reason = "This task shows explicit escalation signals and Spark Swarm is available."
+        if not status.payload_ready:
+            reason = (
+                "This task shows explicit escalation signals; Swarm payload readiness is missing, "
+                "so this is advisory until sync readiness is restored."
+            )
         result = SwarmDecisionResult(
             ok=True,
             escalate=True,
             mode="manual_recommended",
-            reason="This task shows explicit escalation signals and Spark Swarm is available.",
+            reason=reason,
             triggers=triggers,
             task=task,
             attachment_context=status.attachment_context,
-            swarm_available=True,
+            swarm_available=status.payload_ready,
             api_ready=status.api_ready,
         )
     else:
+        reason = "No strong escalation signals were detected; keep the task on the primary agent."
+        if not status.payload_ready:
+            reason = (
+                "No strong escalation signals were detected; keep the task local while Swarm payload "
+                "readiness is missing."
+            )
         result = SwarmDecisionResult(
             ok=True,
             escalate=False,
             mode="hold_local",
-            reason="No strong escalation signals were detected; keep the task on the primary agent.",
+            reason=reason,
             triggers=triggers,
             task=task,
             attachment_context=status.attachment_context,
-            swarm_available=True,
+            swarm_available=status.payload_ready,
             api_ready=status.api_ready,
         )
 
@@ -1372,7 +1367,14 @@ def evaluate_swarm_escalation(
         agent_id=agent_id,
         actor_id=actor_id,
     )
-    if status.attachment_context.get("active_chip_keys") or status.attachment_context.get("active_path_key"):
+    resolved_active_chip_keys = status.attachment_context.get("active_chip_keys") or []
+    resolved_active_path_key = status.attachment_context.get("active_path_key")
+    if (
+        resolved_active_chip_keys
+        or resolved_active_path_key
+        or configured_active_chip_keys
+        or configured_active_path_key
+    ):
         record_event(
             state_db,
             event_type="plugin_or_chip_influence_recorded",
@@ -1381,9 +1383,19 @@ def evaluate_swarm_escalation(
             reason_code="swarm_attachment_context",
             facts={
                 "swarm_operation": "decision",
-                "active_chip_keys": status.attachment_context.get("active_chip_keys") or [],
+                "active_chip_keys": resolved_active_chip_keys,
                 "pinned_chip_keys": status.attachment_context.get("pinned_chip_keys") or [],
-                "active_path_key": status.attachment_context.get("active_path_key"),
+                "active_path_key": resolved_active_path_key,
+                "configured_active_chip_keys": configured_active_chip_keys,
+                "configured_active_path_key": configured_active_path_key or None,
+                "unresolved_configured_active_chip_keys": [
+                    key for key in configured_active_chip_keys if key not in set(resolved_active_chip_keys)
+                ],
+                "unresolved_configured_active_path_key": (
+                    configured_active_path_key
+                    if configured_active_path_key and configured_active_path_key != resolved_active_path_key
+                    else None
+                ),
                 "decision_mode": result.mode,
                 "keepability": "ephemeral_context",
             },
