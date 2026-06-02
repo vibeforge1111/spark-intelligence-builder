@@ -8639,6 +8639,9 @@ class OperatorPairingFlowTests(SparkTestCase):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
             self.assertEqual(payload["text"], "Hello from audio.")
+            governor = payload["governor_decision"]
+            self.assertEqual(governor["schema_version"], "governor-decision-v1")
+            self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.speak")
             return SimpleNamespace(
                 ok=True,
                 chip_key="domain-chip-voice-comms",
@@ -9337,6 +9340,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
             nonlocal voice_speak_payload
             if hook == "voice.transcribe":
+                governor = payload["governor_decision"]
+                self.assertEqual(governor["schema_version"], "governor-decision-v1")
+                self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.transcribe")
                 return SimpleNamespace(
                     ok=True,
                     chip_key="domain-chip-voice-comms",
@@ -9407,6 +9413,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIsNotNone(voice_speak_payload)
         assert voice_speak_payload is not None
         self.assertEqual(str(voice_speak_payload["text"]), "Hey, doing well, ready to work.")
+        governor = voice_speak_payload["governor_decision"]
+        self.assertEqual(governor["schema_version"], "governor-decision-v1")
+        self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.speak")
 
     def test_prepare_voice_reply_text_makes_builder_replies_more_spoken(self) -> None:
         text = (

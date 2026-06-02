@@ -44,6 +44,60 @@ class BridgeAuthorityVerdict:
     ledger_event_id: str | None = None
 
 
+def build_governor_decision_from_bridge_authority(
+    verdict: BridgeAuthorityVerdict,
+    *,
+    reply_instruction: str = "Execute the authorized Builder bridge action.",
+) -> dict[str, Any] | None:
+    envelope = verdict.harness_core_envelope
+    authorization = verdict.authorization_decision
+    ledger = verdict.tool_call_ledger
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != "turn-intent-envelope-vnext":
+        return None
+    if not isinstance(authorization, dict) or authorization.get("schema_version") != "authorization-decision-v1":
+        return None
+    if not isinstance(ledger, dict) or ledger.get("schema_version") != "tool-call-ledger-v1":
+        return None
+    if authorization.get("verdict") != "allow":
+        return None
+    execution_boundary = {
+        "action_authorized": verdict.allowed,
+        "action_count": len(envelope.get("proposed_actions") if isinstance(envelope.get("proposed_actions"), list) else []),
+        "authorized_action_count": 1 if verdict.allowed else 0,
+        "requires_human_confirmation": bool((authorization.get("approval") or {}).get("required")),
+        "legacy_authority_demoted": True,
+        "reasons": list(verdict.reason_codes) or list(authorization.get("reasons") or ["harness_core_authorized"]),
+    }
+    trace = authorization.get("trace") if isinstance(authorization.get("trace"), dict) else {}
+    return {
+        "schema_version": "governor-decision-v1",
+        "decision_id": f"governor-decision:{authorization.get('decision_id') or envelope.get('turn_id')}",
+        "created_at": authorization.get("created_at") or ledger.get("created_at") or envelope.get("created_at"),
+        "surface": envelope.get("surface") or "builder",
+        "turn_id": envelope.get("turn_id"),
+        "selected_move": envelope.get("selected_move"),
+        "authority_state": (envelope.get("action_authority") or {}).get("state"),
+        "risk_tier": authorization.get("risk_tier") or (envelope.get("action_authority") or {}).get("risk_tier"),
+        "outcome": "execute",
+        "envelope": envelope,
+        "authorizations": [authorization],
+        "tool_ledgers": [ledger],
+        "execution_boundary": execution_boundary,
+        "reply_contract": {
+            "style": "human_conversational",
+            "instruction": reply_instruction,
+            "inspect_link_allowed": True,
+            "should_interrupt": False,
+        },
+        "evidence": envelope.get("evidence") or authorization.get("evidence") or [],
+        "trace": {
+            "id": trace.get("id") or f"{envelope.get('turn_id')}:governor",
+            "summary": "Governor decision packaged from Builder bridge authority.",
+            "redaction_class": trace.get("redaction_class") or "metadata_only",
+        },
+    }
+
+
 def set_bridge_authority_ledger_context(
     *,
     state_db: Any,

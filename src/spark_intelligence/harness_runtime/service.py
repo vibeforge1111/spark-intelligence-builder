@@ -838,7 +838,27 @@ def _run_voice_hook(
     payload: dict[str, Any],
     run_id: str,
 ) -> tuple[dict[str, Any], str]:
-    _authorize_harness_voice_hook(envelope=envelope, hook=hook)
+    authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
+    if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
+        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, build_governor_decision_from_bridge_authority
+
+        governor_decision = build_governor_decision_from_bridge_authority(
+            BridgeAuthorityVerdict(
+                allowed=True,
+                reason_codes=authorization.reason_codes,
+                envelope=None,
+                harness_core_envelope=authorization.turn_intent_envelope_vnext,
+                proposed_action=authorization.proposed_action,
+                authorization_decision=authorization.authorization_decision,
+                tool_call_ledger=authorization.tool_call_ledger,
+            ),
+            reply_instruction=f"Execute authorized Harness Runtime voice hook {hook}.",
+        )
+        if isinstance(governor_decision, dict):
+            payload = dict(payload)
+            payload["governor_decision"] = governor_decision
+            if isinstance(authorization.turn_intent_envelope_vnext, dict):
+                payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
     execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
@@ -865,7 +885,7 @@ def _run_voice_hook(
     return output, execution.chip_key
 
 
-def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -> None:
+def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -> Any | None:
     from spark_intelligence.harness_contract import (
         authorize_tool_call,
         authorize_vnext_tool_call,
@@ -884,7 +904,7 @@ def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -
             external_network=external_network,
         )
         if authorization.verdict == "allowed":
-            return
+            return authorization
         reason_text = ", ".join(authorization.reason_codes) if authorization.reason_codes else "turn_not_authorized"
         raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
 
@@ -905,6 +925,7 @@ def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -
     if verdict != "allowed":
         reason_text = ", ".join(reasons) if reasons else "turn_not_authorized"
         raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+    return None
 
 
 def _load_swarm_status(*, config_manager: ConfigManager, state_db: StateDB):
