@@ -730,6 +730,47 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(relevant), 2)
         self.assertTrue(all((event["facts_json"] or {}).get("reason") is None for event in relevant))
 
+    def test_coerce_positive_int_setting_returns_default_for_non_numeric_and_non_positive_inputs(self) -> None:
+        coerce = memory_orchestrator._coerce_positive_int_setting
+        # Non-numeric strings, None, and non-positive ints all fall back to default.
+        self.assertEqual(coerce("3600 chars", default=3600), 3600)
+        self.assertEqual(coerce("not an int", default=3600), 3600)
+        self.assertEqual(coerce(None, default=3600), 3600)
+        self.assertEqual(coerce(0, default=3600), 3600)
+        self.assertEqual(coerce(-1, default=3600), 3600)
+        # Positive ints and clean numeric strings are honored.
+        self.assertEqual(coerce(3600, default=3600), 3600)
+        self.assertEqual(coerce(120, default=3600), 120)
+        self.assertEqual(coerce("240", default=3600), 240)
+
+    def test_hybrid_memory_retrieve_falls_back_to_default_hybrid_context_max_chars_when_config_is_non_numeric(self) -> None:
+        # Operator fat-fingers the setting; previously int("3600 chars") would
+        # have raised ValueError and the entire hybrid_memory_retrieve call
+        # would have crashed before producing a result. The helper now
+        # validates the int and falls back to the documented default of 3600.
+        self.config_manager.set_path("spark.memory.hybrid_context.max_chars", "3600 chars")
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What should we focus on next?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=2,
+                actor_id="test",
+            )
+
+        # Call returns a real result rather than raising; downstream context
+        # packet is shaped exactly like the happy-path test asserts.
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.method, "hybrid_memory_retrieve")
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        self.assertGreaterEqual(trace["selected_count"], 1)
+
     def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
