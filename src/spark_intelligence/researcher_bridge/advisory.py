@@ -1,3 +1,4 @@
+import logging
 from __future__ import annotations
 
 import importlib
@@ -8644,8 +8645,8 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.debug("memory write skipped: %s", exc)
 
     # Check for personality queries (status, reset) before NL detection
     try:
@@ -10093,8 +10094,8 @@ def build_researcher_reply(
                 and detected_belief_recall_query is None
             ):
                 detected_belief_recall_query = _detect_belief_recall_query(user_message)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.debug("memory write skipped: %s", exc)
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
@@ -10279,8 +10280,8 @@ def build_researcher_reply(
                                 },
                             )
                             assessed_generic_memory_candidate = None
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.debug("memory write skipped: %s", exc)
 
     if assessed_generic_memory_candidate is not None:
         if assessed_generic_memory_candidate.outcome == "structured_evidence":
@@ -10298,8 +10299,8 @@ def build_researcher_reply(
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("memory write skipped: %s", exc)
         elif assessed_generic_memory_candidate.outcome == "raw_episode":
             try:
                 write_raw_episode_to_memory(
@@ -10314,8 +10315,8 @@ def build_researcher_reply(
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("memory write skipped: %s", exc)
         elif assessed_generic_memory_candidate.outcome == "belief_candidate":
             try:
                 write_belief_to_memory(
