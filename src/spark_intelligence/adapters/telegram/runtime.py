@@ -267,6 +267,43 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
+def _looks_like_simple_chat_message(text: str) -> bool:
+    """Detect simple conversational messages that don't need the researcher bridge."""
+    if not text:
+        return False
+    lowered = text.lower().strip()
+    # Very short messages are almost always simple chat
+    if len(lowered) <= 15:
+        return True
+    # Short messages with conversational signals
+    if len(lowered) <= 60:
+        simple_signals = (
+            "hello", "hi ", "hey ", "thanks", "thank you", "ok", "okay",
+            "yes", "no ", "nope", "yeah", "sure", "right", "correct",
+            "what", "why", "how", "when", "where", "who",
+            "good", "great", "nice", "cool", "awesome",
+            "sorry", "please", "help", "tell me", "explain",
+            "lol", "haha", "wow", "oh ", "hmm", "bye", "goodbye",
+            "good morning", "good night", "how are you",
+        )
+        if any(signal in lowered for signal in simple_signals):
+            return True
+    # Messages without any specialized task keywords
+    task_signals = (
+        "search", "find", "look up", "research", "browse", "http://", "https://",
+        "build", "create", "make me", "deploy", "install", "fix", "debug",
+        "mission", "spawn", "chip", "swarm", "delegate",
+        "voice", "audio", "transcribe", "speak",
+        "remember", "forget", "save", "store", "what do you know",
+        "diagnose", "status", "health", "test", "probe",
+        "schedule", "calendar", "remind", "alarm",
+        "access", "permission", "admin",
+    )
+    if len(lowered) <= 120 and not any(signal in lowered for signal in task_signals):
+        return True
+    return False
+
+
 def _format_chip_metric_value(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
@@ -1557,6 +1594,18 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
+                if not _shortcircuited and _looks_like_simple_chat_message(effective_text):
+                    _shortcircuited = True
+                    outbound_text = ""
+                    trace_ref = None
+                    bridge_mode = "simple_chat_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "simple_chat_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
                 if not _shortcircuited and _instruction_intent is not None:
                     _shortcircuited = True
                     outbound_text = _maybe_capture_user_instruction(
