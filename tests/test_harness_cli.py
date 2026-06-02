@@ -119,6 +119,9 @@ class HarnessCliTests(SparkTestCase):
                 )
             self.assertEqual(hook, "voice.speak")
             self.assertEqual(payload["text"], "Hello from the CLI harness.")
+            governor = payload["governor_decision"]
+            self.assertEqual(governor["schema_version"], "governor-decision-v1")
+            self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.speak")
             return SimpleNamespace(
                 ok=True,
                 chip_key="domain-chip-voice-comms",

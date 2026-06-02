@@ -32,6 +32,7 @@ from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    build_governor_decision_from_bridge_authority,
     build_telegram_memory_diagnostic_turn_intent_payload,
     build_telegram_memory_diagnostic_turn_intent_payload_vnext,
     build_telegram_memory_read_turn_intent_payload,
@@ -1056,6 +1057,7 @@ def _build_voice_chip_payload(
     audio_bytes: bytes | None = None,
     file_path: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": "telegram",
@@ -1079,6 +1081,8 @@ def _build_voice_chip_payload(
     }
     if isinstance(turn_intent_payload, dict):
         payload["turn_intent_envelope_vnext"] = turn_intent_payload
+    if isinstance(governor_decision, dict):
+        payload["governor_decision"] = governor_decision
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
         secret_ref = getattr(provider, "secret_ref", None)
@@ -1161,6 +1165,7 @@ def _transcribe_telegram_audio_bytes(
     audio_bytes: bytes,
     file_path: str,
     turn_intent_payload: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     transcribe_started = perf_counter()
     execution = run_first_chip_hook_supporting(
@@ -1173,6 +1178,7 @@ def _transcribe_telegram_audio_bytes(
             audio_bytes=audio_bytes,
             file_path=file_path,
             turn_intent_payload=turn_intent_payload,
+            governor_decision=governor_decision,
         ),
     )
     transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
@@ -1271,6 +1277,10 @@ def _prepare_telegram_media_input(
     )
     if not authority.allowed:
         return _voice_transcription_authority_blocked_input(authority.reason_codes)
+    governor_decision = build_governor_decision_from_bridge_authority(
+        authority,
+        reply_instruction="Execute authorized Telegram voice transcription.",
+    )
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
         if embedded_audio is not None:
@@ -1282,6 +1292,7 @@ def _prepare_telegram_media_input(
                 audio_bytes=audio_bytes,
                 file_path=file_path,
                 turn_intent_payload=authority.harness_core_envelope,
+                governor_decision=governor_decision,
             )
     except Exception as exc:
         return {
@@ -1323,6 +1334,7 @@ def _prepare_telegram_media_input(
             audio_bytes=audio_bytes,
             file_path=file_path,
             turn_intent_payload=authority.harness_core_envelope,
+            governor_decision=governor_decision,
         )
     except Exception as exc:
         return {
@@ -3188,6 +3200,19 @@ def _synthesize_telegram_voice_reply(
     voice_input_runtime_state: dict[str, Any] | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    governor_decision: dict[str, Any] | None = None
+    if isinstance(turn_intent_payload, dict):
+        voice_authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_payload},
+            tool_name="voice.speak",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        governor_decision = build_governor_decision_from_bridge_authority(
+            voice_authority,
+            reply_instruction="Execute authorized Telegram voice reply synthesis.",
+        )
     payload = {
         **_build_voice_chip_payload(
             config_manager=config_manager,
@@ -3195,6 +3220,7 @@ def _synthesize_telegram_voice_reply(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_payload=turn_intent_payload,
+            governor_decision=governor_decision,
         ),
         "text": text,
         "surface": "telegram",
@@ -8399,6 +8425,8 @@ def _run_voice_runtime_command(
     mutation_class: str = "read_only",
     external_network: bool = False,
 ) -> dict[str, Any]:
+    governor_decision: dict[str, Any] | None = None
+    authority = None
     if tool_name:
         authority = authorize_builder_bridge_action(
             update_payload,
@@ -8409,12 +8437,17 @@ def _run_voice_runtime_command(
         )
         if not authority.allowed:
             return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+        governor_decision = build_governor_decision_from_bridge_authority(
+            authority,
+            reply_instruction=f"Execute authorized Telegram voice command {command}.",
+        )
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
-        turn_intent_payload=authority.harness_core_envelope,
+        turn_intent_payload=authority.harness_core_envelope if authority is not None else None,
+        governor_decision=governor_decision,
     )
     if payload_extra:
         payload.update(payload_extra)
