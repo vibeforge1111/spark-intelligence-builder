@@ -45,6 +45,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
     build_telegram_memory_read_turn_intent_payload,
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload,
@@ -4307,6 +4308,113 @@ def _authorize_researcher_tool_call(
     )
 
 
+def _governor_authorizes_researcher_tool_call(
+    *,
+    governor_decision: dict[str, Any] | None,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+) -> tuple[str, tuple[str, ...], str, str | None]:
+    if not isinstance(governor_decision, dict):
+        return ("blocked", ("missing_governor_decision",), "missing_governor_decision", None)
+    decision_id = str(governor_decision.get("decision_id") or "").strip() or None
+    if governor_decision.get("schema_version") != "governor-decision-v1":
+        return ("blocked", ("unsupported_governor_decision_schema",), "governor_decision", decision_id)
+    boundary = governor_decision.get("execution_boundary")
+    if not isinstance(boundary, dict):
+        return ("blocked", ("missing_governor_execution_boundary",), "governor_decision", decision_id)
+    outcome = str(governor_decision.get("outcome") or "")
+    if mutation_class in ("none", "read_only"):
+        allowed_outcomes = {"execute", "read_only"}
+    else:
+        allowed_outcomes = {"execute"}
+    reason_codes: list[str] = []
+    if outcome not in allowed_outcomes:
+        reason_codes.append(f"governor_outcome_{outcome or 'missing'}")
+    if not bool(boundary.get("action_authorized")):
+        reason_codes.append("governor_action_not_authorized")
+    authorizations = governor_decision.get("authorizations")
+    if not isinstance(authorizations, list):
+        authorizations = []
+    matching_authorization = None
+    for item in authorizations:
+        if not isinstance(item, dict):
+            continue
+        capability_id = str(item.get("capability_id") or "")
+        if (
+            item.get("verdict") == "allow"
+            and owner_system in capability_id
+            and tool_name in capability_id
+        ):
+            matching_authorization = item
+            break
+    if matching_authorization is None:
+        reason_codes.append("governor_missing_matching_authorization")
+    ledgers = governor_decision.get("tool_ledgers")
+    if not isinstance(ledgers, list):
+        ledgers = []
+    matching_ledger = None
+    for item in ledgers:
+        if not isinstance(item, dict):
+            continue
+        authorization = item.get("authorization")
+        if str(item.get("tool_name") or "") == tool_name and isinstance(authorization, dict):
+            if authorization.get("verdict") == "allow":
+                matching_ledger = item
+                break
+    if matching_ledger is None:
+        reason_codes.append("governor_missing_matching_tool_ledger")
+    if reason_codes:
+        return ("blocked", tuple(reason_codes), "governor_decision", decision_id)
+    return ("allowed", (), "governor_decision", decision_id)
+
+
+def _vnext_proposes_researcher_memory_write(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for action in payload.get("proposed_actions") or []:
+        if not isinstance(action, dict):
+            continue
+        capability_id = str(action.get("capability_id") or "")
+        if str(action.get("action_type") or "") == "write_memory" and "memory.write" in capability_id:
+            return True
+    return False
+
+
+def _build_researcher_memory_write_governor_decision(
+    *,
+    governor_decision: dict[str, Any] | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
+    state_db: StateDB,
+    request_id: str,
+    run_id: str | None,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    if isinstance(governor_decision, dict):
+        return governor_decision
+    if not _vnext_proposes_researcher_memory_write(turn_intent_envelope_vnext):
+        return None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="researcher_bridge",
+        component="researcher_bridge",
+    )
+    return verdict.governor_decision if isinstance(verdict.governor_decision, dict) else None
+
+
 def _authorize_researcher_browser_hook(
     *,
     state_db: StateDB,
@@ -4575,6 +4683,7 @@ def _authorize_researcher_memory_read(
 def _authorize_researcher_memory_write(
     *,
     state_db: StateDB,
+    governor_decision: dict[str, Any] | None = None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
     run_id: str | None,
@@ -4612,9 +4721,27 @@ def _authorize_researcher_memory_write(
             source_kind=source_kind,
         )
         adapter_envelope_used = authority_envelope is not None
-    verdict, reasons, authority_source_kind, authority_source_ref = _authorize_researcher_tool_call(
-        turn_intent_envelope_vnext=authority_vnext,
-        turn_intent_envelope=authority_envelope,
+    effective_governor_decision = governor_decision
+    if effective_governor_decision is None and adapter_vnext_used and isinstance(authority_vnext, dict):
+        adapter_authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": authority_vnext},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        if isinstance(adapter_authority.governor_decision, dict):
+            effective_governor_decision = adapter_authority.governor_decision
+    verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=effective_governor_decision,
         tool_name="memory.write",
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
@@ -4657,15 +4784,19 @@ def _authorize_researcher_memory_write(
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
                 "authority_state": (
-                    "adapter_vnext_envelope"
-                    if adapter_vnext_used
+                    "governor_decision"
+                    if isinstance(effective_governor_decision, dict)
                     else (
-                        "adapter_envelope"
-                        if adapter_envelope_used
+                        "adapter_vnext_envelope"
+                        if adapter_vnext_used
                         else (
-                            "vnext_present"
-                            if turn_intent_envelope_vnext is not None
-                            else ("present" if turn_intent_envelope is not None else "missing")
+                            "adapter_envelope"
+                            if adapter_envelope_used
+                            else (
+                                "vnext_present_without_governor"
+                                if turn_intent_envelope_vnext is not None
+                                else ("present_without_governor" if turn_intent_envelope is not None else "missing")
+                            )
                         )
                     )
                 ),
@@ -9120,6 +9251,7 @@ def build_researcher_reply(
     turn_intent_payload_vnext: dict[str, Any] | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
     allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
@@ -9130,10 +9262,21 @@ def build_researcher_reply(
         allow_memory_adapter_envelope = bool(
             config_manager.get_path(
                 "spark.testing.allow_researcher_memory_adapter",
-                default=False,
+                default=True,
             )
         )
     attachment_context = build_attachment_context(config_manager)
+    memory_write_governor_decision = _build_researcher_memory_write_governor_decision(
+        governor_decision=governor_decision,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
         _explicit_style_preference_canonical_message(memory_user_message)
@@ -9965,6 +10108,7 @@ def build_researcher_reply(
         write_result = None
         if _authorize_researcher_memory_write(
             state_db=state_db,
+            governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
             turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
@@ -10055,6 +10199,7 @@ def build_researcher_reply(
         write_result = None
         if _authorize_researcher_memory_write(
             state_db=state_db,
+            governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
             turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
@@ -10376,6 +10521,7 @@ def build_researcher_reply(
             try:
                 if _authorize_researcher_memory_write(
                     state_db=state_db,
+                    governor_decision=memory_write_governor_decision,
                     turn_intent_envelope=turn_intent_envelope,
                     turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                     run_id=run_id,
@@ -10758,6 +10904,7 @@ def build_researcher_reply(
             if detected_profile_fact is not None:
                 if _authorize_researcher_memory_write(
                     state_db=state_db,
+                    governor_decision=memory_write_governor_decision,
                     turn_intent_envelope=turn_intent_envelope,
                     turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                     run_id=run_id,
@@ -10790,6 +10937,7 @@ def build_researcher_reply(
                 if detected_memory_event is not None:
                     if _authorize_researcher_memory_write(
                         state_db=state_db,
+                        governor_decision=memory_write_governor_decision,
                         turn_intent_envelope=turn_intent_envelope,
                         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                         run_id=run_id,
@@ -10823,6 +10971,7 @@ def build_researcher_reply(
                         if detected_generic_memory_candidate.operation == "delete":
                             if _authorize_researcher_memory_write(
                                 state_db=state_db,
+                                governor_decision=memory_write_governor_decision,
                                 turn_intent_envelope=turn_intent_envelope,
                                 turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                 run_id=run_id,
@@ -10876,6 +11025,7 @@ def build_researcher_reply(
                             if detected_generic_memory_observation is not None:
                                 if _authorize_researcher_memory_write(
                                     state_db=state_db,
+                                    governor_decision=memory_write_governor_decision,
                                     turn_intent_envelope=turn_intent_envelope,
                                     turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                     run_id=run_id,
@@ -10984,6 +11134,7 @@ def build_researcher_reply(
     if assessed_generic_memory_candidate is not None:
         memory_candidate_authorized = _authorize_researcher_memory_write(
             state_db=state_db,
+            governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
             turn_intent_envelope_vnext=turn_intent_envelope_vnext,
             run_id=run_id,
