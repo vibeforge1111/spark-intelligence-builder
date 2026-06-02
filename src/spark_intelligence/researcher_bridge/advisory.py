@@ -2852,11 +2852,27 @@ def _build_structured_evidence_observation_answer(*, evidence_text: str) -> str:
     return f"Logged. I'll factor that in: \"{snippet}\""
 
 
+_RAW_EPISODE_PREFIX_PATTERN = re.compile(
+    r"^(?:please\s+)?remember\s+this(?:\s+(?:(?:just\s+)?for\s+(?:this\s+)?conversation|for\s+now|temporarily))?\s*[:,-]?\s*"
+    r"|^(?:(?:just\s+)?for\s+(?:this\s+)?conversation|for\s+now|temporarily)\s*[:,-]?\s*",
+    re.IGNORECASE,
+)
+
+_EPISODE_ACK_TEMPLATES = [
+    "Got it, I'll remember that.",
+    "Noted — I've saved that.",
+    "Saved! I'll keep that in mind.",
+    "Got it, noted.",
+    "I'll remember that, thanks.",
+]
+
+
 def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
     snippet = str(episode_text or "").strip()
-    if not snippet:
-        return "Noted."
-    return f"Noted: \"{snippet}\""
+    if snippet:
+        snippet = _RAW_EPISODE_PREFIX_PATTERN.sub("", snippet, count=1).strip()
+    import random
+    return random.choice(_EPISODE_ACK_TEMPLATES)
 
 
 @dataclass
