@@ -966,7 +966,8 @@ class _DomainChipMemoryClientAdapter:
         try:
             request = self._module.CurrentStateRequest(**request_kwargs)
         except TypeError:
-            request_kwargs.pop("entity_key", None)
+            if "entity_key" in request_kwargs:
+                request_kwargs.pop("entity_key")
             request = self._module.CurrentStateRequest(**request_kwargs)
         result = self._sdk.get_current_state(request)
         self._persist_manual_state()
@@ -1083,7 +1084,7 @@ class _DomainChipMemoryClientAdapter:
         retrieval_trace = dict(result.trace or {})
         contract_reason = memory_contract_reason(
             memory_role=raw_memory_role,
-            method="get_current_state",
+            method="explain_answer",
             allow_unknown=not bool(result.answer),
         )
         if contract_reason:
@@ -1097,7 +1098,7 @@ class _DomainChipMemoryClientAdapter:
                     scope="domain_answer_explanation",
                     reason=contract_reason,
                     observed_role=memory_role,
-                    method="get_current_state",
+                    method="explain_answer",
                 ),
                 "answer_explanation": None,
                 "reason": contract_reason,
