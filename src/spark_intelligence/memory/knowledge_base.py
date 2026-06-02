@@ -65,7 +65,7 @@ def build_telegram_state_knowledge_base(
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_builder_home = config_manager.paths.home.resolve(strict=False)
     resolved_output_dir = (Path(output_dir) if output_dir else _default_output_dir(config_manager)).resolve(strict=False)
-    _prepare_output_dir(resolved_output_dir)
+    _prepare_output_dir(resolved_output_dir, config_manager=config_manager)
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
@@ -160,7 +160,15 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "spark-memory-kb"
 
 
-def _prepare_output_dir(output_dir: Path) -> None:
+def _prepare_output_dir(output_dir: Path, *, config_manager: ConfigManager) -> None:
+    safe_base = config_manager.paths.home / "artifacts"
+    safe_base_resolved = safe_base.resolve()
+    output_resolved = output_dir.resolve()
+    if not str(output_resolved).startswith(str(safe_base_resolved) + os.sep) and output_resolved != safe_base_resolved:
+        raise ValueError(
+            f"Refusing to delete output_dir '{output_dir}': "
+            f"path is outside the safe artifacts directory '{safe_base}'."
+        )
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
