@@ -492,7 +492,10 @@ def load_personality_profile(
             if isinstance(data.get("traits"), dict):
                 for trait in _DEFAULT_TRAITS:
                     if trait in data["traits"]:
-                        base_traits[trait] = float(data["traits"][trait])
+                        try:
+                            base_traits[trait] = float(data["traits"][trait])
+                        except (ValueError, TypeError):
+                            pass  # keep default for this trait
                 source = "personality_chip"
             signals = data.get("last_signals") or {}
             personality_id = signals.get("personality_id")
