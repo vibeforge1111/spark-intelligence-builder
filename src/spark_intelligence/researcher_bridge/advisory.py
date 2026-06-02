@@ -3682,8 +3682,9 @@ def _load_spark_character_persona() -> str:
         if rendered:
             _SPARK_CHARACTER_PERSONA_CACHE = rendered
             return _SPARK_CHARACTER_PERSONA_CACHE
-    except Exception:
-        pass
+    except (ImportError, FileNotFoundError, OSError) as exc:
+        import logging
+        logging.debug("personality load skipped: %s", exc)
     # Fallback: flat MD persona artifact
     try:
         ensure_spark_character_path()
