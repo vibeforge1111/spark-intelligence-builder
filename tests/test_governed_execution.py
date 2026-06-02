@@ -38,6 +38,22 @@ class GovernedExecutionTests(SparkTestCase):
 
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 12.5)
 
+    def test_run_governed_command_forwards_encoding_and_errors(self) -> None:
+        with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
+            run_mock.return_value.returncode = 0
+            run_mock.return_value.stdout = ""
+            run_mock.return_value.stderr = ""
+
+            run_governed_command(
+                command=[sys.executable, "-c", "print('governed-ok')"],
+                cwd=self.home,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+        self.assertEqual(run_mock.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(run_mock.call_args.kwargs["errors"], "replace")
+
     def test_record_governed_tool_result_emits_typed_result_event(self) -> None:
         execution = run_governed_command(
             command=[sys.executable, "-c", "print('tool-ok')"],

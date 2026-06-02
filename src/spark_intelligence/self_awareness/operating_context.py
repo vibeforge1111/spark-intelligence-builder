@@ -27,6 +27,7 @@ _PRIMARY_ROUTE_KEYS: tuple[str, ...] = (
     "spark_spawner",
     "spark_local_work",
     "spark_browser",
+    "spark_voice",
     "spark_memory",
     "spark_researcher",
     "spark_swarm",
@@ -123,7 +124,7 @@ class AgentOperatingContextResult:
             lines.extend(f"- {item}" for item in why[:4])
         if self.routes:
             lines.extend(["", "Routes"])
-            for route in self.routes[:8]:
+            for route in self.routes[:10]:
                 lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{_route_timeline_suffix(route)}")
             evidence_lines = _route_evidence_lines(self.routes)
             if evidence_lines:
@@ -363,20 +364,31 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "next_probe": evidence.get("next_probe") or _safe_route_probe(key),
         "confidence_level": evidence.get("confidence_level") or "registry_only",
         "limitations": list(record.get("limitations") or [])[:3],
-        "claim_boundary": (
-            "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
-            if browser_use_pending
-            else (
-            "Spark Swarm is attached as a planned rollout, but payload/API readiness is not live yet."
-            if swarm_rollout_pending
-            else (
-            "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
-            if command_path_available_with_warnings
-            else "Registry visibility is route availability context, not proof the route succeeded for the current task."
-            )
-            )
+        "claim_boundary": _route_claim_boundary(
+            key,
+            browser_use_pending=browser_use_pending,
+            swarm_rollout_pending=swarm_rollout_pending,
+            command_path_available_with_warnings=command_path_available_with_warnings,
         ),
     }
+
+
+def _route_claim_boundary(
+    key: str,
+    *,
+    browser_use_pending: bool,
+    swarm_rollout_pending: bool,
+    command_path_available_with_warnings: bool,
+) -> str:
+    if browser_use_pending:
+        return "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
+    if swarm_rollout_pending:
+        return "Spark Swarm is attached as a planned rollout, but payload/API readiness is not live yet."
+    if key == "spark_voice":
+        return "Voice readiness requires a current voice.status probe and Telegram delivery evidence before claiming audio replies."
+    if command_path_available_with_warnings:
+        return "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
+    return "Registry visibility is route availability context, not proof the route succeeded for the current task."
 
 
 def _build_access(spark_access_level: str) -> dict[str, Any]:
@@ -1178,6 +1190,7 @@ def _safe_route_probe(key: str) -> str:
         "spark_spawner": "Run a Spawner health/status probe and record mission route latency before claiming current mission readiness.",
         "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path before claiming local work is available.",
         "spark_browser": "Run a browser-use or legacy Browser status probe before claiming web automation is available.",
+        "spark_voice": "Run voice.status and record Telegram delivery evidence before claiming voice replies are available.",
         "spark_memory": "Run a memory recall/write smoke with source refs before claiming memory is healthy this turn.",
         "spark_researcher": "Run a researcher status or read-only query probe before claiming research route health.",
         "spark_swarm": "Run a swarm route status probe before recommending swarm execution.",

@@ -264,6 +264,34 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result, ({"status": "succeeded", "result": {"extension": {"running": True}}}, "spark-browser"))
         hook_mock.assert_called_once()
 
+    def test_execute_browser_hook_maps_retired_browser_lane_to_explicit_unavailable(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting",
+            side_effect=ValueError(
+                "The legacy browser extension lane is disabled. Use the guarded Spark CLI browser-use MCP lane instead."
+            ),
+        ) as hook_mock:
+            output, chip_key = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-retired-lane",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
+            )
+
+        self.assertIsNone(chip_key)
+        self.assertIsInstance(output, dict)
+        self.assertEqual(output["status"], "failed")
+        self.assertEqual(output["error"]["code"], "BROWSER_SESSION_UNAVAILABLE")
+        self.assertIn("governed browser-use session", output["error"]["message"])
+        hook_mock.assert_called_once()
+
     def test_memory_source_quality_plan_does_not_trigger_browser_search(self) -> None:
         self.assertFalse(
             _should_collect_browser_search_context(

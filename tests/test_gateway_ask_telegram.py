@@ -123,6 +123,10 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.config_path", str(runtime_root / "spark-researcher.project.json"))
         self.config_manager.set_path("spark.researcher.enabled", True)
 
+    def _install_fake_configured_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
     def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")
         with self.state_db.connect() as conn:
@@ -886,6 +890,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIn("Request: req-context-loss-prior.", frustration_response_text)
 
     def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
+        self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -1163,6 +1168,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:
+        self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

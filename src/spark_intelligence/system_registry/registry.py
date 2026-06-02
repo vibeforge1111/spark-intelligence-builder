@@ -261,7 +261,7 @@ def build_system_registry(
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
-    browser = _collect_browser_registry_payload(config_manager) if probe_browser else None
+    browser = _collect_browser_registry_payload(config_manager) if probe_browser else collect_browser_use_adapter_status(config_manager)
     project_index = build_local_project_index(config_manager, probe_git=probe_git).to_payload()
     config = config_manager.load()
     active_chip_keys = set(str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item))

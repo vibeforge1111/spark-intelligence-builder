@@ -57,6 +57,13 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             "explicit user memory writes may update governed memory while bridge replies remain not_promotable",
             guardrails,
         )
+        self.assertIn("self-improvement requests stay probe-first before mutation", guardrails)
+        self.assertIn(
+            "stale status traps must distinguish fresh observation from remembered or wiki context",
+            guardrails,
+        )
+        self.assertIn("capability claims require route evidence, not registry visibility alone", guardrails)
+        self.assertIn("operator access permission is separate from runner capability", guardrails)
         self.assertEqual(
             matrix["release_cadence"]["evidence_boundary"],
             "Only real Telegram runtime traces with simulation=false count as live evidence.",
@@ -65,6 +72,7 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("self_awareness", suites)
         self.assertIn("llm_wiki", suites)
         self.assertIn("telegram_commands", suites)
+        self.assertIn("route_confidence_traps", suites)
 
     def test_live_telegram_cadence_report_declares_release_gate_and_artifacts(self) -> None:
         result = build_live_telegram_regression_cadence(config_manager=self.config_manager)

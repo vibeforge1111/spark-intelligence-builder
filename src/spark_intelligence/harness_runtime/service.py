@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from spark_intelligence.auth.runtime import build_runtime_provider_reference_payload
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
@@ -600,7 +601,7 @@ def _execute_voice_io_harness(
             state_db=state_db,
             envelope=envelope,
             hook="voice.status",
-            payload=_build_voice_hook_payload(config_manager=config_manager, envelope=envelope),
+            payload=_build_voice_hook_payload(config_manager=config_manager, state_db=state_db, envelope=envelope),
             run_id=run_id,
         )
     except Exception as exc:
@@ -652,6 +653,7 @@ def _execute_voice_io_harness(
                 hook="voice.speak",
                 payload=_build_voice_hook_payload(
                     config_manager=config_manager,
+                    state_db=state_db,
                     envelope=envelope,
                     text=task_payload,
                 ),
@@ -807,6 +809,7 @@ def _execute_swarm_escalation_harness(
 def _build_voice_hook_payload(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
     text: str | None = None,
 ) -> dict[str, Any]:
@@ -818,6 +821,10 @@ def _build_voice_hook_payload(
     }
     if isinstance(envelope.turn_intent_payload, dict):
         payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
+    try:
+        payload["provider"] = build_runtime_provider_reference_payload(config_manager=config_manager, state_db=state_db)
+    except Exception as exc:
+        payload["provider_error"] = str(exc)
     if text is not None:
         payload["text"] = text
     return payload

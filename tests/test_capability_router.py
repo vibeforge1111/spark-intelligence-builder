@@ -10,7 +10,7 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CapabilityRouterTests(SparkTestCase):
-    def test_browser_task_routes_to_browser_when_available(self) -> None:
+    def test_browser_task_falls_back_to_researcher_when_legacy_browser_is_disabled(self) -> None:
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -21,8 +21,8 @@ class CapabilityRouterTests(SparkTestCase):
             task="Search the web for Spark and check the website.",
         )
 
-        self.assertEqual(decision.target_system, "Spark CLI browser-use")
-        self.assertEqual(decision.route_mode, "browser_grounded")
+        self.assertEqual(decision.target_system, "Spark Researcher")
+        self.assertEqual(decision.route_mode, "researcher_without_browser")
         self.assertIn("web_search", decision.required_capabilities)
 
     def test_voice_task_routes_to_voice_when_available(self) -> None:
@@ -103,7 +103,8 @@ class CapabilityRouterTests(SparkTestCase):
         )
 
         self.assertIn("[Spark capability router]", prompt_context)
-        self.assertIn("target_system=Spark CLI browser-use", prompt_context)
+        self.assertIn("target_system=Spark Researcher", prompt_context)
+        self.assertIn("route_mode=researcher_without_browser", prompt_context)
         self.assertIn("[Reply rule]", prompt_context)
 
     def test_capability_router_query_detection_catches_routing_questions(self) -> None:

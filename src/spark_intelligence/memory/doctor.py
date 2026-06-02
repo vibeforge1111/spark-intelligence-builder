@@ -318,9 +318,9 @@ def run_memory_doctor(
         if len(expected_deletions) < 2:
             continue
         scanned_multi_delete_turns += 1
-        request_id = str(event.get("request_id") or "").strip()
-        requested_count = _delete_write_request_count(write_requested_events, request_id=request_id)
-        accepted_count = _accepted_delete_write_count(write_succeeded_events, request_id=request_id)
+        delete_request_id = str(event.get("request_id") or "").strip()
+        requested_count = _delete_write_request_count(write_requested_events, request_id=delete_request_id)
+        accepted_count = _accepted_delete_write_count(write_succeeded_events, request_id=delete_request_id)
         expected_count = len(expected_deletions)
         ok = requested_count >= expected_count and accepted_count >= expected_count
         if not ok:
@@ -333,7 +333,7 @@ def run_memory_doctor(
                         f"multi-delete turn expected {expected_count} delete write(s), "
                         f"requested {requested_count}, accepted {accepted_count}"
                     ),
-                    request_id=request_id or None,
+                    request_id=delete_request_id or None,
                     expected_delete_count=expected_count,
                     requested_delete_count=requested_count,
                     accepted_delete_count=accepted_count,

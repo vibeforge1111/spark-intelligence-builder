@@ -145,10 +145,32 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         with self.state_db.connect() as conn:
             row = conn.execute(
                 """
-                SELECT actor_id, reason_code, rollback_ref, status
+                SELECT mutation_id, actor_id, reason_code, rollback_ref, status
                 FROM config_mutation_audit
                 WHERE target_path = 'runtime.install.profile'
                 ORDER BY created_at DESC, mutation_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            requested_event = conn.execute(
+                """
+                SELECT request_id, trace_ref
+                FROM builder_events
+                WHERE event_type = 'config_mutation_requested'
+                    AND actor_id = 'local-operator'
+                    AND json_extract(facts_json, '$.target_path') = 'runtime.install.profile'
+                ORDER BY created_at DESC, event_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            applied_event = conn.execute(
+                """
+                SELECT request_id, trace_ref
+                FROM builder_events
+                WHERE event_type = 'config_mutation_applied'
+                    AND actor_id = 'local-operator'
+                    AND json_extract(facts_json, '$.target_path') = 'runtime.install.profile'
+                ORDER BY created_at DESC, event_id DESC
                 LIMIT 1
                 """
             ).fetchone()
@@ -158,6 +180,13 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(row["reason_code"], "config_set_path")
         self.assertEqual(row["status"], "applied")
         self.assertTrue(row["rollback_ref"])
+        expected_request_id = f"config_mutation:{row['mutation_id']}"
+        self.assertIsNotNone(requested_event)
+        self.assertIsNotNone(applied_event)
+        self.assertEqual(requested_event["request_id"], expected_request_id)
+        self.assertEqual(applied_event["request_id"], expected_request_id)
+        self.assertEqual(requested_event["trace_ref"], f"trace:{expected_request_id}")
+        self.assertEqual(applied_event["trace_ref"], f"trace:{expected_request_id}")
         self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
 
     def test_env_secret_noop_upsert_is_rejected_without_rewrite(self) -> None:

@@ -851,7 +851,11 @@ class ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
         try:
             if exc_type is None:
-                self.commit()
+                try:
+                    self.commit()
+                except BaseException:
+                    self.rollback()
+                    raise
             else:
                 self.rollback()
         finally:
@@ -912,8 +916,9 @@ class StateDB:
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, factory=ClosingConnection)
+        conn = sqlite3.connect(self.path, timeout=10, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     @staticmethod

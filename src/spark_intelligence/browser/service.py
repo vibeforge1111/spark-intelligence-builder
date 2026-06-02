@@ -4,12 +4,16 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from subprocess import TimeoutExpired
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.execution.governed import run_governed_command
 
 BROWSER_STATUS_HOOK = "browser.status"
 BROWSER_NAVIGATE_HOOK = "browser.navigate"
@@ -30,6 +34,12 @@ LEGACY_BROWSER_REPLACEMENT_SURFACE = "spark-cli browser-use agent"
 BROWSER_USE_BACKEND_KIND = "browser_use_adapter"
 BROWSER_USE_BACKEND_LABEL = "Browser-use Adapter"
 BROWSER_USE_STATUS_ENV = "SPARK_BROWSER_USE_STATUS_PATH"
+BROWSER_USE_DOCTOR_TIMEOUT_SECONDS = 20
+BROWSER_USE_SMOKE_TIMEOUT_SECONDS = 30
+BROWSER_USE_SMOKE_URL = "https://example.com"
+_BROWSER_USE_SMOKE_SCREENSHOT_NAME = "smoke-screenshot.png"
+_BROWSER_USE_REQUIRED_DOCTOR_CHECKS = {"browser", "network", "package"}
+_BROWSER_USE_REQUIRED_SMOKE_PROOFS = {"public_page_open", "state_read"}
 _BROWSER_USE_READY_STATUSES = {
     "ready",
     "running",
@@ -81,7 +91,7 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
     status_path = _browser_use_status_path(config_manager, browser_use_config)
     status_doc = _read_browser_use_status(status_path)
     package_available = importlib.util.find_spec("browser_use") is not None
-    cli_path = shutil.which("browser-use") or shutil.which("browser_use")
+    cli_path = _browser_use_cli_path()
     configured = bool(browser_use_config) or status_path is not None or package_available or bool(cli_path)
     if not configured and not status_doc:
         return None
@@ -97,6 +107,7 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
         package_available=package_available,
         cli_path=cli_path,
         status_path=status_path,
+        proofs=status_doc.get("proofs") if isinstance(status_doc.get("proofs"), dict) else {},
         failure_reason=failure_reason,
     )
     return {
@@ -122,13 +133,20 @@ def collect_browser_use_adapter_status(config_manager: ConfigManager) -> dict[st
 
 
 def collect_browser_use_probe_contract(config_manager: ConfigManager) -> dict[str, Any]:
+    config = config_manager.load()
+    browser_use_config = _browser_use_config(config)
+    status_path = _browser_use_status_path(config_manager, browser_use_config) or _browser_use_default_status_path(config_manager)
+    cli_path = _browser_use_cli_path()
+    if cli_path:
+        _refresh_browser_use_status_from_cli(status_path=status_path, cli_path=cli_path)
+
     status = collect_browser_use_adapter_status(config_manager)
     if status is not None:
         return status
 
     status_path = _browser_use_default_status_path(config_manager)
     package_available = importlib.util.find_spec("browser_use") is not None
-    cli_path = shutil.which("browser-use") or shutil.which("browser_use")
+    cli_path = _browser_use_cli_path()
     failure_reason = "browser-use adapter status source is not ready."
     return {
         "status": "missing_status",
@@ -150,6 +168,7 @@ def collect_browser_use_probe_contract(config_manager: ConfigManager) -> dict[st
             package_available=package_available,
             cli_path=cli_path,
             status_path=status_path,
+            proofs={},
             failure_reason=failure_reason,
         ),
         "provenance": {
@@ -535,6 +554,271 @@ def _browser_use_status_path(config_manager: ConfigManager, config: dict[str, An
     return candidates[0] if explicit else None
 
 
+def _browser_use_cli_path() -> str | None:
+    discovered = shutil.which("browser-use") or shutil.which("browser_use")
+    if discovered:
+        return discovered
+
+    executable_dir = Path(sys.executable).resolve(strict=False).parent
+    candidates = [
+        executable_dir / "browser-use.exe",
+        executable_dir / "browser_use.exe",
+        executable_dir / "browser-use",
+        executable_dir / "browser_use",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _refresh_browser_use_status_from_cli(*, status_path: Path, cli_path: str) -> dict[str, Any]:
+    checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    try:
+        completed = run_governed_command(
+            command=[cli_path, "--json", "doctor"],
+            cwd=status_path.parent,
+            encoding="utf-8",
+            errors="replace",
+            timeout_seconds=BROWSER_USE_DOCTOR_TIMEOUT_SECONDS,
+        )
+    except (OSError, TimeoutExpired) as exc:
+        status_doc = _browser_use_doctor_failure_doc(
+            checked_at=checked_at,
+            cli_path=cli_path,
+            reason=f"browser-use doctor failed to run: {exc}",
+            error_code="BROWSER_USE_DOCTOR_UNAVAILABLE",
+        )
+        _write_browser_use_status(status_path, status_doc)
+        return status_doc
+
+    stdout = (completed.stdout or "").strip()
+    try:
+        doctor = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError:
+        doctor = {}
+
+    if not isinstance(doctor, dict):
+        doctor = {}
+
+    if completed.exit_code != 0 or not doctor:
+        stderr = (completed.stderr or "").strip()
+        reason = stderr or stdout or f"browser-use doctor exited with code {completed.exit_code}"
+        status_doc = _browser_use_doctor_failure_doc(
+            checked_at=checked_at,
+            cli_path=cli_path,
+            reason=reason,
+            error_code="BROWSER_USE_DOCTOR_FAILED",
+        )
+        _write_browser_use_status(status_path, status_doc)
+        return status_doc
+
+    status_doc = _browser_use_status_from_doctor(doctor, checked_at=checked_at, cli_path=cli_path)
+    if bool(status_doc.get("ready")):
+        _attach_browser_use_smoke_proofs(status_doc, status_path=status_path, cli_path=cli_path, checked_at=checked_at)
+    _write_browser_use_status(status_path, status_doc)
+    return status_doc
+
+
+def _browser_use_status_from_doctor(doctor: dict[str, Any], *, checked_at: str, cli_path: str) -> dict[str, Any]:
+    checks = doctor.get("checks") if isinstance(doctor.get("checks"), dict) else {}
+    missing_required = [
+        name
+        for name in sorted(_BROWSER_USE_REQUIRED_DOCTOR_CHECKS)
+        if not _browser_use_doctor_check_ok(checks.get(name))
+    ]
+    limitations = [
+        _browser_use_doctor_check_message(name, check)
+        for name, check in sorted(checks.items())
+        if name not in _BROWSER_USE_REQUIRED_DOCTOR_CHECKS and not _browser_use_doctor_check_ok(check)
+    ]
+    limitations = [limitation for limitation in limitations if limitation]
+    ready = not missing_required
+    failure_reason = None
+    if not ready:
+        failure_reason = "browser-use doctor required checks failed: " + ", ".join(missing_required)
+    return {
+        "status": "ready" if ready else "failed",
+        "ready": ready,
+        "checked_at": checked_at,
+        "last_success_at": checked_at if ready else None,
+        "last_failure_at": None if ready else checked_at,
+        "last_failure_reason": failure_reason,
+        "error_code": None if ready else "BROWSER_USE_DOCTOR_REQUIRED_CHECK_FAILED",
+        "cli_path": cli_path,
+        "doctor_status": _string_or_none(doctor.get("status")),
+        "doctor_summary": _string_or_none(doctor.get("summary")),
+        "checks": checks,
+        "limitations": limitations,
+        "proofs": {
+            "doctor": {
+                "status": "success" if ready else "failure",
+                "checked_at": checked_at,
+                "summary": _string_or_none(doctor.get("summary")),
+            }
+        },
+        "provenance": {
+            "source": "browser-use --json doctor",
+            "cli_path": cli_path,
+        },
+    }
+
+
+def _attach_browser_use_smoke_proofs(
+    status_doc: dict[str, Any],
+    *,
+    status_path: Path,
+    cli_path: str,
+    checked_at: str,
+) -> None:
+    proofs = status_doc.get("proofs") if isinstance(status_doc.get("proofs"), dict) else {}
+    screenshot_path = status_path.with_name(_BROWSER_USE_SMOKE_SCREENSHOT_NAME)
+    proof_steps = [
+        ("public_page_open", [cli_path, "--json", "open", BROWSER_USE_SMOKE_URL]),
+        ("state_read", [cli_path, "--json", "state"]),
+        ("screenshot_capture", [cli_path, "--json", "screenshot", str(screenshot_path)]),
+    ]
+    for proof_key, command in proof_steps:
+        result = _run_browser_use_json(command, timeout=BROWSER_USE_SMOKE_TIMEOUT_SECONDS)
+        proofs[proof_key] = _browser_use_smoke_proof_from_result(
+            proof_key,
+            result,
+            checked_at=checked_at,
+            screenshot_path=screenshot_path if proof_key == "screenshot_capture" else None,
+        )
+    status_doc["proofs"] = proofs
+
+    failed_required = [
+        proof_key
+        for proof_key in sorted(_BROWSER_USE_REQUIRED_SMOKE_PROOFS)
+        if not _browser_use_proof_succeeded(proofs.get(proof_key))
+    ]
+    failed_optional = [
+        proof_key
+        for proof_key, proof in sorted(proofs.items())
+        if proof_key not in _BROWSER_USE_REQUIRED_SMOKE_PROOFS
+        and proof_key != "doctor"
+        and not _browser_use_proof_succeeded(proof)
+    ]
+    limitations = list(status_doc.get("limitations") or [])
+    limitations.extend(f"{proof_key}: browser-use smoke proof failed" for proof_key in failed_optional)
+    status_doc["limitations"] = [str(item) for item in limitations if str(item).strip()]
+
+    if failed_required:
+        reason = "browser-use smoke proofs failed: " + ", ".join(failed_required)
+        status_doc["status"] = "failed"
+        status_doc["ready"] = False
+        status_doc["last_success_at"] = None
+        status_doc["last_failure_at"] = checked_at
+        status_doc["last_failure_reason"] = reason
+        status_doc["error_code"] = "BROWSER_USE_SMOKE_REQUIRED_PROOF_FAILED"
+    else:
+        status_doc["smoke_url"] = BROWSER_USE_SMOKE_URL
+        status_doc["last_success_at"] = checked_at
+
+
+def _run_browser_use_json(command: list[str], *, timeout: int) -> dict[str, Any]:
+    try:
+        completed = run_governed_command(
+            command=command,
+            cwd=Path.cwd(),
+            encoding="utf-8",
+            errors="replace",
+            timeout_seconds=timeout,
+        )
+    except (OSError, TimeoutExpired) as exc:
+        return {"success": False, "error": str(exc)}
+
+    stdout = (completed.stdout or "").strip()
+    try:
+        payload = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if completed.exit_code != 0:
+        payload["success"] = False
+        payload["error"] = (completed.stderr or "").strip() or stdout or f"browser-use exited with code {completed.exit_code}"
+    return payload
+
+
+def _browser_use_smoke_proof_from_result(
+    proof_key: str,
+    result: dict[str, Any],
+    *,
+    checked_at: str,
+    screenshot_path: Path | None,
+) -> dict[str, Any]:
+    succeeded = bool(result.get("success") is True)
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    proof: dict[str, Any] = {
+        "status": "success" if succeeded else "failure",
+        "checked_at": checked_at,
+        "request_id": _string_or_none(result.get("id")),
+    }
+    if proof_key == "public_page_open":
+        proof["url"] = _string_or_none(data.get("url")) or BROWSER_USE_SMOKE_URL
+    elif proof_key == "state_read":
+        raw_text = _string_or_none(data.get("_raw_text")) or ""
+        proof["contains_example_domain"] = "Example Domain" in raw_text
+        proof["text_excerpt"] = raw_text[:240]
+        succeeded = succeeded and bool(proof["contains_example_domain"])
+        proof["status"] = "success" if succeeded else "failure"
+    elif proof_key == "screenshot_capture" and screenshot_path is not None:
+        saved_path = Path(str(data.get("saved") or screenshot_path)).expanduser()
+        proof["path"] = str(saved_path)
+        proof["bytes"] = saved_path.stat().st_size if saved_path.exists() else 0
+        succeeded = succeeded and int(proof["bytes"] or 0) > 0
+        proof["status"] = "success" if succeeded else "failure"
+    if proof["status"] != "success":
+        proof["failure_reason"] = _string_or_none(result.get("error")) or "browser-use smoke proof failed"
+    return proof
+
+
+def _browser_use_proof_succeeded(proof: object) -> bool:
+    return isinstance(proof, dict) and str(proof.get("status") or "") == "success"
+
+
+def _browser_use_doctor_check_ok(check: object) -> bool:
+    if not isinstance(check, dict):
+        return False
+    return str(check.get("status") or "").strip().lower() in {"ok", "ready", "success", "passed"}
+
+
+def _browser_use_doctor_check_message(name: str, check: object) -> str | None:
+    if not isinstance(check, dict):
+        return f"{name}: missing check payload"
+    message = _string_or_none(check.get("message")) or _string_or_none(check.get("fix"))
+    if not message:
+        return None
+    return f"{name}: {message}"
+
+
+def _browser_use_doctor_failure_doc(*, checked_at: str, cli_path: str, reason: str, error_code: str) -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "ready": False,
+        "checked_at": checked_at,
+        "last_success_at": None,
+        "last_failure_at": checked_at,
+        "last_failure_reason": reason,
+        "error_code": error_code,
+        "cli_path": cli_path,
+        "provenance": {
+            "source": "browser-use --json doctor",
+            "cli_path": cli_path,
+        },
+    }
+
+
+def _write_browser_use_status(path: Path, status_doc: dict[str, Any]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(status_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
 def _browser_use_default_status_path(config_manager: ConfigManager) -> Path:
     return _spark_runtime_root(config_manager.paths.home) / "state" / "browser-use" / "status.json"
 
@@ -588,6 +872,7 @@ def _browser_use_summary(
     package_available: bool,
     cli_path: str | None,
     status_path: Path | None,
+    proofs: dict[str, Any],
     failure_reason: str | None,
 ) -> str:
     parts = [
@@ -598,6 +883,13 @@ def _browser_use_summary(
     if status_path:
         parts.append(f"status_path={status_path}")
         parts.append(f"exists={status_path.exists()}")
+    successful_proofs = [
+        proof_key
+        for proof_key, proof in sorted(proofs.items())
+        if isinstance(proof, dict) and str(proof.get("status") or "") == "success"
+    ]
+    if successful_proofs:
+        parts.append(f"proofs={','.join(successful_proofs)}")
     if failure_reason and status != "completed":
         parts.append(f"reason={failure_reason}")
     return " ".join(parts)

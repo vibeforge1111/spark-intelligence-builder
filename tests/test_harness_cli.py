@@ -15,18 +15,26 @@ class HarnessCliTests(SparkTestCase):
 
     def test_harness_plan_reports_browser_harness_for_url_task(self) -> None:
         self._enable_fake_researcher()
-        create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
-        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
-
-        exit_code, stdout, stderr = self.run_cli(
-            "harness",
-            "plan",
-            "Open https://example.com and inspect it.",
-            "--home",
-            str(self.home),
-            "--json",
-        )
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value={
+                "status": "completed",
+                "backend_kind": "browser_use_adapter",
+                "backend_label": "Browser-use Adapter",
+                "adapter_status": "ready",
+                "configured": True,
+                "package_available": True,
+                "evidence_summary": "browser-use adapter status=ready",
+            },
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "plan",
+                "Open https://example.com and inspect it.",
+                "--home",
+                str(self.home),
+                "--json",
+            )
 
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)

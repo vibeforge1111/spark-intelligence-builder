@@ -29,7 +29,7 @@ class SystemRegistryTests(SparkTestCase):
         self.assertEqual(records[("system", "spark_intelligence_builder")]["kind"], "system")
         self.assertEqual(records[("system", "spark_researcher")]["kind"], "system")
         self.assertEqual(records[("system", "spark_swarm")]["kind"], "system")
-        self.assertEqual(records[("system", "spark_browser")]["status"], "ready")
+        self.assertEqual(records[("system", "spark_browser")]["status"], "degraded")
         self.assertEqual(records[("system", "spark_voice")]["status"], "available")
         self.assertEqual(records[("system", "spark_spawner")]["status"], "configured")
         self.assertEqual(records[("system", "spark_local_work")]["status"], "available")
@@ -45,8 +45,12 @@ class SystemRegistryTests(SparkTestCase):
             "origin_access",
             records[("chip", "spark-browser")]["metadata"]["onboarding"]["permissions"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "governed browser search and page inspection",
+            payload["summary"]["current_capabilities"],
+        )
+        self.assertIn(
+            "active chips: spark-browser, startup-yc",
             payload["summary"]["current_capabilities"],
         )
         self.assertIn(

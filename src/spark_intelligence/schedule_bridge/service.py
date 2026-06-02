@@ -105,11 +105,15 @@ def humanize_cron(cron: str) -> str:
         if hour.isdigit() and minute.isdigit():
             return f"Daily at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
-        return f"Every {_DOW[int(dow)]} at {_format_12(int(hour), int(minute))}"
+        dow_int = int(dow)
+        if dow_int < len(_DOW):
+            return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
         return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
-        return f"Yearly on {_MON[int(month) - 1]} {dom} at {_format_12(int(hour), int(minute))}"
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
     return f"Custom: {cron}"
 
 

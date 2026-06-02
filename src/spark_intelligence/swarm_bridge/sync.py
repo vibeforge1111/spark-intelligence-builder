@@ -2488,6 +2488,12 @@ def _record_swarm_refresh_state(
         )
 
 
+def _strip_surrounding_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
 def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
     if not runtime_root:
@@ -2505,7 +2511,7 @@ def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
-            mapping.setdefault(key, value)
+            mapping.setdefault(key, _strip_surrounding_quotes(value.strip()))
     return mapping
 
 

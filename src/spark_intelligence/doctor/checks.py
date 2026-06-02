@@ -13,6 +13,7 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
+from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
@@ -253,6 +254,13 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
+    memory_doctor_report = run_memory_doctor(state_db)
+    memory_doctor_detail = (
+        memory_doctor_report.findings[0].detail
+        if memory_doctor_report.findings
+        else "No memory doctor findings recorded."
+    )
+    checks.append(DoctorCheck("memory-doctor", memory_doctor_report.ok, memory_doctor_detail))
     stop_ship_issues = evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True)
     checks.extend(_watchtower_health_checks(config_manager=config_manager, state_db=state_db))
     for issue in stop_ship_issues:
