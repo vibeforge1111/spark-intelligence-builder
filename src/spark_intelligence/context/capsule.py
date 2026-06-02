@@ -208,7 +208,8 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except Exception as _exc:
+            import logging as _logging; _logging.getLogger(__name__).warning("Unexpected error: %s", _exc)
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
