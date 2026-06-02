@@ -107,7 +107,10 @@ def get_provider_spec(provider_id: str) -> ProviderSpec:
     try:
         return PROVIDER_REGISTRY[provider_id]
     except KeyError as exc:
-        raise ValueError(f"Unknown provider '{provider_id}'.") from exc
+        known = ", ".join(sorted(PROVIDER_REGISTRY)) or "(none)"
+        raise ValueError(
+            f"Unknown provider '{provider_id}'. Known providers: {known}."
+        ) from exc
 
 
 def list_provider_specs() -> list[ProviderSpec]:
