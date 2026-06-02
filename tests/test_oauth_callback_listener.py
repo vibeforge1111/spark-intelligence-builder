@@ -72,6 +72,14 @@ class OAuthCallbackListenerTests(SparkTestCase):
                 timeout_seconds=1,
             )
 
+    def test_listener_requires_explicit_redirect_port(self) -> None:
+        with self.assertRaisesRegex(ValueError, "explicit port"):
+            listen_for_oauth_callback(
+                redirect_uri="http://127.0.0.1/auth/callback",
+                owner="auth:test",
+                timeout_seconds=1,
+            )
+
     def test_gateway_callback_completes_pending_login(self) -> None:
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

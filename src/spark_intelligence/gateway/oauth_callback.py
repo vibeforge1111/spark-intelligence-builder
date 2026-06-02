@@ -250,4 +250,6 @@ def _validate_redirect_uri(redirect_uri: str) -> SplitResult:
         raise ValueError("OAuth callback listener only supports loopback redirect URIs.")
     if not parsed.path.startswith("/"):
         raise ValueError("OAuth callback listener redirect URI must include an absolute path.")
+    if parsed.port is None:
+        raise ValueError("OAuth callback redirect URI must include an explicit port, such as http://127.0.0.1:1455/auth/callback.")
     return parsed
