@@ -5023,7 +5023,7 @@ def handle_self_improve(args: argparse.Namespace) -> int:
         record_ledger=bool(getattr(args, "record_ledger", False)),
     )
     print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("priority_actions") else 1
+    return 0
 
 
 def handle_self_ledger(args: argparse.Namespace) -> int:
