@@ -1155,6 +1155,8 @@ def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str
             "error_message": str(exc),
         }
     if execution is None:
+        import logging as _log
+        _log.getLogger(__name__).warning('browser registry hook returned no execution')
         return None
     hook_output = execution.output if isinstance(execution.output, dict) else {}
     hook_status = _normalize_browser_hook_status(hook_output)
