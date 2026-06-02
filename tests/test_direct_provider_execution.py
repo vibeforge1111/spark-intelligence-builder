@@ -71,6 +71,7 @@ class DirectProviderExecutionTests(SparkTestCase):
         self.assertEqual(captured["url"], "https://api.openai.com/v1/chat/completions")
         self.assertEqual(headers["authorization"], "Bearer openai-secret")
         self.assertEqual(captured["body"]["model"], "gpt-5.4")
+        self.assertEqual(captured["body"]["max_tokens"], 1024)
         self.assertEqual(captured["body"]["messages"][0]["role"], "system")
         self.assertEqual(captured["body"]["messages"][1]["content"], "User task")
 
