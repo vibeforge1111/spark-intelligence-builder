@@ -7171,8 +7171,6 @@ def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
         report_write_path=args.report_write,
     )
     print(result.to_json() if args.json else result.to_text())
-    if result.conversation_count == 0:
-        return 1
     if args.run_report and _memory_report_failed(result.report):
         return 1
     if result.validation is None:
@@ -7198,8 +7196,6 @@ def handle_memory_export_shadow_replay_batch(args: argparse.Namespace) -> int:
         report_write_path=args.report_write,
     )
     print(result.to_json() if args.json else result.to_text())
-    if not result.files:
-        return 1
     if args.run_report and _memory_report_failed(result.report):
         return 1
     if result.validation is None:
@@ -7222,8 +7218,6 @@ def handle_memory_export_sdk_maintenance_replay(args: argparse.Namespace) -> int
         validator_root=args.validator_root,
     )
     print(result.to_json() if args.json else result.to_text())
-    if result.write_count == 0:
-        return 1
     if args.run_report and _memory_report_failed(result.report):
         return 1
     return 0
