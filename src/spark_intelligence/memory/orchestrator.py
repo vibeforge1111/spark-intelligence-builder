@@ -5092,10 +5092,29 @@ def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
 def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll_seconds: float = 0.05):
     fd: int | None = None
     deadline = time.monotonic() + timeout_seconds
+    lock_info = f"{os.getpid()}\n{time.time():.3f}\n"
     while fd is None:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.write(fd, lock_info.encode("utf-8"))
         except FileExistsError:
+            # Staleness detection: check if the lock holder is still alive
+            # or if the lock is older than twice the timeout (stale lock).
+            try:
+                raw = lock_path.read_text(encoding="utf-8").strip().splitlines()
+                lock_pid = int(raw[0]) if raw else None
+                lock_ts = float(raw[1]) if len(raw) > 1 else 0.0
+            except Exception:
+                lock_pid, lock_ts = None, 0.0
+            lock_age = time.time() - lock_ts if lock_ts else float("inf")
+            pid_alive = _is_pid_alive(lock_pid) if lock_pid is not None else False
+            if not pid_alive or lock_age > (timeout_seconds * 2):
+                # Stale lock: break it and retry immediately
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"timed out waiting for persistence lock: {lock_path}")
             time.sleep(poll_seconds)
@@ -5110,6 +5129,25 @@ def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll
                 lock_path.unlink()
             except FileNotFoundError:
                 pass
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a process with the given PID is still running."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        else:
+            os.kill(pid, 0)
+            return True
+    except (OSError, ProcessLookupError):
+        return False
 
 
 def _load_domain_chip_memory_payload(path: Path) -> dict[str, Any]:
