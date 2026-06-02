@@ -8644,8 +8644,8 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
 
     # Check for personality queries (status, reset) before NL detection
     try:
