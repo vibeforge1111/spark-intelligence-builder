@@ -2982,7 +2982,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
         path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
         return (path if path.exists() else None, "configured")
 
-    autodetect = Path.home() / "Desktop" / "spark-researcher"
+    autodetect = Path.home() / ".spark" / "researcher"
     if autodetect.exists():
         return autodetect, "autodiscovered"
     return None, "missing"
