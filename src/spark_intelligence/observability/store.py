@@ -1335,7 +1335,7 @@ def record_observer_handoff_record(
     with state_db.connect() as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO observer_handoff_records(
+            INSERT OR IGNORE INTO observer_handoff_records(
                 handoff_id,
                 chip_key,
                 hook,
