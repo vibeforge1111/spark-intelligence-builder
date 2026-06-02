@@ -308,14 +308,14 @@ def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
     assert verdict.authorization_decision["verdict"] == "allow"
 
 
-def test_researcher_memory_write_authorizes_with_vnext_only(tmp_path) -> None:
+def test_researcher_memory_write_blocks_bare_vnext_without_governor(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
     payload = build_telegram_memory_turn_intent_payload_vnext(
-        request_id="req-researcher-write-vnext",
+        request_id="req-researcher-write-bare-vnext",
         channel_kind="telegram",
-        session_id="session-researcher-write-vnext",
-        human_id="human-researcher-write-vnext",
+        session_id="session-researcher-write-bare-vnext",
+        human_id="human-researcher-write-bare-vnext",
         user_message="My favorite color is cobalt blue.",
         source_kind="telegram_runtime_profile_fact_observation",
     )
@@ -325,10 +325,61 @@ def test_researcher_memory_write_authorizes_with_vnext_only(tmp_path) -> None:
         turn_intent_envelope=None,
         turn_intent_envelope_vnext=payload,
         run_id=None,
-        request_id="req-researcher-write-vnext",
+        request_id="req-researcher-write-bare-vnext",
         channel_kind="telegram",
-        session_id="session-researcher-write-vnext",
-        human_id="human-researcher-write-vnext",
+        session_id="session-researcher-write-bare-vnext",
+        human_id="human-researcher-write-bare-vnext",
+        agent_id="agent:test",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+        operation="update",
+        allow_adapter_envelope=False,
+    )
+
+    assert allowed is False
+    blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
+    assert blocks
+    assert blocks[0]["facts_json"]["reason_codes"] == ["missing_governor_decision"]
+
+
+def test_researcher_memory_write_authorizes_with_governor_decision(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-researcher-write-governor",
+        channel_kind="telegram",
+        session_id="session-researcher-write-governor",
+        human_id="human-researcher-write-governor",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    bridge_verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req-researcher-write-governor",
+        channel_id="telegram",
+        session_id="session-researcher-write-governor",
+        human_id="human-researcher-write-governor",
+        agent_id="agent:test",
+        actor_id="test",
+        component="test",
+    )
+    assert bridge_verdict.allowed is True
+    assert bridge_verdict.governor_decision is not None
+
+    allowed = _authorize_researcher_memory_write(
+        state_db=state_db,
+        governor_decision=bridge_verdict.governor_decision,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=payload,
+        run_id=None,
+        request_id="req-researcher-write-governor",
+        channel_kind="telegram",
+        session_id="session-researcher-write-governor",
+        human_id="human-researcher-write-governor",
         agent_id="agent:test",
         user_message="My favorite color is cobalt blue.",
         source_kind="telegram_runtime_profile_fact_observation",
@@ -337,7 +388,8 @@ def test_researcher_memory_write_authorizes_with_vnext_only(tmp_path) -> None:
     )
 
     assert allowed is True
-    assert latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5) == []
+    blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
+    assert blocks == []
 
 
 def test_researcher_memory_read_authorizes_with_vnext_only(tmp_path) -> None:

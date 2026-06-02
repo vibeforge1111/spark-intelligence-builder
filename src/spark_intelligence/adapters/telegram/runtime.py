@@ -443,6 +443,48 @@ def _with_telegram_memory_turn_intent(
     )
 
 
+def _telegram_researcher_memory_write_governor_decision(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    vnext_payload = extract_turn_intent_envelope_vnext(update_payload)
+    if not isinstance(vnext_payload, dict):
+        return None
+    proposed_actions = vnext_payload.get("proposed_actions")
+    if not isinstance(proposed_actions, list):
+        return None
+    has_memory_write = any(
+        isinstance(action, dict)
+        and str(action.get("action_type") or "") == "write_memory"
+        and "memory.write" in str(action.get("capability_id") or "")
+        for action in proposed_actions
+    )
+    if not has_memory_write:
+        return None
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+
+
 def _detect_telegram_memory_diagnostic_authority_source_kind(
     *,
     config_manager: ConfigManager | None,
@@ -2021,6 +2063,15 @@ def simulate_telegram_update(
                     evidence_summary = None
                     bridge_result = None
                 if not _shortcircuited:
+                    researcher_memory_write_governor = _telegram_researcher_memory_write_governor_decision(
+                        researcher_update_payload,
+                        state_db=state_db,
+                        request_id=request_id,
+                        run_id=None,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                    )
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -2032,6 +2083,7 @@ def simulate_telegram_update(
                         user_message=effective_text,
                         turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
                         turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        governor_decision=researcher_memory_write_governor,
                         allow_memory_adapter_envelope=False,
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
@@ -2914,6 +2966,15 @@ def poll_telegram_updates_once(
             },
         )
         bridge_result = build_researcher_reply(
+            governor_decision=_telegram_researcher_memory_write_governor_decision(
+                researcher_update_payload,
+                state_db=state_db,
+                request_id=f"telegram:{normalized.update_id}",
+                run_id=run.run_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+            ),
             config_manager=config_manager,
             state_db=state_db,
             request_id=f"telegram:{normalized.update_id}",

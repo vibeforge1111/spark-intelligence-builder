@@ -5,6 +5,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
     build_telegram_memory_read_turn_intent_payload,
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload,
@@ -22,6 +23,49 @@ class SimulatedDmBridgeResult:
     ok: bool
     decision: str
     detail: dict[str, Any]
+
+
+def _simulated_dm_memory_write_governor_decision(
+    *,
+    state_db: StateDB,
+    turn_intent_payload_vnext: dict[str, Any] | None,
+    request_id: str,
+    run_id: str | None,
+    channel_id: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    origin_surface: str,
+) -> dict[str, Any] | None:
+    if not isinstance(turn_intent_payload_vnext, dict):
+        return None
+    proposed_actions = turn_intent_payload_vnext.get("proposed_actions")
+    if not isinstance(proposed_actions, list):
+        return None
+    has_memory_write = any(
+        isinstance(action, dict)
+        and str(action.get("action_type") or "") == "write_memory"
+        and "memory.write" in str(action.get("capability_id") or "")
+        for action in proposed_actions
+    )
+    if not has_memory_write:
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": turn_intent_payload_vnext},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=origin_surface,
+        component=origin_surface,
+    )
+    return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
 
 
 def resolve_simulated_dm(
@@ -120,6 +164,17 @@ def resolve_simulated_dm(
             run_id=run_id,
             turn_intent_payload=turn_intent_payload,
             turn_intent_payload_vnext=turn_intent_payload_vnext,
+            governor_decision=_simulated_dm_memory_write_governor_decision(
+                state_db=state_db,
+                turn_intent_payload_vnext=turn_intent_payload_vnext,
+                request_id=request_id,
+                run_id=run_id,
+                channel_id=channel_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                origin_surface=origin_surface,
+            ),
             allow_memory_adapter_envelope=False,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)

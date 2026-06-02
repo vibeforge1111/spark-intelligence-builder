@@ -975,6 +975,11 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
         self.assertEqual(vnext["selected_move"], "execute_action")
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
+        governor = captured.get("governor_decision")
+        self.assertIsInstance(governor, dict)
+        self.assertEqual(governor["schema_version"], "governor-decision-v1")
+        self.assertEqual(governor["outcome"], "execute")
+        self.assertTrue(governor["execution_boundary"]["action_authorized"])
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulate_telegram_update_keeps_meta_memory_example_chat_only_for_researcher(self) -> None:
@@ -1117,6 +1122,11 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(vnext, dict)
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
+        governor = captured.get("governor_decision")
+        self.assertIsInstance(governor, dict)
+        self.assertEqual(governor["schema_version"], "governor-decision-v1")
+        self.assertEqual(governor["outcome"], "execute")
+        self.assertTrue(governor["execution_boundary"]["action_authorized"])
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulated_dm_supplies_memory_read_turn_intent_without_researcher_fallback(self) -> None:
