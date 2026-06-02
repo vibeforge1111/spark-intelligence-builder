@@ -314,7 +314,8 @@ def _path_from_reference(reference: str) -> Path | None:
         return None
     try:
         return Path(text).expanduser().resolve()
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return Path(text).expanduser()
 
 
