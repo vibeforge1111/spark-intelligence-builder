@@ -1201,6 +1201,29 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse type for an int that must be > 0.
+
+    Applied across the spark-intelligence CLI to every flag whose downstream
+    use is a SQL LIMIT, a slice, or a loop-count (for example --limit on the
+    wiki / operator / self / gateway subcommands, --rounds and --suggest-limit
+    on loops run, --max-cycles on gateway start, --max-lines-per-file and
+    --recurring-threshold on diagnostics scan, --observation-limit and
+    --evolution-limit on operator personality, and --minutes on the snooze
+    webhook alert command). The default ``type=int`` accepts 0 and negative
+    values, which then propagate into those surfaces and either silently emit
+    zero rows or surface as a less actionable error than the argparse failure
+    surfaced here.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {parsed}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1319,8 +1342,8 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_scan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     diagnostics_scan_parser.add_argument("--logs-root", help="Override or add an explicit logs root/file to scan")
     diagnostics_scan_parser.add_argument("--output-dir", help="Directory for Obsidian-flavored markdown output")
-    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
-    diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
+    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=_positive_int, default=2000, help="Tail window per log source")
+    diagnostics_scan_parser.add_argument("--recurring-threshold", type=_positive_int, default=2, help="Count needed to mark a signature recurring")
     diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
     diagnostics_scan_parser.add_argument("--record-aoc-events", action="store_true", help="Record diagnostic capability evidence in the AOC black box")
     diagnostics_scan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
@@ -1456,7 +1479,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
-    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum black-box events to show")
     self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_source_used_parser = self_subparsers.add_parser(
         "source-used",
@@ -1493,7 +1516,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="pending",
         help="Memory approval inbox filter",
     )
-    self_memory_inbox_parser.add_argument("--limit", type=int, default=20, help="Maximum inbox items to show")
+    self_memory_inbox_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum inbox items to show")
     self_memory_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_decision_parser = self_subparsers.add_parser(
         "memory-decision",
@@ -1672,7 +1695,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
     self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
-    self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to use")
     self_improve_parser.add_argument("--record-ledger", action="store_true", help="Record the capability proposal in the durable proposal/activation ledger")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_ledger_parser = self_subparsers.add_parser(
@@ -1742,7 +1765,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_inventory_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_inventory_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_inventory_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before listing")
-    wiki_inventory_parser.add_argument("--limit", type=int, default=40, help="Maximum page records to emit")
+    wiki_inventory_parser.add_argument("--limit", type=_positive_int, default=40, help="Maximum page records to emit")
     wiki_inventory_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_inbox_parser = wiki_subparsers.add_parser(
         "candidates",
@@ -1756,7 +1779,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="candidate",
         help="Which improvement notes to show",
     )
-    wiki_inbox_parser.add_argument("--limit", type=int, default=40, help="Maximum candidate records to emit")
+    wiki_inbox_parser.add_argument("--limit", type=_positive_int, default=40, help="Maximum candidate records to emit")
     wiki_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_scan_candidates_parser = wiki_subparsers.add_parser(
         "scan-candidates",
@@ -1770,7 +1793,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Which improvement notes to scan",
     )
-    wiki_scan_candidates_parser.add_argument("--limit", type=int, default=80, help="Maximum note records to scan")
+    wiki_scan_candidates_parser.add_argument("--limit", type=_positive_int, default=80, help="Maximum note records to scan")
     wiki_scan_candidates_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_query_parser = wiki_subparsers.add_parser(
         "query",
@@ -1780,7 +1803,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_query_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_query_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_query_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before querying")
-    wiki_query_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to emit")
+    wiki_query_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to emit")
     wiki_query_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_answer_parser = wiki_subparsers.add_parser(
         "answer",
@@ -1790,7 +1813,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_answer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_answer_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_answer_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before answering")
-    wiki_answer_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    wiki_answer_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to use")
     wiki_answer_parser.add_argument("--human-id", default="", help="Optional human id for live self-awareness context")
     wiki_answer_parser.add_argument("--session-id", default="", help="Optional session id for live self-awareness context")
     wiki_answer_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
@@ -2041,7 +2064,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_set_channel_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
     operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
+    operator_history_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of events to show")
     operator_history_parser.add_argument("--action", help="Filter history to one action")
     operator_history_parser.add_argument("--target-kind", help="Filter history to one target kind")
     operator_history_parser.add_argument("--contains", help="Filter history by target, reason, or details substring")
@@ -2059,15 +2082,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_personality_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_personality_parser.add_argument("--human-id", help="Inspect one human id instead of the global overview")
-    operator_personality_parser.add_argument("--observation-limit", type=int, default=10, help="Observation rows to include for one human")
-    operator_personality_parser.add_argument("--evolution-limit", type=int, default=10, help="Evolution rows to include for one human")
+    operator_personality_parser.add_argument("--observation-limit", type=_positive_int, default=10, help="Observation rows to include for one human")
+    operator_personality_parser.add_argument("--evolution-limit", type=_positive_int, default=10, help="Evolution rows to include for one human")
     operator_personality_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_observer_packets_parser = operator_subparsers.add_parser(
         "observer-packets",
         help="Show persisted observer packet records",
     )
     operator_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_packets_parser.add_argument("--limit", type=int, default=50, help="Number of packet rows to show")
+    operator_observer_packets_parser.add_argument("--limit", type=_positive_int, default=50, help="Number of packet rows to show")
     operator_observer_packets_parser.add_argument("--kind", help="Filter to one packet kind")
     operator_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2076,7 +2099,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write an observer packet handoff bundle for external consumption",
     )
     operator_export_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_export_observer_packets_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to export")
+    operator_export_observer_packets_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to export")
     operator_export_observer_packets_parser.add_argument("--kind", help="Filter export to one packet kind")
     operator_export_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_export_observer_packets_parser.add_argument("--write", help="Explicit path for the exported JSON bundle")
@@ -2088,7 +2111,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_handoff_observer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_handoff_observer_parser.add_argument("--chip-key", help="Explicit chip key to run. Defaults to the first active chip exposing packets.")
-    operator_handoff_observer_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to hand off")
+    operator_handoff_observer_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to hand off")
     operator_handoff_observer_parser.add_argument("--kind", help="Filter handoff to one packet kind")
     operator_handoff_observer_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_handoff_observer_parser.add_argument("--write-bundle", help="Explicit path for the handoff bundle JSON")
@@ -2100,7 +2123,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show typed observer handoff records",
     )
     operator_observer_handoffs_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_handoffs_parser.add_argument("--limit", type=int, default=20, help="Number of handoff rows to show")
+    operator_observer_handoffs_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of handoff rows to show")
     operator_observer_handoffs_parser.add_argument("--chip-key", help="Filter to one chip key")
     operator_observer_handoffs_parser.add_argument("--status", help="Filter to one handoff status")
     operator_observer_handoffs_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2109,7 +2132,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Temporarily suppress one webhook alert family from operator surfaces",
     )
     operator_snooze_webhook_parser.add_argument("event", choices=list_webhook_alert_events())
-    operator_snooze_webhook_parser.add_argument("--minutes", type=int, default=60, help="Snooze duration in minutes")
+    operator_snooze_webhook_parser.add_argument("--minutes", type=_positive_int, default=60, help="Snooze duration in minutes")
     operator_snooze_webhook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_snooze_webhook_parser.add_argument("--reason", help="Short audit reason for this snooze")
     operator_list_webhook_snoozes_parser = operator_subparsers.add_parser(
@@ -2136,7 +2159,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep polling in the foreground until interrupted or --max-cycles is reached",
     )
-    gateway_start_parser.add_argument("--max-cycles", type=int, help="Limit gateway poll cycles")
+    gateway_start_parser.add_argument("--max-cycles", type=_positive_int, help="Limit gateway poll cycles")
     gateway_start_parser.add_argument(
         "--poll-timeout-seconds",
         type=int,
@@ -2215,7 +2238,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_whatsapp_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
+    gateway_traces_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of trace events to show")
     gateway_traces_parser.add_argument("--channel-id", help="Filter trace events by channel id")
     gateway_traces_parser.add_argument("--event", help="Filter trace events by event name")
     gateway_traces_parser.add_argument("--user", help="Filter trace events by user id or chat id")
@@ -2223,7 +2246,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
+    gateway_outbound_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of outbound events to show")
     gateway_outbound_parser.add_argument("--channel-id", help="Filter outbound events by channel id")
     gateway_outbound_parser.add_argument("--event", help="Filter outbound events by event name")
     gateway_outbound_parser.add_argument("--user", help="Filter outbound events by user id or chat id")
@@ -2365,8 +2388,8 @@ def build_parser() -> argparse.ArgumentParser:
     loops_subparsers = loops_parser.add_subparsers(dest="loops_command", required=True)
     loops_run_parser = loops_subparsers.add_parser("run", help="Run N rounds of suggest/evaluate against a chip")
     loops_run_parser.add_argument("--chip", required=True, help="Chip key (e.g. domain-chip-brand-sentiment-tracking)")
-    loops_run_parser.add_argument("--rounds", type=int, default=3, help="Number of rounds (default 3)")
-    loops_run_parser.add_argument("--suggest-limit", type=int, default=3, help="Max candidates per round (default 3)")
+    loops_run_parser.add_argument("--rounds", type=_positive_int, default=3, help="Number of rounds (default 3)")
+    loops_run_parser.add_argument("--suggest-limit", type=_positive_int, default=3, help="Max candidates per round (default 3)")
     loops_run_parser.add_argument("--pause-seconds", type=float, default=0.0, help="Sleep between rounds")
     loops_run_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     loops_run_parser.add_argument("--json", action="store_true", help="Emit JSON result")
