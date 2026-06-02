@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -533,9 +535,24 @@ def _read_ledger(path: Path) -> dict[str, Any]:
 
 def _write_ledger(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-    tmp_path.replace(path)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f"{path.stem}.",
+        suffix=".tmp",
+    )
+    try:
+        os.write(fd, json.dumps(payload, indent=2, ensure_ascii=True).encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp_path, path)
+    except Exception:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _event(
