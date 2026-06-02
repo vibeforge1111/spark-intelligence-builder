@@ -2984,7 +2984,9 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
     if autodetect.exists():
-        return autodetect, "autodiscovered"
+        # Validate at point-of-use to prevent TOCTOU race
+        if autodetect.is_dir() and (autodetect / "src").exists():
+            return autodetect, "autodiscovered"
     return None, "missing"
 
 
