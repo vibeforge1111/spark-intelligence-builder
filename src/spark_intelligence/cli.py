@@ -7700,7 +7700,7 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
     swarm_runtime_root = args.swarm_runtime_root
     if not swarm_runtime_root:
         current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
-        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
+        default_swarm_root = Path.home() / ".spark" / "swarm"
         if not current_swarm_root and default_swarm_root.exists():
             swarm_runtime_root = str(default_swarm_root)
             notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
