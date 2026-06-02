@@ -141,7 +141,10 @@ def _human_summary(rec: dict[str, Any]) -> str:
         goal = str(payload.get("goal") or "(no goal)")
         return f'Run mission "{goal}"'
     chip = payload.get("chipKey") or "?"
-    rounds = int(payload.get("rounds") or 1)
+    try:
+        rounds = int(payload.get("rounds") or 1)
+    except (TypeError, ValueError):
+        rounds = 1
     plural = "" if rounds == 1 else "s"
     return f"Run {rounds} loop round{plural} on {chip}"
 
