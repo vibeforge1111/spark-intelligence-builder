@@ -1493,22 +1493,40 @@ def _resolve_swarm_auth_client_key(config_manager: ConfigManager) -> str | None:
     return config_manager.read_env_map().get(env_ref)
 
 
+def _assert_supabase_url_is_https(url: str) -> None:
+    """Reject non-https Supabase URLs before credentials are sent over them."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"Swarm Supabase URL must use https://. Got scheme '{parsed.scheme}': {url!r}"
+        )
+
+
 def _resolve_swarm_supabase_url(config_manager: ConfigManager, access_token: str | None) -> str | None:
     configured = config_manager.get_path("spark.swarm.supabase_url")
     if configured:
-        return str(configured).rstrip("/")
+        url = str(configured).rstrip("/")
+        _assert_supabase_url_is_https(url)
+        return url
     env_map = config_manager.read_env_map()
     if env_map.get("SPARK_SWARM_SUPABASE_URL"):
-        return env_map["SPARK_SWARM_SUPABASE_URL"].rstrip("/")
+        url = env_map["SPARK_SWARM_SUPABASE_URL"].rstrip("/")
+        _assert_supabase_url_is_https(url)
+        return url
     local_env = _read_local_swarm_env_map(config_manager)
     if local_env.get("SUPABASE_URL"):
-        return str(local_env["SUPABASE_URL"]).rstrip("/")
+        url = str(local_env["SUPABASE_URL"]).rstrip("/")
+        _assert_supabase_url_is_https(url)
+        return url
     claims = _decode_jwt_claims(access_token)
     issuer = claims.get("iss") if isinstance(claims, dict) else None
     if isinstance(issuer, str) and issuer:
         if issuer.endswith("/auth/v1"):
-            return issuer[: -len("/auth/v1")]
-        return issuer.rstrip("/")
+            url = issuer[: -len("/auth/v1")]
+        else:
+            url = issuer.rstrip("/")
+        _assert_supabase_url_is_https(url)
+        return url
     return None
 
 
@@ -2341,6 +2359,7 @@ def _refresh_swarm_access_token(
         raise RuntimeError("Swarm auth client key is missing.")
     if not session.supabase_url:
         raise RuntimeError("Swarm Supabase URL is missing.")
+    _assert_supabase_url_is_https(session.supabase_url)
     request = urllib.request.Request(
         url=urllib.parse.urljoin(f"{session.supabase_url}/", "auth/v1/token?grant_type=refresh_token"),
         data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
