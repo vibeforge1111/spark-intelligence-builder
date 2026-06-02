@@ -2998,12 +2998,12 @@ def resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: 
 
 def _import_build_advisory(runtime_root: Path):
     module = _import_researcher_module(runtime_root, "spark_researcher.advisory")
-    return getattr(module, "build_advisory")
+    return getattr(module, "build_advisory", None)
 
 
 def _import_execute_with_research(runtime_root: Path):
     module = _import_researcher_module(runtime_root, "spark_researcher.research")
-    return getattr(module, "execute_with_research")
+    return getattr(module, "execute_with_research", None)
 
 
 def _import_researcher_module(runtime_root: Path, module_name: str):
