@@ -397,6 +397,45 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("source_of_truth", hit)
         self.assertEqual(hit["authority"], "supporting_not_authoritative")
 
+    def test_wiki_query_returns_error_payload_when_retrieval_raises_runtime_failure(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+
+        def _raise(**_kwargs):
+            raise RuntimeError("wiki retrieval lock contention")
+
+        with patch(
+            "spark_intelligence.llm_wiki.query.hybrid_memory_retrieve",
+            side_effect=_raise,
+        ):
+            result = build_llm_wiki_query(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="Spark self-awareness contract",
+                limit=3,
+            )
+
+        self.assertEqual(result.payload["wiki_retrieval_status"], "error")
+        self.assertEqual(result.payload["hit_count"], 0)
+        self.assertIn("wiki_query_failed:RuntimeError", result.payload["warnings"])
+
+    def test_wiki_query_lets_programming_bugs_in_retrieval_propagate(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+
+        def _raise(**_kwargs):
+            raise AttributeError("typo in retrieval module")
+
+        with patch(
+            "spark_intelligence.llm_wiki.query.hybrid_memory_retrieve",
+            side_effect=_raise,
+        ):
+            with self.assertRaises(AttributeError):
+                build_llm_wiki_query(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    query="Spark self-awareness contract",
+                    limit=3,
+                )
+
     def test_wiki_query_cli_can_emit_machine_readable_hits(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "wiki",
