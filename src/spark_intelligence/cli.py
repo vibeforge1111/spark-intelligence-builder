@@ -4849,7 +4849,10 @@ def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
     text = str(raw or "").strip()
     if not text:
         return None
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"--memory-candidate-json is not valid JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise SystemExit("--memory-candidate-json must be a JSON object")
     return value
@@ -5534,7 +5537,10 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
 
 def _load_shadow_telegram_pack(path: Path) -> list[dict[str, str | None]]:
     if path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise ValueError(f"Invalid Shadow Telegram pack JSON: {exc}") from exc
         if not isinstance(payload, list):
             raise ValueError("Shadow Telegram pack JSON must be a list.")
         entries: list[dict[str, str | None]] = []
