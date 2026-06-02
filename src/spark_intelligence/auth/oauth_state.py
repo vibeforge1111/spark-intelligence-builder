@@ -91,16 +91,14 @@ def consume_oauth_callback_state(
     now = datetime.now(UTC)
     with state_db.connect() as conn:
         row = conn.execute(
-            "SELECT * FROM oauth_callback_states WHERE oauth_state = ? LIMIT 1",
+            "SELECT * FROM oauth_callback_states WHERE oauth_state = ? AND status = 'pending' LIMIT 1",
             (oauth_state,),
         ).fetchone()
         if not row:
-            raise ValueError("OAuth callback state was not found.")
+            raise ValueError("OAuth callback state was not found or already consumed.")
         record = _row_to_record(row)
         if record.provider_id != provider_id:
             raise ValueError("OAuth callback state provider mismatch.")
-        if record.status != "pending" or record.consumed_at:
-            raise ValueError("OAuth callback state was already consumed.")
         if redirect_uri and record.redirect_uri and redirect_uri != record.redirect_uri:
             raise ValueError("OAuth callback redirect URI mismatch.")
         if expected_issuer and record.expected_issuer and expected_issuer != record.expected_issuer:
@@ -117,14 +115,16 @@ def consume_oauth_callback_state(
             conn.commit()
             raise ValueError("OAuth callback state expired.")
         consumed_at = _format_timestamp(now)
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE oauth_callback_states
             SET status = 'consumed', consumed_at = ?
-            WHERE callback_id = ?
+            WHERE callback_id = ? AND status = 'pending'
             """,
             (consumed_at, record.callback_id),
         )
+        if cursor.rowcount == 0:
+            raise ValueError("OAuth callback state was already consumed.")
         updated = conn.execute(
             "SELECT * FROM oauth_callback_states WHERE callback_id = ? LIMIT 1",
             (record.callback_id,),
