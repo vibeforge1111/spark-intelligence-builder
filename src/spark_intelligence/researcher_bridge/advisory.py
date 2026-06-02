@@ -9412,6 +9412,7 @@ def build_researcher_reply(
     governor_decision: dict[str, Any] | None = None,
     allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
+    trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
     turn_intent_envelope_vnext = turn_intent_envelope_vnext or _parse_optional_turn_intent_payload_vnext(
         turn_intent_payload_vnext
@@ -15137,6 +15138,7 @@ def build_researcher_reply(
                     summary="Researcher bridge dispatch started.",
                     run_id=run_id,
                     request_id=request_id,
+                    trace_ref=trace_ref,
                     channel_id=channel_kind,
                     session_id=session_id,
                     human_id=human_id,

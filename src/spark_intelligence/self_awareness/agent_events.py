@@ -163,6 +163,24 @@ class AgentBlackBoxReport:
         return "\n".join(lines)
 
 
+def _looks_like_trace_ref(value: str | None) -> bool:
+    normalized = str(value or "").strip()
+    return normalized.startswith(("trace:", "trace-"))
+
+
+def _infer_trace_ref_from_agent_event(event: AgentEvent, explicit_trace_ref: str | None) -> str | None:
+    normalized = str(explicit_trace_ref or "").strip()
+    if normalized:
+        return normalized
+    facts_trace = event.facts.get("trace_ref") if isinstance(event.facts, dict) else None
+    if _looks_like_trace_ref(str(facts_trace or "")):
+        return str(facts_trace).strip()
+    for source in event.sources:
+        if _looks_like_trace_ref(source.source_ref):
+            return str(source.source_ref).strip()
+    return None
+
+
 def record_agent_event(
     state_db: StateDB,
     event: AgentEvent,
@@ -177,6 +195,7 @@ def record_agent_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
 ) -> str:
+    normalized_trace_ref = _infer_trace_ref_from_agent_event(event, trace_ref)
     return record_event(
         state_db,
         event_type=event.event_type,
@@ -186,7 +205,7 @@ def record_agent_event(
         parent_event_id=parent_event_id,
         correlation_id=correlation_id,
         request_id=request_id,
-        trace_ref=trace_ref,
+        trace_ref=normalized_trace_ref,
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,

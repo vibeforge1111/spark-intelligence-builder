@@ -1134,6 +1134,11 @@ class ContextCapsuleTests(SparkTestCase):
 
         self.assertEqual(result.routing_decision, "provider_fallback_chat")
         self.assertIn("automatic memory maintenance", result.reply_text)
+        dispatch_events = latest_events_by_type(self.state_db, event_type="dispatch_started", limit=5)
+        dispatch_event = next(
+            event for event in dispatch_events if event["request_id"] == "req-context-capsule"
+        )
+        self.assertEqual(dispatch_event["trace_ref"], "trace:agent-1:human-1:req-context-capsule")
         events = latest_events_by_type(self.state_db, event_type="context_capsule_compiled", limit=5)
         self.assertTrue(events)
         event_facts = [event["facts_json"] or {} for event in events]
