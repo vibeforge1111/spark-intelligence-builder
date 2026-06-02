@@ -208,7 +208,16 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except Exception as exc:
+            # Surface the miss so operators triaging an empty capsule can see
+            # which candidate id failed and why. Keep at DEBUG so the normal
+            # capsule build (which expects candidates to miss until the first
+            # match) stays quiet at INFO.
+            import logging
+            logging.getLogger(__name__).debug(
+                "context_capsule: memory inspection failed for candidate %r: %s",
+                candidate, exc,
+            )
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
