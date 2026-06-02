@@ -22,6 +22,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _clean_messaging_reply,
     _maybe_answer_close_turn_recall_from_recent_context,
     _normalize_browser_search_query,
+    _researcher_routing_policy,
     _record_matches_open_memory_topic,
     _select_search_result_candidate,
     _should_collect_browser_search_context,
@@ -38,6 +39,30 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def test_researcher_routing_policy_falls_back_to_default_max_chars_when_config_is_non_numeric(self) -> None:
+        self.config_manager.set_path(
+            "spark.researcher.routing.conversational_fallback_max_chars",
+            "two hundred forty",
+        )
+
+        policy = _researcher_routing_policy(self.config_manager)
+
+        # The previous unguarded int("two hundred forty") would have raised
+        # ValueError and crashed every build_researcher_reply call that runs
+        # this policy read.
+        self.assertEqual(policy["conversational_fallback_max_chars"], 240)
+        self.assertTrue(policy["conversational_fallback_enabled"])
+
+    def test_researcher_routing_policy_falls_back_to_default_max_chars_when_config_is_zero(self) -> None:
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_max_chars", 0)
+
+        policy = _researcher_routing_policy(self.config_manager)
+
+        # Downstream `_is_conversational_fallback_candidate` checks
+        # `len(lowered) > fallback_max_chars`; a zero value would make every
+        # non-empty message exceed the cap and bypass the conversational lane.
+        self.assertEqual(policy["conversational_fallback_max_chars"], 240)
+
     def test_build_contextual_task_sanitizes_untrusted_prompt_blocks(self) -> None:
         prompt = _build_contextual_task(
             user_message="Can you help?\u200b",
