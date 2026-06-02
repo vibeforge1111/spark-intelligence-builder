@@ -3011,7 +3011,9 @@ def _import_researcher_module(runtime_root: Path, module_name: str):
     src_root_resolved = src_root.resolve(strict=False)
     _evict_researcher_modules_from_other_roots(src_root_resolved)
     if str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
+        with _sys_lock:
+        if str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
     importlib.invalidate_caches()
     return importlib.import_module(module_name)
 
