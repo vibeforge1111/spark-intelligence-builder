@@ -7769,7 +7769,7 @@ def _build_active_context_status_reply(
             next_steps.append(
                 f'If the sample looks right, mark "{current_focus}" closed and set the next focus.'
             )
-        if (current_focus or transition_new_focus) == "persistent memory quality evaluation":
+        if current_focus == "persistent memory quality evaluation" or transition_new_focus == "persistent memory quality evaluation":
             next_steps = [
                 "Evaluate whether current focus updates survive across a new turn.",
                 "Test open-ended recall against the same facts without triggering deterministic helper routes.",
@@ -14618,7 +14618,7 @@ def build_researcher_reply(
                 )
                 return ResearcherBridgeResult(
                     request_id=request_id,
-                    reply_text=f"[Spark Researcher bridge error] {exc}",
+                    reply_text="[Spark Researcher bridge error] An internal error occurred while processing your request.",
                     evidence_summary="External bridge failed closed.",
                     escalation_hint="bridge_error",
                     trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",

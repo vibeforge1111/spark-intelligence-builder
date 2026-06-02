@@ -735,6 +735,55 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("Recently closed", result.reply_text)
         self.assertIn("- context capsule verification", result.reply_text)
 
+    def test_context_status_next_step_uses_transition_focus_when_current_focus_differs(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge closed an old focus label and set a new current focus.",
+            human_id="human:telegram:8319079055",
+            agent_id="agent:human:telegram:8319079055",
+            request_id="req-transition-new-focus",
+            actor_id="researcher_bridge",
+            reason_code="current_focus_transition",
+            facts={
+                "routing_decision": "current_focus_transition",
+                "closed_focus": "context capsule verification",
+                "new_focus": "persistent memory quality evaluation",
+            },
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    records=[
+                        {
+                            "predicate": "profile.current_focus",
+                            "value": "context capsule verification",
+                            "timestamp": "2026-04-27T16:56:22Z",
+                        },
+                    ]
+                )
+            ),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-transition-next-step",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="What is my current focus, what did we just close, and what should we evaluate next?",
+            )
+
+        self.assertEqual(result.routing_decision, "active_context_status")
+        self.assertIn("Recently closed", result.reply_text)
+        self.assertIn("Evaluate whether current focus updates survive across a new turn.", result.reply_text)
+        self.assertIn("Test open-ended recall against the same facts", result.reply_text)
+
     def test_cleanup_sample_query_reports_counts_only_when_audit_samples_missing(self) -> None:
         record_event(
             self.state_db,
@@ -1149,3 +1198,59 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(provider_ledger[0]["role"], "authority")
         self.assertEqual(provider_ledger[-1]["source"], "workflow_state")
         self.assertEqual(provider_ledger[-1]["role"], "advisory")
+
+    def test_researcher_reply_redacts_external_bridge_exception_from_user_reply(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=RuntimeError("C:/Users/alice/.spark/secrets/provider-key leaked"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-bridge-error-redaction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-context-capsule",
+                channel_kind="telegram",
+                user_message="Give me a quick orientation on the active work.",
+            )
+
+        self.assertEqual(result.routing_decision, "bridge_error")
+        self.assertEqual(
+            result.reply_text,
+            "[Spark Researcher bridge error] An internal error occurred while processing your request.",
+        )
+        self.assertNotIn("C:/Users/alice", result.reply_text)
+        self.assertNotIn("provider-key", result.reply_text)
+        events = latest_events_by_type(self.state_db, event_type="dispatch_failed", limit=5)
+        bridge_error = next(event for event in events if event["reason_code"] == "bridge_error")
+        self.assertIn("provider-key leaked", bridge_error["facts_json"]["error"])
