@@ -56,6 +56,7 @@ from spark_intelligence.harness_contract import (
     MutationClass,
     authorize_tool_call,
     authorize_vnext_tool_call,
+    build_vnext_action_intent_envelope,
     parse_turn_intent_envelope,
 )
 from spark_intelligence.harness_registry import build_harness_prompt_context
@@ -4023,9 +4024,37 @@ def _rewrite_browser_search_capability_denial(reply_text: str, *, browser_search
     )
 
 
+def _browser_search_boundary_blocks_adapter_authority(user_message: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered:
+        return True
+    action_words = (
+        r"browse|browser|search the web|web search|websearch|look up|find online|"
+        r"search online|google|open|visit|go to|source"
+    )
+    if re.search(
+        rf"\b(?:do not|don't|dont|please don't|please dont|no need to|without)\b.{{0,80}}\b(?:{action_words})\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        rf"\b(?:{action_words})\b.{{0,80}}\b(?:not a request|not an instruction|not a command|quoted|bug report|word alone|words alone|meta-language|meta language)\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        rf"\b(?:quoted|bug report|word alone|words alone|meta-language|meta language|not a request|not an instruction|not a command)\b.{{0,100}}\b(?:{action_words})\b",
+        lowered,
+    ):
+        return True
+    return False
+
+
 def _should_collect_browser_search_context(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lowered:
+        return False
+    if _browser_search_boundary_blocks_adapter_authority(lowered):
         return False
     if _detect_memory_quality_evaluation_plan_query(lowered) or _detect_memory_source_explanation_query(lowered):
         return False
@@ -4054,6 +4083,51 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     return any(signal in lowered for signal in current_fact_signals) and any(
         token in lowered for token in ("search", "look", "find", "source")
     )
+
+
+_BROWSER_AUTHORITY_HOOKS: tuple[str, ...] = (
+    "browser.status",
+    "browser.navigate",
+    "browser.tab.wait",
+    "browser.page.dom_extract",
+    "browser.page.interactives.list",
+    "browser.page.text_extract",
+    "browser.page.snapshot",
+)
+
+
+def _build_browser_search_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    human_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    if not _should_collect_browser_search_context(user_message):
+        return None
+    actions = [
+        {
+            "tool_name": hook,
+            "owner_system": "spark-browser",
+            "mutation_class": "external_network",
+            "external_network": True,
+            "args_path": f"builder://browser-search/{request_id}/{hook.replace('.', '-')}",
+        }
+        for hook in _BROWSER_AUTHORITY_HOOKS
+    ]
+    try:
+        return build_vnext_action_intent_envelope(
+            surface=channel_kind,
+            actor_id_ref=human_id,
+            request_id=f"{request_id}:browser-search",
+            source_kind="researcher_browser_search_explicit",
+            intent_summary="User explicitly requested browser-grounded current or source-backed web context.",
+            raw_turn_summary="Raw turn offloaded; browser search detector accepted this fresh user turn.",
+            actions=actions,
+            confidence=0.94,
+        )
+    except Exception:
+        return None
 
 
 def _detect_memory_source_explanation_query(user_message: str) -> bool:
@@ -4390,6 +4464,7 @@ def _authorize_researcher_browser_hook(
     *,
     state_db: StateDB,
     turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
     hook: str,
     run_id: str | None,
     request_id: str,
@@ -4399,24 +4474,54 @@ def _authorize_researcher_browser_hook(
     agent_id: str,
     blocked_stage: str,
 ) -> bool:
-    verdict, reasons = authorize_tool_call(
-        turn_intent_envelope,
+    governor_decision = None
+    authority_source_kind = "missing_governor_decision"
+    authority_source_ref = None
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name=hook,
+            owner_system="spark-browser",
+            mutation_class="external_network",
+            external_network=True,
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        governor_decision = authority.governor_decision
+        authority_source_kind = "governor_decision"
+        authority_source_ref = (
+            str(governor_decision.get("decision_id") or "")
+            if isinstance(governor_decision, dict)
+            else str(turn_intent_envelope_vnext.get("turn_id") or "")
+        ) or None
+    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=governor_decision,
         tool_name=hook,
         owner_system="spark-browser",
         mutation_class="external_network",
-        external_network=True,
     )
     if verdict == "allowed":
         return True
+    if governor_source_kind != "missing_governor_decision":
+        authority_source_kind = governor_source_kind
+    if governor_source_ref is not None:
+        authority_source_ref = governor_source_ref
     try:
         record_policy_gate_block(
             state_db,
             component="researcher_bridge",
-            policy_domain="turn_intent",
+            policy_domain="governor_authority",
             gate_name="researcher_bridge.browser_hook",
-            source_kind="turn_intent_envelope",
-            source_ref=turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
-            summary="Researcher bridge blocked browser chip execution without matching TurnIntent authority.",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked browser chip execution without matching Governor authority.",
             action="blocked",
             reason_code="browser_hook_authority_blocked",
             blocked_stage=blocked_stage,
@@ -4432,7 +4537,15 @@ def _authorize_researcher_browser_hook(
             facts={
                 "hook": hook,
                 "reason_codes": list(reasons),
-                "authority_state": "present" if turn_intent_envelope is not None else "missing",
+                "authority_state": (
+                    "governor_decision"
+                    if isinstance(governor_decision, dict)
+                    else (
+                        "vnext_present_without_governor"
+                        if isinstance(turn_intent_envelope_vnext, dict)
+                        else ("legacy_present_without_governor" if turn_intent_envelope is not None else "missing")
+                    )
+                ),
             },
         )
     except Exception:
@@ -4444,6 +4557,7 @@ def _authorize_researcher_active_chip_evaluate(
     *,
     state_db: StateDB,
     turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
     selected_chip_keys: list[str],
     run_id: str | None,
     request_id: str,
@@ -4452,23 +4566,53 @@ def _authorize_researcher_active_chip_evaluate(
     human_id: str,
     agent_id: str,
 ) -> bool:
-    verdict, reasons = authorize_tool_call(
-        turn_intent_envelope,
+    governor_decision = None
+    authority_source_kind = "missing_governor_decision"
+    authority_source_ref = None
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name="chip.evaluate",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_files",
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        governor_decision = authority.governor_decision
+        authority_source_kind = "governor_decision"
+        authority_source_ref = (
+            str(governor_decision.get("decision_id") or "")
+            if isinstance(governor_decision, dict)
+            else str(turn_intent_envelope_vnext.get("turn_id") or "")
+        ) or None
+    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=governor_decision,
         tool_name="chip.evaluate",
         owner_system="spark-intelligence-builder",
         mutation_class="writes_files",
     )
     if verdict == "allowed":
         return True
+    if governor_source_kind != "missing_governor_decision":
+        authority_source_kind = governor_source_kind
+    if governor_source_ref is not None:
+        authority_source_ref = governor_source_ref
     try:
         record_policy_gate_block(
             state_db,
             component="researcher_bridge",
-            policy_domain="turn_intent",
+            policy_domain="governor_authority",
             gate_name="researcher_bridge.active_chip_evaluate",
-            source_kind="turn_intent_envelope",
-            source_ref=turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
-            summary="Researcher bridge blocked active chip evaluation without matching TurnIntent authority.",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked active chip evaluation without matching Governor authority.",
             action="blocked",
             reason_code="active_chip_evaluate_authority_blocked",
             blocked_stage="active_chip_evaluate",
@@ -4489,7 +4633,15 @@ def _authorize_researcher_active_chip_evaluate(
                 "tool_name": "chip.evaluate",
                 "selected_chip_keys": selected_chip_keys,
                 "reason_codes": list(reasons),
-                "authority_state": "present" if turn_intent_envelope is not None else "missing",
+                "authority_state": (
+                    "governor_decision"
+                    if isinstance(governor_decision, dict)
+                    else (
+                        "vnext_present_without_governor"
+                        if isinstance(turn_intent_envelope_vnext, dict)
+                        else ("legacy_present_without_governor" if turn_intent_envelope is not None else "missing")
+                    )
+                ),
             },
         )
     except Exception:
@@ -4805,10 +4957,12 @@ def _execute_browser_hook(
     human_id: str,
     agent_id: str,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not _authorize_researcher_browser_hook(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
         hook=hook,
         run_id=run_id,
         request_id=request_id,
@@ -5103,6 +5257,7 @@ def _build_direct_browser_snapshot_context(
     session_id: str,
     run_id: str | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, str | None]:
     direct_target_host = str(urlparse(direct_target_url).hostname or "").strip().lower()
     navigate_output, chip_key = _execute_browser_hook(
@@ -5122,6 +5277,7 @@ def _build_direct_browser_snapshot_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output or {})
     if blocked_reply:
@@ -5153,6 +5309,7 @@ def _build_direct_browser_snapshot_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -5178,6 +5335,7 @@ def _build_direct_browser_snapshot_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
     if blocked_reply:
@@ -5239,6 +5397,7 @@ def _build_browser_search_context(
     session_id: str,
     run_id: str | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, str | None]:
     empty = {
         "context": "",
@@ -5247,9 +5406,18 @@ def _build_browser_search_context(
     }
     if not _should_collect_browser_search_context(user_message):
         return empty
+    browser_authority_vnext = turn_intent_envelope_vnext
+    if not isinstance(browser_authority_vnext, dict):
+        browser_authority_vnext = _build_browser_search_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            human_id=human_id,
+            user_message=user_message,
+        )
     if not _authorize_researcher_browser_hook(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
         hook="browser.navigate",
         run_id=run_id,
         request_id=request_id,
@@ -5289,6 +5457,7 @@ def _build_browser_search_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     if not _browser_hook_succeeded(status_output):
         status_error_code = _browser_hook_error_code(status_output)
@@ -5310,6 +5479,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 agent_id=agent_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             if retried_status_output:
                 status_output = retried_status_output
@@ -5343,6 +5513,7 @@ def _build_browser_search_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     if not navigate_output:
         if direct_target_url:
@@ -5358,6 +5529,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 run_id=run_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output)
@@ -5377,6 +5549,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 run_id=run_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
     navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
@@ -5398,6 +5571,7 @@ def _build_browser_search_context(
                 session_id=session_id,
                 run_id=run_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
 
@@ -5419,6 +5593,7 @@ def _build_browser_search_context(
         human_id=human_id,
         agent_id=agent_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -5457,6 +5632,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output or {})
         if blocked_reply:
@@ -5483,6 +5659,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
         if blocked_reply:
@@ -5512,6 +5689,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         if not dom_output:
             return empty
@@ -5547,6 +5725,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 agent_id=agent_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
             if blocked_reply:
@@ -5578,6 +5757,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 agent_id=agent_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
             if blocked_reply:
@@ -5610,6 +5790,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
     if source_navigate_output:
         source_navigate_result = (
@@ -5644,6 +5825,7 @@ def _build_browser_search_context(
                 human_id=human_id,
                 agent_id=agent_id,
                 turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
             if blocked_reply:
@@ -5671,6 +5853,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
     snapshot_output = None
     if text_output:
@@ -5699,6 +5882,7 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
             turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
         if blocked_reply:
@@ -5717,6 +5901,7 @@ def _build_browser_search_context(
                     session_id=session_id,
                     run_id=run_id,
                     turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=browser_authority_vnext,
                 )
             return empty
         snapshot_result = snapshot_output.get("result") if isinstance(snapshot_output.get("result"), dict) else {}
@@ -6812,6 +6997,7 @@ def _run_active_chip_evaluate(
     attachment_context: dict[str, object],
     run_id: str | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     payload = {
@@ -6852,6 +7038,7 @@ def _run_active_chip_evaluate(
     if not _authorize_researcher_active_chip_evaluate(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
         selected_chip_keys=selected_record_keys,
         run_id=run_id,
         request_id=request_id,
@@ -14197,6 +14384,7 @@ def build_researcher_reply(
         attachment_context=attachment_context,
         run_id=run_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
         record_event(
@@ -14237,6 +14425,7 @@ def build_researcher_reply(
         session_id=session_id,
         run_id=run_id,
         turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     browser_search_context_extra = str(browser_search_support.get("context") or "")
     browser_search_blocked_reply = str(browser_search_support.get("blocked_reply") or "") or None
