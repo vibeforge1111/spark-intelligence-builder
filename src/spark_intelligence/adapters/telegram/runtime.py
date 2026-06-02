@@ -350,8 +350,9 @@ def _maybe_save_reply_as_draft(
                 f"{timestamp}Z user={user} iter={is_iteration} "
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
 
     if is_iteration:
         source_draft = None
@@ -378,8 +379,9 @@ def _maybe_save_reply_as_draft(
                         content=reply,
                         chip_used=chip_used,
                     )
-                except Exception:
-                    pass
+                except Exception as _e:  # SILENT-CATCH-PATCH
+
+                    import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
             # preserve the original draft and capture the divergent
@@ -393,8 +395,9 @@ def _maybe_save_reply_as_draft(
                     session_id=session_id,
                     chip_used=chip_used,
                 )
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
             return reply_text
         try:
             save_draft(
@@ -405,8 +408,9 @@ def _maybe_save_reply_as_draft(
                 session_id=session_id,
                 chip_used=chip_used,
             )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
         return reply_text
 
     if is_generative:
@@ -419,8 +423,9 @@ def _maybe_save_reply_as_draft(
                 session_id=session_id,
                 chip_used=chip_used,
             )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
         return reply_text
 
     return reply_text
@@ -1303,8 +1308,9 @@ def simulate_telegram_update(
 
                                 if _detect_generic_memory_deletion(effective_text) is not None:
                                     _instruction_intent = None
-                        except Exception:
-                            pass
+                        except Exception as _e:  # SILENT-CATCH-PATCH
+
+                            import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
                     try:
                         memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
                         shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
@@ -8304,8 +8310,9 @@ def _telegram_voice_dashboard_agent_label(*, state_db: StateDB, human_id: str | 
             name = str(read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_name or "").strip()
             if name:
                 return name
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Suppressed error: %s", _e, exc_info=True)
     if agent_id:
         return f"Agent {hashlib.sha256(str(agent_id).encode('utf-8')).hexdigest()[:8]}"
     return "Current Spark agent"
