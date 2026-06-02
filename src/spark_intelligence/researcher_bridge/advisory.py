@@ -5696,14 +5696,18 @@ def _load_recent_active_chip_keys(
                 """,
                 (channel_kind, session_id, turn_limit * 4),
             ).fetchall()
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.debug("db query failed in %s: %s", "_load_recent_active_chip_keys", exc)
         return []
     for row in rows:
         if request_id and str(row["request_id"] or "") == request_id:
             continue
         try:
             facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.debug("db query failed in %s: %s", "_load_recent_active_chip_keys", exc)
             continue
         chip_key_raw = str(facts.get("chip_key") or "").strip()
         if not chip_key_raw:
