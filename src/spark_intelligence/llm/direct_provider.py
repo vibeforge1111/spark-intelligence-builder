@@ -188,6 +188,7 @@ def _execute_chat_completions(
         "model": model_name,
         "messages": _chat_messages(system_prompt=system_prompt, user_prompt=user_prompt),
         "temperature": 0.2,
+        "max_tokens": 1024,
     }
     if tools:
         payload["tools"] = tools
