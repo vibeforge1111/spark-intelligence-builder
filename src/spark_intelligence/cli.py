@@ -875,6 +875,15 @@ def _swarm_auth_state(swarm) -> str:
     return "missing"
 
 
+def _coerce_positive_int_setting(value: object, *, default: int) -> int:
+    """Return ``int(value)`` when it is a positive integer; otherwise ``default``."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced if coerced > 0 else default
+
+
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
@@ -1116,8 +1125,9 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "auto_recommend_enabled": bool(
                 config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
             ),
-            "long_task_word_count": int(
-                config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
+            "long_task_word_count": _coerce_positive_int_setting(
+                config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40),
+                default=40,
             ),
             "last_decision_mode": (swarm.last_decision or {}).get("mode"),
             "last_failure_mode": _swarm_last_failure_payload(swarm).get("mode"),

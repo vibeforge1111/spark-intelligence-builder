@@ -234,6 +234,46 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
 
+    def test_evaluate_swarm_escalation_falls_back_to_default_when_long_task_word_count_is_non_numeric(self) -> None:
+        self.config_manager.set_path("spark.swarm.routing.long_task_word_count", "forty words")
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="one two three four five",
+            )
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.escalate)
+        self.assertEqual(result.mode, "hold_local")
+        # 5-word task is below the documented default 40-word threshold;
+        # the previous unguarded int("forty words") would have raised ValueError
+        # and crashed the entire swarm-decide path before producing any result.
+        self.assertNotIn("long_task", result.triggers)
+
+    def test_evaluate_swarm_escalation_falls_back_to_default_when_long_task_word_count_is_zero(self) -> None:
+        self.config_manager.set_path("spark.swarm.routing.long_task_word_count", 0)
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value=self._ready_swarm_attachment_context(),
+        ):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="one two three",
+            )
+
+        self.assertTrue(result.ok)
+        # With the documented default of 40, a 3-word task does not trip the
+        # long_task trigger; the previous unguarded int() would have used the
+        # raw 0 and forced every task (len(task.split()) >= 0) to be flagged.
+        self.assertNotIn("long_task", result.triggers)
+
     def test_evaluate_swarm_escalation_records_typed_decision_and_attachment_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
