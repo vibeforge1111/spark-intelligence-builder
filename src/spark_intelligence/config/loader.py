@@ -462,8 +462,9 @@ class ConfigManager:
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
                 return principal
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Config load error suppressed: %s", _e, exc_info=True)
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
         return f"{domain}\\{username}" if domain else username
