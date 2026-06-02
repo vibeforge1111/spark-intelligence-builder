@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import re
+import tempfile
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -369,8 +370,26 @@ class ConfigManager:
         previous_value: str | None = None,
         new_value: str | None = None,
     ) -> None:
-        self.paths.env_file.write_text(content, encoding="utf-8")
-        self.harden_env_file_permissions()
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.paths.env_file.parent,
+            prefix=".env.",
+            suffix=".tmp",
+        )
+        try:
+            os.write(fd, content.encode("utf-8"))
+            os.close(fd)
+            fd = -1
+            if os.name != "nt":
+                os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, self.paths.env_file)
+        except Exception:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
         self._record_config_mutation(
