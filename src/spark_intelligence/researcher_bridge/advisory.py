@@ -14852,7 +14852,7 @@ def _read_typed_researcher_bridge_state(state_db: StateDB) -> dict[str, Any]:
             """
         ).fetchone()
         if row:
-            failure_count = int(row["count"])
+            failure_count = int(str(row.get("count", 0) or 0))
     facts = last_result.get("facts_json") or {}
     failure_facts = last_failure.get("facts_json") or {}
     influence_facts = last_influence.get("facts_json") or {}
