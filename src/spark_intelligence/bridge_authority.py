@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from spark_intelligence.harness_contract import (
@@ -42,6 +42,7 @@ class BridgeAuthorityVerdict:
     authorization_decision: dict[str, Any] | None = None
     tool_call_ledger: dict[str, Any] | None = None
     ledger_event_id: str | None = None
+    governor_decision: dict[str, Any] | None = None
 
 
 def build_governor_decision_from_bridge_authority(
@@ -58,12 +59,28 @@ def build_governor_decision_from_bridge_authority(
         return None
     if not isinstance(ledger, dict) or ledger.get("schema_version") != "tool-call-ledger-v1":
         return None
-    if authorization.get("verdict") != "allow":
+    authorization_verdict = str(authorization.get("verdict") or "")
+    if authorization_verdict not in {"allow", "deny", "interrupt", "degrade"}:
         return None
+    outcome_by_verdict = {
+        "allow": "execute",
+        "deny": "deny",
+        "interrupt": "interrupt",
+        "degrade": "degrade",
+    }
+    outcome = outcome_by_verdict[authorization_verdict]
+    if not verdict.allowed and authorization_verdict == "allow":
+        outcome = "deny"
+    action_authorized = verdict.allowed and authorization_verdict == "allow"
+    authority_state = (envelope.get("action_authority") or {}).get("state")
+    if outcome == "interrupt":
+        authority_state = "confirmation_required"
+    elif outcome in {"deny", "degrade"}:
+        authority_state = "blocked"
     execution_boundary = {
-        "action_authorized": verdict.allowed,
+        "action_authorized": action_authorized,
         "action_count": len(envelope.get("proposed_actions") if isinstance(envelope.get("proposed_actions"), list) else []),
-        "authorized_action_count": 1 if verdict.allowed else 0,
+        "authorized_action_count": 1 if action_authorized else 0,
         "requires_human_confirmation": bool((authorization.get("approval") or {}).get("required")),
         "legacy_authority_demoted": True,
         "reasons": list(verdict.reason_codes) or list(authorization.get("reasons") or ["harness_core_authorized"]),
@@ -76,9 +93,9 @@ def build_governor_decision_from_bridge_authority(
         "surface": envelope.get("surface") or "builder",
         "turn_id": envelope.get("turn_id"),
         "selected_move": envelope.get("selected_move"),
-        "authority_state": (envelope.get("action_authority") or {}).get("state"),
+        "authority_state": authority_state,
         "risk_tier": authorization.get("risk_tier") or (envelope.get("action_authority") or {}).get("risk_tier"),
-        "outcome": "execute",
+        "outcome": outcome,
         "envelope": envelope,
         "authorizations": [authorization],
         "tool_ledgers": [ledger],
@@ -96,6 +113,13 @@ def build_governor_decision_from_bridge_authority(
             "redaction_class": trace.get("redaction_class") or "metadata_only",
         },
     }
+
+
+def _with_governor_decision(verdict: BridgeAuthorityVerdict) -> BridgeAuthorityVerdict:
+    governor_decision = build_governor_decision_from_bridge_authority(verdict)
+    if not isinstance(governor_decision, dict):
+        return verdict
+    return replace(verdict, governor_decision=governor_decision)
 
 
 def set_bridge_authority_ledger_context(
@@ -944,6 +968,7 @@ def authorize_builder_bridge_action(
         authorization_decision=authorization.authorization_decision,
         tool_call_ledger=authorization.tool_call_ledger,
     )
+    verdict = _with_governor_decision(verdict)
     ledger_context = _ledger_context(
         state_db=state_db,
         component=component,
@@ -973,16 +998,7 @@ def authorize_builder_bridge_action(
     )
     if ledger_event_id is None:
         return verdict
-    return BridgeAuthorityVerdict(
-        verdict.allowed,
-        verdict.reason_codes,
-        verdict.envelope,
-        verdict.harness_core_envelope,
-        verdict.proposed_action,
-        verdict.authorization_decision,
-        verdict.tool_call_ledger,
-        ledger_event_id,
-    )
+    return replace(verdict, ledger_event_id=ledger_event_id)
 
 
 def authorize_pending_confirmation(
@@ -1039,6 +1055,7 @@ def authorize_pending_confirmation(
         authorization.authorization_decision,
         authorization.tool_call_ledger,
     )
+    verdict = _with_governor_decision(verdict)
     ledger_context = _ledger_context(
         state_db=state_db,
         component=component,
@@ -1068,13 +1085,4 @@ def authorize_pending_confirmation(
     )
     if ledger_event_id is None:
         return verdict
-    return BridgeAuthorityVerdict(
-        verdict.allowed,
-        verdict.reason_codes,
-        verdict.envelope,
-        verdict.harness_core_envelope,
-        verdict.proposed_action,
-        verdict.authorization_decision,
-        verdict.tool_call_ledger,
-        ledger_event_id,
-    )
+    return replace(verdict, ledger_event_id=ledger_event_id)

@@ -32,7 +32,6 @@ from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
-    build_governor_decision_from_bridge_authority,
     build_telegram_memory_diagnostic_turn_intent_payload,
     build_telegram_memory_diagnostic_turn_intent_payload_vnext,
     build_telegram_memory_read_turn_intent_payload,
@@ -1279,10 +1278,7 @@ def _prepare_telegram_media_input(
     )
     if not authority.allowed:
         return _voice_transcription_authority_blocked_input(authority.reason_codes)
-    governor_decision = build_governor_decision_from_bridge_authority(
-        authority,
-        reply_instruction="Execute authorized Telegram voice transcription.",
-    )
+    governor_decision = authority.governor_decision
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
         if embedded_audio is not None:
@@ -3179,10 +3175,7 @@ def _synthesize_telegram_voice_reply(
             mutation_class="external_network",
             external_network=True,
         )
-        governor_decision = build_governor_decision_from_bridge_authority(
-            voice_authority,
-            reply_instruction="Execute authorized Telegram voice reply synthesis.",
-        )
+        governor_decision = voice_authority.governor_decision
     payload = {
         **_build_voice_chip_payload(
             config_manager=config_manager,
@@ -8342,10 +8335,7 @@ def _run_voice_runtime_command(
         )
         if not authority.allowed:
             return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
-        governor_decision = build_governor_decision_from_bridge_authority(
-            authority,
-            reply_instruction=f"Execute authorized Telegram voice command {command}.",
-        )
+        governor_decision = authority.governor_decision
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,

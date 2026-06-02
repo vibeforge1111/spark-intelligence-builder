@@ -128,6 +128,11 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
     assert verdict.tool_call_ledger is not None
     assert verdict.tool_call_ledger["schema_version"] == "tool-call-ledger-v1"
     assert verdict.tool_call_ledger["authorization"]["decision_id"] == verdict.authorization_decision["decision_id"]
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["schema_version"] == "governor-decision-v1"
+    assert verdict.governor_decision["outcome"] == "execute"
+    assert verdict.governor_decision["authorizations"][0]["decision_id"] == verdict.authorization_decision["decision_id"]
+    assert verdict.governor_decision["tool_ledgers"][0]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
 
 
 def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
@@ -153,6 +158,9 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
     assert verdict.authorization_decision["verdict"] == "allow"
     assert verdict.tool_call_ledger is not None
     assert verdict.tool_call_ledger["result"]["status"] == "not_started"
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "execute"
+    assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
 
 
 def test_blocks_native_vnext_when_action_is_not_proposed() -> None:
@@ -175,6 +183,9 @@ def test_blocks_native_vnext_when_action_is_not_proposed() -> None:
     assert "proposed_action_not_authorized" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "deny"
+    assert verdict.governor_decision["execution_boundary"]["action_authorized"] is False
 
 
 def test_builds_memory_read_turn_intent_for_explicit_recall() -> None:
@@ -234,6 +245,8 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "execute"
 
 
 def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
@@ -263,6 +276,8 @@ def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "execute"
 
 
 def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
@@ -407,6 +422,8 @@ def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
     assert verdict.authorization_decision["verdict"] == "deny"
     assert verdict.tool_call_ledger is not None
     assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "deny"
 
 
 def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> None:
