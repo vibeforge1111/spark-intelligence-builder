@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+def _safe_int(value, default: int) -> int:
+    """Safely convert a value to int, returning default on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 import importlib
 import json
 import os
