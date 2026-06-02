@@ -1156,9 +1156,9 @@ def pop_agent_persona_undo_snapshot(
             (row["snapshot_id"],),
         )
         conn.commit()
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] or "{}" else {} if row["base_traits_json"] else {}
+    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] or "[]" else {} if row["behavioral_rules_json"] else []
+    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] or "{}" else {} if row["provenance_json"] else {}
     return save_agent_persona_profile(
         agent_id=storage_agent_id,
         human_id=human_id,
