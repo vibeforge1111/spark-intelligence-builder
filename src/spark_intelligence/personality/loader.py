@@ -661,6 +661,21 @@ def normalize_personality_import(
     )
 
 
+
+def _atomic_write_json(path: Path, content: str) -> None:
+    """Write JSON atomically via temp file + rename."""
+    import tempfile
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
 def write_personality_evolver_state(
     *,
     config_manager: ConfigManager | None,
@@ -669,7 +684,7 @@ def write_personality_evolver_state(
 ) -> str:
     target_path = Path(write_path) if write_path is not None else resolve_personality_evolver_state_path(config_manager=config_manager)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(json.dumps(evolver_state, indent=2, ensure_ascii=True), encoding="utf-8")
+    _atomic_write_json(target_path, json.dumps(evolver_state, indent=2, ensure_ascii=True))
     return str(target_path)
 
 
