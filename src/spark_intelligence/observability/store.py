@@ -2289,7 +2289,7 @@ def _mirror_memory_lane_event(
     )
     conn.execute(
         """
-        INSERT OR REPLACE INTO memory_lane_records(
+        INSERT OR IGNORE INTO memory_lane_records(
             lane_record_id,
             recorded_at,
             event_id,
