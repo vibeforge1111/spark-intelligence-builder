@@ -15,6 +15,26 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_i
 
 
 class AttachmentHookTests(SparkTestCase):
+    def _chip_evaluate_turn_intent_vnext(self, *, request_id: str = "req-chip-vnext") -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_active_chip_explicit",
+            intent_summary="User explicitly requested startup chip guidance for the current turn.",
+            raw_turn_summary="Raw active-chip test turn is offloaded in the fixture.",
+            actions=[
+                {
+                    "tool_name": "chip.evaluate",
+                    "owner_system": "spark-intelligence-builder",
+                    "mutation_class": "writes_files",
+                    "args_path": f"builder://active-chip/{request_id}/chip-evaluate",
+                }
+            ],
+        )
+
     def test_legacy_browser_extension_hooks_are_disabled_at_execution_boundary(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -567,6 +587,9 @@ class AttachmentHookTests(SparkTestCase):
                     turn_id="turn:chip-fallback",
                     trace_id="trace:chip-fallback",
                 ),
+                turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
+                    request_id="req-chip-fallback"
+                ),
             )
 
         self.assertEqual(result.reply_text, "Tighten the user pain wedge first.")
@@ -667,6 +690,106 @@ class AttachmentHookTests(SparkTestCase):
         self.assertTrue(
             any(event.get("reason_code") == "active_chip_evaluate_authority_blocked" for event in policy_blocks)
         )
+
+    def test_researcher_bridge_with_legacy_turn_intent_does_not_run_active_chip_evaluate(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="minimax-secret",
+            source="test",
+        )
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:under-supported",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            captured["user_prompt"] = user_prompt
+            captured["governance"] = governance
+            return {"raw_response": "We can discuss the startup without running chip hooks."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._is_conversational_fallback_candidate",
+            return_value=True,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=type(
+                "Selection",
+                (),
+                {"provider": provider, "model_family": "generic", "error": None},
+            )(),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.run_chip_hook",
+        ) as run_hook_mock:
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-chip-legacy-only",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="What should this startup focus on next?",
+                turn_intent_envelope=make_turn_intent_envelope(
+                    turn_id="turn:chip-legacy-only",
+                    trace_id="trace:chip-legacy-only",
+                ),
+            )
+
+        self.assertEqual(result.reply_text, "We can discuss the startup without running chip hooks.")
+        run_hook_mock.assert_not_called()
+        self.assertNotIn("[Active chip guidance]", str(captured["user_prompt"]))
+        policy_blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=10)
+        matching = [
+            event
+            for event in policy_blocks
+            if event.get("reason_code") == "active_chip_evaluate_authority_blocked"
+        ]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["facts_json"]["authority_state"], "legacy_present_without_governor")
 
     def test_researcher_bridge_injects_browser_search_evidence_from_non_active_chip(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
