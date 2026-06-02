@@ -10093,8 +10093,8 @@ def build_researcher_reply(
                 and detected_belief_recall_query is None
             ):
                 detected_belief_recall_query = _detect_belief_recall_query(user_message)
-        except Exception:
-            pass
+        except Exception as _e:
+            import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
