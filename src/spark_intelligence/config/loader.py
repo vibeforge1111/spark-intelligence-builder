@@ -283,6 +283,17 @@ class ConfigManager:
         )
         return True
 
+    _RESERVED_ENV_KEYS = frozenset({
+        "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL",
+        "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH", "IFS", "CDPATH", "ENV", "BASH_ENV",
+        "PROMPT_COMMAND", "PS1", "PS2", "PS4", "BASHOPTS",
+        "SHELLOPTS", "PIPESTATUS", "BASH_XTRACEFD",
+        "HISTFILE", "HISTSIZE", "HISTFILESIZE",
+        "MAILCHECK", "TMOUT", "EDITOR", "VISUAL",
+    })
+    _VALID_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def upsert_env_secret(
         self,
         key: str,
@@ -293,6 +304,14 @@ class ConfigManager:
         reason_code: str = "env_secret_upsert",
         request_source: str = "config_manager.upsert_env_secret",
     ) -> None:
+        if not key or not self._VALID_ENV_KEY_RE.match(key):
+            raise ValueError(
+                f"Invalid env secret key {key!r}: must match [A-Za-z_][A-Za-z0-9_]*."
+            )
+        if key in self._RESERVED_ENV_KEYS:
+            raise ValueError(
+                f"Env secret key {key!r} is reserved and cannot be set via config manager."
+            )
         env_map = self.read_env_map()
         previous = env_map.get(key)
         if previous == value:
