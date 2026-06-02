@@ -2637,6 +2637,92 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             str(captured["user_prompt"]),
         )
 
+    def test_render_direct_provider_chat_fallback_injects_constraint_reasoning_guard_for_scenario_questions(self) -> None:
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="secret",
+            source="config+env",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
+            captured["system_prompt"] = system_prompt
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Take the car."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            reply = _render_direct_provider_chat_fallback(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                provider=provider,
+                user_message=(
+                    "So your car is dirty and needs a wash and the carwash is just two blocks away from your house, "
+                    "do you take the car with you or do you go on foot to save fuel?"
+                ),
+                channel_kind="telegram",
+                attachment_context={},
+            )
+
+        self.assertEqual(reply, "Take the car.")
+        self.assertIn("[Constraint-aware scenario reasoning]", str(captured["user_prompt"]))
+        self.assertIn("identify the user's actual goal", str(captured["user_prompt"]))
+        self.assertIn("Do not recommend an action that makes the stated task impossible", str(captured["user_prompt"]))
+        self.assertIn("Answer goal first, then tradeoffs like time, fuel, or convenience", str(captured["user_prompt"]))
+
+    def test_render_direct_provider_chat_fallback_injects_provider_transparency_guard(self) -> None:
+        provider = RuntimeProviderResolution(
+            provider_id="deepseek",
+            provider_kind="custom",
+            auth_profile_id="deepseek:default",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.deepseek.com/v1",
+            default_model="deepseek-reasoner",
+            secret_ref=None,
+            secret_value="secret",
+            source="config+env",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
+            captured["system_prompt"] = system_prompt
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Spark is the agent layer; DeepSeek is the configured model backend for this reply."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            reply = _render_direct_provider_chat_fallback(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                provider=provider,
+                user_message=(
+                    "Did you reason independently as Spark before you answered the questions or were you fed this by the Deepseek API?"
+                ),
+                channel_kind="telegram",
+                attachment_context={},
+            )
+
+        self.assertEqual(reply, "Spark is the agent layer; DeepSeek is the configured model backend for this reply.")
+        self.assertIn("[Provider/source-of-reasoning transparency]", str(captured["user_prompt"]))
+        self.assertIn("Do not claim your reasoning is independent of the configured model/provider", str(captured["user_prompt"]))
+        self.assertIn("Spark is the agent/runtime layer", str(captured["user_prompt"]))
+        self.assertIn("provider_id=deepseek", str(captured["user_prompt"]))
+        self.assertIn("provider_model=deepseek-reasoner", str(captured["user_prompt"]))
+
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
