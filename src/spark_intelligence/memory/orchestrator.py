@@ -6352,7 +6352,7 @@ def _build_recent_conversation_lane(
         conditions.append("session_id = ?")
         params.append(session_id)
     if conditions:
-        sql += " WHERE " + " OR ".join(f"({condition})" for condition in conditions)
+        sql += " WHERE " + " AND ".join(f"({condition})" for condition in conditions)
     sql += " ORDER BY created_at DESC, event_id DESC LIMIT ?"
     params.append(row_limit)
 
