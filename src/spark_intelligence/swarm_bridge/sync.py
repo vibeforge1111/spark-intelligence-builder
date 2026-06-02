@@ -212,6 +212,16 @@ class SwarmDoctorReport:
         return "\n".join(lines)
 
 
+_SAFE_RESPONSE_BODY_KEYS = {"error", "message", "code", "status"}
+
+
+def _sanitize_response_body(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Strip unknown keys from provider error response bodies before persistence."""
+    if not isinstance(body, dict):
+        return body
+    return {k: v for k, v in body.items() if k in _SAFE_RESPONSE_BODY_KEYS}
+
+
 @dataclass
 class SwarmSyncResult:
     ok: bool
@@ -233,7 +243,7 @@ class SwarmSyncResult:
                 "api_url": self.api_url,
                 "workspace_id": self.workspace_id,
                 "accepted": self.accepted,
-                "response_body": self.response_body,
+                "response_body": _sanitize_response_body(self.response_body),
             },
             indent=2,
         )
@@ -2136,7 +2146,7 @@ def _record_swarm_failure_state(
                 "api_url": result.api_url,
                 "workspace_id": result.workspace_id,
                 "payload_path": result.payload_path,
-                "response_body": result.response_body,
+                "response_body": _sanitize_response_body(result.response_body),
                 "recorded_at": _utc_now_iso(),
             }
         else:
