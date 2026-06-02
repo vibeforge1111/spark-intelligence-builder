@@ -49,10 +49,65 @@ from spark_intelligence.researcher_bridge.advisory import (
     researcher_bridge_status,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_intent_envelope
+from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
+    def _chip_evaluate_turn_intent_vnext(self, *, request_id: str) -> dict[str, object]:
+        return {
+            "schema_version": "turn-intent-envelope-vnext",
+            "turn_id": f"turn:chip-evaluate:{request_id}",
+            "surface": "telegram",
+            "selected_move": "execute_action",
+            "action_authority": {"state": "executable", "risk_tier": "local_write"},
+            "proposed_actions": [
+                {
+                    "action_type": "tool_call",
+                    "tool_name": "chip.evaluate",
+                    "owner_system": "spark-intelligence-builder",
+                    "mutation_class": "writes_files",
+                    "capability_id": "spark-intelligence-builder:chip.evaluate",
+                }
+            ],
+        }
+
+    def _governed_chip_authority(self, update_payload: dict[str, object] | None = None, **kwargs: object) -> SimpleNamespace:
+        tool_name = str(kwargs.get("tool_name") or "")
+        owner_system = str(kwargs.get("owner_system") or "")
+        vnext = (update_payload or {}).get("turn_intent_envelope_vnext") if isinstance(update_payload, dict) else None
+        if tool_name != "chip.evaluate" or owner_system != "spark-intelligence-builder" or not isinstance(vnext, dict):
+            return SimpleNamespace(governor_decision=None)
+        decision_id = f"test-governor:{vnext.get('turn_id') or 'chip-evaluate'}"
+        return SimpleNamespace(
+            governor_decision={
+                "schema_version": "governor-decision-v1",
+                "decision_id": decision_id,
+                "surface": "telegram",
+                "turn_id": vnext.get("turn_id"),
+                "outcome": "execute",
+                "execution_boundary": {
+                    "action_authorized": True,
+                    "legacy_authority_demoted": True,
+                    "reasons": ["test_governor_authorized_chip_evaluate"],
+                },
+                "authorizations": [
+                    {
+                        "decision_id": f"{decision_id}:auth",
+                        "verdict": "allow",
+                        "capability_id": "spark-intelligence-builder:chip.evaluate",
+                    }
+                ],
+                "tool_ledgers": [
+                    {
+                        "ledger_id": f"{decision_id}:ledger",
+                        "tool_name": "chip.evaluate",
+                        "authorization": {"verdict": "allow", "decision_id": f"{decision_id}:auth"},
+                    }
+                ],
+                "evidence": [{"kind": "test_fixture", "ref": "governed-chip-authority"}],
+            }
+        )
+
     def test_tranche1_typed_ledger_tables_are_populated(self) -> None:
         run = open_run(
             self.state_db,
@@ -1372,22 +1427,26 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
 
-        result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            request_id="req-provenance",
-            agent_id="agent:test",
-            human_id="human:test",
-            session_id="session:test",
-            channel_kind="telegram",
-            user_message="What should this startup focus on next?",
-            turn_intent_envelope=make_turn_intent_envelope(
-                turn_id="turn:provenance",
-                trace_id="trace:provenance",
-            ),
-        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
+            side_effect=self._governed_chip_authority,
+        ) as authority_mock:
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-provenance",
+                agent_id="agent:test",
+                human_id="human:test",
+                session_id="session:test",
+                channel_kind="telegram",
+                user_message="What should this startup focus on next?",
+                turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
+                    request_id="req-provenance"
+                ),
+            )
 
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
         self.assertTrue(events)
         chip_events = [
@@ -1445,17 +1504,25 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            request_id="req-chip-result-classification",
-            agent_id="agent:test",
-            human_id="human:test",
-            session_id="session:test",
-            channel_kind="telegram",
-            user_message="What should this startup focus on next?",
-        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
+            side_effect=self._governed_chip_authority,
+        ) as authority_mock:
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-chip-result-classification",
+                agent_id="agent:test",
+                human_id="human:test",
+                session_id="session:test",
+                channel_kind="telegram",
+                user_message="What should this startup focus on next?",
+                turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
+                    request_id="req-chip-result-classification"
+                ),
+            )
 
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
         chip_events = [
             event
