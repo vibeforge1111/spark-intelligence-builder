@@ -4264,7 +4264,19 @@ def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
         )
         return 1
 
-    result_path = Path(args.write_result) if args.write_result else (
+    write_result_path = Path(args.write_result) if args.write_result else None
+    if write_result_path:
+        write_result_resolved = write_result_path.resolve()
+        home_resolved = config_manager.paths.home.resolve()
+        artifacts_dir = home_resolved / "artifacts"
+        allowed_roots = [home_resolved, artifacts_dir]
+        is_allowed = any(write_result_resolved.is_relative_to(root) or write_result_resolved == root for root in allowed_roots)
+        if not is_allowed:
+            raise SystemExit(
+                f"Error: --write-result path must be inside Spark Intelligence home or its artifacts directory.\n"
+                f"Refusing: {args.write_result}"
+            )
+    result_path = write_result_path if write_result_path else (
         config_manager.paths.home / "artifacts" / "observer-handoffs" / f"{handoff_id}.result.json"
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -6473,7 +6485,19 @@ def _execute_browser_hook(
         )
         return 2, None, str(exc)
 
-    result_path = Path(args.write_result) if getattr(args, "write_result", None) else (
+    write_result_path = Path(args.write_result) if getattr(args, "write_result", None) else None
+    if write_result_path:
+        write_result_resolved = write_result_path.resolve()
+        home_resolved = config_manager.paths.home.resolve()
+        artifacts_dir = home_resolved / "artifacts"
+        allowed_roots = [home_resolved, artifacts_dir]
+        is_allowed = any(write_result_resolved.is_relative_to(root) or write_result_resolved == root for root in allowed_roots)
+        if not is_allowed:
+            raise SystemExit(
+                f"Error: --write-result path must be inside Spark Intelligence home or its artifacts directory.\n"
+                f"Refusing: {args.write_result}"
+            )
+    result_path = write_result_path if write_result_path else (
         config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.result.json"
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8209,7 +8233,19 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    result_path = Path(args.write_result) if args.write_result else (
+    write_result_path = Path(args.write_result) if args.write_result else None
+    if write_result_path:
+        write_result_resolved = write_result_path.resolve()
+        home_resolved = config_manager.paths.home.resolve()
+        artifacts_dir = home_resolved / "artifacts"
+        allowed_roots = [home_resolved, artifacts_dir]
+        is_allowed = any(write_result_resolved.is_relative_to(root) or write_result_resolved == root for root in allowed_roots)
+        if not is_allowed:
+            raise SystemExit(
+                f"Error: --write-result path must be inside Spark Intelligence home or its artifacts directory.\n"
+                f"Refusing: {args.write_result}"
+            )
+    result_path = write_result_path if write_result_path else (
         config_manager.paths.home / "artifacts" / "agent-imports" / f"{import_id}.result.json"
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8521,7 +8557,19 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
         return 2
 
     result_payload = execution.to_payload()
-    result_path = Path(args.write_result) if args.write_result else (
+    write_result_path = Path(args.write_result) if args.write_result else None
+    if write_result_path:
+        write_result_resolved = write_result_path.resolve()
+        home_resolved = config_manager.paths.home.resolve()
+        artifacts_dir = home_resolved / "artifacts"
+        allowed_roots = [home_resolved, artifacts_dir]
+        is_allowed = any(write_result_resolved.is_relative_to(root) or write_result_resolved == root for root in allowed_roots)
+        if not is_allowed:
+            raise SystemExit(
+                f"Error: --write-result path must be inside Spark Intelligence home or its artifacts directory.\n"
+                f"Refusing: {args.write_result}"
+            )
+    result_path = write_result_path if write_result_path else (
         config_manager.paths.home / "artifacts" / "personality-imports" / f"{import_id}.result.json"
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
