@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
 
@@ -65,6 +66,11 @@ def looks_like_build_quality_review_query(message: str) -> bool:
     lowered = str(message or "").strip().casefold()
     if not lowered:
         return False
+    if has_conversation_only_boundary(lowered) or denies_intent(
+        lowered,
+        ("review", "rate", "assess", "judge", "score"),
+    ):
+        return False
     buildish = "build" in lowered or "route" in lowered or "page" in lowered or "app" in lowered
     if any(signal in lowered for signal in _FALSE_POSITIVE_SIGNALS) and not buildish:
         return False
@@ -78,6 +84,11 @@ def looks_like_build_quality_review_query(message: str) -> bool:
 def looks_like_memory_quality_dashboard_operator_query(message: str) -> bool:
     lowered = str(message or "").strip().casefold()
     if not lowered:
+        return False
+    if has_conversation_only_boundary(lowered) or denies_intent(
+        lowered,
+        ("open", "launch", "show", "access"),
+    ):
         return False
     if not any(signal in lowered for signal in _MEMORY_QUALITY_DASHBOARD_SIGNALS):
         return False

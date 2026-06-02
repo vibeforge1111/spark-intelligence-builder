@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
 
 
@@ -154,6 +155,11 @@ class AutoHarnessRecipeSelection:
 def looks_like_harness_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
+        return False
+    if has_conversation_only_boundary(lowered_message) or denies_intent(
+        lowered_message,
+        ("execute", "run", "route", "use harness", "use backend", "use toolset", "use session"),
+    ):
         return False
     direct_signals = (
         "what harness",

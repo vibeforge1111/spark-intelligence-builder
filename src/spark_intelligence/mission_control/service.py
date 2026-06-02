@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.spawner_payload_drift import detect_spawner_payload_drift
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -63,6 +64,11 @@ class MissionControlPlan:
 def looks_like_mission_control_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
+        return False
+    if has_conversation_only_boundary(lowered_message) or denies_intent(
+        lowered_message,
+        ("open mission control", "show mission control", "launch", "start", "run"),
+    ):
         return False
     direct_signals = (
         "mission control",

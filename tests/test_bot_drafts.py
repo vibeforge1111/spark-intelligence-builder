@@ -39,6 +39,11 @@ class DetectGenerativeIntentTests(SparkTestCase):
         self.assertFalse(detect_generative_intent(""))
         self.assertFalse(detect_generative_intent("   "))
 
+    def test_quoted_draft_phrase_is_not_generative(self) -> None:
+        self.assertFalse(
+            detect_generative_intent("write me a tweet is quoted text; do not draft anything")
+        )
+
 
 class DetectIterationIntentTests(SparkTestCase):
     def test_tighten_this(self) -> None:
@@ -94,6 +99,11 @@ class DetectIterationIntentTests(SparkTestCase):
 
     def test_unrelated_question_is_not_iteration(self) -> None:
         self.assertIsNone(detect_iteration_intent("how does this tool work?"))
+
+    def test_quoted_iteration_word_is_not_iteration(self) -> None:
+        self.assertIsNone(
+            detect_iteration_intent("shorter is just a word here; do not revise anything")
+        )
 
 
 class ReplyResemblesDraftTests(SparkTestCase):

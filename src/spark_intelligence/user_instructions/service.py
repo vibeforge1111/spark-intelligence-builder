@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Iterable
 from uuid import uuid4
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
 
 
@@ -57,6 +58,11 @@ _FORGET_PREFIXES = (
 def detect_instruction_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("remember", "save", "forget", "store", "delete"),
+    ):
         return None
     for pattern in _FORGET_PREFIXES:
         match = pattern.match(text)

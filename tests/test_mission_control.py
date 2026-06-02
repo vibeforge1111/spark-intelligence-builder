@@ -255,3 +255,9 @@ class MissionControlTests(SparkTestCase):
         self.assertTrue(looks_like_mission_control_query("Show me mission control."))
         self.assertTrue(looks_like_mission_control_query("Give me a one-line Telegram launch health check."))
         self.assertFalse(looks_like_mission_control_query("Write me a cold outbound email."))
+        self.assertFalse(
+            looks_like_mission_control_query(
+                "We keep saying mission control, but do not open mission control; explain the bug."
+            )
+        )
+        self.assertFalse(looks_like_mission_control_query("What is active right now is just quoted text."))

@@ -16,6 +16,7 @@ from spark_intelligence.browser.service import (
     collect_browser_use_adapter_status,
 )
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
 
@@ -129,10 +130,34 @@ def looks_like_system_registry_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
         return False
-    direct_signals = (
+    if has_conversation_only_boundary(lowered_message) or denies_intent(
+        lowered_message,
+        ("self-introspect", "self introspect", "open", "show tools", "show systems", "list tools"),
+    ):
+        return False
+    name_signals = (
         "spark swarm",
         "spark researcher",
         "spark intelligence builder",
+    )
+    self_knowledge_actions = (
+        "what",
+        "which",
+        "show",
+        "list",
+        "status",
+        "ready",
+        "connected",
+        "available",
+        "active",
+        "diagnose",
+        "health",
+    )
+    if any(signal in lowered_message for signal in name_signals) and any(
+        action in lowered_message for action in self_knowledge_actions
+    ):
+        return True
+    direct_signals = (
         "what chips",
         "which chips",
         "active chips",
@@ -196,6 +221,11 @@ def looks_like_system_registry_query(message: str) -> bool:
 def _looks_like_self_awareness_report_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
+        return False
+    if has_conversation_only_boundary(lowered_message) or denies_intent(
+        lowered_message,
+        ("self-introspect", "self introspect", "inspect yourself", "diagnose yourself"),
+    ):
         return False
     signals = (
         "know about yourself",
