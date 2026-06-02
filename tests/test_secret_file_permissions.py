@@ -79,3 +79,30 @@ class SecretFilePermissionTests(SparkTestCase):
         principal = ConfigManager._windows_current_principal()
 
         self.assertEqual(principal, "DESKTOP-SMVB6C0\\USER")
+
+    def test_env_secret_write_never_leaves_world_readable_window(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX file-mode window; Windows uses ACL hardening")
+        import stat
+
+        env_path = self.config_manager.paths.env_file
+        # Ensure the file exists, then simulate an exposed / umask-created mode.
+        self.config_manager.upsert_env_secret("SEED_KEY", "seed")
+        os.chmod(env_path, 0o644)
+
+        # Disable the post-write hardening so the test observes the write itself,
+        # not the chmod that runs afterward.
+        with patch.object(ConfigManager, "harden_env_file_permissions", lambda self: None):
+            previous_umask = os.umask(0o022)
+            try:
+                self.config_manager.upsert_env_secret("TELEGRAM_BOT_TOKEN", "123456789:secret")
+            finally:
+                os.umask(previous_umask)
+
+        mode = stat.S_IMODE(env_path.stat().st_mode)
+        self.assertEqual(
+            mode,
+            0o600,
+            f"env secrets file was mode {oct(mode)} during write; the bot token must "
+            "never be group/world readable even before hardening runs",
+        )

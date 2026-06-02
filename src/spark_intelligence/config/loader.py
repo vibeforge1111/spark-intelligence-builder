@@ -369,7 +369,7 @@ class ConfigManager:
         previous_value: str | None = None,
         new_value: str | None = None,
     ) -> None:
-        self.paths.env_file.write_text(content, encoding="utf-8")
+        self._write_secret_text(self.paths.env_file, content)
         self.harden_env_file_permissions()
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
@@ -386,6 +386,27 @@ class ConfigManager:
             rollback_payload={"key": target_key, "manual_restore_required": previous_value is not None},
             summary=f"Env secret mutation applied for {target_key}.",
         )
+
+    @staticmethod
+    def _write_secret_text(path: Path, content: str) -> None:
+        """Write secret content so it is never group/world readable, even for
+        an instant. New files are created mode 0600 via a restrictive opener,
+        and an existing file is tightened before it is truncated, closing the
+        window where the prior code wrote under the process umask (often 0644)
+        and only chmod-ed afterward. Post-write hardening is kept as a backstop.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt" and path.exists():
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+
+        def _secure_opener(target: str, flags: int) -> int:
+            return os.open(target, flags, 0o600)
+
+        with open(path, "w", encoding="utf-8", opener=_secure_opener) as handle:
+            handle.write(content)
 
     def harden_env_file_permissions(self) -> None:
         if not self.paths.env_file.exists():
