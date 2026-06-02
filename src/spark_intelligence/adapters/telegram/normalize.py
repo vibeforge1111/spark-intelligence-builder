@@ -3,6 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+def _safe_int(value: Any, field_name: str) -> int:
+    """Convert *value* to ``int`` safely.
+
+    Returns ``0`` when *value* cannot be converted rather than letting a
+    ``ValueError`` propagate up and crash the entire normalisation.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
 
 @dataclass
 class NormalizedTelegramUpdate:
@@ -60,7 +71,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     media_payload = voice_payload if isinstance(voice_payload, dict) else (audio_payload if isinstance(audio_payload, dict) else {})
     media_file_id = str(media_payload.get("file_id")).strip() if media_payload.get("file_id") else None
     media_mime_type = str(media_payload.get("mime_type")).strip() if media_payload.get("mime_type") else None
-    media_duration_seconds = int(media_payload.get("duration")) if media_payload.get("duration") is not None else None
+    media_duration_seconds = _safe_int(media_payload.get("duration"), "media_duration") if media_payload.get("duration") is not None else None
     spark_media = message.get("spark_media") if isinstance(message.get("spark_media"), dict) else {}
     media_audio_base64 = str(spark_media.get("audio_base64")).strip() if spark_media.get("audio_base64") else None
     media_filename = str(spark_media.get("filename")).strip() if spark_media.get("filename") else None
@@ -68,7 +79,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     caption_text = str(message.get("caption") or "").strip() or None
 
     return NormalizedTelegramUpdate(
-        update_id=int(update_id),
+        update_id=_safe_int(update_id, "update_id"),
         channel_id=channel_id,
         message_id=int(message_id),
         telegram_user_id=str(telegram_user_id),
