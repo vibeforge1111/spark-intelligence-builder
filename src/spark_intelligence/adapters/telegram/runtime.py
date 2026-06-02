@@ -4230,6 +4230,49 @@ def _record_telegram_voice_delivery_runtime_state(
             state_key=f"telegram:voice:last_runtime_state:{external_user_id}",
             value=encoded,
         )
+    _export_telegram_voice_runtime_state_for_spark_os(state_db=state_db, runtime_state=runtime_state)
+
+
+def _export_telegram_voice_runtime_state_for_spark_os(*, state_db: StateDB, runtime_state: dict[str, Any]) -> None:
+    if runtime_state.get("schema_version") != "spark.voice_runtime_state.v1":
+        return
+    spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
+    if spark_home:
+        root = Path(spark_home).expanduser()
+    else:
+        state_path = Path(state_db.path).expanduser()
+        root = state_path.parents[1] if len(state_path.parents) > 1 else state_path.parent
+    output_path = root / "state" / "spark-voice-comms" / "voice-runtime-state.json"
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(_public_telegram_voice_runtime_state(runtime_state), sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _public_telegram_voice_runtime_state(runtime_state: dict[str, Any]) -> dict[str, Any]:
+    public_state = json.loads(json.dumps(runtime_state))
+    tts = public_state.get("tts") if isinstance(public_state.get("tts"), dict) else {}
+    if tts.get("voice_id") and not tts.get("voice_id_masked"):
+        voice_id = str(tts.get("voice_id") or "")
+        tts["voice_id_masked"] = f"{voice_id[:4]}...{voice_id[-4:]}" if len(voice_id) > 8 else "***"
+    tts.pop("voice_id", None)
+    tts.pop("settings", None)
+    public_state["tts"] = tts
+    transcript = public_state.get("transcript")
+    if isinstance(transcript, dict):
+        public_state["transcript"] = {
+            "present": True,
+            "confidence": transcript.get("confidence"),
+            "provider_id": transcript.get("provider_id"),
+        }
+    public_state["redaction"] = (
+        "metadata only; raw audio, transcript bodies, provider secrets, and unmasked voice ids omitted"
+    )
+    return public_state
 
 
 def _telegram_voice_runtime_state_with_delivery(

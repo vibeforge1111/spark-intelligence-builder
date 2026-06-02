@@ -8685,7 +8685,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                 },
             )
 
-        with patch(
+        with patch.dict("os.environ", {"SPARK_HOME": str(self.home)}, clear=False), patch(
             "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
             side_effect=fake_voice_hook,
         ):
@@ -8714,6 +8714,18 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(runtime_state["telegram_delivery"]["telegram_message_id_present"])
         self.assertTrue(runtime_state["claim_levels"]["delivery_ready"])
         self.assertIn("telegram-sendVoice-trace", runtime_state["source_ledger"])
+        os_runtime_state_path = self.home / "state" / "spark-voice-comms" / "voice-runtime-state.json"
+        self.assertTrue(os_runtime_state_path.exists())
+        os_runtime_state = json.loads(os_runtime_state_path.read_text(encoding="utf-8"))
+        self.assertEqual(os_runtime_state["schema_version"], "spark.voice_runtime_state.v1")
+        self.assertEqual(os_runtime_state["telegram_delivery"]["last_send_voice_status"], "success")
+        self.assertTrue(os_runtime_state["telegram_delivery"]["telegram_message_id_present"])
+        self.assertTrue(os_runtime_state["claim_levels"]["delivery_ready"])
+        self.assertEqual(
+            os_runtime_state["redaction"],
+            "metadata only; raw audio, transcript bodies, provider secrets, and unmasked voice ids omitted",
+        )
+        self.assertNotIn("voice_id", os_runtime_state["tts"])
 
     def test_telegram_voice_reply_uses_profile_tts_env_override(self) -> None:
         captured_payload: dict[str, object] = {}
