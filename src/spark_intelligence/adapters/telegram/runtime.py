@@ -267,6 +267,35 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
+def _looks_like_simple_chat_message(text: str) -> bool:
+    """Detect trivially simple conversational messages that don't need the researcher bridge.
+
+    Conservative matching: only catches greetings, thanks, single-word affirmations,
+    and very short casual phrases. Does NOT catch questions, requests, or anything
+    that could benefit from memory or research context.
+    """
+    if not text:
+        return False
+    lowered = text.lower().strip()
+    # Ultra-short messages (<=8 chars) that are just greetings or affirmations
+    ultra_short = {"hi", "hey", "yo", "sup", "ok", "okay", "yes", "no", "nope",
+                   "yeah", "sure", "right", "correct", "lol", "haha", "wow",
+                   "oh", "hmm", "bye", "thanks", "ty", "cool", "nice", "good",
+                   "great", "awesome", "wow", "lol", "lmao", "rofl", "haha"}
+    if lowered in ultra_short:
+        return True
+    # Short greeting/closing phrases
+    greeting_closing = (
+        "hello", "hi there", "hey there", "good morning", "good night",
+        "good evening", "good afternoon", "how are you", "how's it going",
+        "what's up", "thanks", "thank you", "thank you so much",
+        "bye", "goodbye", "see you", "see ya", "take care", "cheers",
+    )
+    if lowered in greeting_closing:
+        return True
+    return False
+
+
 def _format_chip_metric_value(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
@@ -1557,6 +1586,18 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
+                if not _shortcircuited and _looks_like_simple_chat_message(effective_text):
+                    _shortcircuited = True
+                    outbound_text = ""
+                    trace_ref = None
+                    bridge_mode = "simple_chat_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "simple_chat_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
                 if not _shortcircuited and _instruction_intent is not None:
                     _shortcircuited = True
                     outbound_text = _maybe_capture_user_instruction(
@@ -5872,13 +5913,26 @@ def _match_contextual_memory_doctor_command(
     session_id: str,
     current_request_id: str,
 ) -> dict[str, object] | None:
+    # Skip contextual trigger when the message is a memory write request.
+    # Without this guard, "remember this: X" messages trigger distress signals
+    # that activate the Doctor on every subsequent message.
+    _memory_write_patterns = re.compile(
+        r"(?:^|\b)(?:please\s+)?(?:remember\s+this|save\s+this|memory\s+update)\b",
+        re.IGNORECASE,
+    )
+    if _memory_write_patterns.search(str(inbound_text or "")):
+        return None
+    # Skip when the message already contains Memory Doctor evidence appended
+    # by the Telegram bridge, preventing infinite re-trigger loops.
+    if "[Spark Telegram Memory Doctor evidence]" in str(inbound_text or ''):
+        return None
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
     previous_record = _memory_doctor_previous_gateway_record(
         config_manager=config_manager,
         external_user_id=external_user_id,
         session_id=session_id,
         current_request_id=current_request_id,
-        include_memory_doctor=True,
+        include_memory_doctor=False,
     )
     if previous_record is None:
         return None
@@ -5956,7 +6010,9 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
         signals.append({"name": "diagnostic_question", "weight": 1})
     if re.search(
-        r"\b(?:not\s+[a-z][a-z0-9_-]*|wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+)\b",
+        r"\b(?:wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+|"
+                r"not\s+(?:called|named)\s+\w+|my\s+name\s+is\s+not\s+\w+)\b"
+        r"|that(?:\s+s)?\s+not\s+(?:right|correct|my\s+name)|my\s+name\s+is\s+not\b",
         text,
     ):
         signals.append({"name": "identity_correction_after_wrong_name", "weight": 2})
