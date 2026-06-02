@@ -750,7 +750,6 @@ def _build_voice_hook_payload(
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": envelope.channel_kind or "cli",
-        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
         "human_id": envelope.human_id,
         "agent_id": envelope.agent_id,
     }
