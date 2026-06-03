@@ -566,8 +566,25 @@ def _build_recent_invocation_claims(
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
             events = latest_events_by_type(state_db, event_type=event_type, limit=8)
-        except Exception:
+        except Exception as exc:
             events = []
+            claims.append(
+                SelfAwarenessClaim(
+                    claim=(
+                        f"Self-awareness sensor degraded: could not read recent {event_type} "
+                        f"events from the state DB ({type(exc).__name__})."
+                    ),
+                    source="observability.store.latest_events_by_type",
+                    source_kind="self_awareness_sensor_degraded",
+                    confidence="high",
+                    verification_status="sensor_unavailable",
+                    freshness="current_snapshot",
+                    next_probe=(
+                        "Run `spark intelligence doctor` or inspect the StateDB before claiming the agent has "
+                        "recent success/failure evidence; this capsule cannot confirm it right now."
+                    ),
+                )
+            )
         for event in events:
             facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
             provenance = event.get("provenance_json") if isinstance(event.get("provenance_json"), dict) else {}
