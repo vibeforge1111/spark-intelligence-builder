@@ -7,7 +7,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,7 +51,8 @@ from spark_intelligence.memory.retention_policy import (
 DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
-_SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
+_SDK_CLIENT_CACHE_MAX_SIZE = 128
+_SDK_CLIENT_CACHE: OrderedDict[tuple[str, str], Any] = OrderedDict()
 
 # Builder-side source of truth for the runtime memory architecture. Substrate
 # (`domain_chip_memory.sdk`) also defines a default, but relying on it meant
@@ -5023,6 +5024,22 @@ def _write_personality_observations(
     return result
 
 
+def _cache_get(key: tuple[str, str]) -> Any | None:
+    """Retrieve from cache and mark as most-recently-used."""
+    if key in _SDK_CLIENT_CACHE:
+        _SDK_CLIENT_CACHE.move_to_end(key)
+        return _SDK_CLIENT_CACHE[key]
+    return None
+
+
+def _cache_put(key: tuple[str, str], value: Any) -> None:
+    """Insert into cache with LRU eviction when size exceeds limit."""
+    _SDK_CLIENT_CACHE[key] = value
+    _SDK_CLIENT_CACHE.move_to_end(key)
+    while len(_SDK_CLIENT_CACHE) > _SDK_CLIENT_CACHE_MAX_SIZE:
+        _SDK_CLIENT_CACHE.popitem(last=False)
+
+
 def _load_sdk_client(config_manager: ConfigManager) -> Any | None:
     module_name = str(config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     return _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
@@ -5030,8 +5047,9 @@ def _load_sdk_client(config_manager: ConfigManager) -> Any | None:
 
 def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | None:
     cache_key = (module_name, str(home_path))
-    if cache_key in _SDK_CLIENT_CACHE:
-        return _SDK_CLIENT_CACHE[cache_key]
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         module = _import_memory_sdk_module(module_name)
     except Exception:
@@ -5046,11 +5064,11 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
             persistence_path = _domain_chip_memory_persistence_path(home_path)
             _hydrate_domain_chip_memory_sdk(client=client, module=module, persistence_path=persistence_path)
             adapted = _DomainChipMemoryClientAdapter(client, module, persistence_path=persistence_path)
-            _SDK_CLIENT_CACHE[cache_key] = adapted
+            _cache_put(cache_key, adapted)
             return adapted
-        _SDK_CLIENT_CACHE[cache_key] = client
+        _cache_put(cache_key, client)
         return client
-    _SDK_CLIENT_CACHE[cache_key] = module
+    _cache_put(cache_key, module)
     return module
 
 
