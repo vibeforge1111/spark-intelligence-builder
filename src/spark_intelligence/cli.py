@@ -2451,6 +2451,7 @@ def build_parser() -> argparse.ArgumentParser:
     attachments_set_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     attachments_clear_path_parser = attachments_subparsers.add_parser("clear-path", help="Clear the active specialization path")
     attachments_clear_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_clear_path_parser.add_argument("--dry-run", action="store_true", help="Print the current active path without clearing it")
     attachments_run_hook_parser = attachments_subparsers.add_parser(
         "run-hook",
         help="Run a manifest-backed chip hook using the standard spark-hook-io.v1 contract",
@@ -6343,6 +6344,10 @@ def handle_attachments_set_path(args: argparse.Namespace) -> int:
 
 def handle_attachments_clear_path(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    if getattr(args, "dry_run", False):
+        current = config_manager.get_path("spark.specialization_paths.active_path_key") or "none"
+        print(f"Active path (would clear): {current}")
+        return 0
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
