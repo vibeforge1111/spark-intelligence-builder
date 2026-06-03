@@ -3457,6 +3457,8 @@ def maybe_evolve_traits(
 
     # Compute trait adjustment signals
     trait_signals: dict[str, float] = {}
+    if total_weight == 0.0:
+        return None
     for state, weight in state_weights.items():
         signals = _STATE_TRAIT_SIGNALS.get(state, {})
         normalized_weight = weight / total_weight
