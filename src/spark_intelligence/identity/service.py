@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from uuid import uuid4
 
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+
+logger = logging.getLogger(__name__)
 
 
 LOCAL_OPERATOR_HUMAN_ID = "local-operator"
@@ -1357,7 +1360,19 @@ def _active_pairing_code_rows(conn, *, channel_id: str, external_user_id: str, n
     for row in rows:
         try:
             payload = json.loads(str(row["value"] or "{}"))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            # A corrupted runtime_state row for a pairing code is silently
+            # treated as "no active pairing" today, which surfaces to the
+            # operator as "pairing-code workflow stuck / lockout never
+            # clears". Name the state_key + parse error so the bad row is
+            # findable in the operator log before falling back to skip.
+            logger.warning(
+                "identity._active_pairing_code_rows: skipping malformed runtime_state row "
+                "state_key=%s channel=%s: %s",
+                row["state_key"],
+                channel_id,
+                exc,
+            )
             continue
         if not isinstance(payload, dict):
             continue
