@@ -173,7 +173,7 @@ def connect_provider(
         "api_key_env": env_key,
         "default_auth_profile_id": profile_id,
     }
-    if not config["providers"].get("default_provider"):
+    if not config["providers"].get("default_provider") and profile_status == "active":
         config["providers"]["default_provider"] = provider
     config_manager.save(
         config,
