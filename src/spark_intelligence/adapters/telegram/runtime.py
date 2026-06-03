@@ -8121,7 +8121,16 @@ def _render_telegram_voice_dashboard_reply(
     )
     snapshot_path = _telegram_voice_dashboard_snapshot_path()
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(json.dumps(snapshot, sort_keys=True, indent=2, ensure_ascii=True), encoding="utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(snapshot_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
+            json.dump(snapshot, tmp_file, sort_keys=True, indent=2, ensure_ascii=True)
+        os.replace(tmp_path, snapshot_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     dashboard_url = _telegram_voice_dashboard_url(config_manager)
     return (
         "I updated the voice system dashboard snapshot.\n\n"
