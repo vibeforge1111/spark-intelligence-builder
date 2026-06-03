@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from spark_intelligence.auth._token_crypto import decrypt_token, encrypt_token
 from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, get_oauth_callback_state, issue_oauth_callback_state
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
@@ -476,7 +477,7 @@ def refresh_provider(
             """,
             (auth_profile_id,),
         ).fetchone()
-    refresh_token = str(row["refresh_token_ciphertext"]) if row and row["refresh_token_ciphertext"] else ""
+    refresh_token = decrypt_token(str(row["refresh_token_ciphertext"])) if row and row["refresh_token_ciphertext"] else ""
     if not refresh_token:
         _mark_oauth_refresh_failure(
             state_db=state_db,
@@ -797,8 +798,8 @@ def _persist_oauth_tokens(
                 issuer,
                 None,
                 str(token_payload.get("scope")) if token_payload.get("scope") else None,
-                str(token_payload.get("access_token")),
-                str(token_payload.get("refresh_token")) if token_payload.get("refresh_token") else None,
+                encrypt_token(str(token_payload.get("access_token"))),
+                encrypt_token(str(token_payload.get("refresh_token"))) if token_payload.get("refresh_token") else None,
                 access_expires_at,
                 refresh_expires_at,
             ),

@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from dataclasses import asdict, dataclass
 
+from spark_intelligence.auth._token_crypto import decrypt_token
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
@@ -418,7 +419,7 @@ def _resolve_secret_value(
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
         if _oauth_token_expired(oauth_row):
             raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
-        return str(oauth_row["access_token_ciphertext"])
+        return decrypt_token(str(oauth_row["access_token_ciphertext"]))
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
     if secret_ref.source != "env":
