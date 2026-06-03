@@ -133,13 +133,13 @@ def build_stale_context_sweep(
                 stale_claims=[claim.to_payload() for claim in resolution.stale_claims],
                 contradicted_claims=[claim.to_payload() for claim in resolution.contradicted_claims],
                 resolution=resolution.resolution,
-                contradiction_event_id=recorded_ids[index] if index < len(recorded_ids) else "",
+                contradiction_event_id=recorded_ids[idx] if idx < len(recorded_ids) else "",
                 request_id=request_id,
                 session_id=session_id,
                 human_id=human_id,
                 actor_id=actor_id or "stale_context_sweeper",
             )
-            for index, resolution in enumerate(resolutions)
+            for idx, resolution in enumerate(resolutions)
         ]
     status = "clear" if not stale_items and not contradicted_items else "needs_review"
     return StaleContextSweepReport(
