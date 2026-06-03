@@ -105,6 +105,11 @@ MEMORY_MOVEMENT_STATUS_EXPORT_KEYS: tuple[str, ...] = (
 )
 
 
+def init_runtime_architecture_pins() -> None:
+    """Initialize runtime architecture environment pins. Call at startup, not import time."""
+    _apply_runtime_architecture_pin()
+
+
 def _apply_runtime_architecture_pin() -> None:
     if not os.environ.get(_ARCHITECTURE_PIN_ENV_VAR):
         os.environ[_ARCHITECTURE_PIN_ENV_VAR] = PINNED_RUNTIME_MEMORY_ARCHITECTURE
