@@ -881,14 +881,14 @@ class MemoryOrchestratorTests(SparkTestCase):
         fake_client = _HybridRetrievalMemoryClient()
 
         def fake_build_sidecars(**kwargs):
-            self.assertEqual(kwargs.get("graphiti_backend"), "kuzu")
-            self.assertTrue(str(kwargs.get("graphiti_db_path")).endswith("graphiti.kuzu"))
-            self.assertEqual(kwargs.get("graphiti_llm_api_key_env"), "ZAI_API_KEY")
-            self.assertEqual(kwargs.get("graphiti_llm_api_key"), "test-secret")
-            self.assertEqual(kwargs.get("graphiti_llm_base_url"), "https://api.z.ai/api/coding/paas/v4/")
-            self.assertEqual(kwargs.get("graphiti_llm_model"), "glm-5.1")
-            self.assertTrue(kwargs.get("graphiti_auto_build_indices"))
-            self.assertEqual(kwargs.get("graphiti_call_timeout_seconds"), 6.0)
+            self.assertEqual(kwargs["graphiti_backend"], "kuzu")
+            self.assertTrue(str(kwargs["graphiti_db_path"]).endswith("graphiti.kuzu"))
+            self.assertEqual(kwargs["graphiti_llm_api_key_env"], "ZAI_API_KEY")
+            self.assertEqual(kwargs["graphiti_llm_api_key"], "test-secret")
+            self.assertEqual(kwargs["graphiti_llm_base_url"], "https://api.z.ai/api/coding/paas/v4/")
+            self.assertEqual(kwargs["graphiti_llm_model"], "glm-5.1")
+            self.assertTrue(kwargs["graphiti_auto_build_indices"])
+            self.assertEqual(kwargs["graphiti_call_timeout_seconds"], 6.0)
             return {"graphiti_temporal_graph": FakeGraphSidecar()}
 
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -1872,8 +1872,8 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("stale_preserved", actions)
         self.assertIn("superseded", actions)
         self.assertIn("resurrected", actions)
-        self.assertTrue(all(facts.get("transition_count") == 1 for facts in lifecycle_facts))
-        self.assertTrue(all(facts.get("retention_class") == "maintenance_summary" for facts in lifecycle_facts))
+        self.assertTrue(all(facts["transition_count"] == 1 for facts in lifecycle_facts))
+        self.assertTrue(all(facts["retention_class"] == "maintenance_summary" for facts in lifecycle_facts))
         by_action = {facts.get("lifecycle_action"): facts for facts in lifecycle_facts}
         stale_facts = by_action["stale_preserved"]
         self.assertEqual(stale_facts["audit_sample_bucket"], "stale_preserved")
@@ -1921,7 +1921,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
-        self.assertEqual(events[0]["facts_json"].get("memory_role"), "structured_evidence")
+        self.assertEqual(events[0]["facts_json"]["memory_role"], "structured_evidence")
         self.assertEqual(observations[0]["predicate"], "evidence.telegram.evidence")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
 
@@ -2596,7 +2596,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
-        self.assertEqual(events[0]["facts_json"].get("memory_role"), "episodic")
+        self.assertEqual(events[0]["facts_json"]["memory_role"], "episodic")
         self.assertEqual(observations[0]["predicate"], "raw_turn")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
 
