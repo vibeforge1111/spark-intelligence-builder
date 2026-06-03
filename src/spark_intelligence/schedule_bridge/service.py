@@ -322,8 +322,11 @@ def _save_pending(store: dict[str, Any]) -> None:
     tmp = p.with_suffix(".json.tmp")
     now = _time.time()
     pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
-    tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    try:
+        tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
