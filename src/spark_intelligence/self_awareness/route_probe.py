@@ -124,6 +124,8 @@ def _run_route_probe(
         return _run_swarm_status_probe(config_manager, state_db)
     if capability_key == "spark_browser":
         return _run_browser_use_status_probe(config_manager)
+    if capability_key == "spark_local_work":
+        return _run_local_work_registry_probe()
     return _run_registry_route_probe(config_manager, state_db, capability_key=capability_key)
 
 
@@ -335,6 +337,17 @@ def _run_browser_use_status_probe(config_manager: ConfigManager) -> dict[str, An
             or "browser-use adapter status source is not ready."
         ),
         "summary": str(status.get("evidence_summary") or "browser-use adapter status=unknown"),
+    }
+
+
+def _run_local_work_registry_probe() -> dict[str, Any]:
+    # The local-work registry row is static (available=True) and does not depend on
+    # gateway/auth/swarm probes or local repo/git indexing. Full build_system_registry()
+    # was pulling those in and made route probes take several seconds.
+    status = "available"
+    return {
+        "status": "success",
+        "summary": f"registry status={status} available=True",
     }
 
 

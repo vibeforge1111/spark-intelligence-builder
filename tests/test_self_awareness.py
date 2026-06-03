@@ -715,6 +715,22 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.capability_key, "spark_local_work")
         self.assertIn("registry status=ready", result.probe_summary)
 
+    def test_local_work_route_probe_skips_full_system_registry_build(self) -> None:
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.build_system_registry",
+            side_effect=AssertionError("full registry build should not run for spark_local_work route probes"),
+        ) as registry_build:
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_local_work",
+                actor_id="operator:test",
+            )
+        registry_build.assert_not_called()
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.capability_key, "spark_local_work")
+        self.assertIn("registry status=available available=True", result.probe_summary)
+
     def test_run_route_probe_uses_memory_smoke_for_memory_route(self) -> None:
         smoke_result = SimpleNamespace(
             write_result=SimpleNamespace(status="succeeded", accepted_count=1, reason=None),
