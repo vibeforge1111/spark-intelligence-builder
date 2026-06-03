@@ -2923,6 +2923,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     identity_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     identity_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    identity_list_parser.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
 
     pairing_parser = subparsers.add_parser("pairings", help="Manage pairings")
     pairing_subparsers = pairing_parser.add_subparsers(dest="pairings_command", required=True)
