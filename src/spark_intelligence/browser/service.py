@@ -812,9 +812,27 @@ def _browser_use_doctor_failure_doc(*, checked_at: str, cli_path: str, reason: s
 
 
 def _write_browser_use_status(path: Path, status_doc: dict[str, Any]) -> None:
+    """Persist the browser-use status doc atomically.
+
+    status.json is read by _read_browser_use_status on every browser
+    health check. A torn write (process killed mid-write) would leave
+    the file partial; _read_browser_use_status falls back to status=error
+    with `could not read browser-use status file`, hiding the real
+    ready/last_success_at history from the operator. Sibling temp file +
+    os.replace is atomic on POSIX.
+    """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(status_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        try:
+            tmp.write_text(json.dumps(status_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(str(tmp), str(path))
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
     except OSError:
         return
 
