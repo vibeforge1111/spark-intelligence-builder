@@ -1214,6 +1214,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="SPARK_SWARM_ACCESS_TOKEN",
         help="Env var name used to store the Spark Swarm access token",
     )
+    setup_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     bootstrap_parser = subparsers.add_parser("bootstrap", help="Run one supported end-to-end bootstrap profile")
     bootstrap_subparsers = bootstrap_parser.add_subparsers(dest="bootstrap_command", required=True)
