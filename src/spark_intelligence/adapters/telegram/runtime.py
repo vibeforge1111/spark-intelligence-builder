@@ -352,6 +352,7 @@ def _maybe_save_reply_as_draft(
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
     except Exception:
+        logging.warning("Silent error in voice handler: %s", exc)
         pass
 
     if is_iteration:
@@ -380,6 +381,7 @@ def _maybe_save_reply_as_draft(
                         chip_used=chip_used,
                     )
                 except Exception:
+                    logging.warning("Silent error in voice handler: %s", exc)
                     pass
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
@@ -395,6 +397,7 @@ def _maybe_save_reply_as_draft(
                     chip_used=chip_used,
                 )
             except Exception:
+                logging.warning("Silent error in voice handler: %s", exc)
                 pass
             return reply_text
         try:
@@ -407,6 +410,7 @@ def _maybe_save_reply_as_draft(
                 chip_used=chip_used,
             )
         except Exception:
+            logging.warning("Silent error in voice handler: %s", exc)
             pass
         return reply_text
 
@@ -421,6 +425,7 @@ def _maybe_save_reply_as_draft(
                 chip_used=chip_used,
             )
         except Exception:
+            logging.warning("Silent error in voice handler: %s", exc)
             pass
         return reply_text
 
