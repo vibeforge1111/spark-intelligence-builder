@@ -3589,6 +3589,7 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             check=True,
             capture_output=True,
             text=True,
+            timeout=30,
         )
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "Task Scheduler install failed.").strip()
@@ -3597,6 +3598,9 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             return 1
         wrapper_path = _install_windows_startup_wrapper(config_manager, task_name, task_command)
         installed_platform = "windows_startup_folder"
+    except subprocess.TimeoutExpired:
+        print("Task Scheduler install timed out.", file=sys.stderr)
+        return 1
 
     config_manager.set_path("runtime.autostart.enabled", True)
     config_manager.set_path("runtime.autostart.platform", installed_platform)
@@ -3638,9 +3642,13 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
         except subprocess.CalledProcessError as exc:
             print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
+            return 1
+        except subprocess.TimeoutExpired:
+            print("Task Scheduler uninstall timed out.", file=sys.stderr)
             return 1
 
     config_manager.set_path("runtime.autostart.enabled", False)
