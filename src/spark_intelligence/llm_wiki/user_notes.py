@@ -122,7 +122,14 @@ def promote_llm_wiki_user_note(
         or "Invalidate or downgrade if governed current-state memory, explicit user correction, or newer evidence contradicts it.",
         warnings=warnings,
     )
-    path.write_text(content, encoding="utf-8")
+    if overwrite:
+        path.write_text(content, encoding="utf-8")
+    else:
+        # Exclusive-create closes the TOCTOU window between the line-100
+        # exists() pre-check and this write.  A concurrent promotion that
+        # raced past the pre-check will be rejected here by the OS.
+        with path.open("x", encoding="utf-8") as fh:
+            fh.write(content)
     payload = {
         "output_dir": str(root),
         "relative_path": relative_path,
