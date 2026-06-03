@@ -31,19 +31,19 @@ def test_builder_legacy_authority_inventory_is_release_ready() -> None:
     assert inventory["release_gate"]["blockers"] == []
 
 
-def test_builder_old_detectors_are_evidence_only_or_disabled() -> None:
+def test_builder_old_detectors_are_evidence_only_or_quarantined() -> None:
     planes = build_builder_legacy_authority_planes()
-    evidence_or_disabled = [
+    evidence_or_quarantined = [
         plane
         for plane in planes
-        if plane["disposition"] in {"rebound_to_harness_evidence", "disabled"}
+        if plane["disposition"] in {"evidence_adapter", "quarantined"}
     ]
 
-    assert len(evidence_or_disabled) >= 9
-    for plane in evidence_or_disabled:
+    assert len(evidence_or_quarantined) >= 9
+    for plane in evidence_or_quarantined:
         assert not _has_high_agency_risk(plane)
         assert plane["blockers"] == []
-        if plane["disposition"] == "rebound_to_harness_evidence":
+        if plane["disposition"] == "evidence_adapter":
             assert plane["harness_binding"]["evidence_only"] is True
             assert plane["harness_binding"]["consumer_of_governor"] is False
 
@@ -53,7 +53,7 @@ def test_builder_high_agency_consumers_require_governor_and_ledgers() -> None:
     consumers = [
         plane
         for plane in inventory["planes"]
-        if plane["disposition"] == "converted_to_harness_consumer"
+        if plane["disposition"] == "canonical_consumer"
     ]
 
     assert len(consumers) >= 6

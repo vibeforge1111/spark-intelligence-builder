@@ -33,13 +33,13 @@ def _evidence_only_plane(*, plane_id: str, surface: str, plane_type: str, source
         source_path=source_path,
         summary=summary,
         authority_risk={},
-        disposition="rebound_to_harness_evidence",
+        disposition="evidence_adapter",
         evidence=[_evidence(plane_id, summary, kind="route_candidate")],
         evidence_only=True,
     )
 
 
-def _disabled_plane(*, plane_id: str, surface: str, plane_type: str, source_path: str, summary: str) -> dict[str, Any]:
+def _quarantined_plane(*, plane_id: str, surface: str, plane_type: str, source_path: str, summary: str) -> dict[str, Any]:
     return _KERNEL.legacy_authority_plane(
         plane_id=f"legacy-plane:{plane_id}",
         owner_repo=OWNER_REPO,
@@ -48,7 +48,7 @@ def _disabled_plane(*, plane_id: str, surface: str, plane_type: str, source_path
         source_path=source_path,
         summary=summary,
         authority_risk={},
-        disposition="disabled",
+        disposition="quarantined",
         evidence=[_evidence(plane_id, summary, confidence=0.98)],
     )
 
@@ -70,7 +70,7 @@ def _consumer_plane(
         source_path=source_path,
         summary=summary,
         authority_risk=authority_risk,
-        disposition="converted_to_harness_consumer",
+        disposition="canonical_consumer",
         evidence=[_evidence(plane_id, summary)],
         governor_required=True,
         consumer_of_governor=True,
@@ -151,7 +151,7 @@ def build_builder_legacy_authority_planes() -> list[dict[str, Any]]:
                 "can_schedule": True,
             },
         ),
-        _disabled_plane(
+        _quarantined_plane(
             plane_id="builder-swarm-keyword-escalation-without-readiness",
             surface="recursive_swarm",
             plane_type="keyword_detector",

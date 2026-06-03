@@ -58,6 +58,7 @@ from spark_intelligence.harness_contract import (
     authorize_vnext_tool_call,
     build_vnext_action_intent_envelope,
     parse_turn_intent_envelope,
+    verify_governor_tool_authority,
 )
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
@@ -4389,58 +4390,21 @@ def _governor_authorizes_researcher_tool_call(
     owner_system: str,
     mutation_class: MutationClass,
 ) -> tuple[str, tuple[str, ...], str, str | None]:
-    if not isinstance(governor_decision, dict):
-        return ("blocked", ("missing_governor_decision",), "missing_governor_decision", None)
-    decision_id = str(governor_decision.get("decision_id") or "").strip() or None
-    if governor_decision.get("schema_version") != "governor-decision-v1":
-        return ("blocked", ("unsupported_governor_decision_schema",), "governor_decision", decision_id)
-    boundary = governor_decision.get("execution_boundary")
-    if not isinstance(boundary, dict):
-        return ("blocked", ("missing_governor_execution_boundary",), "governor_decision", decision_id)
-    outcome = str(governor_decision.get("outcome") or "")
-    if mutation_class in ("none", "read_only"):
-        allowed_outcomes = {"execute", "read_only"}
-    else:
-        allowed_outcomes = {"execute"}
-    reason_codes: list[str] = []
-    if outcome not in allowed_outcomes:
-        reason_codes.append(f"governor_outcome_{outcome or 'missing'}")
-    if not bool(boundary.get("action_authorized")):
-        reason_codes.append("governor_action_not_authorized")
-    authorizations = governor_decision.get("authorizations")
-    if not isinstance(authorizations, list):
-        authorizations = []
-    matching_authorization = None
-    for item in authorizations:
-        if not isinstance(item, dict):
-            continue
-        capability_id = str(item.get("capability_id") or "")
-        if (
-            item.get("verdict") == "allow"
-            and owner_system in capability_id
-            and tool_name in capability_id
-        ):
-            matching_authorization = item
-            break
-    if matching_authorization is None:
-        reason_codes.append("governor_missing_matching_authorization")
-    ledgers = governor_decision.get("tool_ledgers")
-    if not isinstance(ledgers, list):
-        ledgers = []
-    matching_ledger = None
-    for item in ledgers:
-        if not isinstance(item, dict):
-            continue
-        authorization = item.get("authorization")
-        if str(item.get("tool_name") or "") == tool_name and isinstance(authorization, dict):
-            if authorization.get("verdict") == "allow":
-                matching_ledger = item
-                break
-    if matching_ledger is None:
-        reason_codes.append("governor_missing_matching_tool_ledger")
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        allow_read_only=mutation_class in ("none", "read_only"),
+    )
+    decision_id = str(verification.get("decision_id") or "").strip() or None
+    reason_codes = tuple(str(reason) for reason in verification.get("reason_codes") or [])
+    source_kind = str(verification.get("source_kind") or "governor_decision")
+    if verification.get("allowed") is True:
+        return ("allowed", (), source_kind, decision_id)
     if reason_codes:
-        return ("blocked", tuple(reason_codes), "governor_decision", decision_id)
-    return ("allowed", (), "governor_decision", decision_id)
+        return ("blocked", reason_codes, source_kind, decision_id)
+    return ("blocked", ("governor_consumer_verification_failed",), source_kind, decision_id)
 
 
 def _vnext_proposes_researcher_memory_write(payload: dict[str, Any] | None) -> bool:

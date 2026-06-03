@@ -1,6 +1,10 @@
+from copy import deepcopy
+
 from spark_intelligence.bridge_authority import (
+    BridgeAuthorityVerdict,
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    build_governor_decision_from_bridge_authority,
     build_telegram_memory_read_turn_intent_payload,
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_diagnostic_turn_intent_payload_vnext,
@@ -189,6 +193,58 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+
+
+def test_bridge_governor_degrades_copied_tool_ledger() -> None:
+    payload_a = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-ledger-source",
+        channel_kind="telegram",
+        session_id="session-write-ledger-source",
+        human_id="human-write-ledger-source",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    payload_b = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-ledger-target",
+        channel_kind="telegram",
+        session_id="session-write-ledger-target",
+        human_id="human-write-ledger-target",
+        user_message="My favorite color is green.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload_a is not None
+    assert payload_b is not None
+    source = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload_a},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    target = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload_b},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert source.tool_call_ledger is not None
+    assert target.authorization_decision is not None
+
+    copied = BridgeAuthorityVerdict(
+        allowed=True,
+        reason_codes=(),
+        envelope=target.envelope,
+        harness_core_envelope=target.harness_core_envelope,
+        proposed_action=target.proposed_action,
+        authorization_decision=target.authorization_decision,
+        tool_call_ledger=deepcopy(source.tool_call_ledger),
+    )
+
+    governor = build_governor_decision_from_bridge_authority(copied)
+
+    assert governor is not None
+    assert governor["outcome"] == "degrade"
+    assert governor["execution_boundary"]["action_authorized"] is False
+    assert "tool_ledger_turn_mismatch" in governor["execution_boundary"]["reasons"]
 
 
 def test_blocks_native_vnext_when_action_is_not_proposed() -> None:
@@ -420,6 +476,67 @@ def test_researcher_memory_write_authorizes_with_governor_decision(tmp_path) -> 
     assert allowed is True
     blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
     assert blocks == []
+
+
+def test_researcher_memory_write_rejects_copied_governor_ledger(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload_source = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-researcher-write-ledger-source",
+        channel_kind="telegram",
+        session_id="session-researcher-write-ledger-source",
+        human_id="human-researcher-write-ledger-source",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    payload_target = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-researcher-write-ledger-target",
+        channel_kind="telegram",
+        session_id="session-researcher-write-ledger-target",
+        human_id="human-researcher-write-ledger-target",
+        user_message="My favorite color is green.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload_source is not None
+    assert payload_target is not None
+    source = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload_source},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    target = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload_target},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert source.tool_call_ledger is not None
+    assert target.governor_decision is not None
+    copied_governor = deepcopy(target.governor_decision)
+    copied_governor["tool_ledgers"] = [deepcopy(source.tool_call_ledger)]
+
+    allowed = _authorize_researcher_memory_write(
+        state_db=state_db,
+        governor_decision=copied_governor,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=payload_target,
+        run_id=None,
+        request_id="req-researcher-write-ledger-target",
+        channel_kind="telegram",
+        session_id="session-researcher-write-ledger-target",
+        human_id="human-researcher-write-ledger-target",
+        agent_id="agent:test",
+        user_message="My favorite color is green.",
+        source_kind="telegram_runtime_profile_fact_observation",
+        operation="update",
+        allow_adapter_envelope=False,
+    )
+
+    assert allowed is False
+    blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
+    assert blocks
+    assert "governor_missing_matching_tool_ledger" in blocks[0]["facts_json"]["reason_codes"]
 
 
 def test_researcher_memory_read_authorizes_with_vnext_only(tmp_path) -> None:
