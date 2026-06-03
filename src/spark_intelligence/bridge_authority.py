@@ -45,15 +45,91 @@ class BridgeAuthorityVerdict:
     governor_decision: dict[str, Any] | None = None
 
 
+def _append_reason(reasons: list[str], reason: str) -> None:
+    if reason not in reasons:
+        reasons.append(reason)
+
+
+def _ledger_binding_reasons(
+    *,
+    envelope: dict[str, Any],
+    proposed_action: dict[str, Any],
+    authorization: dict[str, Any],
+    ledger: dict[str, Any],
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    ledger_authorization = ledger.get("authorization") if isinstance(ledger.get("authorization"), dict) else {}
+    result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
+
+    turn_id = str(envelope.get("turn_id") or "")
+    action_id = str(proposed_action.get("action_id") or "")
+    capability_id = str(proposed_action.get("capability_id") or "")
+    decision_id = str(authorization.get("decision_id") or "")
+    proposed_actions = envelope.get("proposed_actions") if isinstance(envelope.get("proposed_actions"), list) else []
+    action_in_envelope = any(
+        isinstance(action, dict)
+        and str(action.get("action_id") or "") == action_id
+        and str(action.get("capability_id") or "") == capability_id
+        for action in proposed_actions
+    )
+
+    if not turn_id:
+        _append_reason(reasons, "missing_envelope_turn_id")
+    if not action_id:
+        _append_reason(reasons, "missing_proposed_action_id")
+    if not capability_id:
+        _append_reason(reasons, "missing_proposed_capability_id")
+    if not decision_id:
+        _append_reason(reasons, "missing_authorization_decision_id")
+    if not action_in_envelope:
+        _append_reason(reasons, "proposed_action_not_in_envelope")
+
+    if str(authorization.get("verdict") or "") != "allow":
+        _append_reason(reasons, "authorization_not_allowed")
+    if str(authorization.get("turn_id") or "") != turn_id:
+        _append_reason(reasons, "authorization_turn_mismatch")
+    if str(authorization.get("action_id") or "") != action_id:
+        _append_reason(reasons, "authorization_action_mismatch")
+    if str(authorization.get("capability_id") or "") != capability_id:
+        _append_reason(reasons, "authorization_capability_mismatch")
+
+    if str(ledger.get("turn_id") or "") != turn_id:
+        _append_reason(reasons, "tool_ledger_turn_mismatch")
+    if str(ledger.get("action_id") or "") != action_id:
+        _append_reason(reasons, "tool_ledger_action_mismatch")
+    if str(ledger.get("capability_id") or "") != capability_id:
+        _append_reason(reasons, "tool_ledger_capability_mismatch")
+    if str(result.get("status") or "") != "not_started":
+        _append_reason(reasons, "tool_ledger_not_pre_execution")
+
+    if not ledger_authorization:
+        _append_reason(reasons, "missing_tool_ledger_authorization")
+    if str(ledger_authorization.get("verdict") or "") != "allow":
+        _append_reason(reasons, "tool_ledger_authorization_not_allowed")
+    if str(ledger_authorization.get("turn_id") or "") != turn_id:
+        _append_reason(reasons, "tool_ledger_authorization_turn_mismatch")
+    if str(ledger_authorization.get("action_id") or "") != action_id:
+        _append_reason(reasons, "tool_ledger_authorization_action_mismatch")
+    if str(ledger_authorization.get("capability_id") or "") != capability_id:
+        _append_reason(reasons, "tool_ledger_authorization_capability_mismatch")
+    if str(ledger_authorization.get("decision_id") or "") != decision_id:
+        _append_reason(reasons, "tool_ledger_authorization_decision_mismatch")
+
+    return tuple(reasons)
+
+
 def build_governor_decision_from_bridge_authority(
     verdict: BridgeAuthorityVerdict,
     *,
     reply_instruction: str = "Execute the authorized Builder bridge action.",
 ) -> dict[str, Any] | None:
     envelope = verdict.harness_core_envelope
+    proposed_action = verdict.proposed_action
     authorization = verdict.authorization_decision
     ledger = verdict.tool_call_ledger
     if not isinstance(envelope, dict) or envelope.get("schema_version") != "turn-intent-envelope-vnext":
+        return None
+    if not isinstance(proposed_action, dict):
         return None
     if not isinstance(authorization, dict) or authorization.get("schema_version") != "authorization-decision-v1":
         return None
@@ -69,21 +145,30 @@ def build_governor_decision_from_bridge_authority(
         "degrade": "degrade",
     }
     outcome = outcome_by_verdict[authorization_verdict]
-    if not verdict.allowed and authorization_verdict == "allow":
-        outcome = "deny"
-    action_authorized = verdict.allowed and authorization_verdict == "allow"
+    ledger_binding_reasons = _ledger_binding_reasons(
+        envelope=envelope,
+        proposed_action=proposed_action,
+        authorization=authorization,
+        ledger=ledger,
+    )
+    if authorization_verdict == "allow" and (not verdict.allowed or ledger_binding_reasons):
+        outcome = "degrade" if ledger_binding_reasons else "deny"
+    action_authorized = verdict.allowed and authorization_verdict == "allow" and not ledger_binding_reasons
     authority_state = (envelope.get("action_authority") or {}).get("state")
     if outcome == "interrupt":
         authority_state = "confirmation_required"
     elif outcome in {"deny", "degrade"}:
         authority_state = "blocked"
+    reasons = list(verdict.reason_codes) or list(authorization.get("reasons") or ["harness_core_authorized"])
+    for reason in ledger_binding_reasons:
+        _append_reason(reasons, reason)
     execution_boundary = {
         "action_authorized": action_authorized,
         "action_count": len(envelope.get("proposed_actions") if isinstance(envelope.get("proposed_actions"), list) else []),
         "authorized_action_count": 1 if action_authorized else 0,
         "requires_human_confirmation": bool((authorization.get("approval") or {}).get("required")),
         "legacy_authority_demoted": True,
-        "reasons": list(verdict.reason_codes) or list(authorization.get("reasons") or ["harness_core_authorized"]),
+        "reasons": reasons,
     }
     trace = authorization.get("trace") if isinstance(authorization.get("trace"), dict) else {}
     return {
@@ -119,6 +204,21 @@ def _with_governor_decision(verdict: BridgeAuthorityVerdict) -> BridgeAuthorityV
     governor_decision = build_governor_decision_from_bridge_authority(verdict)
     if not isinstance(governor_decision, dict):
         return verdict
+    if verdict.allowed and str(governor_decision.get("outcome") or "") != "execute":
+        boundary = governor_decision.get("execution_boundary")
+        boundary_reasons = boundary.get("reasons") if isinstance(boundary, dict) else []
+        reason_codes = list(verdict.reason_codes)
+        iterable_reasons = boundary_reasons if isinstance(boundary_reasons, list) else []
+        for reason in iterable_reasons:
+            _append_reason(reason_codes, str(reason))
+        if not reason_codes:
+            reason_codes.append("governor_execution_boundary_not_executable")
+        return replace(
+            verdict,
+            allowed=False,
+            reason_codes=tuple(reason_codes),
+            governor_decision=governor_decision,
+        )
     return replace(verdict, governor_decision=governor_decision)
 
 
