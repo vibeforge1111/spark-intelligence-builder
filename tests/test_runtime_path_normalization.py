@@ -16,6 +16,11 @@ from tests.test_support import SparkTestCase
 
 
 class RuntimePathNormalizationTests(SparkTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        if os.name != "nt" and not Path("/mnt/c").exists():
+            self.skipTest("WSL-style /mnt/c runtime fixture is unavailable on this machine.")
+
     def test_normalize_runtime_path_prefers_local_runtime_surface(self) -> None:
         normalized = self.config_manager.normalize_runtime_path(r"C:\Users\USER\Desktop\spark-intelligence-builder")
 

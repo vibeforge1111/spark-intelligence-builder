@@ -1318,13 +1318,8 @@ def evaluate_swarm_escalation(
         triggers.append("multi_chip_context")
     recommendation_triggers = [trigger for trigger in triggers if trigger != "multi_chip_context"]
 
-    if recommendation_triggers and auto_recommend_enabled:
+    if recommendation_triggers and auto_recommend_enabled and status.payload_ready:
         reason = "This task shows explicit escalation signals and Spark Swarm is available."
-        if not status.payload_ready:
-            reason = (
-                "This task shows explicit escalation signals; Swarm payload readiness is missing, "
-                "so this is advisory until sync readiness is restored."
-            )
         result = SwarmDecisionResult(
             ok=True,
             escalate=True,
@@ -1334,6 +1329,22 @@ def evaluate_swarm_escalation(
             task=task,
             attachment_context=status.attachment_context,
             swarm_available=status.payload_ready,
+            api_ready=status.api_ready,
+        )
+    elif recommendation_triggers and auto_recommend_enabled:
+        reason = (
+            "This task shows explicit escalation signals; Swarm payload readiness is missing, "
+            "so keep the task local until sync readiness is restored."
+        )
+        result = SwarmDecisionResult(
+            ok=True,
+            escalate=False,
+            mode="unavailable",
+            reason=reason,
+            triggers=triggers,
+            task=task,
+            attachment_context=status.attachment_context,
+            swarm_available=False,
             api_ready=status.api_ready,
         )
     else:
@@ -1421,7 +1432,7 @@ def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | 
     configured_root = config_manager.get_path("spark.swarm.runtime_root")
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root)
-        return (path if path.exists() else None, "configured")
+        return (path, "configured")
     autodetect = Path.home() / "Desktop" / "spark-swarm"
     if autodetect.exists():
         return autodetect, "autodiscovered"

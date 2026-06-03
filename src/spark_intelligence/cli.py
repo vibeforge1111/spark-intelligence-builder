@@ -3559,9 +3559,6 @@ def _install_windows_startup_wrapper(config_manager: ConfigManager, task_name: s
 
 
 def handle_install_autostart(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
-        return 1
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
@@ -3599,6 +3596,9 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             capture_output=True,
             text=True,
         )
+    except FileNotFoundError:
+        print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "Task Scheduler install failed.").strip()
         if "Access is denied" not in message:
@@ -3623,9 +3623,6 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
 
 
 def handle_uninstall_autostart(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
-        return 1
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     task_name = _resolve_autostart_task_name(config_manager, args.task_name)
@@ -3648,6 +3645,9 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
                 capture_output=True,
                 text=True,
             )
+        except FileNotFoundError:
+            print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+            return 1
         except subprocess.CalledProcessError as exc:
             print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
             return 1

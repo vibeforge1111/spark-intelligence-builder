@@ -752,11 +752,22 @@ def _build_browser_record(
             limitations=limitations,
             metadata=browser_payload,
         )
-    return _build_chip_backed_system_record(
-        system_key="spark_browser",
-        chip_key="spark-browser",
-        active_chip_keys=active_chip_keys,
-        attachment_context=attachment_context,
+    return SystemRegistryRecord(
+        record_id="system:spark_browser",
+        kind="system",
+        key="spark_browser",
+        label="Spark Browser",
+        role=_SYSTEM_ROLE_HINTS["spark_browser"],
+        status="degraded",
+        attached=attached,
+        active=False,
+        pinned=False,
+        available=False,
+        degraded=True,
+        requires_restart=False,
+        capabilities=_SYSTEM_CAPABILITY_HINTS["spark_browser"],
+        limitations=["Browser chip is attached, but no fresh browser-use readiness proof is available."],
+        metadata={"attached_chip_keys": sorted(attached_chip_keys)},
     )
 
 
@@ -769,9 +780,9 @@ def _build_browser_use_record(browser_payload: dict[str, Any]) -> SystemRegistry
         degraded = False
         limitations: list[str] = []
     elif payload_status == "configured":
-        status = "standby"
+        status = "degraded"
         active = False
-        available = True
+        available = False
         degraded = True
         limitations = [
             str(

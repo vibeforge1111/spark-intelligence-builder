@@ -14,6 +14,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     _maybe_save_reply_as_draft,
 )
 from spark_intelligence.bot_drafts import list_recent_drafts
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 
 from tests.test_support import SparkTestCase
 
@@ -34,9 +35,27 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
             limit=50,
         )
 
+    def _draft_authority(self, user_message: str) -> dict:
+        request_slug = re.sub(r"[^a-z0-9]+", "-", user_message.lower()).strip("-") or "draft"
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=f"user:{self.USER}",
+            request_id=f"draft-{request_slug[:64]}",
+            source_kind="draft_runtime_test",
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            intent_summary="Fresh Telegram turn authorizes draft-state capture.",
+            raw_turn_summary="Draft runtime integration test turn remains offloaded.",
+            confidence=0.95,
+        )
+        self.assertIsNotNone(payload)
+        return {"turn_intent_envelope_vnext": payload}
+
     def _send(self, *, user_message: str, reply_text: str) -> str:
         return _maybe_save_reply_as_draft(
             state_db=self.state_db,
+            update_payload=self._draft_authority(user_message),
             external_user_id=self.USER,
             session_id=None,
             chip_used=None,

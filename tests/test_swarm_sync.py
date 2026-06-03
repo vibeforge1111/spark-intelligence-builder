@@ -234,6 +234,20 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
 
+    def test_evaluate_swarm_escalation_holds_local_when_payload_not_ready(self) -> None:
+        result = evaluate_swarm_escalation(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Please delegate this as parallel multi-agent work and research deeply.",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.escalate)
+        self.assertEqual(result.mode, "unavailable")
+        self.assertFalse(result.swarm_available)
+        self.assertIn("explicit_swarm", result.triggers)
+        self.assertIn("payload readiness is missing", result.reason)
+
     def test_evaluate_swarm_escalation_records_typed_decision_and_attachment_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
