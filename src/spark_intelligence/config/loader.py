@@ -400,27 +400,37 @@ class ConfigManager:
 
     def _harden_windows_env_file_permissions(self) -> None:
         principal = self._windows_current_principal()
-        subprocess.run(
-            [
-                "icacls",
-                str(self.paths.env_file),
-                "/inheritance:r",
-                "/grant:r",
-                f"{principal}:(R,W)",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "icacls",
+                    str(self.paths.env_file),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{principal}:(R,W)",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "Timed out hardening env file permissions (icacls)."
+            )
 
     def _windows_env_permission_status(self) -> tuple[bool, str]:
         principal = self._windows_current_principal()
-        result = subprocess.run(
-            ["icacls", str(self.paths.env_file)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["icacls", str(self.paths.env_file)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return (False, "permission check timed out (icacls)")
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         acl_lines: list[str] = []
         for line in lines:
@@ -458,6 +468,7 @@ class ConfigManager:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
