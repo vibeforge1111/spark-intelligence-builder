@@ -1768,7 +1768,10 @@ def _build_collective_payload(
     with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
         export_info = write_payload(researcher_root, runtime_root, config)
     payload_path = Path(str(export_info["payload_path"]))
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Failed to load Swarm payload from {payload_path}: {exc}") from exc
     if _normalize_collective_payload(payload):
         payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
@@ -1899,7 +1902,13 @@ def _get_swarm_api_json(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse raw sync payload: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse Swarm API response: {exc}") from exc
 
 
 def _request_swarm_api_json(
@@ -1925,7 +1934,13 @@ def _request_swarm_api_json(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse raw sync payload: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse Swarm API response: {exc}") from exc
 
 
 def _post_collective_payload(
@@ -1947,7 +1962,13 @@ def _post_collective_payload(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse raw sync payload: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse Swarm API response: {exc}") from exc
 
 
 def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
@@ -2367,7 +2388,10 @@ def _refresh_swarm_access_token(
         _record_swarm_refresh_state(state_db, error=message)
         raise RuntimeError(message) from exc
 
-    payload = json.loads(raw) if raw.strip() else {}
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse Swarm auth refresh response: {exc}") from exc
     access_token = str(payload.get("access_token") or "").strip()
     refresh_token = str(payload.get("refresh_token") or session.refresh_token or "").strip()
     if not access_token:
