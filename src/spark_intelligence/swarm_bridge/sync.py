@@ -2552,14 +2552,19 @@ def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
         return {"raw": raw}
 
 
+import threading
+
+temporary_env_lock = threading.Lock()
+
 @contextmanager
 def _temporary_env(key: str, value: str):
-    previous = os.environ.get(key)
-    os.environ[key] = value
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
+    with temporary_env_lock:
+        previous = os.environ.get(key)
+        os.environ[key] = value
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
