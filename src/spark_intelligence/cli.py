@@ -875,6 +875,15 @@ def _swarm_auth_state(swarm) -> str:
     return "missing"
 
 
+def _coerce_positive_int_setting(value: object, *, default: int) -> int:
+    """Return ``int(value)`` when it is a positive integer; otherwise ``default``."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced if coerced > 0 else default
+
+
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
@@ -1099,8 +1108,9 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "conversational_fallback_enabled": bool(
                 config_manager.get_path("spark.researcher.routing.conversational_fallback_enabled", default=True)
             ),
-            "conversational_fallback_max_chars": int(
-                config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240)
+            "conversational_fallback_max_chars": _coerce_positive_int_setting(
+                config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240),
+                default=240,
             ),
             "last_routing_decision": researcher.last_routing_decision,
             "last_active_chip_key": researcher.last_active_chip_key,

@@ -3143,13 +3143,23 @@ def _extract_text_from_response_payload(payload: Any) -> str:
     return ""
 
 
+def _coerce_positive_int_setting(value: object, *, default: int) -> int:
+    """Return ``int(value)`` when it is a positive integer; otherwise ``default``."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced if coerced > 0 else default
+
+
 def _researcher_routing_policy(config_manager: ConfigManager) -> dict[str, Any]:
     return {
         "conversational_fallback_enabled": bool(
             config_manager.get_path("spark.researcher.routing.conversational_fallback_enabled", default=True)
         ),
-        "conversational_fallback_max_chars": int(
-            config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240)
+        "conversational_fallback_max_chars": _coerce_positive_int_setting(
+            config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240),
+            default=240,
         ),
     }
 
