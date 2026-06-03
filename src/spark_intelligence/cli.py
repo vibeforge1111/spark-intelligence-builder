@@ -2130,8 +2130,9 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
     gateway_start_parser = gateway_subparsers.add_parser("start", help="Start foreground gateway")
     gateway_start_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_start_parser.add_argument("--once", action="store_true", help="Run one poll cycle and exit")
-    gateway_start_parser.add_argument(
+    _gateway_mode_group = gateway_start_parser.add_mutually_exclusive_group()
+    _gateway_mode_group.add_argument("--once", action="store_true", help="Run one poll cycle and exit")
+    _gateway_mode_group.add_argument(
         "--continuous",
         action="store_true",
         help="Keep polling in the foreground until interrupted or --max-cycles is reached",
