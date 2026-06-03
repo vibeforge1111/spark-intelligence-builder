@@ -50,8 +50,10 @@ def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            traces.append(json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+            record = json.loads(line)
+            if isinstance(record, dict):
+                traces.append(record)
+        except json.JSONDecodeError:
             continue
     return traces
 
@@ -65,8 +67,10 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            records.append(json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(record)
+        except json.JSONDecodeError:
             continue
     return records
 

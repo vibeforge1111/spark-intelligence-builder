@@ -40,9 +40,9 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def mask_secret(value: str) -> str:
-    if len(value) < 18:
+    if len(value) < 8:
         return "***"
-    return f"{value[:6]}...{value[-4:]}"
+    return f"{value[:3]}...{value[-2:]}"
 
 
 def redact_text(text: str | None) -> str:
