@@ -108,6 +108,37 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             }
         )
 
+    def _verify_chip_governor_authority(self, governor_decision: dict[str, object] | None, **kwargs: object) -> dict[str, object]:
+        tool_name = str(kwargs.get("tool_name") or "")
+        owner_system = str(kwargs.get("owner_system") or "")
+        mutation_class = str(kwargs.get("mutation_class") or "")
+        decision_id = str((governor_decision or {}).get("decision_id") or "")
+        turn_id = str((governor_decision or {}).get("turn_id") or "")
+        allowed = (
+            isinstance(governor_decision, dict)
+            and tool_name == "chip.evaluate"
+            and owner_system == "spark-intelligence-builder"
+            and mutation_class == "writes_files"
+            and bool(decision_id)
+            and bool(turn_id)
+        )
+        return {
+            "schema_version": "governor-consumer-verification-v1",
+            "allowed": allowed,
+            "reason_codes": [] if allowed else ["test_governor_mismatch"],
+            "source_kind": "governor_decision" if isinstance(governor_decision, dict) else "missing_governor_decision",
+            "decision_id": decision_id or None,
+            "turn_id": turn_id or None,
+            "outcome": (governor_decision or {}).get("outcome") if isinstance(governor_decision, dict) else None,
+            "expected_capability_id": "capability:spark-intelligence-builder:chip.evaluate",
+            "expected_action_type": "edit_file",
+            "tool_name": tool_name,
+            "action_id": "action:test-chip-evaluate" if allowed else None,
+            "capability_id": "capability:spark-intelligence-builder:chip.evaluate" if allowed else None,
+            "authorization_decision_id": f"{decision_id}:auth" if allowed else None,
+            "ledger_id": f"{decision_id}:ledger" if allowed else None,
+        }
+
     def test_tranche1_typed_ledger_tables_are_populated(self) -> None:
         run = open_run(
             self.state_db,
@@ -1430,7 +1461,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         with patch(
             "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
             side_effect=self._governed_chip_authority,
-        ) as authority_mock:
+        ) as authority_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.verify_governor_tool_authority",
+            side_effect=self._verify_chip_governor_authority,
+        ) as verifier_mock:
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -1447,6 +1481,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
         self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in verifier_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
         self.assertTrue(events)
         chip_events = [
@@ -1507,7 +1542,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         with patch(
             "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
             side_effect=self._governed_chip_authority,
-        ) as authority_mock:
+        ) as authority_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.verify_governor_tool_authority",
+            side_effect=self._verify_chip_governor_authority,
+        ) as verifier_mock:
             build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -1523,6 +1561,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             )
 
         self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in verifier_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
         chip_events = [
             event
