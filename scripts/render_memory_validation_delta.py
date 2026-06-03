@@ -27,9 +27,14 @@ def _maybe_load_soak(run_summary: dict[str, Any]) -> dict[str, Any] | None:
     if not soak_dir:
         return None
     soak_path = Path(str(soak_dir)) / "telegram-memory-architecture-soak.json"
-    if not soak_path.exists():
+    # EAFP: a single read with try/except is atomic; an exists()-then-read
+    # pattern opens a race window where a parallel validation run can
+    # rotate soak_output_dir between the check and the read, raising
+    # FileNotFoundError out of the helper instead of returning None.
+    try:
+        return _load_json(soak_path)
+    except FileNotFoundError:
         return None
-    return _load_json(soak_path)
 
 
 def _maybe_load_regression(run_summary: dict[str, Any]) -> dict[str, Any] | None:
@@ -37,9 +42,12 @@ def _maybe_load_regression(run_summary: dict[str, Any]) -> dict[str, Any] | None
     if not regression_dir:
         return None
     regression_path = Path(str(regression_dir)) / "telegram-memory-regression.json"
-    if not regression_path.exists():
+    # EAFP: see _maybe_load_soak above. regression_output_dir is also
+    # rewritten on each validation pass.
+    try:
+        return _load_json(regression_path)
+    except FileNotFoundError:
         return None
-    return _load_json(regression_path)
 
 
 def _fmt_list(items: list[str]) -> str:
