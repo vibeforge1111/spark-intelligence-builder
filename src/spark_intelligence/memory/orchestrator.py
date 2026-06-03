@@ -1453,13 +1453,17 @@ def _local_domain_chip_memory_src() -> Path:
     return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
 
 
+_ALLOWED_SDK_PREFIXES = ("domain_chip_memory",)
+
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    root_name = module_name.split(".", 1)[0]
+    if root_name not in _ALLOWED_SDK_PREFIXES:
+        raise ValueError(f"Module name not in allowlist: {module_name}")
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
-        root_name = module_name.split(".", 1)[0]
         local_src = _local_domain_chip_memory_src()
-        if exc.name != root_name or root_name != "domain_chip_memory" or not local_src.exists():
+        if exc.name != root_name or not local_src.exists():
             raise
         with _prepend_sys_path(local_src):
             return importlib.import_module(module_name)
