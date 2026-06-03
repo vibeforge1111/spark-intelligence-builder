@@ -3036,7 +3036,12 @@ def _evict_researcher_modules_from_other_roots(src_root: Path) -> None:
     package = sys.modules.get("spark_researcher")
     if package is None or _module_loaded_from_root(package, src_root):
         return
-    for name in ("spark_researcher.advisory", "spark_researcher.research", "spark_researcher"):
+    # Evict the spark_researcher package and every cached submodule that was
+    # loaded from a different src_root. Only listing advisory/research left
+    # transitively-imported submodules (e.g. spark_researcher.chips,
+    # .runner, .trainers) in sys.modules pointing at the old root, which
+    # would then be reused on the next import from the new root.
+    for name in [n for n in sys.modules if n == "spark_researcher" or n.startswith("spark_researcher.")]:
         sys.modules.pop(name, None)
 
 
