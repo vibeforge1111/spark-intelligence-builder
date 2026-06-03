@@ -824,10 +824,10 @@ def _browser_use_default_status_path(config_manager: ConfigManager) -> Path:
 
 
 def _spark_runtime_root(home: Path) -> Path:
-    resolved = home.resolve(strict=False)
-    if resolved.name == "spark-intelligence" and resolved.parent.name == "state":
-        return resolved.parent.parent
-    return resolved
+    normalized = home.expanduser()
+    if normalized.name == "spark-intelligence" and normalized.parent.name == "state":
+        return normalized.parent.parent
+    return normalized
 
 
 def _read_browser_use_status(path: Path | None) -> dict[str, Any]:

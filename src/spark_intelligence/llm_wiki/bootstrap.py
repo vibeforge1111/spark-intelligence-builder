@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.llm_wiki.paths import wiki_root
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ def bootstrap_llm_wiki(
     output_dir: str | Path | None = None,
     overwrite: bool = False,
 ) -> LlmWikiBootstrapResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     generated_at = _utc_timestamp()
     pages = _bootstrap_pages(generated_at=generated_at)
     created: list[str] = []

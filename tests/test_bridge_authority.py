@@ -13,6 +13,7 @@ from spark_intelligence.bridge_authority import (
     reset_bridge_authority_ledger_context,
     set_bridge_authority_ledger_context,
 )
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _authorize_researcher_memory_read,
@@ -82,6 +83,30 @@ def _envelope(*, route: str = "memory.write", no_execution: bool = False) -> dic
     }
 
 
+def _tool_vnext(
+    *,
+    request_id: str,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: str,
+    source_kind: str = "test_native_vnext",
+) -> dict:
+    payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref="user:test",
+        request_id=request_id,
+        source_kind=source_kind,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,  # type: ignore[arg-type]
+        intent_summary=f"Test VNext authority for {tool_name}.",
+        raw_turn_summary="Raw test turn remains offloaded.",
+        confidence=0.95,
+    )
+    assert payload is not None
+    return payload
+
+
 def test_extracts_turn_intent_from_message_payload() -> None:
     update = {"message": {"spark_turn_intent": _envelope()}}
 
@@ -93,14 +118,16 @@ def test_extracts_turn_intent_from_message_payload() -> None:
 
 
 def test_extracts_vnext_turn_intent_from_message_payload() -> None:
-    legacy_verdict = authorize_builder_bridge_action(
-        {"spark_turn_intent": _envelope(route="memory.write")},
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-extract-vnext",
+        channel_kind="telegram",
+        session_id="session-extract-vnext",
+        human_id="human-extract-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
     )
-    assert legacy_verdict.harness_core_envelope is not None
-    update = {"message": {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope}}
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
 
     envelope = extract_turn_intent_envelope_vnext(update)
 
@@ -109,7 +136,7 @@ def test_extracts_vnext_turn_intent_from_message_payload() -> None:
     assert envelope["selected_move"] == "execute_action"
 
 
-def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
+def test_authorizes_builder_memory_write_through_governed_legacy_adapter() -> None:
     update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
 
     verdict = authorize_builder_bridge_action(
@@ -123,30 +150,30 @@ def test_authorizes_builder_memory_write_only_with_envelope_policy() -> None:
     assert verdict.reason_codes == ()
     assert verdict.harness_core_envelope is not None
     assert verdict.authorization_decision is not None
+    assert verdict.tool_call_ledger is not None
+    assert verdict.governor_decision is not None
     assert verdict.harness_core_envelope["schema_version"] == "turn-intent-envelope-vnext"
     assert verdict.authorization_decision["schema_version"] == "authorization-decision-v1"
     assert verdict.authorization_decision["verdict"] == "allow"
-    assert verdict.tool_call_ledger is not None
     assert verdict.tool_call_ledger["schema_version"] == "tool-call-ledger-v1"
-    assert verdict.tool_call_ledger["authorization"]["decision_id"] == verdict.authorization_decision["decision_id"]
-    assert verdict.governor_decision is not None
     assert verdict.governor_decision["schema_version"] == "governor-decision-v1"
     assert verdict.governor_decision["outcome"] == "execute"
-    assert verdict.governor_decision["authorizations"][0]["decision_id"] == verdict.authorization_decision["decision_id"]
-    assert verdict.governor_decision["tool_ledgers"][0]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
+    assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
 
 
 def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
-    legacy_verdict = authorize_builder_bridge_action(
-        {"spark_turn_intent": _envelope(route="memory.write")},
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-native-vnext",
+        channel_kind="telegram",
+        session_id="session-write-native-vnext",
+        human_id="human-write-native-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
     )
-    assert legacy_verdict.harness_core_envelope is not None
+    assert payload is not None
 
     verdict = authorize_builder_bridge_action(
-        {"message": {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope}},
+        {"message": {"turn_intent_envelope_vnext": payload}},
         tool_name="memory.write",
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
@@ -165,16 +192,18 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
 
 
 def test_blocks_native_vnext_when_action_is_not_proposed() -> None:
-    legacy_verdict = authorize_builder_bridge_action(
-        {"spark_turn_intent": _envelope(route="memory.write")},
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-block-native-vnext",
+        channel_kind="telegram",
+        session_id="session-block-native-vnext",
+        human_id="human-block-native-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
     )
-    assert legacy_verdict.harness_core_envelope is not None
+    assert payload is not None
 
     verdict = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": legacy_verdict.harness_core_envelope},
+        {"turn_intent_envelope_vnext": payload},
         tool_name="memory.read",
         owner_system="domain-chip-memory",
         mutation_class="read_only",
@@ -457,10 +486,17 @@ def test_blocks_builder_memory_write_without_envelope() -> None:
     assert verdict.authorization_decision is None
 
 
-def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
-    payload = _envelope(route="memory.write")
-    payload["executionPolicy"]["canWriteMemory"] = False
-    update = {"message": {"spark_turn_intent": payload}}
+def test_blocks_memory_write_when_vnext_action_is_not_proposed() -> None:
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-write-not-proposed-vnext",
+        channel_kind="telegram",
+        session_id="session-write-not-proposed-vnext",
+        human_id="human-write-not-proposed-vnext",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
 
     verdict = authorize_builder_bridge_action(
         update,
@@ -470,7 +506,7 @@ def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
     )
 
     assert verdict.allowed is False
-    assert "write_memory_not_authorized" in verdict.reason_codes
+    assert "proposed_action_not_authorized" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
     assert verdict.tool_call_ledger is not None
@@ -482,9 +518,16 @@ def test_blocks_memory_write_when_execution_policy_denies_it() -> None:
 def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
-    payload = _envelope(route="memory.write")
-    payload["executionPolicy"]["canWriteMemory"] = False
-    update = {"message": {"spark_turn_intent": payload}}
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-blocked-result",
+        channel_kind="telegram",
+        session_id="session-blocked-result",
+        human_id="human-blocked-result",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
 
     verdict = authorize_builder_bridge_action(
         update,
@@ -514,9 +557,16 @@ def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
 def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
-    payload = _envelope(route="memory.write")
-    payload["executionPolicy"]["canWriteMemory"] = False
-    update = {"message": {"spark_turn_intent": payload}}
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-blocked-scoped-result",
+        channel_kind="telegram",
+        session_id="session-blocked-scoped",
+        human_id="human-blocked-scoped",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
     token = set_bridge_authority_ledger_context(
         state_db=state_db,
         component="telegram_runtime",
@@ -551,7 +601,16 @@ def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) ->
 def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
-    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-test-ledger",
+        channel_kind="telegram",
+        session_id="session-test-ledger",
+        human_id="human-test-ledger",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
 
     verdict = authorize_builder_bridge_action(
         update,
@@ -579,7 +638,16 @@ def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> Non
 def test_records_bridge_tool_call_ledger_from_scoped_context(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
-    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-context-ledger",
+        channel_kind="telegram",
+        session_id="session-context-ledger",
+        human_id="human-context-ledger",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
     token = set_bridge_authority_ledger_context(
         state_db=state_db,
         component="telegram_runtime",
@@ -614,7 +682,16 @@ def test_records_bridge_tool_call_ledger_from_scoped_context(tmp_path) -> None:
 def test_records_final_bridge_tool_call_result_from_scoped_context(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
-    update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-final-ledger",
+        channel_kind="telegram",
+        session_id="session-final-ledger",
+        human_id="human-final-ledger",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
     token = set_bridge_authority_ledger_context(
         state_db=state_db,
         component="telegram_runtime",
@@ -655,7 +732,14 @@ def test_records_final_bridge_tool_call_result_from_scoped_context(tmp_path) -> 
 
 
 def test_authorizes_schedule_delete_and_pending_confirmation() -> None:
-    update = {"spark_turn_intent": _envelope(route="schedule.delete")}
+    update = {
+        "turn_intent_envelope_vnext": _tool_vnext(
+            request_id="req-schedule-delete",
+            tool_name="schedule.delete",
+            owner_system="spark-intelligence-builder",
+            mutation_class="deletes_schedule",
+        )
+    }
 
     delete_verdict = authorize_builder_bridge_action(
         update,
@@ -686,12 +770,22 @@ def test_blocks_pending_confirmation_when_turn_is_meta_language() -> None:
 
     assert verdict.allowed is False
     assert "no_execution_boundary" in verdict.reason_codes
+    assert "quoted_or_meta_language" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
 
 
 def test_blocks_pending_confirmation_for_unrelated_executable_envelope() -> None:
-    update = {"spark_turn_intent": _envelope(route="memory.write")}
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-unrelated-vnext",
+        channel_kind="telegram",
+        session_id="session-unrelated-vnext",
+        human_id="human-unrelated-vnext",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    update = {"turn_intent_envelope_vnext": payload}
 
     verdict = authorize_pending_confirmation(
         update,
@@ -701,6 +795,4 @@ def test_blocks_pending_confirmation_for_unrelated_executable_envelope() -> None
     )
 
     assert verdict.allowed is False
-    assert "tool_not_allowed_by_policy" in verdict.reason_codes
-    assert "mutation_class_not_authorized" in verdict.reason_codes
-    assert "owner_mismatch" in verdict.reason_codes
+    assert "proposed_action_not_authorized" in verdict.reason_codes

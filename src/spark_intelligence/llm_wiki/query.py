@@ -8,6 +8,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.bootstrap import bootstrap_llm_wiki
 from spark_intelligence.llm_wiki.compile_system import compile_system_wiki
+from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.memory import hybrid_memory_retrieve
 from spark_intelligence.state.db import StateDB
 
@@ -70,7 +71,7 @@ def build_llm_wiki_query(
     refresh: bool = False,
     limit: int = 5,
 ) -> LlmWikiQueryResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     normalized_query = " ".join(str(query or "").split())
     refreshed_files: tuple[str, ...] = ()
     if refresh:

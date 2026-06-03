@@ -2995,7 +2995,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     configured_root = config.get("spark", {}).get("researcher", {}).get("runtime_root")
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
-        return (path if path.exists() else None, "configured")
+        return (path, "configured")
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
     if autodetect.exists():

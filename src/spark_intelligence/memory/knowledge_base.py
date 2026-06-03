@@ -63,8 +63,8 @@ def build_telegram_state_knowledge_base(
     validator_root: str | Path | None = None,
     timeout_seconds: float | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
-    resolved_builder_home = config_manager.paths.home.resolve(strict=False)
-    resolved_output_dir = (Path(output_dir) if output_dir else _default_output_dir(config_manager)).resolve(strict=False)
+    resolved_builder_home = _stable_absolute_path(config_manager.paths.home)
+    resolved_output_dir = _stable_absolute_path(Path(output_dir) if output_dir else _default_output_dir(config_manager))
     _prepare_output_dir(resolved_output_dir)
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
@@ -83,7 +83,7 @@ def build_telegram_state_knowledge_base(
     for manifest in resolved_repo_source_manifest_files:
         command_args.extend(["--repo-source-manifest", str(manifest)])
     if write_path:
-        command_args.extend(["--write", str(Path(write_path).resolve(strict=False))])
+        command_args.extend(["--write", str(_stable_absolute_path(Path(write_path)))])
     payload = _run_domain_chip_memory_cli(
         "run-spark-builder-state-telegram-intake",
         *command_args,
@@ -158,6 +158,13 @@ def _domain_chip_memory_cli_env(root: Path) -> dict[str, str]:
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "spark-memory-kb"
+
+
+def _stable_absolute_path(path: Path) -> Path:
+    expanded = path.expanduser()
+    if expanded.is_absolute():
+        return expanded
+    return Path.cwd() / expanded
 
 
 def _prepare_output_dir(output_dir: Path) -> None:

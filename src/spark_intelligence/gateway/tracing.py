@@ -88,6 +88,8 @@ def _tail_lines(path: Path, n: int) -> list[str]:
             f.seek(remaining)
             blocks.append(f.read(read_size))
             lines = b"".join(reversed(blocks)).split(b"\n")
+        if lines and lines[-1] == b"":
+            lines = lines[:-1]
         return [l.decode("utf-8", errors="replace") for l in lines[-n:]]
 
 

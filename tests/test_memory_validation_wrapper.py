@@ -6,6 +6,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("powershell") is None,
+    reason="PowerShell is required for memory validation wrapper script tests.",
+)
+
 
 def _git_revision(repo_root: Path) -> str | None:
     if not (repo_root / ".git").exists():

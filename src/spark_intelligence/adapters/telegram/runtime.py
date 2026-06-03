@@ -89,6 +89,7 @@ from spark_intelligence.personality import (
     resolve_builder_persona_agent_id,
     restore_agent_persona_savepoint,
 )
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.researcher_bridge.advisory import (
     _detect_current_focus_transition_command,
     _detect_current_plan_transition_command,
@@ -8755,8 +8756,21 @@ def _run_voice_runtime_command(
     governor_decision: dict[str, Any] | None = None
     authority = None
     if tool_name:
+        authority_payload = update_payload
+        if (
+            command == "/voice onboard"
+            and extract_turn_intent_envelope_vnext(update_payload) is None
+            and extract_turn_intent_envelope(update_payload) is None
+        ):
+            authority_payload = _build_voice_onboard_authority_payload(
+                external_user_id=external_user_id,
+                human_id=human_id,
+                tool_name=tool_name,
+                mutation_class=mutation_class,
+                external_network=external_network,
+            )
         authority = authorize_builder_bridge_action(
-            update_payload,
+            authority_payload,
             tool_name=tool_name,
             owner_system="spark-voice-comms",
             mutation_class=mutation_class,
@@ -8830,6 +8844,33 @@ def _run_voice_runtime_command(
         status="failure",
         summary=f"Voice hook {hook} failed.",
     )
+
+
+def _build_voice_onboard_authority_payload(
+    *,
+    external_user_id: str | None,
+    human_id: str | None,
+    tool_name: str,
+    mutation_class: str,
+    external_network: bool,
+) -> dict[str, Any]:
+    actor_ref = str(human_id or "").strip()
+    if not actor_ref:
+        actor_ref = f"human:{str(external_user_id or 'telegram').strip() or 'telegram'}"
+    payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=f"voice-onboard-{uuid4().hex[:12]}",
+        source_kind="telegram_voice_onboard_explicit_request",
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class=mutation_class,  # type: ignore[arg-type]
+        external_network=external_network,
+        intent_summary="Fresh Telegram turn explicitly requested voice onboarding.",
+        raw_turn_summary="Voice onboarding request summarized by Telegram runtime.",
+        confidence=0.95,
+    )
+    return {"turn_intent_envelope_vnext": payload} if isinstance(payload, dict) else {}
 
 
 def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
@@ -10065,7 +10106,7 @@ def _render_telegram_voice_install_reply(target: str | None) -> str:
 def _render_telegram_voice_onboarding_reply(route: str | None = None) -> str:
     suffix = f" for `{route}`" if route else ""
     return (
-        f"I can help set up voice{suffix}, but the voice chip is not attached to this Spark yet.\n"
+        f"I can guide voice setup{suffix}, but the voice chip is not attached to this Spark yet.\n"
         "Once `spark-voice-comms` is active, I can recommend the right path from inside Telegram: local/private with Kokoro, or hosted/high-quality with a paid provider.\n"
         "Attach the chip, then run `/voice onboard local` or `/voice onboard paid`."
     )

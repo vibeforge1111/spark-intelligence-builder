@@ -112,9 +112,9 @@ def compare_telegram_memory_architectures(
         errors.append("no_comparable_cases")
     elif not resolved_baseline_names:
         errors.append("no_baselines_selected")
-    elif not validator_path.exists():
-        errors.append(f"validator_root_missing:{validator_path}")
     else:
+        if not validator_path.exists():
+            errors.append(f"validator_root_missing:{validator_path}")
         try:
             baseline_rows, contract_summary = _run_live_comparison_scorecards(
                 sample_specs=sample_specs,

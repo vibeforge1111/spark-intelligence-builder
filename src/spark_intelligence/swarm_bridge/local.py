@@ -309,8 +309,6 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
     if configured:
         candidate = config_manager.normalize_runtime_path(configured)
         if candidate is not None:
-            candidate = candidate.resolve()
-        if candidate.exists():
             return candidate
     candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
     if candidate.exists():

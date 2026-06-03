@@ -163,15 +163,13 @@ class ConfigManager:
             drive = wsl_match.group(1).upper()
             remainder = wsl_match.group(2).replace("/", "\\")
             translated = Path(f"{drive}:\\{remainder}")
-            if translated.exists():
-                return translated
+            return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
         if windows_match and os.name != "nt":
             drive = windows_match.group(1).lower()
             remainder = windows_match.group(2).replace("\\", "/")
             translated = Path("/mnt") / drive / remainder
-            if translated.exists():
-                return translated
+            return translated
         return path
 
     def save(
