@@ -1,0 +1,8 @@
+fix: correct regex operator precedence in _looks_like_memory_forget_request
+
+The regex alternation (|) has lower precedence than concatenation, so
+the word boundary \b only applied to the first alternative. This meant
+"profile factor" and "memory foam" could incorrectly match.
+
+Fix: wrap all alternatives in a non-capturing group with shared \b
+boundaries on both sides.
