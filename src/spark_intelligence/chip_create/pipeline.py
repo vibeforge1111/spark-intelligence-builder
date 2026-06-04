@@ -91,7 +91,12 @@ def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
     )
     raw = str(result.get("raw_response") or "")
     cleaned = _strip_code_fences(raw)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Chip brief generation returned invalid JSON: {exc.msg}"
+        ) from exc
 
 
 def _validate_brief(brief: dict) -> list[str]:
@@ -135,7 +140,10 @@ def _patch_manifest_command_modules(manifest_path: Path, chip_dir: Path) -> None
     is no __main__.py. The scaffolder emits the bare module path but
     the generated package has no __main__, so `python -m <pkg>` fails.
     """
-    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
     commands = doc.get("commands")
     if not isinstance(commands, dict):
         return
@@ -198,7 +206,10 @@ def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
 
 
 def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key: str) -> None:
-    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
     if not doc.get("chip_name"):
         doc["chip_name"] = chip_key
     normalized = _normalize_commands(doc.get("commands"))
