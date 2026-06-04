@@ -1457,7 +1457,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
                 human_id="human:test",
                 session_id="session:test",
                 channel_kind="telegram",
-                user_message="What should this startup focus on next?",
+                user_message="Please review the current operator situation.",
                 turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
                     request_id="req-provenance"
                 ),
@@ -1538,7 +1538,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
                 human_id="human:test",
                 session_id="session:test",
                 channel_kind="telegram",
-                user_message="What should this startup focus on next?",
+                user_message="Please review the current operator situation.",
                 turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
                     request_id="req-chip-result-classification"
                 ),
