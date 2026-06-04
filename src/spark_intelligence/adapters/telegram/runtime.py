@@ -80,6 +80,7 @@ from spark_intelligence.self_awareness import (
     run_route_probe_and_record,
 )
 from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
@@ -750,7 +751,7 @@ def record_telegram_auth_result(
                 "status": status,
                 "checked_at": _utc_now_iso(),
                 "bot_username": bot_username,
-                "error": error,
+                "error": _sanitize_telegram_runtime_failure_detail(error),
             },
             sort_keys=True,
         ),
@@ -783,7 +784,7 @@ def record_telegram_poll_failure(
     payload = _load_runtime_json_object(state_db, "telegram:poll_state")
     payload["last_failure_at"] = _utc_now_iso()
     payload["last_failure_type"] = failure_type
-    payload["last_failure_message"] = message
+    payload["last_failure_message"] = _sanitize_telegram_runtime_failure_detail(message)
     payload["consecutive_failures"] = _read_optional_int(payload.get("consecutive_failures")) + 1
     payload["last_backoff_seconds"] = max(backoff_seconds, 0)
     set_runtime_state_value(
@@ -793,6 +794,18 @@ def record_telegram_poll_failure(
         component="telegram_runtime",
         guard_strategy=JSON_RICHNESS_MERGE_GUARD,
     )
+
+
+def _sanitize_telegram_runtime_failure_detail(value: str | None) -> str | None:
+    if value is None:
+        return None
+    redacted = redact_text(str(value))
+    redacted = re.sub(
+        r"(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\s'\"<>]+|/(?:Users|home)/[^\s'\"<>]+)",
+        "<local-path>",
+        redacted,
+    )
+    return " ".join(redacted.split())[:240]
 
 
 def _resolve_telegram_bot_token(config_manager: ConfigManager) -> str | None:
