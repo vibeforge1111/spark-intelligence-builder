@@ -59,9 +59,30 @@ def apply_inbound_rate_limit(
     state_key = f"{channel_id}:rate_limit:{external_user_id}"
     raw = _load_json_object(state_db=state_db, state_key=state_key)
     now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
+    raw_timestamps = raw.get("timestamps", []) if isinstance(raw.get("timestamps"), list) else []
+    # Filter numeric items, exclude bool (isinstance(True, int) is True in
+    # Python so without this guard a tampered payload containing true/false
+    # would pollute the rate-limit history with 0/1 epoch entries that
+    # immediately fall outside the now-60 window).
+    timestamps = [
+        int(item)
+        for item in raw_timestamps
+        if isinstance(item, (int, float)) and not isinstance(item, bool)
+    ]
     timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
+    # last_notice_at was previously parsed as `int(raw.get(...) or 0)`. If the
+    # disk-backed runtime_state row is hand-edited or torn into a non-numeric
+    # shape (e.g. "now" or {"recorded_at": 123}), int(...) raises ValueError
+    # or TypeError and every subsequent inbound message from this user on
+    # this channel hits the same crash, permanently breaking rate-limit
+    # accounting and the cooldown-notice gate.
+    last_notice_at_raw = raw.get("last_notice_at", 0)
+    if isinstance(last_notice_at_raw, bool):
+        last_notice_at = 0
+    elif isinstance(last_notice_at_raw, (int, float)):
+        last_notice_at = int(last_notice_at_raw)
+    else:
+        last_notice_at = 0
     if len(timestamps) >= max(limit_per_minute, 1):
         retry_after_seconds = max(1, 60 - (now - timestamps[0]))
         notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
