@@ -20,7 +20,7 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpypi-[A-Za-z0-9_-]{20,}\b"), "<redacted pypi token>"),
     (re.compile(r"\bdop_v1_[A-Za-z0-9_-]{20,}\b"), "<redacted doppler token>"),
     (re.compile(r"\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis)://[^\s'\"<>]+", re.I), "<redacted connection string>"),
-    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "Bearer <redacted>"),
+    (re.compile(r"\b(Bearer|Token|ApiKey|OAuth)\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "auth_scheme"),
     (
         re.compile(
             r"(?P<key>\b[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|BOT[_-]?TOKEN)[A-Z0-9_]*\s*=\s*)(?P<value>[^\s#'\";]{8,})",
@@ -57,6 +57,8 @@ def redact_text(text: str | None) -> str:
                 lambda match: f"{match.group('prefix')}{mask_secret(match.group('value'))}{match.group('suffix')}",
                 redacted,
             )
+        elif replacement == "auth_scheme":
+            redacted = pattern.sub(lambda match: f"{match.group(1)} <redacted>", redacted)
         else:
             redacted = pattern.sub(replacement, redacted)
     return redacted
