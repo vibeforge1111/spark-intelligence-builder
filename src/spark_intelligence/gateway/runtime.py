@@ -286,8 +286,11 @@ def gateway_start(
         lines.append("Provider execution readiness is degraded. Gateway did not start polling.")
         return GatewayStartReport(ok=False, text="\n".join(lines))
     if not telegram_record:
-        lines.append("No Telegram adapter configured. Gateway is idle.")
-        return GatewayStartReport(ok=True, text="\n".join(lines))
+        lines.append(
+            "No runnable foreground channel is configured. "
+            "Run spark-intelligence channel telegram-onboard to enable Telegram polling."
+        )
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     telegram_status = str(telegram_summary.status or "enabled")
     if telegram_status == "disabled":
