@@ -20,6 +20,18 @@ _LOGGER = logging.getLogger(__name__)
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
 
+
+# Module-scope compiled patterns for hot paths in humanize_cron and
+# _extract_delete_hints. Pre-compiling avoids re-parsing on every call.
+_CRON_STEP_RE = re.compile(r"^\*/(\d+)$")
+_CRON_SINGLE_DIGIT_RE = re.compile(r"^\d$")
+_SCHEDULE_ID_RE = re.compile(r"\b(sched-[a-z0-9]+)\b", re.IGNORECASE)
+_TIME_AMPM_RE = re.compile(r"\b(\d{1,2})\s*(am|pm)\b", re.IGNORECASE)
+_TIME_OF_DAY_RES = {
+    tod: re.compile(rf"\b{tod}\b", re.IGNORECASE)
+    for tod in ("nightly", "daily", "weekly", "morning", "evening")
+}
+
 # Scope note: scheduler-related vocabulary the bot should route here.
 # We match on any message that (a) asks about the scheduler surface or
 # (b) asks a "what's running / what's set up / what's automated" type
@@ -99,7 +111,7 @@ def humanize_cron(cron: str) -> str:
     if hour == "*" and dom == "*" and month == "*" and dow == "*":
         if minute == "*":
             return "Every minute"
-        m = re.match(r"^\*/(\d+)$", minute)
+        m = _CRON_STEP_RE.match(minute)
         if m:
             n = int(m.group(1))
             if not 1 <= n <= 59:
@@ -110,7 +122,7 @@ def humanize_cron(cron: str) -> str:
             if 0 <= minute_value <= 59:
                 return f"At {minute_value} min past every hour"
     if dom == "*" and month == "*" and dow == "*":
-        h = re.match(r"^\*/(\d+)$", hour)
+        h = _CRON_STEP_RE.match(hour)
         if h and minute.isdigit():
             n = int(h.group(1))
             minute_value = int(minute)
@@ -118,7 +130,7 @@ def humanize_cron(cron: str) -> str:
                 return f"Every {n} hour" + ("" if n == 1 else "s") + f" at :{minute_value:02d}"
         if hour.isdigit() and minute.isdigit() and _valid_clock_time(int(hour), int(minute)):
             return f"Daily at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
+    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and _CRON_SINGLE_DIGIT_RE.match(dow):
         dow_int = int(dow)
         if dow_int < len(_DOW) and _valid_clock_time(int(hour), int(minute)):
             return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
@@ -300,14 +312,14 @@ def detect_delete_intent(message: str) -> dict | None:
     if not matched:
         return None
     hints: dict[str, Any] = {"raw": text}
-    id_match = re.search(r"\b(sched-[a-z0-9]+)\b", text, re.IGNORECASE)
+    id_match = _SCHEDULE_ID_RE.search(text)
     if id_match:
         hints["schedule_id"] = id_match.group(1)
-    for tod in ("nightly", "daily", "weekly", "morning", "evening"):
-        if re.search(rf"\b{tod}\b", text, re.IGNORECASE):
+    for tod, tod_re in _TIME_OF_DAY_RES.items():
+        if tod_re.search(text):
             hints["time_of_day"] = tod
             break
-    time_match = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
+    time_match = _TIME_AMPM_RE.search(text)
     if time_match:
         h = int(time_match.group(1))
         ampm = time_match.group(2).lower()
