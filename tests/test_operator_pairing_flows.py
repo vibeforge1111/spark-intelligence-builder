@@ -6845,7 +6845,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
             captured_payload.update(payload)
@@ -7147,7 +7147,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_voice_doctor_reports_claim_gaps_from_runtime_state(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
@@ -7227,7 +7227,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             ),
         )
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
@@ -7338,7 +7338,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             ),
         )
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.status")
             return SimpleNamespace(
                 ok=True,
@@ -7588,7 +7588,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.onboard")
             captured_payload.update(payload)
             return SimpleNamespace(
@@ -7652,7 +7652,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.install")
             captured_payload.update(payload)
             return SimpleNamespace(
@@ -8273,7 +8273,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
             captured_payload.update(payload)
@@ -8366,7 +8366,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             ]
         )
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook == "voice.speak":
                 return SimpleNamespace(
                     ok=False,
@@ -8419,7 +8419,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_bridge_voice_ask_failure_is_visible_in_text_fallback(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook == "voice.speak":
                 return SimpleNamespace(
                     ok=False,
@@ -8635,7 +8635,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             ]
         )
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
             self.assertEqual(payload["text"], "Hello from audio.")
@@ -8730,7 +8730,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_telegram_voice_reply_uses_profile_tts_env_override(self) -> None:
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
             captured_payload.update(payload)
@@ -8788,7 +8788,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertFalse(tts["voice_settings"]["use_speaker_boost"])
 
     def test_voice_reply_runtime_state_carries_transcribe_proof_into_delivery(self) -> None:
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             self.assertEqual(hook, "voice.speak")
             return SimpleNamespace(
                 ok=True,
@@ -8869,7 +8869,7 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_explicit_voice_tts_override_wins_over_profile_env(self) -> None:
         captured_payload: dict[str, object] = {}
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             captured_payload.update(payload)
             return SimpleNamespace(
                 ok=True,
@@ -9104,13 +9104,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             def download_file(self, *, file_path: str) -> bytes:
                 return b"fake-ogg-bytes"
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook == "voice.transcribe":
                 self.assertEqual(payload["message_kind"], "voice")
-                self.assertEqual(
-                    payload["builder_env_file_path"],
-                    str(self.config_manager.paths.env_file.resolve()),
-                )
+                self.assertNotIn("builder_env_file_path", payload)
                 return SimpleNamespace(
                     ok=True,
                     chip_key="domain-chip-voice-comms",
@@ -9204,7 +9201,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             ]
         )
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook == "voice.transcribe":
                 return SimpleNamespace(
                     ok=True,
@@ -9352,7 +9349,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         voice_speak_payload: dict[str, object] | None = None
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             nonlocal voice_speak_payload
             if hook == "voice.transcribe":
                 governor = payload["governor_decision"]
