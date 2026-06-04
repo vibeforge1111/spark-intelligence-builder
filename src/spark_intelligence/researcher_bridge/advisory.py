@@ -4419,6 +4419,20 @@ def _vnext_proposes_researcher_memory_write(payload: dict[str, Any] | None) -> b
     return False
 
 
+def _vnext_proposes_builder_chip_evaluate(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for action in payload.get("proposed_actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if (
+            str(action.get("capability_id") or "") == "capability:spark-intelligence-builder:chip.evaluate"
+            and str(action.get("action_type") or "") == "edit_file"
+        ):
+            return True
+    return False
+
+
 def _build_researcher_memory_write_governor_decision(
     *,
     governor_decision: dict[str, Any] | None,
@@ -7046,10 +7060,14 @@ def _run_active_chip_evaluate(
         conversation_history=conversation_history,
         recent_active_chip_keys=recent_chip_keys,
     )
-    if not decision.selected:
+    selected_keys = [s.chip_key for s in decision.selected]
+    if not selected_keys and _vnext_proposes_builder_chip_evaluate(turn_intent_envelope_vnext):
+        evaluate_records = [r for r in active_records if "evaluate" in r.commands]
+        if len(evaluate_records) == 1:
+            selected_keys = [evaluate_records[0].key]
+    if not selected_keys:
         return None
 
-    selected_keys = [s.chip_key for s in decision.selected]
     selected_records = [r for r in active_records if r.key in selected_keys and "evaluate" in r.commands]
     if not selected_records:
         return None
