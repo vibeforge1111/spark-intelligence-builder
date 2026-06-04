@@ -54,22 +54,24 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 class BuilderPrelaunchContractTests(SparkTestCase):
     def _chip_evaluate_turn_intent_vnext(self, *, request_id: str) -> dict[str, object]:
-        return {
-            "schema_version": "turn-intent-envelope-vnext",
-            "turn_id": f"turn:chip-evaluate:{request_id}",
-            "surface": "telegram",
-            "selected_move": "execute_action",
-            "action_authority": {"state": "executable", "risk_tier": "local_write"},
-            "proposed_actions": [
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human:test",
+            request_id=request_id,
+            source_kind="test_chip_evaluate_explicit",
+            intent_summary="User explicitly requested startup chip guidance for the current turn.",
+            raw_turn_summary="Raw active-chip test turn is offloaded in the fixture.",
+            actions=[
                 {
-                    "action_type": "tool_call",
                     "tool_name": "chip.evaluate",
                     "owner_system": "spark-intelligence-builder",
                     "mutation_class": "writes_files",
-                    "capability_id": "spark-intelligence-builder:chip.evaluate",
+                    "args_path": f"builder://active-chip/{request_id}/chip-evaluate",
                 }
             ],
-        }
+        )
 
     def _governed_chip_authority(self, update_payload: dict[str, object] | None = None, **kwargs: object) -> SimpleNamespace:
         tool_name = str(kwargs.get("tool_name") or "")
@@ -77,35 +79,17 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         vnext = (update_payload or {}).get("turn_intent_envelope_vnext") if isinstance(update_payload, dict) else None
         if tool_name != "chip.evaluate" or owner_system != "spark-intelligence-builder" or not isinstance(vnext, dict):
             return SimpleNamespace(governor_decision=None)
-        decision_id = f"test-governor:{vnext.get('turn_id') or 'chip-evaluate'}"
-        return SimpleNamespace(
-            governor_decision={
-                "schema_version": "governor-decision-v1",
-                "decision_id": decision_id,
-                "surface": "telegram",
-                "turn_id": vnext.get("turn_id"),
-                "outcome": "execute",
-                "execution_boundary": {
-                    "action_authorized": True,
-                    "legacy_authority_demoted": True,
-                    "reasons": ["test_governor_authorized_chip_evaluate"],
-                },
-                "authorizations": [
-                    {
-                        "decision_id": f"{decision_id}:auth",
-                        "verdict": "allow",
-                        "capability_id": "spark-intelligence-builder:chip.evaluate",
-                    }
-                ],
-                "tool_ledgers": [
-                    {
-                        "ledger_id": f"{decision_id}:ledger",
-                        "tool_name": "chip.evaluate",
-                        "authorization": {"verdict": "allow", "decision_id": f"{decision_id}:auth"},
-                    }
-                ],
-                "evidence": [{"kind": "test_fixture", "ref": "governed-chip-authority"}],
-            }
+        from spark_intelligence.bridge_authority import authorize_builder_bridge_action as real_authorize_builder_bridge_action
+
+        return real_authorize_builder_bridge_action(
+            update_payload,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=str(kwargs.get("mutation_class") or "writes_files"),
+            state_db=self.state_db,
+            request_id=str(kwargs.get("request_id") or "req-chip-evaluate-test"),
+            actor_id="test",
+            component="test",
         )
 
     def _verify_chip_governor_authority(self, governor_decision: dict[str, object] | None, **kwargs: object) -> dict[str, object]:

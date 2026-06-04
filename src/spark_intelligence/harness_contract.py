@@ -34,6 +34,11 @@ def _harness_core_source_candidates() -> list[Path]:
         if parent.name == "modules":
             candidates.append(parent / "spark-harness-core" / "source" / "src")
             break
+    for parent in here.parents:
+        sibling = parent / "spark-harness-core" / "src"
+        if sibling.exists():
+            candidates.append(sibling)
+            break
     return candidates
 
 

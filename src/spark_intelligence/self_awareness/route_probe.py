@@ -343,22 +343,30 @@ def _run_browser_use_status_probe(config_manager: ConfigManager) -> dict[str, An
 def _run_voice_status_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
     from spark_intelligence.attachments.hooks import run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(
-        config_manager,
-        hook="voice.status",
-        payload={
-            "surface": "route_probe",
-            "advisor_context": {
-                "source_ledger": [
-                    {
-                        "source": "agent_operating_context.route_probe",
-                        "role": "voice_runtime_probe",
-                        "claim_boundary": "This checks the voice chip status hook only; Telegram delivery still needs a sendVoice smoke.",
-                    }
-                ]
+    try:
+        execution = run_first_chip_hook_supporting(
+            config_manager,
+            hook="voice.status",
+            payload={
+                "surface": "route_probe",
+                "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+                "advisor_context": {
+                    "source_ledger": [
+                        {
+                            "source": "agent_operating_context.route_probe",
+                            "role": "voice_runtime_probe",
+                            "claim_boundary": "This checks the voice chip status hook only; Telegram delivery still needs a sendVoice smoke.",
+                        }
+                    ]
+                },
             },
-        },
-    )
+        )
+    except RuntimeError as exc:
+        return {
+            "status": "failure",
+            "failure_reason": str(exc),
+            "summary": "voice.status blocked by Harness Core Governor authority",
+        }
     if execution is None:
         return {
             "status": "failure",

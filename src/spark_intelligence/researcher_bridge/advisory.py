@@ -4466,7 +4466,7 @@ def _authorize_researcher_browser_hook(
     human_id: str,
     agent_id: str,
     blocked_stage: str,
-) -> bool:
+) -> dict[str, Any] | None:
     governor_decision = None
     authority_source_kind = "missing_governor_decision"
     authority_source_ref = None
@@ -4501,7 +4501,7 @@ def _authorize_researcher_browser_hook(
         mutation_class="external_network",
     )
     if verdict == "allowed":
-        return True
+        return governor_decision if isinstance(governor_decision, dict) else None
     if governor_source_kind != "missing_governor_decision":
         authority_source_kind = governor_source_kind
     if governor_source_ref is not None:
@@ -4543,7 +4543,7 @@ def _authorize_researcher_browser_hook(
         )
     except Exception:
         pass
-    return False
+    return None
 
 
 def _authorize_researcher_active_chip_evaluate(
@@ -4558,7 +4558,7 @@ def _authorize_researcher_active_chip_evaluate(
     session_id: str,
     human_id: str,
     agent_id: str,
-) -> bool:
+) -> dict[str, Any] | None:
     governor_decision = None
     authority_source_kind = "missing_governor_decision"
     authority_source_ref = None
@@ -4592,7 +4592,7 @@ def _authorize_researcher_active_chip_evaluate(
         mutation_class="writes_files",
     )
     if verdict == "allowed":
-        return True
+        return governor_decision if isinstance(governor_decision, dict) else None
     if governor_source_kind != "missing_governor_decision":
         authority_source_kind = governor_source_kind
     if governor_source_ref is not None:
@@ -4639,7 +4639,7 @@ def _authorize_researcher_active_chip_evaluate(
         )
     except Exception:
         pass
-    return False
+    return None
 
 
 def _build_researcher_memory_turn_intent_envelope(
@@ -4952,7 +4952,7 @@ def _execute_browser_hook(
     turn_intent_envelope: TurnIntentEnvelope | None = None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    if not _authorize_researcher_browser_hook(
+    governor_decision = _authorize_researcher_browser_hook(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
@@ -4964,10 +4964,36 @@ def _execute_browser_hook(
         human_id=human_id,
         agent_id=agent_id,
         blocked_stage="browser_hook_execution",
-    ):
+    )
+    if governor_decision is None:
         return None, None
     try:
-        execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+        execution = run_first_chip_hook_supporting(
+            config_manager,
+            hook=hook,
+            payload=payload,
+            governor_decision=governor_decision,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "legacy browser extension lane is disabled" in message.lower():
+            return (
+                {
+                    "status": "failed",
+                    "error": {
+                        "code": "BROWSER_SESSION_UNAVAILABLE",
+                        "message": (
+                            "The governed browser-use session is not connected for researcher browser search."
+                        ),
+                        "details": {
+                            "replacement_surface": "spark-cli browser-use agent",
+                            "retired_lane": "legacy_browser_extension",
+                        },
+                    },
+                },
+                None,
+        )
+        return None, None
     except Exception:
         return None, None
     if not execution or not execution.ok:
@@ -7028,7 +7054,7 @@ def _run_active_chip_evaluate(
     if not selected_records:
         return None
     selected_record_keys = [record.key for record in selected_records]
-    if not _authorize_researcher_active_chip_evaluate(
+    governor_decision = _authorize_researcher_active_chip_evaluate(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
@@ -7039,7 +7065,8 @@ def _run_active_chip_evaluate(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
-    ):
+    )
+    if governor_decision is None:
         return None
 
     analyses: list[str] = []
@@ -7055,7 +7082,13 @@ def _run_active_chip_evaluate(
 
     for record in selected_records:
         try:
-            execution = run_chip_hook(config_manager, chip_key=record.key, hook="evaluate", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=record.key,
+                hook="evaluate",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         except Exception:
             continue
         if not execution or not execution.ok:
