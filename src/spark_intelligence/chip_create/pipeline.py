@@ -62,10 +62,14 @@ def _ensure_chip_labs_importable(root: Path) -> None:
         sys.path.insert(0, src)
 
 
+_CODE_FENCE_OPEN_RE = re.compile(r"^```(?:json)?\s*")
+_CODE_FENCE_CLOSE_RE = re.compile(r"\s*```$")
+
+
 def _strip_code_fences(text: str) -> str:
     text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
+    text = _CODE_FENCE_OPEN_RE.sub("", text)
+    text = _CODE_FENCE_CLOSE_RE.sub("", text)
     return text.strip()
 
 
