@@ -3560,8 +3560,39 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Startup Operator run completed.", str(result.detail["response_text"]))
+        self.assertIn("Artifacts: written locally. Collective payload: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/run-artifacts", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/payload.json", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm autoloop startup-operator` or `/swarm session startup-operator`.", str(result.detail["response_text"]))
         self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
+
+    def test_swarm_run_failure_redacts_local_output_before_reply(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_bridge_run_specialization_path",
+            return_value=SimpleNamespace(
+                ok=False,
+                exit_code=2,
+                stderr="failed to open /Users/alice/private/swarm-artifacts/latest.json during local bridge run",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=23021,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm run startup-operator",
+                ),
+            )
+
+        response_text = str(result.detail["response_text"])
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm run failed.", response_text)
+        self.assertIn("<local-path>", response_text)
+        self.assertNotIn("/Users/alice/private/swarm-artifacts/latest.json", response_text)
 
     def test_natural_language_swarm_autoloop_command_runs_local_loop(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3653,6 +3684,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Quality delta: tool usage +0.1400 (0.6600 -> 0.8000).", str(result.detail["response_text"]))
         self.assertIn("Quality delta: reasoning +0.1100 (0.6800 -> 0.7900).", str(result.detail["response_text"]))
         self.assertIn("Promotion readiness: ready (benchmark_proof_passed).", str(result.detail["response_text"]))
+        self.assertIn("Round artifact: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/round-summary.json", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
 
@@ -3944,6 +3977,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Swarm rerun request executed.", str(result.detail["response_text"]))
+        self.assertIn("Artifacts: written locally.", str(result.detail["response_text"]))
+        self.assertIn("Collective payload: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/rerun-artifacts", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/rerun-payload.json", str(result.detail["response_text"]))
         self.assertEqual(rerun_mock.call_args.kwargs["path_key"], "startup-operator")
 
     def test_swarm_read_failure_returns_bounded_message(self) -> None:

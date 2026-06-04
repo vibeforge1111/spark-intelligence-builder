@@ -81,6 +81,7 @@ from spark_intelligence.self_awareness import (
 )
 from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -113,6 +114,9 @@ from spark_intelligence.swarm_bridge import (
 
 
 TELEGRAM_PARROT_EFFECT_VERSION = "parrot-balanced-v1"
+SWARM_LOCAL_PATH_PATTERN = re.compile(
+    r"(?i)\b[A-Z]:[\\/][^\s`'\"<>]+|(?<![\w.])/(?:Users|home|tmp|var|private|Volumes|workspace|mnt|root)/[^\s`'\"<>]+"
+)
 
 
 @dataclass
@@ -9616,8 +9620,8 @@ def _render_swarm_bridge_run_reply(result: Any) -> str:
         return _render_swarm_bridge_failure("run", result)
     path_key = str(getattr(result, "path_key", "") or "unknown")
     path_label = _humanize_swarm_path_key(path_key)
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         f"{path_label} run completed.\n"
         f"Artifacts: {artifacts_path}. Collective payload: {payload_path}.\n"
@@ -9843,7 +9847,7 @@ def _render_swarm_latest_round_detail_lines(
         )
     )
     if latest_round_summary_path:
-        lines.append(f"Round artifact: {latest_round_summary_path}.")
+        lines.append("Round artifact: written locally.")
     return lines
 
 
@@ -9967,8 +9971,8 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
     if not getattr(result, "ok", False):
         return _render_swarm_bridge_failure("rerun request", result)
     path_key = str(getattr(result, "path_key", "") or "latest open path")
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         "Swarm rerun request executed.\n"
         f"Path: {path_key}.\n"
@@ -9984,9 +9988,24 @@ def _render_swarm_bridge_failure(action: str, result: Any) -> str:
     lines = [
         f"Swarm {action} failed.",
         f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
-        detail[:800],
+        _safe_swarm_bridge_output_detail(detail),
     ]
     return "\n".join(lines)
+
+
+def _describe_swarm_local_artifact(value: Any, *, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if text.lower() in {"unknown", "not written"}:
+        return text
+    return "written locally"
+
+
+def _safe_swarm_bridge_output_detail(value: str) -> str:
+    redacted = redact_text(value).strip()
+    redacted = SWARM_LOCAL_PATH_PATTERN.sub("<local-path>", redacted)
+    return redacted[:800] or "Command failed without stdout or stderr."
 
 
 def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:
