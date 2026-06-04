@@ -605,10 +605,20 @@ def _build_source_ledger(
 
 
 def _cold_context_records_from_trace(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    # Iterate in declared key order, but only return when a list yields at
+    # least one usable record. An empty `items` list previously shadowed a
+    # populated `evidence` or `events` list further down the priority chain
+    # because `isinstance([], list)` is True — the early return treated
+    # "key present but empty" as "this is the source of truth", which
+    # silently drops cold-memory evidence the SDK actually returned under
+    # a sibling key.
     for key in ("items", "records", "evidence", "events", "matches"):
         value = trace.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+        if not isinstance(value, list):
+            continue
+        records = [item for item in value if isinstance(item, dict)]
+        if records:
+            return records
     return []
 
 
