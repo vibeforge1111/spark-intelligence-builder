@@ -20,6 +20,10 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpypi-[A-Za-z0-9_-]{20,}\b"), "<redacted pypi token>"),
     (re.compile(r"\bdop_v1_[A-Za-z0-9_-]{20,}\b"), "<redacted doppler token>"),
     (re.compile(r"\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis)://[^\s'\"<>]+", re.I), "<redacted connection string>"),
+    (
+        re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\s'\"<>]+|/(?:Users|home)/[^\s'\"<>]+)", re.I),
+        "<redacted local path>",
+    ),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "Bearer <redacted>"),
     (
         re.compile(
