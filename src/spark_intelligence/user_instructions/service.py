@@ -9,6 +9,12 @@ from uuid import uuid4
 from spark_intelligence.state.db import StateDB
 
 
+# Tokenizer compiled once. find_matching_instructions calls it inside a loop
+# over up to 200 candidates per query, so compile-once cuts up to 200+
+# per-query recompilations down to 0.
+_INSTRUCTION_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
 @dataclass
 class UserInstruction:
     instruction_id: str
@@ -190,12 +196,12 @@ def matching_instructions_to_archive(
         channel_kind=channel_kind,
         limit=200,
     )
-    needle_tokens = set(re.findall(r"[a-z0-9]+", needle_norm))
+    needle_tokens = set(_INSTRUCTION_TOKEN_RE.findall(needle_norm))
     if not needle_tokens:
         return []
     scored: list[tuple[int, UserInstruction]] = []
     for inst in candidates:
-        text_tokens = set(re.findall(r"[a-z0-9]+", inst.instruction_text.lower()))
+        text_tokens = set(_INSTRUCTION_TOKEN_RE.findall(inst.instruction_text.lower()))
         overlap = len(needle_tokens & text_tokens)
         if overlap == 0:
             continue
