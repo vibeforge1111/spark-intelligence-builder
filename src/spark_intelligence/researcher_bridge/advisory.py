@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -14780,6 +14781,7 @@ def _command_override_for_provider(selection: ResearcherProviderSelection) -> li
 
 
 @contextmanager
+@contextmanager
 def _temporary_provider_env(
     provider: RuntimeProviderResolution,
     *,
@@ -14788,6 +14790,7 @@ def _temporary_provider_env(
     request_id: str | None = None,
     trace_ref: str | None = None,
 ):
+    lock = threading.Lock()
     values = {
         "SPARK_INTELLIGENCE_PROVIDER_ID": provider.provider_id,
         "SPARK_INTELLIGENCE_PROVIDER_KIND": provider.provider_kind,
@@ -14807,16 +14810,17 @@ def _temporary_provider_env(
     if trace_ref:
         values["SPARK_INTELLIGENCE_TRACE_REF"] = trace_ref
     original = {key: os.environ.get(key) for key in values}
-    try:
-        for key, value in values.items():
-            os.environ[key] = value
-        yield
-    finally:
-        for key, value in original.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
+    with lock:
+        try:
+            for key, value in values.items():
                 os.environ[key] = value
+            yield
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def _read_runtime_state(state_db: StateDB) -> dict[str, str]:
