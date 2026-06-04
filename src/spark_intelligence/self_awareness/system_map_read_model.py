@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,26 @@ from spark_intelligence.config.loader import ConfigManager
 
 
 SYSTEM_MAP_CONTEXT_SCHEMA_VERSION = "spark.aoc_system_map_context.v1"
+_FRESHNESS_FRESH_HORIZON = timedelta(hours=24)
+_FRESHNESS_STALE_HORIZON = timedelta(days=7)
+
+
+def _freshness_from_generated_at(generated_at: Any) -> str:
+    text = str(generated_at or "").strip()
+    if not text:
+        return "unknown"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return "unparseable_timestamp"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - parsed.astimezone(UTC)
+    if age < _FRESHNESS_FRESH_HORIZON:
+        return "fresh"
+    if age < _FRESHNESS_STALE_HORIZON:
+        return "aging"
+    return "stale"
 
 _RAW_READ_FLAGS = (
     "raw_secret_values_read",
@@ -100,7 +121,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "source_ref": "spark os compile",
         "output_dir": str(output_dir),
         "resolution": resolution,
-        "freshness": "fresh" if system_map.get("generated_at") else "unknown",
+        "freshness": _freshness_from_generated_at(system_map.get("generated_at")),
         "generated_at": system_map.get("generated_at"),
         "counts": counts,
         "memory_movement": memory_movement,
