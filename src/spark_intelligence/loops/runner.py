@@ -112,9 +112,19 @@ def run_chip_autoloop(
     suggest_limit: int = 3,
     artifacts_root: Path | None = None,
     pause_seconds: float = 0.0,
+    suggest_governor_decision: dict[str, Any] | None = None,
+    evaluate_governor_decision: dict[str, Any] | None = None,
 ) -> LoopResult:
     rounds = max(1, int(rounds))
     suggest_limit = max(1, int(suggest_limit))
+    if not isinstance(suggest_governor_decision, dict) or not isinstance(evaluate_governor_decision, dict):
+        return LoopResult(
+            ok=False,
+            chip_key=chip_key,
+            rounds_completed=0,
+            total_rounds=rounds,
+            error="chip autoloop requires Harness Core Governor authority for chip.suggest and chip.evaluate",
+        )
     artifacts_root = artifacts_root or Path.home() / ".spark-intelligence" / "loops"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     status_path = artifacts_root / f"{chip_key}.status.json"
@@ -144,6 +154,7 @@ def run_chip_autoloop(
                     "chip_key": chip_key,
                     "cold_start": round_idx == 1 and not history,
                 },
+                governor_decision=suggest_governor_decision,
             )
         except Exception as exc:
             return LoopResult(
@@ -194,6 +205,7 @@ def run_chip_autoloop(
                     chip_key=chip_key,
                     hook="evaluate",
                     payload={"candidate": s, "round": round_idx},
+                    governor_decision=evaluate_governor_decision,
                 )
             except Exception as exc:
                 evaluations.append({"candidate": s, "error": str(exc)})

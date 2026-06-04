@@ -7,6 +7,7 @@ from spark_intelligence.attachments.registry import (
 )
 from spark_intelligence.attachments.hooks import (
     ChipHookExecution,
+    chip_hook_authority_contract,
     list_chip_records,
     list_active_chip_records,
     record_chip_hook_execution,
@@ -40,6 +41,7 @@ __all__ = [
     "build_attachment_context",
     "build_attachment_snapshot",
     "clear_active_path",
+    "chip_hook_authority_contract",
     "deactivate_chip",
     "list_chip_records",
     "list_active_chip_records",

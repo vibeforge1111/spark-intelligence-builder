@@ -15,6 +15,51 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_i
 
 
 class AttachmentHookTests(SparkTestCase):
+    def _governor_decision_for_hook(
+        self,
+        *,
+        hook: str = "evaluate",
+        request_id: str = "req-chip-hook-governor",
+        owner_system: str = "spark-intelligence-builder",
+        mutation_class: str = "writes_files",
+        external_network: bool = False,
+    ) -> dict[str, object]:
+        from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        tool_name = hook if hook.startswith(("browser.", "voice.", "chip.")) else f"chip.{hook}"
+        envelope = build_vnext_action_intent_envelope(
+            surface="cli",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_chip_hook_governor",
+            intent_summary=f"Test authorizes {tool_name}.",
+            raw_turn_summary=f"Run {tool_name} in test.",
+            actions=[
+                {
+                    "tool_name": tool_name,
+                    "owner_system": owner_system,
+                    "mutation_class": mutation_class,
+                    "external_network": external_network,
+                    "args_path": f"builder://test/{request_id}/{tool_name}",
+                }
+            ],
+        )
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+            state_db=self.state_db,
+            request_id=request_id,
+            actor_id="test",
+            component="test",
+        )
+        self.assertTrue(authority.allowed, authority.reason_codes)
+        self.assertIsInstance(authority.governor_decision, dict)
+        return authority.governor_decision
+
     def _chip_evaluate_turn_intent_vnext(self, *, request_id: str = "req-chip-vnext") -> dict[str, object]:
         from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 
@@ -160,6 +205,39 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(hook_exit, 2)
         self.assertIn("legacy browser extension lane is disabled", hook_stderr)
         self.assertIn("browser-use MCP lane", hook_stderr)
+
+    def test_run_chip_hook_without_governor_does_not_call_subprocess(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        with patch("spark_intelligence.attachments.hooks.run_governed_command") as run_mock:
+            with self.assertRaises(RuntimeError) as blocked:
+                run_chip_hook(
+                    self.config_manager,
+                    chip_key="startup-yc",
+                    hook="evaluate",
+                    payload={"situation": "no authority"},
+                )
+
+        run_mock.assert_not_called()
+        self.assertIn("requires Harness Core Governor authority", str(blocked.exception))
+
+    def test_run_chip_hook_with_governor_executes_subprocess(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        governor_decision = self._governor_decision_for_hook(request_id="req-chip-hook-valid")
+
+        execution = run_chip_hook(
+            self.config_manager,
+            chip_key="startup-yc",
+            hook="evaluate",
+            payload={"situation": "We have growth but poor retention"},
+            governor_decision=governor_decision,
+        )
+
+        self.assertTrue(execution.ok)
+        self.assertEqual(execution.governor_verification["allowed"], True)
+        self.assertIn("Startup YC doctrine", execution.output["result"]["analysis"])
 
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
@@ -625,6 +703,7 @@ class AttachmentHookTests(SparkTestCase):
 
         self.assertEqual(result.reply_text, "Tighten the user pain wedge first.")
         run_hook_mock.assert_called_once()
+        self.assertIsInstance(run_hook_mock.call_args.kwargs.get("governor_decision"), dict)
         self.assertIn("[Active chip guidance]", str(captured["user_prompt"]))
         self.assertIn("chip_key=startup-yc", str(captured["user_prompt"]))
         self.assertIn("Startup YC doctrine: focus on the narrowest urgent founder pain first.", str(captured["user_prompt"]))

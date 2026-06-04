@@ -189,6 +189,19 @@ def build_builder_legacy_authority_planes() -> list[dict[str, Any]]:
             },
         ),
         _consumer_plane(
+            plane_id="builder-chip-hook-execution-boundary",
+            surface="domain_chip",
+            plane_type="tool_launcher",
+            source_path="src/spark_intelligence/attachments/hooks.py,src/spark_intelligence/cli.py,src/spark_intelligence/researcher_bridge/advisory.py",
+            summary="All chip hook subprocess execution consumes explicit Governor decisions at the shared hook boundary before payload files or commands run.",
+            authority_risk={
+                "can_execute": True,
+                "can_mutate_state": True,
+                "can_write_memory": True,
+                "can_call_network": True,
+            },
+        ),
+        _consumer_plane(
             plane_id="builder-researcher-memory-authority",
             surface="memory",
             plane_type="tool_launcher",
