@@ -71,6 +71,8 @@ _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "N
 
 
 def _format_12(h: int, m: int) -> str:
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return f"{h:02d}:{m:02d}"
     hh = ((h + 11) % 12) + 1
     suffix = "AM" if h < 12 else "PM"
     return f"{hh} {suffix}" if m == 0 else f"{hh}:{m:02d} {suffix}"
@@ -95,17 +97,18 @@ def humanize_cron(cron: str) -> str:
         if h and minute.isdigit():
             n = h.group(1)
             return f"Every {n} hour" + ("" if n == "1" else "s") + f" at :{int(minute):02d}"
-        if hour.isdigit() and minute.isdigit():
+       if hour.isdigit() and minute.isdigit() and 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
             return f"Daily at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
+   if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
         dow_int = int(dow)
-        if dow_int < len(_DOW):
+        if dow_int < len(_DOW) and 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
             return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
-        return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
+   if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
+        if 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
+            return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
         month_int = int(month)
-        if 1 <= month_int <= 12:
+    if 1 <= month_int <= 12 and 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
             return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
     return f"Custom: {cron}"
 
