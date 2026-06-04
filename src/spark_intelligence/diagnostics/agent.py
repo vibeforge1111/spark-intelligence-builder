@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import socket
+import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter, defaultdict, deque
@@ -618,13 +620,38 @@ def render_diagnostic_markdown(report: DiagnosticReport) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_name = handle.name
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except Exception:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
+
+
 def write_diagnostic_markdown(report: DiagnosticReport, *, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = report.generated_at.replace(":", "-")
     output_path = output_dir / f"spark-diagnostic-{stamp}.md"
-    output_path.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    rendered = render_diagnostic_markdown(report)
+    _atomic_write_text(output_path, rendered)
     latest_path = output_dir / "Spark Diagnostics.md"
-    latest_path.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    _atomic_write_text(latest_path, rendered)
     return output_path
 
 
