@@ -142,10 +142,21 @@ class ConfigManager:
             },
         }
 
-    def load(self) -> dict[str, Any]:
+   def load(self) -> dict[str, Any]:
         if not self.paths.config_yaml.exists():
             return self.default_config()
-        data = yaml.safe_load(self.paths.config_yaml.read_text(encoding="utf-8")) or {}
+        try:
+            text = self.paths.config_yaml.read_text(encoding="utf-8")
+        except OSError as exc:
+            import warnings
+            warnings.warn(f"config: cannot read {self.paths.config_yaml}: {exc} — using defaults")
+            return self.default_config()
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            import warnings
+            warnings.warn(f"config: malformed YAML in {self.paths.config_yaml}: {exc} — using defaults")
+            return self.default_config()
         return data
 
     @staticmethod
