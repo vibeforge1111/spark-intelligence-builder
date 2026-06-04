@@ -1690,8 +1690,19 @@ def _resolve_specialization_default_mutation_target_path(
         if not isinstance(template, dict):
             continue
         destination = str(template.get("destination") or "").strip()
-        if destination:
-            return repo_root / destination
+        if not destination:
+            continue
+        root = repo_root.resolve()
+        resolved = (root / destination).resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            logger.warning(
+                "Blocked manifest template destination escaping repo root: %r",
+                destination,
+            )
+            continue
+        return resolved
     return None
 
 
