@@ -994,9 +994,18 @@ def load_agent_persona_profile(
                 ).fetchone()
                 if not row:
                     continue
-                base_traits = json.loads(row["base_traits_json"] or "{}")
-                behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-                provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+                try:
+                    base_traits = json.loads(row["base_traits_json"] or "{}")
+                except json.JSONDecodeError:
+                    base_traits = {}
+                try:
+                    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+                except json.JSONDecodeError:
+                    behavioral_rules = []
+                try:
+                    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+                except json.JSONDecodeError:
+                    provenance = {}
                 return {
                     "agent_id": candidate_agent_id,
                     "persona_name": _read_optional_text(row["persona_name"]),
