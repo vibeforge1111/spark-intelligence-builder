@@ -2329,6 +2329,38 @@ def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str)
     return getattr(module, symbol)
 
 
+_BLOCKED_SWARM_URL_SUFFIXES = (".internal", ".local", ".corp", ".lan")
+
+
+def _validate_swarm_url(url: str) -> None:
+    """Reject URLs that target loopback, private, or metadata endpoints.
+
+    Prevents SSRF when swarm config values (api_url, supabase_url) are
+    redirected to internal services, cloud metadata endpoints, or attacker-
+    controlled credential-harvesting servers.
+    """
+    parsed = urllib.parse.urlparse(url)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError(f"Blocked swarm request to invalid URL: {url!r}")
+
+    _blocked = {"localhost", "127.0.0.1", "::1", "0.0.0.0",
+                "169.254.169.254", "metadata.google.internal"}
+    if hostname in _blocked:
+        raise ValueError(f"Blocked swarm request to metadata/loopback: {url!r}")
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            raise ValueError(f"Blocked swarm request to private IP: {url!r}")
+    except ValueError:
+        if hostname in _blocked:
+            raise
+
+    if any(hostname.endswith(s) for s in _BLOCKED_SWARM_URL_SUFFIXES):
+        raise ValueError(f"Blocked swarm request to internal hostname: {url!r}")
+
+
 def _refresh_swarm_access_token(
     *,
     config_manager: ConfigManager,
@@ -2353,6 +2385,7 @@ def _refresh_swarm_access_token(
         method="POST",
     )
     try:
+        _validate_swarm_url(session.supabase_url)
         with urllib.request.urlopen(request, timeout=15) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
