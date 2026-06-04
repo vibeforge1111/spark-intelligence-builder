@@ -3006,7 +3006,17 @@ def _import_execute_with_research(runtime_root: Path):
     return getattr(module, "execute_with_research")
 
 
+_ALLOWED_RESEARCHER_IMPORT_MODULES = frozenset({
+    "spark_researcher.advisory",
+    "spark_researcher.research",
+})
+
+
 def _import_researcher_module(runtime_root: Path, module_name: str):
+    if module_name not in _ALLOWED_RESEARCHER_IMPORT_MODULES:
+        raise ValueError(
+            f"Module '{module_name}' is not in the allowed researcher module list."
+        )
     src_root = runtime_root / "src"
     src_root_resolved = src_root.resolve(strict=False)
     _evict_researcher_modules_from_other_roots(src_root_resolved)
