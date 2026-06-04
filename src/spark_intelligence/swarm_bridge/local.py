@@ -308,10 +308,16 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
     configured = config_manager.get_path("spark.swarm.runtime_root")
     if configured:
         candidate = config_manager.normalize_runtime_path(configured)
+        # normalize_runtime_path may return None when the configured value
+        # cannot be expanded (unknown env alias, malformed path). Guard the
+        # follow-up .exists() lookup so a misconfigured runtime_root falls
+        # through to the Desktop fallback instead of crashing every swarm
+        # bridge call with AttributeError: 'NoneType' object has no
+        # attribute 'exists'.
         if candidate is not None:
             candidate = candidate.resolve()
-        if candidate.exists():
-            return candidate
+            if candidate.exists():
+                return candidate
     candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
     if candidate.exists():
         return candidate
