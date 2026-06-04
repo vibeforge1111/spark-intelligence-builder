@@ -503,7 +503,7 @@ def _looks_like_memory_forget_request(user_message: str) -> bool:
     if not re.search(r"\b(?:forget|delete|remove|erase|purge|stop remembering)\b", text):
         return False
     return bool(
-        re.search(r"\b(?:saved\s+)?memor(?:y|ies)|\bprofile\s+(?:fact|memory)|\bactive\s+current\s+profile\b", text)
+        re.search(r"\b(?:(?:saved\s+)?memor(?:y|ies)|profile\s+(?:fact|memory)|active\s+current\s+profile)\b", text)
         or re.search(r"\b(?:my\s+name|preferred\s+name|written\s+name|pronounced|pronunciation)\b", text)
     )
 
