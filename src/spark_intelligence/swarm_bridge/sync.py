@@ -1626,8 +1626,23 @@ def _resolve_specialization_default_mutation_target_path(
         if not isinstance(template, dict):
             continue
         destination = str(template.get("destination") or "").strip()
-        if destination:
-            return repo_root / destination
+        if not destination:
+            continue
+        # Block path traversal: destination must not escape repo_root
+        if ".." in destination or destination.startswith("/"):
+            logger.warning(
+                "Blocked manifest template with path-traversal destination: %r",
+                destination,
+            )
+            continue
+        resolved = (repo_root / destination).resolve()
+        if not str(resolved).startswith(str(repo_root.resolve())):
+            logger.warning(
+                "Blocked manifest template destination escaping repo root: %r",
+                destination,
+            )
+            continue
+        return resolved
     return None
 
 
