@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.security.redaction import redact_text
 
 SENSITIVE_TEXT_PATTERNS = [
     re.compile(r"\b(?:bot)?\d{7,12}:[A-Za-z0-9_-]{30,}\b"),
@@ -116,5 +117,10 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
-        return redacted
+        # Also run the canonical secret/PII redactor so trace strings are never
+        # weaker than the rest of the system: the local patterns above are a
+        # subset that misses whole credential families (AWS keys, DB connection
+        # strings, github_pat_/hf_/npm_/pypi_/doppler tokens, phone numbers).
+        # Applied last so anything the local patterns already masked is untouched.
+        return redact_text(redacted)
     return value
