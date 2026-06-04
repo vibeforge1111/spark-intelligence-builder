@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -139,7 +141,30 @@ def run_chip_autoloop(
             "history": history,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Write via temp+os.replace so a crash mid-write cannot truncate the
+        # canonical autoloop status pointer that downstream surfaces (CLI,
+        # /loop_status TG command, telegram-bot pollers) read between rounds.
+        serialized = json.dumps(payload, indent=2)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{status_path.name}.",
+            suffix=".tmp",
+            dir=str(status_path.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(serialized)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_name, status_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     for round_idx in range(1, rounds + 1):
         try:
