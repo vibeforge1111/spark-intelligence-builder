@@ -20,6 +20,17 @@ from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
+# Pre-compiled tokenizer and frozen stopword set for _capsule_tokens.
+# _capsule_tokens is called once for the user message + once per candidate
+# record during memory recall (potentially dozens per capsule build). Lifting
+# both the regex and the stopword set out of the function eliminates per-call
+# AST recompilation and per-call set-literal construction.
+_CAPSULE_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_CAPSULE_STOPWORDS = frozenset(
+    {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
+)
+
+
 _STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
     ("profile.current_focus", "current_focus"),
     ("profile.current_plan", "current_plan"),
@@ -634,11 +645,10 @@ def _compact(text: str, max_chars: int) -> str:
 
 
 def _capsule_tokens(text: str) -> set[str]:
-    stopwords = {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
     return {
         token
-        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(text or "").casefold())
-        if token and token not in stopwords
+        for token in _CAPSULE_TOKEN_RE.findall(str(text or "").casefold())
+        if token and token not in _CAPSULE_STOPWORDS
     }
 
 
