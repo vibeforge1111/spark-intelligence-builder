@@ -1017,8 +1017,8 @@ def _prepare_telegram_media_input(
             "effective_text": None,
             "transcript_text": None,
             "routing_decision": "voice_transcription_unavailable",
-            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
-            "error": str(exc),
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=_safe_voice_error_message(exc)),
+            "error": _safe_voice_error_message(exc),
         }
     media_client = client or _resolve_telegram_client(config_manager)
     if media_client is None:
@@ -1057,8 +1057,8 @@ def _prepare_telegram_media_input(
             "effective_text": None,
             "transcript_text": None,
             "routing_decision": "voice_transcription_unavailable",
-            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
-            "error": str(exc),
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=_safe_voice_error_message(exc)),
+            "error": _safe_voice_error_message(exc),
         }
 
 
