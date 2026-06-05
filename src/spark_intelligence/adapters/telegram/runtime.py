@@ -488,7 +488,21 @@ def _telegram_researcher_memory_write_governor_decision(
     return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
 
 
-def _telegram_user_instruction_governor_decision(
+def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return None
+    candidates: list[Any] = [update_payload.get("governor_decision")]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message.get("governor_decision"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("schema_version") == "governor-decision-v1":
+            return candidate
+    return None
+
+
+def _telegram_user_instruction_governor_decision_from_inbound_authority(
+    update_payload: dict[str, Any] | None,
     *,
     state_db,
     request_id: str,
@@ -496,26 +510,19 @@ def _telegram_user_instruction_governor_decision(
     session_id: str,
     human_id: str,
     agent_id: str,
-    action: str,
+    action: str | None,
 ) -> dict[str, Any] | None:
+    if not action:
+        return None
     action_name = "archive" if action == "forget" else "write"
     tool_name = f"user_instruction.{action_name}"
-    payload = build_vnext_tool_intent_envelope(
-        surface="telegram",
-        actor_id_ref=human_id,
-        request_id=f"{request_id}:user-instruction-{action_name}",
-        source_kind=f"telegram_runtime_user_instruction_{action_name}",
-        tool_name=tool_name,
-        owner_system="spark-intelligence-builder",
-        mutation_class="writes_memory",
-        intent_summary=f"Fresh Telegram turn authorizes a saved-preference {action_name}.",
-        raw_turn_summary="Telegram saved-preference intent remains offloaded; raw text is not used as authority.",
-        confidence=0.95,
-    )
-    if not isinstance(payload, dict):
+    inbound_governor = _inbound_governor_decision(update_payload)
+    if isinstance(inbound_governor, dict):
+        return inbound_governor
+    if extract_turn_intent_envelope_vnext(update_payload) is None:
         return None
     authority = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": payload},
+        update_payload,
         tool_name=tool_name,
         owner_system="spark-intelligence-builder",
         mutation_class="writes_memory",
@@ -533,6 +540,7 @@ def _telegram_user_instruction_governor_decision(
 
 
 def _telegram_user_instruction_governor_decision_for_message(
+    update_payload: dict[str, Any] | None,
     *,
     state_db,
     request_id: str,
@@ -549,7 +557,8 @@ def _telegram_user_instruction_governor_decision_for_message(
     intent = detect_instruction_intent(user_message)
     if not intent:
         return None
-    return _telegram_user_instruction_governor_decision(
+    return _telegram_user_instruction_governor_decision_from_inbound_authority(
+        update_payload,
         state_db=state_db,
         request_id=request_id,
         run_id=run_id,
@@ -811,6 +820,8 @@ def _maybe_capture_user_instruction(
     base = (reply_text or "").rstrip()
     text_value = str(intent.get("instruction_text") or "").strip()
     if not text_value:
+        return reply_text
+    if not isinstance(governor_decision, dict):
         return reply_text
     if intent.get("action") == "forget":
         try:
@@ -2125,34 +2136,6 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
-                if not _shortcircuited and _instruction_intent is not None:
-                    _shortcircuited = True
-                    outbound_text = _maybe_capture_user_instruction(
-                        state_db=state_db,
-                        user_message=effective_text,
-                        external_user_id=normalized.telegram_user_id,
-                        reply_text="",
-                        bridge_mode="user_instruction_shortcircuit",
-                        routing_decision="user_instruction_shortcircuit",
-                        governor_decision=_telegram_user_instruction_governor_decision_for_message(
-                            state_db=state_db,
-                            request_id=request_id,
-                            run_id=None,
-                            session_id=resolution.session_id,
-                            human_id=resolution.human_id,
-                            agent_id=resolution.agent_id,
-                            user_message=effective_text,
-                        ),
-                    )
-                    trace_ref = None
-                    bridge_mode = "user_instruction_shortcircuit"
-                    attachment_context = None
-                    routing_decision = "user_instruction_shortcircuit"
-                    active_chip_key = None
-                    active_chip_task_type = None
-                    active_chip_evaluate_used = False
-                    evidence_summary = None
-                    bridge_result = None
                 if not _shortcircuited:
                     researcher_memory_write_governor = _telegram_researcher_memory_write_governor_decision(
                         researcher_update_payload,
@@ -2231,6 +2214,7 @@ def simulate_telegram_update(
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
                         governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                            researcher_update_payload,
                             state_db=state_db,
                             request_id=request_id,
                             run_id=None,
@@ -3133,6 +3117,7 @@ def poll_telegram_updates_once(
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
             governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                researcher_update_payload,
                 state_db=state_db,
                 request_id=f"telegram:{normalized.update_id}",
                 run_id=run.run_id,
