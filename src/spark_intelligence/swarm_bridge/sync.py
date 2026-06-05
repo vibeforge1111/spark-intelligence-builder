@@ -1768,7 +1768,10 @@ def _build_collective_payload(
     with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
         export_info = write_payload(researcher_root, runtime_root, config)
     payload_path = Path(str(export_info["payload_path"]))
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     if _normalize_collective_payload(payload):
         payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
