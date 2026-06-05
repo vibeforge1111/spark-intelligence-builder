@@ -7,7 +7,10 @@ from typing import Any
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
 
 
 def _load_run_summary_from_pointer(pointer_path: Path) -> dict[str, Any]:
