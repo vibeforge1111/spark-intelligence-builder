@@ -2324,7 +2324,7 @@ def build_parser() -> argparse.ArgumentParser:
     drafts_show_parser.add_argument("handle", help="Draft handle (e.g. D-7f3a)")
     drafts_show_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
-    instr_parser = subparsers.add_parser("instructions", help="Manage persistent per-user instructions injected into prompts")
+    instr_parser = subparsers.add_parser("instructions", help="Manage saved per-user preferences recalled as evidence")
     instr_subparsers = instr_parser.add_subparsers(dest="instructions_command", required=True)
 
     instr_list_parser = instr_subparsers.add_parser("list", help="List active instructions for a user")
@@ -2336,13 +2336,21 @@ def build_parser() -> argparse.ArgumentParser:
     instr_add_parser = instr_subparsers.add_parser("add", help="Add an instruction for a user")
     instr_add_parser.add_argument("--user-id", required=True, help="External user id")
     instr_add_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
-    instr_add_parser.add_argument("--text", required=True, help="The instruction text")
+    instr_add_parser.add_argument("--text", required=True, help="The saved preference text")
     instr_add_parser.add_argument("--source", default="explicit", help="Source label (default: explicit)")
     instr_add_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    instr_add_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this saved-preference write",
+    )
 
-    instr_archive_parser = instr_subparsers.add_parser("archive", help="Archive a single instruction by id")
-    instr_archive_parser.add_argument("instruction_id", help="The instruction id to archive")
+    instr_archive_parser = instr_subparsers.add_parser("archive", help="Archive a single saved preference by id")
+    instr_archive_parser.add_argument("instruction_id", help="The saved preference id to archive")
     instr_archive_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    instr_archive_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this saved-preference archive",
+    )
 
     chips_parser = subparsers.add_parser("chips", help="Inspect chip routing decisions for a given message")
     chips_subparsers = chips_parser.add_subparsers(dest="chips_command", required=True)
@@ -6032,42 +6040,66 @@ def handle_instructions_list(args: argparse.Namespace) -> int:
         print(_json.dumps([i.to_dict() for i in items], indent=2))
         return 0
     if not items:
-        print(f"No active instructions for user={args.user_id} channel={args.channel}")
+        print(f"No active preferences for user={args.user_id} channel={args.channel}")
         return 0
-    print(f"Active instructions for user={args.user_id} channel={args.channel}:")
+    print(f"Active preferences for user={args.user_id} channel={args.channel}:")
     for i in items:
         print(f"- [{i.instruction_id}] ({i.source}) {i.instruction_text}")
     return 0
 
 
+def _load_governor_decision_json(value: str | None) -> dict | None:
+    if not value:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("--governor-decision-json must decode to a JSON object")
+    return parsed
+
+
 def handle_instructions_add(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import add_instruction
+    from spark_intelligence.user_instructions import UserInstructionAuthorityError, add_instruction
 
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
-    saved = add_instruction(
-        state_db,
-        external_user_id=args.user_id,
-        channel_kind=args.channel,
-        instruction_text=args.text,
-        source=args.source,
-    )
-    print(f"Saved instruction {saved.instruction_id}: {saved.instruction_text}")
+    try:
+        governor_decision = _load_governor_decision_json(args.governor_decision_json)
+        saved = add_instruction(
+            state_db,
+            external_user_id=args.user_id,
+            channel_kind=args.channel,
+            instruction_text=args.text,
+            source=args.source,
+            governor_decision=governor_decision,
+        )
+    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+        print(f"Saved preference write blocked: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved preference {saved.instruction_id}: {saved.instruction_text}")
     return 0
 
 
 def handle_instructions_archive(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import archive_instruction
+    from spark_intelligence.user_instructions import UserInstructionAuthorityError, archive_instruction
 
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
-    ok = archive_instruction(state_db, instruction_id=args.instruction_id)
+    try:
+        governor_decision = _load_governor_decision_json(args.governor_decision_json)
+        ok = archive_instruction(
+            state_db,
+            instruction_id=args.instruction_id,
+            governor_decision=governor_decision,
+        )
+    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+        print(f"Saved preference archive blocked: {exc}", file=sys.stderr)
+        return 1
     if ok:
-        print(f"Archived instruction {args.instruction_id}")
+        print(f"Archived preference {args.instruction_id}")
         return 0
     print(f"No active instruction with id {args.instruction_id}")
     return 1
