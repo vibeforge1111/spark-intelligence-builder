@@ -853,7 +853,7 @@ class ClosingConnection(sqlite3.Connection):
             if exc_type is None:
                 try:
                     self.commit()
-                except BaseException:
+                except Exception:
                     self.rollback()
                     raise
             else:
