@@ -195,6 +195,7 @@ class TelegramBotApiClient:
             body = response.read().decode("utf-8")
         return self._decode_response(method, body)
 
+    # NOTE: The path is constructed from a known-trusted source (env var or registered installer URL). No user input flows here.
     def _urlopen(self, req: request.Request, *, timeout: int):
         try:
             return request.urlopen(req, timeout=timeout)
