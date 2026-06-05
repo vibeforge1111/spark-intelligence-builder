@@ -4849,7 +4849,10 @@ def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
     text = str(raw or "").strip()
     if not text:
         return None
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     if not isinstance(value, dict):
         raise SystemExit("--memory-candidate-json must be a JSON object")
     return value
