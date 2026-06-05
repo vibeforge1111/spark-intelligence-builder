@@ -502,6 +502,7 @@ def _reanchor_builder_persona_rows(
             ),
         )
 
+    # NOTE: f-string SQL with table/column interpolation. The identifiers come from hardcoded whitelists in this module; do not pass user input here.
     conn.execute(
         f"""
         UPDATE agent_persona_mutations
