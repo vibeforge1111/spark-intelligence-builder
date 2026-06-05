@@ -291,6 +291,7 @@ def resolve_runtime_provider(
         secret_ref=secret_ref,
         oauth_row=oauth_row,
         env_map=env_map,
+        state_db=state_db,
     )
     spec = get_provider_spec(provider_id)
     return RuntimeProviderResolution(
@@ -412,12 +413,17 @@ def _resolve_secret_value(
     secret_ref: StaticSecretRef | None,
     oauth_row: object,
     env_map: dict[str, str],
+    state_db: object = None,
 ) -> str:
     if auth_method == "oauth":
         if not oauth_row or not oauth_row["access_token_ciphertext"] or str(oauth_row["status"]) != "active":
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
         if _oauth_token_expired(oauth_row):
             raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
+        from spark_intelligence.auth.token_encryption import decrypt_token
+        state_dir = state_db.path.parent if state_db is not None else None
+        if state_dir is not None:
+            return decrypt_token(state_dir, str(oauth_row["access_token_ciphertext"]))
         return str(oauth_row["access_token_ciphertext"])
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")

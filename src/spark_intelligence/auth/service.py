@@ -476,7 +476,9 @@ def refresh_provider(
             """,
             (auth_profile_id,),
         ).fetchone()
-    refresh_token = str(row["refresh_token_ciphertext"]) if row and row["refresh_token_ciphertext"] else ""
+    from spark_intelligence.auth.token_encryption import decrypt_token as _decrypt_token
+    _state_dir = state_db.path.parent
+    refresh_token = _decrypt_token(_state_dir, str(row["refresh_token_ciphertext"])) if row and row["refresh_token_ciphertext"] else ""
     if not refresh_token:
         _mark_oauth_refresh_failure(
             state_db=state_db,
@@ -757,6 +759,8 @@ def _persist_oauth_tokens(
     token_payload: dict[str, object],
     refreshed: bool = False,
 ) -> None:
+    from spark_intelligence.auth.token_encryption import encrypt_token
+    state_dir = state_db.path.parent
     issuer = _issuer_from_url(get_provider_spec(provider).oauth.authorize_url)
     access_expires_at = _timestamp_from_expires_in(token_payload.get("expires_in"))
     refresh_expires_at = _timestamp_from_expires_in(
@@ -797,8 +801,8 @@ def _persist_oauth_tokens(
                 issuer,
                 None,
                 str(token_payload.get("scope")) if token_payload.get("scope") else None,
-                str(token_payload.get("access_token")),
-                str(token_payload.get("refresh_token")) if token_payload.get("refresh_token") else None,
+                encrypt_token(state_dir, str(token_payload.get("access_token"))),
+                encrypt_token(state_dir, str(token_payload.get("refresh_token"))) if token_payload.get("refresh_token") else None,
                 access_expires_at,
                 refresh_expires_at,
             ),
