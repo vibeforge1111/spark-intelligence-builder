@@ -533,7 +533,10 @@ def gateway_simulate_discord_message(
     *,
     as_json: bool = False,
 ) -> str:
-    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    try:
+        payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     result = simulate_discord_message(
         config_manager=config_manager,
         state_db=state_db,
