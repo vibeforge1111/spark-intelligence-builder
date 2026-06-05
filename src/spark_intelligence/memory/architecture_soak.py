@@ -410,8 +410,10 @@ def _run_regression_subprocess(
             f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
         ) from exc
     payload: dict[str, Any] = {}
-    if write_path.exists():
+    try:
         payload = json.loads(write_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        pass
     elif (completed.stdout or "").strip():
         payload = json.loads(completed.stdout)
     if payload:
