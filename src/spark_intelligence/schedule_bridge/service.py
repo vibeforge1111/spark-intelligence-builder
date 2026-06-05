@@ -299,6 +299,8 @@ def _load_pending() -> dict[str, Any]:
     if not p.exists():
         return {}
     try:
+        # NOTE: This is a read-modify-write block. A concurrent writer could lose updates.
+        # See _atomic_read_modify_write for the safe version of this pattern.
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
