@@ -8,6 +8,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.harness_contract import verify_governor_tool_authority
+
+
+class ChipCreateAuthorityError(RuntimeError):
+    def __init__(self, message: str, verification: dict[str, Any]):
+        super().__init__(message)
+        self.verification = verification
+
 
 @dataclass
 class ChipCreateResult:
@@ -16,6 +24,7 @@ class ChipCreateResult:
     chip_path: str | None = None
     brief: dict | None = None
     router_invokable: bool = False
+    governor_verification: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -213,6 +222,27 @@ def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key:
     manifest_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
+def _verify_chip_create_governor_authority(
+    governor_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name="chip.create",
+        owner_system="spark-intelligence-builder",
+        mutation_class="creates_chip",
+        require_pre_execution_ledger=True,
+    )
+    if verification.get("allowed") is True:
+        return verification
+    reasons = [str(reason) for reason in verification.get("reason_codes") or [] if str(reason)]
+    reason_text = ", ".join(reasons) if reasons else "governor_consumer_verification_failed"
+    raise ChipCreateAuthorityError(
+        "Chip creation requires Harness Core Governor authority for "
+        f"spark-intelligence-builder:chip.create. Reason: {reason_text}.",
+        verification,
+    )
+
+
 def create_chip_from_prompt(
     *,
     prompt: str,
@@ -220,19 +250,37 @@ def create_chip_from_prompt(
     state_db,
     output_dir: Path | None = None,
     chip_labs_root: Path | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> ChipCreateResult:
     warnings: list[str] = []
     chip_labs_root = chip_labs_root or _default_chip_labs_root()
     output_dir = output_dir or _default_output_dir()
 
+    try:
+        governor_verification = _verify_chip_create_governor_authority(governor_decision)
+    except ChipCreateAuthorityError as exc:
+        return ChipCreateResult(
+            ok=False,
+            governor_verification=exc.verification,
+            error=str(exc),
+        )
+
     if not chip_labs_root.exists():
-        return ChipCreateResult(ok=False, error=f"chip-labs root not found: {chip_labs_root}")
+        return ChipCreateResult(
+            ok=False,
+            governor_verification=governor_verification,
+            error=f"chip-labs root not found: {chip_labs_root}",
+        )
 
     _ensure_chip_labs_importable(chip_labs_root)
     try:
         from chip_labs.chip_factory.scaffold import scaffold_chip
     except Exception as exc:
-        return ChipCreateResult(ok=False, error=f"chip_labs import failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            governor_verification=governor_verification,
+            error=f"chip_labs import failed: {exc}",
+        )
 
     # Resolve LLM provider using existing builder auth path
     try:
@@ -241,11 +289,16 @@ def create_chip_from_prompt(
             config_manager=config_manager, state_db=state_db
         )
     except Exception as exc:
-        return ChipCreateResult(ok=False, error=f"provider resolve failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            governor_verification=governor_verification,
+            error=f"provider resolve failed: {exc}",
+        )
 
     if not getattr(provider, "secret_value", None):
         return ChipCreateResult(
             ok=False,
+            governor_verification=governor_verification,
             error=f"no LLM secret for provider={getattr(provider,'provider_id','?')} auth_method={getattr(provider,'auth_method','?')}",
         )
 
@@ -253,19 +306,31 @@ def create_chip_from_prompt(
     try:
         brief = _parse_brief_via_llm(prompt, provider=provider)
     except Exception as exc:
-        return ChipCreateResult(ok=False, error=f"brief parse failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            governor_verification=governor_verification,
+            error=f"brief parse failed: {exc}",
+        )
 
     validation_errors = _validate_brief(brief)
     if validation_errors:
         return ChipCreateResult(
-            ok=False, brief=brief, error=f"brief validation: {validation_errors}"
+            ok=False,
+            brief=brief,
+            governor_verification=governor_verification,
+            error=f"brief validation: {validation_errors}",
         )
 
     # 2) Scaffold
     try:
         chip_dir = Path(scaffold_chip(brief, output_dir=output_dir))
     except Exception as exc:
-        return ChipCreateResult(ok=False, brief=brief, error=f"scaffold failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            brief=brief,
+            governor_verification=governor_verification,
+            error=f"scaffold failed: {exc}",
+        )
 
     manifest = chip_dir / "spark-chip.json"
     if not manifest.exists():
@@ -273,6 +338,7 @@ def create_chip_from_prompt(
             ok=False,
             brief=brief,
             chip_path=str(chip_dir),
+            governor_verification=governor_verification,
             error="scaffold produced no spark-chip.json",
         )
 
@@ -350,5 +416,6 @@ def create_chip_from_prompt(
         chip_path=str(chip_dir),
         brief=brief,
         router_invokable=router_invokable,
+        governor_verification=governor_verification,
         warnings=warnings,
     )
