@@ -21,6 +21,7 @@ from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
+from spark_intelligence.user_instructions import list_active_instructions
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
@@ -981,6 +982,91 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(governor["outcome"], "execute")
         self.assertTrue(governor["execution_boundary"]["action_authorized"])
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulate_telegram_update_does_not_shortcircuit_raw_user_instruction(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98704,
+                    "message": {
+                        "message_id": 104,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "Remember that I prefer concise replies.",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["bridge_mode"], "researcher_advisory")
+        self.assertNotEqual(result.detail["bridge_mode"], "user_instruction_shortcircuit")
+        self.assertEqual(captured.get("user_message"), "Remember that I prefer concise replies.")
+        self.assertNotIn("saved preference evidence", str(result.detail.get("response_text") or ""))
+        self.assertEqual(
+            list_active_instructions(
+                self.state_db,
+                external_user_id="111",
+                channel_kind="telegram",
+            ),
+            [],
+        )
+
+    def test_simulate_telegram_update_captures_instruction_with_inbound_vnext(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+        payload = self.vnext_tool_intent_payload(
+            request_id="req-inbound-user-instruction-write",
+            tool_name="user_instruction.write",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            source_kind="test_inbound_user_instruction_write",
+        )
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98705,
+                    "turn_intent_envelope_vnext": payload,
+                    "message": {
+                        "message_id": 105,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "Remember that I prefer concise replies.",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured.get("user_message"), "Remember that I prefer concise replies.")
+        self.assertIn("saved preference evidence", str(result.detail.get("response_text") or ""))
+        instructions = list_active_instructions(
+            self.state_db,
+            external_user_id="111",
+            channel_kind="telegram",
+        )
+        self.assertEqual(len(instructions), 1)
+        self.assertEqual(instructions[0].instruction_text, "I prefer concise replies")
 
     def test_simulate_telegram_update_keeps_meta_memory_example_chat_only_for_researcher(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
