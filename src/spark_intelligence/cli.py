@@ -4468,7 +4468,10 @@ def handle_status(args: argparse.Namespace) -> int:
 
     payload = {
         "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
-        "auth": json.loads(auth_report.to_json()),
+        try:
+            "auth": json.loads(auth_report.to_json()),
+        except json.JSONDecodeError:
+            return {}  # malformed JSON, return safe default
         "gateway": json.loads(gateway.to_json()),
         "researcher": json.loads(researcher.to_json()),
         "swarm": json.loads(swarm.to_json()),
