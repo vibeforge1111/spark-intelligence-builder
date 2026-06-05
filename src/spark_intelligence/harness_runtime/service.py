@@ -420,7 +420,10 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                try:
+                    "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                except json.JSONDecodeError:
+                    return {}  # malformed JSON, return safe default
             }
         )
     summary = {
