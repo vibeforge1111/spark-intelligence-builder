@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -260,7 +261,7 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
+        raise RuntimeError(f"Provider HTTP {exc.code}: {_sanitize_error_body(body)}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Provider network error: {exc.reason}") from exc
 
@@ -339,3 +340,18 @@ def _normalize_chat_completions_model(provider: DirectProviderRequest) -> str:
         _, _, stripped = model_name.partition("/")
         return stripped or model_name
     return model_name
+_ERROR_BODY_MAX_LEN = 200
+_ERROR_SECRET_PATTERNS = [
+    re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)(\s*[:=]\s*)([^\s,;\"']+)"),
+    re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._\-]{16,})"),
+]
+
+
+def _sanitize_error_body(raw: str) -> str:
+    """Truncate and redact potential secrets from an HTTP error body."""
+    text = raw[:_ERROR_BODY_MAX_LEN]
+    for pattern in _ERROR_SECRET_PATTERNS:
+        text = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", text)
+    return text
+
+
