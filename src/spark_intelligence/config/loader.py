@@ -14,6 +14,8 @@ import yaml
 from spark_intelligence.observability.store import payload_hash, record_config_mutation
 from spark_intelligence.state.db import StateDB
 
+SPARK_INTELLIGENCE_BUILDER___TIMEOUT_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class SparkPaths:
@@ -420,6 +422,8 @@ class ConfigManager:
             check=True,
             capture_output=True,
             text=True,
+
+        timeout=SPARK_INTELLIGENCE_BUILDER___TIMEOUT_SECONDS,
         )
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         acl_lines: list[str] = []
