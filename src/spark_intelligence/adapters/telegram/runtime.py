@@ -2687,7 +2687,10 @@ def _synthesize_telegram_voice_reply(
 
 
 def _merge_voice_input_runtime_state(*, speak_state: dict[str, Any], input_state: dict[str, Any]) -> dict[str, Any]:
-    merged = json.loads(json.dumps(speak_state))
+    try:
+        merged = json.loads(json.dumps(speak_state))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     input_stt = input_state.get("stt") if isinstance(input_state.get("stt"), dict) else {}
     if input_stt.get("ready"):
         merged["stt"] = dict(input_stt)
