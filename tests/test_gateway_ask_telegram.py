@@ -885,7 +885,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(frustration_response_text.splitlines()[0], "Memory Doctor: needs attention.")
         self.assertIn("Request: req-context-loss-prior.", frustration_response_text)
 
-    def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
+    def test_gateway_ask_telegram_does_not_route_generic_memory_deletes_without_governor(self) -> None:
         self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
@@ -927,12 +927,17 @@ class GatewayAskTelegramTests(SparkTestCase):
         )
         self.assertEqual(
             deletion["result"]["detail"]["bridge_mode"],
-            "memory_generic_observation_delete",
+            "external_configured",
         )
-        self.assertIn("I'll forget your favorite color.", deletion["result"]["detail"]["response_text"])
+        self.assertNotIn("I'll forget your favorite color.", deletion["result"]["detail"]["response_text"])
         self.assertEqual(
             post_delete_query["result"]["detail"]["response_text"],
             "I don't currently have that saved.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        self.assertFalse(
+            any(event.get("reason_code") == "memory_generic_observation_delete" for event in tool_events),
+            tool_events,
         )
 
     def test_simulate_telegram_update_supplies_memory_turn_intent_to_researcher(self) -> None:
@@ -976,11 +981,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
         self.assertEqual(vnext["selected_move"], "execute_action")
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
-        governor = captured.get("governor_decision")
-        self.assertIsInstance(governor, dict)
-        self.assertEqual(governor["schema_version"], "governor-decision-v1")
-        self.assertEqual(governor["outcome"], "execute")
-        self.assertTrue(governor["execution_boundary"]["action_authorized"])
+        self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulate_telegram_update_does_not_shortcircuit_raw_user_instruction(self) -> None:
@@ -1208,11 +1209,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(vnext, dict)
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
-        governor = captured.get("governor_decision")
-        self.assertIsInstance(governor, dict)
-        self.assertEqual(governor["schema_version"], "governor-decision-v1")
-        self.assertEqual(governor["outcome"], "execute")
-        self.assertTrue(governor["execution_boundary"]["action_authorized"])
+        self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
     def test_simulated_dm_supplies_memory_read_turn_intent_without_researcher_fallback(self) -> None:
@@ -1248,7 +1245,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
-    def test_gateway_ask_telegram_routes_active_state_memory_deletes_before_instruction_shortcircuit(self) -> None:
+    def test_gateway_ask_telegram_does_not_route_active_state_memory_deletes_without_governor(self) -> None:
         self._install_fake_configured_researcher()
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
@@ -1307,12 +1304,17 @@ class GatewayAskTelegramTests(SparkTestCase):
                 )
                 self.assertEqual(
                     deletion["result"]["detail"]["bridge_mode"],
-                    "memory_generic_observation_delete",
+                    "external_configured",
                 )
-                self.assertIn(label, deletion["result"]["detail"]["response_text"])
+                self.assertNotIn(f"I'll forget your {label}", deletion["result"]["detail"]["response_text"])
                 self.assertEqual(
                     post_delete_query["result"]["detail"]["response_text"],
                     "I don't currently have that saved.",
+                )
+                tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+                self.assertFalse(
+                    any(event.get("reason_code") == "memory_generic_observation_delete" for event in tool_events),
+                    tool_events,
                 )
 
     def test_gateway_ask_telegram_uses_single_allowed_user_and_formats_reply(self) -> None:
