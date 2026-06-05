@@ -97,26 +97,42 @@ class SystemRegistrySnapshot:
     records: list[SystemRegistryRecord]
 
     def to_payload(self) -> dict[str, Any]:
+        # Single pass collects records dicts + every kind counter together
+        # instead of walking self.records eight times and allocating seven
+        # throwaway intermediate lists just to call len() on them.
+        records_dicts: list[dict[str, Any]] = []
+        kind_counts: dict[str, int] = {
+            "system": 0,
+            "adapter": 0,
+            "provider": 0,
+            "chip": 0,
+            "path": 0,
+            "repo": 0,
+        }
+        dirty_repo_count = 0
+        onboarding_contract_count = 0
+        for record in self.records:
+            records_dicts.append(record.to_dict())
+            if record.kind in kind_counts:
+                kind_counts[record.kind] += 1
+            if record.kind == "repo" and record.status == "dirty":
+                dirty_repo_count += 1
+            if record.kind in {"chip", "path"} and isinstance(record.metadata.get("onboarding"), dict):
+                onboarding_contract_count += 1
         return {
             "generated_at": self.generated_at,
             "workspace_id": self.workspace_id,
             "record_count": len(self.records),
-            "records": [record.to_dict() for record in self.records],
+            "records": records_dicts,
             "summary": {
-                "system_count": len([record for record in self.records if record.kind == "system"]),
-                "adapter_count": len([record for record in self.records if record.kind == "adapter"]),
-                "provider_count": len([record for record in self.records if record.kind == "provider"]),
-                "chip_count": len([record for record in self.records if record.kind == "chip"]),
-                "path_count": len([record for record in self.records if record.kind == "path"]),
-                "repo_count": len([record for record in self.records if record.kind == "repo"]),
-                "dirty_repo_count": len([record for record in self.records if record.kind == "repo" and record.status == "dirty"]),
-                "onboarding_contract_count": len(
-                    [
-                        record
-                        for record in self.records
-                        if record.kind in {"chip", "path"} and isinstance(record.metadata.get("onboarding"), dict)
-                    ]
-                ),
+                "system_count": kind_counts["system"],
+                "adapter_count": kind_counts["adapter"],
+                "provider_count": kind_counts["provider"],
+                "chip_count": kind_counts["chip"],
+                "path_count": kind_counts["path"],
+                "repo_count": kind_counts["repo"],
+                "dirty_repo_count": dirty_repo_count,
+                "onboarding_contract_count": onboarding_contract_count,
                 "current_capabilities": _derive_current_capabilities(self.records),
             },
         }
