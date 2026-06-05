@@ -488,6 +488,78 @@ def _telegram_researcher_memory_write_governor_decision(
     return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
 
 
+def _telegram_user_instruction_governor_decision(
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    action: str,
+) -> dict[str, Any] | None:
+    action_name = "archive" if action == "forget" else "write"
+    tool_name = f"user_instruction.{action_name}"
+    payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=human_id,
+        request_id=f"{request_id}:user-instruction-{action_name}",
+        source_kind=f"telegram_runtime_user_instruction_{action_name}",
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+        intent_summary=f"Fresh Telegram turn authorizes a saved-preference {action_name}.",
+        raw_turn_summary="Telegram saved-preference intent remains offloaded; raw text is not used as authority.",
+        confidence=0.95,
+    )
+    if not isinstance(payload, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime.user_instruction",
+    )
+    return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+
+
+def _telegram_user_instruction_governor_decision_for_message(
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    try:
+        from spark_intelligence.user_instructions import detect_instruction_intent
+    except Exception:
+        return None
+    intent = detect_instruction_intent(user_message)
+    if not intent:
+        return None
+    return _telegram_user_instruction_governor_decision(
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        action=str(intent.get("action") or "remember"),
+    )
+
+
 def _detect_telegram_memory_diagnostic_authority_source_kind(
     *,
     config_manager: ConfigManager | None,
@@ -714,6 +786,7 @@ def _maybe_capture_user_instruction(
     reply_text: str,
     bridge_mode: str | None = None,
     routing_decision: str | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> str:
     try:
         from spark_intelligence.user_instructions import (
@@ -751,18 +824,22 @@ def _maybe_capture_user_instruction(
         except Exception:
             return reply_text
         if not matches:
-            return f"{base}\n\n_(no matching saved instruction to forget for: \"{text_value[:120]}\")_\n"
+            return f"{base}\n\n_(no matching saved preference to forget for: \"{text_value[:120]}\")_\n"
         archived_texts: list[str] = []
         for inst in matches:
             try:
-                if archive_instruction(state_db, instruction_id=inst.instruction_id):
+                if archive_instruction(
+                    state_db,
+                    instruction_id=inst.instruction_id,
+                    governor_decision=governor_decision,
+                ):
                     archived_texts.append(inst.instruction_text)
             except Exception:
                 continue
         if not archived_texts:
             return reply_text
         joined = "; ".join(t[:120] for t in archived_texts)
-        return f"{base}\n\n_(forgot {len(archived_texts)} saved instruction(s): {joined})_\n"
+        return f"{base}\n\n_(forgot {len(archived_texts)} saved preference(s): {joined})_\n"
     try:
         saved = add_instruction(
             state_db,
@@ -770,10 +847,11 @@ def _maybe_capture_user_instruction(
             channel_kind="telegram",
             instruction_text=text_value,
             source="explicit",
+            governor_decision=governor_decision,
         )
     except Exception:
         return reply_text
-    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
+    return f"{base}\n\n_(saved preference evidence: \"{saved.instruction_text[:160]}\" - available as future context)_\n"
 
 
 def _looks_like_memory_forget_request(user_message: str) -> bool:
@@ -2052,6 +2130,15 @@ def simulate_telegram_update(
                         reply_text="",
                         bridge_mode="user_instruction_shortcircuit",
                         routing_decision="user_instruction_shortcircuit",
+                        governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                            state_db=state_db,
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            user_message=effective_text,
+                        ),
                     )
                     trace_ref = None
                     bridge_mode = "user_instruction_shortcircuit"
@@ -2139,6 +2226,15 @@ def simulate_telegram_update(
                         reply_text=outbound_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
+                        governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                            state_db=state_db,
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            user_message=effective_text,
+                        ),
                     )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
@@ -3004,6 +3100,15 @@ def poll_telegram_updates_once(
             reply_text=outbound_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
+            governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                state_db=state_db,
+                request_id=f"telegram:{normalized.update_id}",
+                run_id=run.run_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                user_message=effective_text,
+            ),
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
