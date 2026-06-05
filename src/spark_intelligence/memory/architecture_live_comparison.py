@@ -782,11 +782,12 @@ def _baseline_row(
             question_text=str(question.get("question") or ""),
             expected_fragments=expected_fragments,
         )
+        predicted_answer_lower = predicted_answer.lower()
         missing_fragments = [
-            fragment for fragment in required_fragments if fragment.lower() not in predicted_answer.lower()
+            fragment for fragment in required_fragments if fragment.lower() not in predicted_answer_lower
         ]
         forbidden_hits = [
-            fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer.lower()
+            fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer_lower
         ]
         abstention_expected = bool(question.get("should_abstain"))
         abstention_respected = abstention_expected and _is_truthful_abstention_answer(predicted_answer) and not forbidden_hits
