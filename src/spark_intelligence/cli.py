@@ -2373,8 +2373,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     chips_create_parser = chips_subparsers.add_parser("create", help="Create a new domain chip from a natural-language prompt")
     chips_create_parser.add_argument("--prompt", required=True, help="Natural-language description of the chip to create")
-    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: C:/Users/USER/Desktop)")
-    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: C:/Users/USER/Desktop/spark-domain-chip-labs)")
+    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: CHIP_CREATE_OUTPUT_DIR or current working directory)")
+    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: CHIP_LABS_ROOT or ./spark-domain-chip-labs)")
+    chips_create_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this domain-chip creation",
+    )
     chips_create_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     chips_create_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
@@ -6195,12 +6199,14 @@ def handle_chips_create(args: argparse.Namespace) -> int:
     state_db.initialize()
     output_dir = _Path(args.output_dir) if args.output_dir else None
     chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
+    governor_decision = _load_governor_decision_json(args.governor_decision_json)
     result = create_chip_from_prompt(
         prompt=args.prompt,
         config_manager=config_manager,
         state_db=state_db,
         output_dir=output_dir,
         chip_labs_root=chip_labs_root,
+        governor_decision=governor_decision,
     )
     if args.json:
         print(_json.dumps(result.to_dict(), indent=2, default=str))
