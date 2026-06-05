@@ -342,8 +342,9 @@ def _claim_discord_interaction_request(
 def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
     if not headers:
         return None
+    target = name.lower()
     for key, value in headers.items():
-        if key.lower() == name.lower():
+        if key.lower() == target:
             return value
     return None
 
