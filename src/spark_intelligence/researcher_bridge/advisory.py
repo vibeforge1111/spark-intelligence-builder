@@ -3669,6 +3669,7 @@ def _load_spark_character_persona() -> str:
       3. A minimal inline voice rule set as the absolute fallback so
          SIB never breaks on a missing dependency chain.
     """
+    # NOTE: This function reads/writes a module-level cache without a lock. In a multi-threaded or async-shared runtime, concurrent callers can race and observe a torn/None value. Use threading.Lock or functools.cache for thread-safe memoization.
     global _SPARK_CHARACTER_PERSONA_CACHE
     if _SPARK_CHARACTER_PERSONA_CACHE is not None:
         return _SPARK_CHARACTER_PERSONA_CACHE
