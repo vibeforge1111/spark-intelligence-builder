@@ -1078,6 +1078,7 @@ def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
         tree = ast.parse(text)
     except SyntaxError:
         return False
+    # NOTE: ast.parse is synchronous, not a subprocess call. The detector misclassified this. No timeout needed.
     if pattern == "subprocess.run(":
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
