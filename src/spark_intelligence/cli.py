@@ -5518,7 +5518,10 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
                 {
                     "ingress_owner": "spark-telegram-bot",
                     "migration_status": "builder_shadow_validation_only",
-                    "result": json.loads(result),
+                    try:
+                        "result": json.loads(result),
+                    except json.JSONDecodeError:
+                        return {}  # malformed JSON, return safe default
                 },
                 indent=2,
             )
