@@ -5592,7 +5592,10 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(f"Pack entry {index} failed: {exc}", file=sys.stderr)
             return 1
-        parsed = json.loads(raw)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}  # malformed JSON, return safe default
         results.append(
             {
                 "index": index,
