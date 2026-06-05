@@ -208,7 +208,12 @@ def _parse_payload(value: Any) -> Any:
         return {"raw": text}
 
 
-def _extract_repo_references(payload: Any, *, prefix: str = "") -> list[tuple[str, str]]:
+_MAX_RECURSION_DEPTH = 50
+
+
+def _extract_repo_references(payload: Any, *, prefix: str = "", _depth: int = _MAX_RECURSION_DEPTH) -> list[tuple[str, str]]:
+    if _depth <= 0:
+        return []
     references: list[tuple[str, str]] = []
     if isinstance(payload, dict):
         for raw_key, value in payload.items():
@@ -216,15 +221,22 @@ def _extract_repo_references(payload: Any, *, prefix: str = "") -> list[tuple[st
             next_prefix = f"{prefix}.{key}" if prefix else key
             normalized_key = _normalize_key(key)
             if _is_repo_reference_key(normalized_key):
-                references.extend(_string_values(value, payload_key=next_prefix))
-            references.extend(_extract_repo_references(value, prefix=next_prefix))
+                references.extend(_string_values(value, payload_key=next_prefix, _depth=_depth - 1))
+            references.extend(_extract_repo_references(value, prefix=next_prefix, _depth=_depth - 1))
     elif isinstance(payload, list):
         for index, item in enumerate(payload):
-            references.extend(_extract_repo_references(item, prefix=f"{prefix}[{index}]"))
+            references.extend(_extract_repo_references(item, prefix=f"{prefix}[{index}]", _depth=_depth - 1))
     return references
 
 
-def _string_values(value: Any, *, payload_key: str) -> list[tuple[str, str]]:
+def _string_values(
+    value: Any,
+    *,
+    payload_key: str,
+    _depth: int = _MAX_RECURSION_DEPTH,
+) -> list[tuple[str, str]]:
+    if _depth <= 0:
+        return []
     if isinstance(value, str):
         return [(payload_key, value.strip())] if value.strip() else []
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -233,12 +245,24 @@ def _string_values(value: Any, *, payload_key: str) -> list[tuple[str, str]]:
         values: list[tuple[str, str]] = []
         for nested_key in ("key", "name", "repo", "repoKey", "repo_root", "path", "root"):
             if nested_key in value:
-                values.extend(_string_values(value[nested_key], payload_key=f"{payload_key}.{nested_key}"))
+                values.extend(
+                    _string_values(
+                        value[nested_key],
+                        payload_key=f"{payload_key}.{nested_key}",
+                        _depth=_depth - 1,
+                    )
+                )
         return values
     if isinstance(value, list):
         values = []
         for index, item in enumerate(value):
-            values.extend(_string_values(item, payload_key=f"{payload_key}[{index}]"))
+            values.extend(
+                _string_values(
+                    item,
+                    payload_key=f"{payload_key}[{index}]",
+                    _depth=_depth - 1,
+                )
+            )
         return values
     return []
 
