@@ -679,7 +679,10 @@ def exchange_oauth_refresh_token(
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        try:
+            payload = json.loads(response.read().decode("utf-8"))
+        except json.JSONDecodeError:
+            return {}  # malformed JSON, return safe default
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
