@@ -4407,18 +4407,6 @@ def _governor_authorizes_researcher_tool_call(
     return ("blocked", ("governor_consumer_verification_failed",), source_kind, decision_id)
 
 
-def _vnext_proposes_researcher_memory_write(payload: dict[str, Any] | None) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    for action in payload.get("proposed_actions") or []:
-        if not isinstance(action, dict):
-            continue
-        capability_id = str(action.get("capability_id") or "")
-        if str(action.get("action_type") or "") == "write_memory" and "memory.write" in capability_id:
-            return True
-    return False
-
-
 def _vnext_proposes_builder_chip_evaluate(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -4447,24 +4435,7 @@ def _build_researcher_memory_write_governor_decision(
 ) -> dict[str, Any] | None:
     if isinstance(governor_decision, dict):
         return governor_decision
-    if not _vnext_proposes_researcher_memory_write(turn_intent_envelope_vnext):
-        return None
-    verdict = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        state_db=state_db,
-        request_id=request_id,
-        run_id=run_id,
-        channel_id=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id="researcher_bridge",
-        component="researcher_bridge",
-    )
-    return verdict.governor_decision if isinstance(verdict.governor_decision, dict) else None
+    return None
 
 
 def _authorize_researcher_browser_hook(
@@ -4852,24 +4823,6 @@ def _authorize_researcher_memory_write(
         )
         adapter_envelope_used = authority_envelope is not None
     effective_governor_decision = governor_decision
-    if effective_governor_decision is None and adapter_vnext_used and isinstance(authority_vnext, dict):
-        adapter_authority = authorize_builder_bridge_action(
-            {"turn_intent_envelope_vnext": authority_vnext},
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
-            mutation_class="writes_memory",
-            state_db=state_db,
-            request_id=request_id,
-            run_id=run_id,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            component="researcher_bridge",
-        )
-        if isinstance(adapter_authority.governor_decision, dict):
-            effective_governor_decision = adapter_authority.governor_decision
     verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
         governor_decision=effective_governor_decision,
         tool_name="memory.write",
@@ -9465,7 +9418,7 @@ def build_researcher_reply(
         allow_memory_adapter_envelope = bool(
             config_manager.get_path(
                 "spark.testing.allow_researcher_memory_adapter",
-                default=True,
+                default=False,
             )
         )
     attachment_context = build_attachment_context(config_manager)

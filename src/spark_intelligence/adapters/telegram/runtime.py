@@ -456,36 +456,7 @@ def _telegram_researcher_memory_write_governor_decision(
     human_id: str,
     agent_id: str,
 ) -> dict[str, Any] | None:
-    vnext_payload = extract_turn_intent_envelope_vnext(update_payload)
-    if not isinstance(vnext_payload, dict):
-        return None
-    proposed_actions = vnext_payload.get("proposed_actions")
-    if not isinstance(proposed_actions, list):
-        return None
-    has_memory_write = any(
-        isinstance(action, dict)
-        and str(action.get("action_type") or "") == "write_memory"
-        and "memory.write" in str(action.get("capability_id") or "")
-        for action in proposed_actions
-    )
-    if not has_memory_write:
-        return None
-    authority = authorize_builder_bridge_action(
-        update_payload,
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        state_db=state_db,
-        request_id=request_id,
-        run_id=run_id,
-        channel_id="telegram",
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id="telegram_runtime",
-        component="telegram_runtime",
-    )
-    return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+    return _inbound_governor_decision(update_payload)
 
 
 def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
