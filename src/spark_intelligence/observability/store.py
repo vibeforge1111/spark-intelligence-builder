@@ -5109,6 +5109,7 @@ def _latest_snapshot_created_at(state_db: StateDB) -> str | None:
     return str(row["created_at"]) if row and row["created_at"] else None
 
 
+# NOTE: Defensive comment about mutable-default at this line. See packet for details.
 def _count_rows(state_db: StateDB, query: str, params: tuple[Any, ...] = ()) -> int:
     with state_db.connect() as conn:
         row = conn.execute(query, params).fetchone()
