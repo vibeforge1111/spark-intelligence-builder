@@ -3498,8 +3498,9 @@ def _resolve_chip_or_persona(*, kind: str | None, surface: str | None = None):
                 surface_overlay = load_surface_overlay(surface)
                 if surface_overlay:
                     parts.append(surface_overlay)
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
         combined = "\n\n---\n\n".join(parts)
         version_tag = f"chip:{chip_id}"
         if kind:
@@ -3591,8 +3592,9 @@ def _resolve_active_personality_chip_id() -> str:
         if active:
             _ACTIVE_PERSONALITY_CACHE = str(active)
             return _ACTIVE_PERSONALITY_CACHE
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
     # 4. Fallback
     _ACTIVE_PERSONALITY_CACHE = "founder-operator"
     return _ACTIVE_PERSONALITY_CACHE
@@ -3653,8 +3655,9 @@ def _load_spark_character_persona() -> str:
         if rendered:
             _SPARK_CHARACTER_PERSONA_CACHE = rendered
             return _SPARK_CHARACTER_PERSONA_CACHE
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
     # Fallback: flat MD persona artifact
     try:
         ensure_spark_character_path()
@@ -3780,8 +3783,9 @@ def _render_direct_provider_chat_fallback(
             surface_overlay = load_surface_overlay(inferred_surface)
             if surface_overlay:
                 persona_prompt = f"{persona_prompt}\n\n---\n\n{surface_overlay}"
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
     current_state_block = _build_current_state_block(
         config_manager=config_manager,
         state_db=state_db,
@@ -8615,8 +8619,9 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     # Check for personality queries (status, reset) before NL detection
     try:
@@ -8641,8 +8646,9 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     agent_persona_mutation = None
     if not personality_context_extra:
@@ -8663,8 +8669,9 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     if not personality_context_extra and _detect_context_source_debug_query(user_message):
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
@@ -10064,8 +10071,9 @@ def build_researcher_reply(
                 and detected_belief_recall_query is None
             ):
                 detected_belief_recall_query = _detect_belief_recall_query(user_message)
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
@@ -10091,8 +10099,9 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     if not personality_context_extra:
         try:
@@ -10250,8 +10259,9 @@ def build_researcher_reply(
                                 },
                             )
                             assessed_generic_memory_candidate = None
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     if assessed_generic_memory_candidate is not None:
         if assessed_generic_memory_candidate.outcome == "structured_evidence":
@@ -10269,8 +10279,9 @@ def build_researcher_reply(
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
         elif assessed_generic_memory_candidate.outcome == "raw_episode":
             try:
                 write_raw_episode_to_memory(
@@ -10285,8 +10296,9 @@ def build_researcher_reply(
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
         elif assessed_generic_memory_candidate.outcome == "belief_candidate":
             try:
                 write_belief_to_memory(
@@ -10302,8 +10314,9 @@ def build_researcher_reply(
                     actor_id="telegram_belief_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
         record_event(
             state_db,
             event_type="memory_candidate_assessed",
@@ -10404,8 +10417,9 @@ def build_researcher_reply(
     # Periodically trigger self-evolution based on accumulated observations
     try:
         evolved_deltas = maybe_evolve_traits(human_id=human_id, state_db=state_db)
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     # Record observation for self-evolution (runs on every message)
     try:
@@ -10416,8 +10430,9 @@ def build_researcher_reply(
                 traits_active=personality_profile["traits"],
                 state_db=state_db,
             )
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
 
     if (
         personality_profile
@@ -12393,8 +12408,9 @@ def build_researcher_reply(
                             archived_structured_evidence_ids.add(record_id)
                         if record_text:
                             archived_structured_evidence_texts.add(record_text)
-                    except Exception:
-                        pass
+                    except Exception as _e:  # SILENT-CATCH-PATCH
+
+                        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                 if archived_structured_evidence_ids or archived_structured_evidence_texts:
                     recall_records = [
                         record
@@ -12452,8 +12468,9 @@ def build_researcher_reply(
                         ).strip()
                         if record_id:
                             archived_raw_episode_ids.add(record_id)
-                    except Exception:
-                        pass
+                    except Exception as _e:  # SILENT-CATCH-PATCH
+
+                        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                 if archived_raw_episode_ids:
                     recall_records = [
                         record
@@ -12525,8 +12542,9 @@ def build_researcher_reply(
                                 archived_structured_evidence_ids.add(record_id)
                             if record_text:
                                 archived_structured_evidence_texts.add(record_text)
-                        except Exception:
-                            pass
+                        except Exception as _e:  # SILENT-CATCH-PATCH
+
+                            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                     if archived_structured_evidence_ids or archived_structured_evidence_texts:
                         recall_records = [
                             record
@@ -12584,8 +12602,9 @@ def build_researcher_reply(
                             ).strip()
                             if record_id:
                                 archived_raw_episode_ids.add(record_id)
-                        except Exception:
-                            pass
+                        except Exception as _e:  # SILENT-CATCH-PATCH
+
+                            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                     if archived_raw_episode_ids:
                         recall_records = [
                             record
@@ -12777,8 +12796,9 @@ def build_researcher_reply(
                             actor_id="telegram_belief_archiver",
                         )
                         archived_belief_count += 1
-                    except Exception:
-                        pass
+                    except Exception as _e:  # SILENT-CATCH-PATCH
+
+                        import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                 evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
                 newer_evidence_records = [
                     record
@@ -12833,8 +12853,9 @@ def build_researcher_reply(
                                 actor_id="telegram_belief_archiver",
                             )
                             archived_belief_count += 1
-                        except Exception:
-                            pass
+                        except Exception as _e:  # SILENT-CATCH-PATCH
+
+                            import logging as _log; _log.getLogger(__name__).warning("Researcher bridge advisory error: %s", _e, exc_info=True)
                     evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
                     newer_evidence_records = [
                         record
