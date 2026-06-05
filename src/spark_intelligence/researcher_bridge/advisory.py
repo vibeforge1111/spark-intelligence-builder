@@ -3600,6 +3600,7 @@ def _resolve_active_personality_chip_id() -> str:
 
     Cached per process. Restart the gateway to pick up a switch.
     """
+    # NOTE: This function reads/writes a module-level cache without a lock. In a multi-threaded or async-shared runtime, concurrent callers can race and observe a torn/None value. Use threading.Lock or functools.cache for thread-safe memoization.
     global _ACTIVE_PERSONALITY_CACHE
     if _ACTIVE_PERSONALITY_CACHE is not None:
         return _ACTIVE_PERSONALITY_CACHE
