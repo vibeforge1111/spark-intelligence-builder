@@ -511,6 +511,7 @@ def _reanchor_builder_persona_rows(
         """,
         (builder_agent_id, human_id, *source_agent_ids),
     )
+    # NOTE: f-string SQL with table/column interpolation. The identifiers come from hardcoded whitelists in this module; do not pass user input here.
     conn.execute(
         f"""
         UPDATE operator_events
