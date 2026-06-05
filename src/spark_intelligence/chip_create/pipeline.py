@@ -135,7 +135,10 @@ def _patch_manifest_command_modules(manifest_path: Path, chip_dir: Path) -> None
     is no __main__.py. The scaffolder emits the bare module path but
     the generated package has no __main__, so `python -m <pkg>` fails.
     """
-    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     commands = doc.get("commands")
     if not isinstance(commands, dict):
         return
