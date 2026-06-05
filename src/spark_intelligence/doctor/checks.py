@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 
@@ -26,6 +27,20 @@ from spark_intelligence.observability.store import (
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
+
+
+_PATH_PATTERN = re.compile(r"(?i)[A-Za-z]:\\[^\s,;\"']+|/(?:home|usr|var|etc|opt|tmp|root)[^\s,;\"']*")
+_SECRET_LIKE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)(\s*[:=]\s*)([^\s,;\"']+)")
+
+
+def _sanitize_error_detail(exc: Exception) -> str:
+    """Strip file paths and secret-like patterns from an exception message."""
+    text = str(exc)
+    text = _PATH_PATTERN.sub("[PATH]", text)
+    text = _SECRET_LIKE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", text)
+    if len(text) > 200:
+        text = text[:200] + "... [truncated]"
+    return text
 
 
 @dataclass
@@ -102,14 +117,14 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         config = config_manager.load()
         checks.append(DoctorCheck("config-load", True, f"loaded workspace {config.get('workspace', {}).get('id', 'unknown')}"))
     except Exception as exc:  # pragma: no cover - defensive
-        checks.append(DoctorCheck("config-load", False, str(exc)))
+        checks.append(DoctorCheck("config-load", False, _sanitize_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
             conn.execute("SELECT 1 FROM schema_info LIMIT 1").fetchone()
         checks.append(DoctorCheck("state-schema", True, "schema initialized"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("state-schema", False, str(exc)))
+        checks.append(DoctorCheck("state-schema", False, _sanitize_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
@@ -118,7 +133,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             ).fetchone()
         checks.append(DoctorCheck("operator-authority", bool(row), "local operator present"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("operator-authority", False, str(exc)))
+        checks.append(DoctorCheck("operator-authority", False, _sanitize_error_detail(exc)))
 
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     if auth_report.providers:
