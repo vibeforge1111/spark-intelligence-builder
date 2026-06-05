@@ -399,8 +399,9 @@ def _whatsapp_record(config_manager: ConfigManager) -> dict[str, Any]:
 def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
     if not headers:
         return None
+    target = name.lower()
     for key, value in headers.items():
-        if key.lower() == name.lower():
+        if key.lower() == target:
             return value
     return None
 
