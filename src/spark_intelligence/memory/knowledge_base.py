@@ -65,7 +65,7 @@ def build_telegram_state_knowledge_base(
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_builder_home = config_manager.paths.home.resolve(strict=False)
     resolved_output_dir = (Path(output_dir) if output_dir else _default_output_dir(config_manager)).resolve(strict=False)
-    _prepare_output_dir(resolved_output_dir)
+    _prepare_output_dir(resolved_output_dir, root=resolved_builder_home)
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
@@ -160,7 +160,15 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "spark-memory-kb"
 
 
-def _prepare_output_dir(output_dir: Path) -> None:
+def _prepare_output_dir(output_dir: Path, root: Path | None = None) -> None:
+    if root is not None:
+        try:
+            output_dir.resolve(strict=False).relative_to(root.resolve(strict=False))
+        except ValueError:
+            raise ValueError(
+                f"output_dir '{output_dir}' is outside the allowed root '{root}'. "
+                "Refusing to delete arbitrary directories."
+            )
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
