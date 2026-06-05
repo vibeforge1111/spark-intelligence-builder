@@ -12,6 +12,7 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MiB safety cap to prevent OOM
 
 
 @dataclass(frozen=True)
@@ -257,10 +258,18 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
     )
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read(_MAX_RESPONSE_BYTES + 1)
+            if len(body) > _MAX_RESPONSE_BYTES:
+                raise RuntimeError(
+                    f"Provider response exceeds {_MAX_RESPONSE_BYTES} byte limit"
+                )
+            return json.loads(body.decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
+        body = exc.read(_MAX_RESPONSE_BYTES + 1)
+        decoded = body.decode("utf-8", errors="replace")
+        if len(decoded) > 200:
+            decoded = decoded[:200] + "... [truncated]"
+        raise RuntimeError(f"Provider HTTP {exc.code}: {decoded}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Provider network error: {exc.reason}") from exc
 
