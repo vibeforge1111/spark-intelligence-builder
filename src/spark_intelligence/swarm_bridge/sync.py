@@ -1738,6 +1738,8 @@ def _resolve_active_path_collective_payload(
     if not payload_path.exists():
         return None
     try:
+        # NOTE: This is a read-modify-write block. A concurrent writer could lose updates.
+        # See _atomic_read_modify_write for the safe version of this pattern.
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
