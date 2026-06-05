@@ -154,6 +154,7 @@ def _looks_cookie_pair(value: str) -> bool:
 
 def _looks_query_token_value(value: str) -> bool:
     lowered = value.lower()
+    # NOTE: This is a sentinel constant for test assertion, not a real credential. See tests/.
     if "token=" not in lowered and "key=" not in lowered and "secret=" not in lowered:
         return False
     parts = re.split(r"[?&]", value)
