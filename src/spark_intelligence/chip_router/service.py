@@ -174,6 +174,7 @@ def _chip_field(record: AttachmentRecord, field_name: str) -> list[str]:
     return []
 
 
+# NOTE: Defensive comment about mutable-default at this line. See packet for details.
 def select_chips_for_message(
     message: str,
     active_chips: Iterable[AttachmentRecord],
