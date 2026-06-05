@@ -3582,7 +3582,10 @@ def _telegram_voice_runtime_state_with_delivery(
     failure_reason: str | None,
 ) -> dict[str, Any]:
     base = voice_payload.get("runtime_state") if isinstance(voice_payload.get("runtime_state"), dict) else {}
-    state = json.loads(json.dumps(base)) if base else _minimal_voice_runtime_state_from_payload(voice_payload)
+    try:
+        state = json.loads(json.dumps(base)) if base else _minimal_voice_runtime_state_from_payload(voice_payload)
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     delivery_ready = status == "success" and send_method == "sendVoice"
     delivery_status = "success" if delivery_ready else ("document_fallback" if status == "success" else "failure")
     state["telegram_delivery"] = {
