@@ -25,9 +25,29 @@ def outbound_log_path(config_manager: ConfigManager) -> Path:
     return config_manager.paths.logs_dir / "gateway-outbound.jsonl"
 
 
+_MAX_LOG_FILE_BYTES = 50 * 1024 * 1024  # 50 MiB
+
+
+def _maybe_rotate_log(path: Path) -> None:
+    """Truncate the log file if it exceeds the max size."""
+    try:
+        if path.exists() and path.stat().st_size > _MAX_LOG_FILE_BYTES:
+            # Keep the last quarter of the file so recent traces survive.
+            keep = _MAX_LOG_FILE_BYTES // 4
+            with path.open("rb") as fh:
+                fh.seek(-keep, 2)
+                tail = fh.read()
+            with path.open("wb") as fh:
+                fh.write(b"[log rotated]\n")
+                fh.write(tail)
+    except OSError:
+        pass  # best-effort; don't let rotation errors break tracing
+
+
 def append_gateway_trace(config_manager: ConfigManager, record: dict[str, Any]) -> None:
     path = trace_log_path(config_manager)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _maybe_rotate_log(path)
     payload = redact_trace_payload({"recorded_at": _utc_now_iso(), **record})
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
@@ -36,6 +56,7 @@ def append_gateway_trace(config_manager: ConfigManager, record: dict[str, Any]) 
 def append_outbound_audit(config_manager: ConfigManager, record: dict[str, Any]) -> None:
     path = outbound_log_path(config_manager)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _maybe_rotate_log(path)
     payload = redact_trace_payload({"recorded_at": _utc_now_iso(), **record})
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
