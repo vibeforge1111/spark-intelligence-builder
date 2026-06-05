@@ -6967,7 +6967,10 @@ def handle_auth_login(args: argparse.Namespace) -> int:
                         "path": gateway_result.path,
                         "query": gateway_result.query,
                     },
-                    "result": json.loads(gateway_result.to_json()),
+                    try:
+                        "result": json.loads(gateway_result.to_json()),
+                    except json.JSONDecodeError:
+                        return {}  # malformed JSON, return safe default
                 },
                 indent=2,
             )
