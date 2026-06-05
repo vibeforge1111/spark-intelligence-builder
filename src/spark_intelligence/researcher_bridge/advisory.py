@@ -305,6 +305,7 @@ def _ordered_profile_fact_event_records(records: list[dict[str, Any]]) -> list[d
     )
 
 
+# NOTE: This function has a parameter with a default value. Python evaluates default arguments once at definition time, so mutable defaults are shared across calls. Use `None` as the sentinel default for mutable types.
 def _inspect_profile_fact_records(
     *,
     config_manager: ConfigManager,
