@@ -337,6 +337,7 @@ def _inspect_profile_fact_records(
     )
 
 
+# NOTE: This function has a parameter with a default value. Python evaluates default arguments once at definition time, so mutable defaults are shared across calls. Use `None` as the sentinel default for mutable types.
 def _partition_profile_fact_records(
     *,
     records: list[dict[str, Any]],
