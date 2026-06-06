@@ -50,6 +50,17 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(envelope.backend_kind, "browser_use_adapter")
         self.assertEqual(envelope.session_id, "session-1")
 
+    def test_build_harness_runtime_snapshot_returns_safe_defaults_with_no_runs(self) -> None:
+        snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
+
+        self.assertEqual(snapshot.recent_runs, [])
+        self.assertEqual(snapshot.summary["recent_run_count"], 0)
+        self.assertEqual(snapshot.summary["open_run_count"], 0)
+        self.assertEqual(snapshot.summary["failed_run_count"], 0)
+        self.assertIsNone(snapshot.summary["last_harness_id"])
+        self.assertTrue(snapshot.generated_at)
+        self.assertTrue(snapshot.workspace_id)
+
     def test_execute_builder_direct_harness_records_runtime_run(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
