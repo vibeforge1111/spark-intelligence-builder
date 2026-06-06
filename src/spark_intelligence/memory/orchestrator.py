@@ -5223,17 +5223,47 @@ def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
     return Path(str(home_path)) / "artifacts" / "domain_chip_memory_sdk_state.json"
 
 
+def _persistence_lock_is_stale(lock_path: Path, stale_seconds: float) -> bool:
+    """A lock left by a crashed/exited process is reclaimable once it is older
+    than stale_seconds. Returns True if the lock should be removed and retried."""
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return age >= stale_seconds
+
+
 @contextmanager
-def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll_seconds: float = 0.05):
+def _exclusive_path_lock(
+    lock_path: Path,
+    *,
+    timeout_seconds: float = 15.0,
+    poll_seconds: float = 0.05,
+    stale_seconds: float = 60.0,
+):
     fd: int | None = None
     deadline = time.monotonic() + timeout_seconds
     while fd is None:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
         except FileExistsError:
+            # Reclaim an abandoned lock left behind by a crashed/exited process so
+            # memory reads/writes are not wedged forever by a stale lock file.
+            if _persistence_lock_is_stale(lock_path, stale_seconds):
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"timed out waiting for persistence lock: {lock_path}")
             time.sleep(poll_seconds)
+    try:
+        os.write(fd, f"{os.getpid()} {int(time.time())}".encode("ascii", "ignore"))
+    except OSError:
+        pass
     try:
         yield
     finally:
