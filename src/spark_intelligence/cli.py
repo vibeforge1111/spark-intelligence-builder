@@ -3589,6 +3589,7 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             check=True,
             capture_output=True,
             text=True,
+            timeout=120,
         )
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "Task Scheduler install failed.").strip()
@@ -3627,17 +3628,18 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
             wrapper_path.unlink()
     else:
         try:
-            subprocess.run(
-                [
-                    "schtasks",
-                    "/Delete",
-                    "/TN",
-                    task_name,
-                    "/F",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
+        subprocess.run(
+            [
+                "schtasks",
+                "/Delete",
+                "/TN",
+                task_name,
+                "/F",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
             )
         except subprocess.CalledProcessError as exc:
             print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
