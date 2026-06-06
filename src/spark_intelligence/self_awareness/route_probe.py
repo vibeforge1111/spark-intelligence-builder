@@ -28,7 +28,8 @@ class RouteProbeEvidenceResult:
     source_ref: str = ""
     probe_summary: str = ""
 
-    def to_payload(self) -> dict[str, Any]:
+    # guard: defensive wrapping
+def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_id": self.event_id,
             "capability_key": self.capability_key,
