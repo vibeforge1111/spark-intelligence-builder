@@ -23,7 +23,7 @@ This repo does not own:
 ## Start-of-Work Protocol
 
 1. Run `git status --short --branch`.
-2. Read this file plus the relevant owner doc or handoff before edits.
+2. Read this file plus `docs/TURNINTENT_HARNESS_RULESET.md` and the relevant owner doc or handoff before edits.
 3. Identify whether the change is Builder-owned or belongs in Telegram, CLI, Spawner, memory, Cockpit, Labs, Swarm, voice, or Skill Graphs.
 4. Define the smallest source-owned behavior and stop-ship gate.
 5. Add or update focused tests for the route, memory, AOC, or ledger behavior being changed.
@@ -54,6 +54,9 @@ Use allowlisted payloads for AOC, route-context, memory proof cards, and source-
 
 ## Route Confidence Rules
 
+- Raw words may propose candidates; fresh user intent authorizes action.
+- Every high-agency Builder route must be `envelope_verified` or explicit `machine_origin_policy`; any high-agency `legacy_local_gate` is a release blocker.
+- Quoted examples, bug reports, meta-language, no-action turns, and "just explain" boundaries block interruptive routes.
 - Route confidence means: "Is Spark justified in taking this route right now?"
 - The gate decides `act`, `ask`, `explain`, or `refuse`; it must not freeze user-facing prose into deterministic templates.
 - High-agency routes fail closed without latest instruction, intent clarity, route fit, consequence risk, runner/capability state, authority verdict or explicit `not_required`, confirmation state, freshness, reversibility, and clean privacy boundary.

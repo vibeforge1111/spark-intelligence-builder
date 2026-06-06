@@ -17,6 +17,7 @@ from spark_intelligence.attachments import (
     add_attachment_root,
     attachment_status,
     build_attachment_snapshot,
+    chip_hook_authority_contract,
     clear_active_path,
     deactivate_chip,
     list_attachments,
@@ -32,6 +33,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -66,6 +68,7 @@ from spark_intelligence.gateway.runtime import (
 )
 from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
+from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -198,6 +201,7 @@ from spark_intelligence.harness_runtime import (
     build_harness_task_envelope,
     execute_harness_chain,
     execute_harness_task,
+    with_harness_local_operator_turn_intent,
 )
 from spark_intelligence.mission_control import build_mission_control_plan, build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
@@ -2320,7 +2324,7 @@ def build_parser() -> argparse.ArgumentParser:
     drafts_show_parser.add_argument("handle", help="Draft handle (e.g. D-7f3a)")
     drafts_show_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
-    instr_parser = subparsers.add_parser("instructions", help="Manage persistent per-user instructions injected into prompts")
+    instr_parser = subparsers.add_parser("instructions", help="Manage saved per-user preferences recalled as evidence")
     instr_subparsers = instr_parser.add_subparsers(dest="instructions_command", required=True)
 
     instr_list_parser = instr_subparsers.add_parser("list", help="List active instructions for a user")
@@ -2332,13 +2336,21 @@ def build_parser() -> argparse.ArgumentParser:
     instr_add_parser = instr_subparsers.add_parser("add", help="Add an instruction for a user")
     instr_add_parser.add_argument("--user-id", required=True, help="External user id")
     instr_add_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
-    instr_add_parser.add_argument("--text", required=True, help="The instruction text")
+    instr_add_parser.add_argument("--text", required=True, help="The saved preference text")
     instr_add_parser.add_argument("--source", default="explicit", help="Source label (default: explicit)")
     instr_add_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    instr_add_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this saved-preference write",
+    )
 
-    instr_archive_parser = instr_subparsers.add_parser("archive", help="Archive a single instruction by id")
-    instr_archive_parser.add_argument("instruction_id", help="The instruction id to archive")
+    instr_archive_parser = instr_subparsers.add_parser("archive", help="Archive a single saved preference by id")
+    instr_archive_parser.add_argument("instruction_id", help="The saved preference id to archive")
     instr_archive_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    instr_archive_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this saved-preference archive",
+    )
 
     chips_parser = subparsers.add_parser("chips", help="Inspect chip routing decisions for a given message")
     chips_subparsers = chips_parser.add_subparsers(dest="chips_command", required=True)
@@ -2361,8 +2373,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     chips_create_parser = chips_subparsers.add_parser("create", help="Create a new domain chip from a natural-language prompt")
     chips_create_parser.add_argument("--prompt", required=True, help="Natural-language description of the chip to create")
-    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: C:/Users/USER/Desktop)")
-    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: C:/Users/USER/Desktop/spark-domain-chip-labs)")
+    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: CHIP_CREATE_OUTPUT_DIR or current working directory)")
+    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: CHIP_LABS_ROOT or ./spark-domain-chip-labs)")
+    chips_create_parser.add_argument(
+        "--governor-decision-json",
+        help="Harness Core Governor decision JSON authorizing this domain-chip creation",
+    )
     chips_create_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     chips_create_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
@@ -2520,6 +2536,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_movement_status_export_parser = memory_subparsers.add_parser(
+        "export-movement-status",
+        help="Write the redacted memory movement status artifact consumed by Spark OS compile",
+    )
+    memory_movement_status_export_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_movement_status_export_parser.add_argument("--sdk-module", help="Override the SDK module for this export")
+    memory_movement_status_export_parser.add_argument("--write", help="Optional output path for the status artifact")
+    memory_movement_status_export_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_lookup_parser = memory_subparsers.add_parser(
         "lookup-current-state",
         help="Read one structured current-state fact directly through the Domain Chip Memory bridge",
@@ -3550,9 +3574,6 @@ def _install_windows_startup_wrapper(config_manager: ConfigManager, task_name: s
 
 
 def handle_install_autostart(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
-        return 1
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
@@ -3590,6 +3611,9 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             capture_output=True,
             text=True,
         )
+    except FileNotFoundError:
+        print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "Task Scheduler install failed.").strip()
         if "Access is denied" not in message:
@@ -3614,9 +3638,6 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
 
 
 def handle_uninstall_autostart(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
-        return 1
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     task_name = _resolve_autostart_task_name(config_manager, args.task_name)
@@ -3639,6 +3660,9 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
                 capture_output=True,
                 text=True,
             )
+        except FileNotFoundError:
+            print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+            return 1
         except subprocess.CalledProcessError as exc:
             print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
             return 1
@@ -4036,6 +4060,18 @@ def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     handoff_id = f"observer-handoff-{uuid4().hex[:12]}"
+    governor_decision, authority_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook="packets",
+        request_id=handoff_id,
+        component="operator_cli",
+        intent_summary="Local operator requested an observer packet handoff to a chip.",
+        raw_turn_summary="spark-intelligence operator handoff-observer",
+        chip_key=args.chip_key,
+    )
+    if governor_decision is None:
+        print(_format_cli_authority_block(hook="packets", reasons=authority_reasons), file=sys.stderr)
+        return 2
     run = open_run(
         state_db,
         run_kind="operator:observer_handoff",
@@ -4076,9 +4112,20 @@ def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
     }
     try:
         if args.chip_key:
-            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="packets", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=args.chip_key,
+                hook="packets",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         else:
-            execution = run_first_active_chip_hook(config_manager, hook="packets", payload=payload)
+            execution = run_first_active_chip_hook(
+                config_manager,
+                hook="packets",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
             if execution is None:
                 summary = "Observer handoff found no active chip exposing the packets hook."
                 record_observer_handoff_record(
@@ -4126,7 +4173,7 @@ def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         summary = "Observer handoff failed validation before chip execution."
         record_observer_handoff_record(
             state_db,
@@ -5307,7 +5354,7 @@ def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, 
     )
     try:
         execution = run_first_active_chip_hook(config_manager, hook=BROWSER_STATUS_HOOK, payload=payload)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {
             "status": "unavailable",
             "chip_key": "browser",
@@ -5997,42 +6044,66 @@ def handle_instructions_list(args: argparse.Namespace) -> int:
         print(_json.dumps([i.to_dict() for i in items], indent=2))
         return 0
     if not items:
-        print(f"No active instructions for user={args.user_id} channel={args.channel}")
+        print(f"No active preferences for user={args.user_id} channel={args.channel}")
         return 0
-    print(f"Active instructions for user={args.user_id} channel={args.channel}:")
+    print(f"Active preferences for user={args.user_id} channel={args.channel}:")
     for i in items:
         print(f"- [{i.instruction_id}] ({i.source}) {i.instruction_text}")
     return 0
 
 
+def _load_governor_decision_json(value: str | None) -> dict | None:
+    if not value:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("--governor-decision-json must decode to a JSON object")
+    return parsed
+
+
 def handle_instructions_add(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import add_instruction
+    from spark_intelligence.user_instructions import UserInstructionAuthorityError, add_instruction
 
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
-    saved = add_instruction(
-        state_db,
-        external_user_id=args.user_id,
-        channel_kind=args.channel,
-        instruction_text=args.text,
-        source=args.source,
-    )
-    print(f"Saved instruction {saved.instruction_id}: {saved.instruction_text}")
+    try:
+        governor_decision = _load_governor_decision_json(args.governor_decision_json)
+        saved = add_instruction(
+            state_db,
+            external_user_id=args.user_id,
+            channel_kind=args.channel,
+            instruction_text=args.text,
+            source=args.source,
+            governor_decision=governor_decision,
+        )
+    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+        print(f"Saved preference write blocked: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved preference {saved.instruction_id}: {saved.instruction_text}")
     return 0
 
 
 def handle_instructions_archive(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import archive_instruction
+    from spark_intelligence.user_instructions import UserInstructionAuthorityError, archive_instruction
 
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
-    ok = archive_instruction(state_db, instruction_id=args.instruction_id)
+    try:
+        governor_decision = _load_governor_decision_json(args.governor_decision_json)
+        ok = archive_instruction(
+            state_db,
+            instruction_id=args.instruction_id,
+            governor_decision=governor_decision,
+        )
+    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+        print(f"Saved preference archive blocked: {exc}", file=sys.stderr)
+        return 1
     if ok:
-        print(f"Archived instruction {args.instruction_id}")
+        print(f"Archived preference {args.instruction_id}")
         return 0
     print(f"No active instruction with id {args.instruction_id}")
     return 1
@@ -6065,12 +6136,41 @@ def handle_loops_run(args: argparse.Namespace) -> int:
 
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    request_id = f"chip-autoloop:{args.chip}:{uuid4().hex[:8]}"
+    suggest_governor, suggest_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook="suggest",
+        request_id=request_id,
+        component="loops_cli",
+        intent_summary=f"Local operator requested chip autoloop suggestions for {args.chip}.",
+        raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
+        chip_key=args.chip,
+    )
+    if suggest_governor is None:
+        print(_format_cli_authority_block(hook="suggest", reasons=suggest_reasons), file=sys.stderr)
+        return 2
+    evaluate_governor, evaluate_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook="evaluate",
+        request_id=request_id,
+        component="loops_cli",
+        intent_summary=f"Local operator requested chip autoloop evaluation for {args.chip}.",
+        raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
+        chip_key=args.chip,
+    )
+    if evaluate_governor is None:
+        print(_format_cli_authority_block(hook="evaluate", reasons=evaluate_reasons), file=sys.stderr)
+        return 2
     result = run_chip_autoloop(
         config_manager=config_manager,
         chip_key=args.chip,
         rounds=args.rounds,
         suggest_limit=args.suggest_limit,
         pause_seconds=args.pause_seconds,
+        suggest_governor_decision=suggest_governor,
+        evaluate_governor_decision=evaluate_governor,
     )
     if args.json:
         print(_json.dumps(result.to_dict(), indent=2, default=str))
@@ -6099,12 +6199,14 @@ def handle_chips_create(args: argparse.Namespace) -> int:
     state_db.initialize()
     output_dir = _Path(args.output_dir) if args.output_dir else None
     chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
+    governor_decision = _load_governor_decision_json(args.governor_decision_json)
     result = create_chip_from_prompt(
         prompt=args.prompt,
         config_manager=config_manager,
         state_db=state_db,
         output_dir=output_dir,
         chip_labs_root=chip_labs_root,
+        governor_decision=governor_decision,
     )
     if args.json:
         print(_json.dumps(result.to_dict(), indent=2, default=str))
@@ -6251,6 +6353,63 @@ def handle_attachments_clear_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def _authorize_cli_chip_hook(
+    *,
+    state_db: StateDB,
+    hook: str,
+    request_id: str,
+    component: str,
+    intent_summary: str,
+    raw_turn_summary: str,
+    actor_id: str = "local-operator",
+    chip_key: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+    tool_name, owner_system, mutation_class, external_network = chip_hook_authority_contract(hook)
+    action: dict[str, object] = {
+        "tool_name": tool_name,
+        "owner_system": owner_system,
+        "mutation_class": mutation_class,
+        "args_path": f"builder://{component}/{request_id}/{chip_key or 'active'}/{hook}",
+    }
+    if external_network:
+        action["external_network"] = True
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref=human_id or actor_id,
+        request_id=request_id,
+        source_kind=component,
+        intent_summary=intent_summary,
+        raw_turn_summary=raw_turn_summary,
+        actions=[action],
+    )
+    if not isinstance(envelope, dict):
+        return None, ("harness_core_vnext_envelope_unavailable",)
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        external_network=external_network,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        component=component,
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision, ()
+    return None, tuple(authority.reason_codes or ("missing_governor_decision",))
+
+
+def _format_cli_authority_block(*, hook: str, reasons: tuple[str, ...]) -> str:
+    reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "turn_not_authorized"
+    return f"Chip hook '{hook}' is blocked before execution. Reason: {reason_text}."
+
+
 def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -6273,21 +6432,45 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         print("Hook payload must be a JSON object.", file=sys.stderr)
         return 2
+    request_id = f"attachments-hook:{args.hook}"
+    governor_decision, authority_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook=args.hook,
+        request_id=request_id,
+        component="attachments_cli",
+        intent_summary=f"Local operator requested attachments hook {args.hook}.",
+        raw_turn_summary=f"spark-intelligence attachments run-hook {args.hook}",
+        chip_key=args.chip_key,
+    )
+    if governor_decision is None:
+        print(_format_cli_authority_block(hook=args.hook, reasons=authority_reasons), file=sys.stderr)
+        return 2
     run = open_run(
         state_db,
         run_kind=f"operator:attachments_hook:{args.hook}",
         origin_surface="attachments_cli",
         summary="Operator started an attachments chip hook execution.",
-        request_id=f"attachments-hook:{args.hook}",
+        request_id=request_id,
         actor_id="local-operator",
         reason_code="attachments_run_hook",
         facts={"chip_key": args.chip_key or "active", "hook": args.hook},
     )
     try:
         if args.chip_key:
-            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook=args.hook, payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=args.chip_key,
+                hook=args.hook,
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         else:
-            execution = run_first_active_chip_hook(config_manager, hook=args.hook, payload=payload)
+            execution = run_first_active_chip_hook(
+                config_manager,
+                hook=args.hook,
+                payload=payload,
+                governor_decision=governor_decision,
+            )
             if execution is None:
                 close_run(
                     state_db,
@@ -6302,7 +6485,7 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         close_run(
             state_db,
             run_id=run.run_id,
@@ -6427,6 +6610,17 @@ def _execute_browser_hook(
     config_manager.bootstrap()
     state_db.initialize()
     request_id = str(payload.get("request_id") or f"browser-hook:{uuid4().hex[:12]}")
+    governor_decision, authority_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook=hook_name,
+        request_id=request_id,
+        component="browser_cli",
+        intent_summary=f"Local operator requested browser hook {hook_name}.",
+        raw_turn_summary=f"spark-intelligence browser {action} {target_ref}",
+        chip_key=args.chip_key,
+    )
+    if governor_decision is None:
+        return 2, None, _format_cli_authority_block(hook=hook_name, reasons=authority_reasons)
     payload_path = Path(args.write_payload) if getattr(args, "write_payload", None) else (
         config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.payload.json"
     )
@@ -6445,9 +6639,20 @@ def _execute_browser_hook(
     )
     try:
         if args.chip_key:
-            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook=hook_name, payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=args.chip_key,
+                hook=hook_name,
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         else:
-            execution = run_first_active_chip_hook(config_manager, hook=hook_name, payload=payload)
+            execution = run_first_active_chip_hook(
+                config_manager,
+                hook=hook_name,
+                payload=payload,
+                governor_decision=governor_decision,
+            )
             if execution is None:
                 close_run(
                     state_db,
@@ -6462,7 +6667,7 @@ def _execute_browser_hook(
                     None,
                     f"No active chip exposes hook '{hook_name}'. Activate the browser runtime first or pass --chip-key.",
                 )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         close_run(
             state_db,
             run_id=run.run_id,
@@ -7054,6 +7259,27 @@ def handle_memory_status(args: argparse.Namespace) -> int:
         }
     )
     print(status.to_json() if args.json else status.to_text())
+    return 0
+
+
+def handle_memory_export_movement_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = write_memory_movement_status_export(
+        config_manager=config_manager,
+        sdk_module=args.sdk_module,
+        write_path=args.write,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+    print("Spark memory movement status export")
+    print(f"- status: {payload.get('status') or 'unknown'}")
+    print(f"- rows: {payload.get('row_count') or 0}")
+    print(f"- path: {result.get('path') or 'unknown'}")
+    print("- redaction: allowlisted movement status only; memory rows and bodies omitted")
     return 0
 
 
@@ -7936,6 +8162,7 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
         human_id=args.human_id,
         agent_id=args.agent_id,
     )
+    envelope = with_harness_local_operator_turn_intent(envelope)
     if follow_up_harness_ids:
         result = execute_harness_chain(
             config_manager=config_manager,
@@ -8160,6 +8387,19 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
     payload["import_id"] = import_id
     payload["requested_by"] = "local-operator"
     payload["reason"] = args.reason
+    governor_decision, authority_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook="identity",
+        request_id=import_id,
+        component="agent_cli",
+        intent_summary="Local operator requested Spark Swarm identity import.",
+        raw_turn_summary=f"spark-intelligence agent import-swarm {args.human_id}",
+        chip_key=args.chip_key,
+        human_id=args.human_id,
+    )
+    if governor_decision is None:
+        print(_format_cli_authority_block(hook="identity", reasons=authority_reasons), file=sys.stderr)
+        return 2
 
     payload_path = Path(args.write_payload) if args.write_payload else (
         config_manager.paths.home / "artifacts" / "agent-imports" / f"{import_id}.payload.json"
@@ -8180,9 +8420,20 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
     )
     try:
         if args.chip_key:
-            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="identity", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=args.chip_key,
+                hook="identity",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         else:
-            execution = run_first_active_chip_hook(config_manager, hook="identity", payload=payload)
+            execution = run_first_active_chip_hook(
+                config_manager,
+                hook="identity",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
             if execution is None:
                 close_run(
                     state_db,
@@ -8197,7 +8448,7 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         close_run(
             state_db,
             run_id=run.run_id,
@@ -8470,6 +8721,20 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
     payload["import_id"] = import_id
     payload["requested_by"] = "local-operator"
     payload["reason"] = args.reason
+    governor_decision, authority_reasons = _authorize_cli_chip_hook(
+        state_db=state_db,
+        hook="personality",
+        request_id=import_id,
+        component="agent_cli",
+        intent_summary="Local operator requested personality import.",
+        raw_turn_summary=f"spark-intelligence agent import-personality {args.human_id}",
+        chip_key=args.chip_key,
+        human_id=args.human_id,
+        agent_id=canonical_state.agent_id,
+    )
+    if governor_decision is None:
+        print(_format_cli_authority_block(hook="personality", reasons=authority_reasons), file=sys.stderr)
+        return 2
 
     payload_path = Path(args.write_payload) if args.write_payload else (
         config_manager.paths.home / "artifacts" / "personality-imports" / f"{import_id}.payload.json"
@@ -8491,9 +8756,20 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
     )
     try:
         if args.chip_key:
-            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="personality", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=args.chip_key,
+                hook="personality",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         else:
-            execution = run_first_active_chip_hook(config_manager, hook="personality", payload=payload)
+            execution = run_first_active_chip_hook(
+                config_manager,
+                hook="personality",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
             if execution is None:
                 close_run(
                     state_db,
@@ -8508,7 +8784,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         close_run(
             state_db,
             run_id=run.run_id,
@@ -9207,6 +9483,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_researcher_status(args)
     if args.command == "memory" and args.memory_command == "status":
         return handle_memory_status(args)
+    if args.command == "memory" and args.memory_command == "export-movement-status":
+        return handle_memory_export_movement_status(args)
     if args.command == "memory" and args.memory_command == "lookup-current-state":
         return handle_memory_lookup_current_state(args)
     if args.command == "memory" and args.memory_command == "inspect-human":

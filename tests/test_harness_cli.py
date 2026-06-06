@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
@@ -105,6 +106,84 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["envelope"]["harness_id"], "researcher.advisory")
         self.assertEqual(payload["envelope"]["route_mode"], "forced_harness")
         self.assertEqual(payload["artifacts"]["reply_text"], "Forced harness reply.")
+
+    def test_harness_execute_voice_io_attaches_local_authority_before_hooks(self) -> None:
+        seen_hooks: list[str] = []
+
+        def fake_voice_hook(
+            _config_manager,
+            *,
+            hook: str,
+            payload: dict[str, object],
+            governor_decision: dict[str, object] | None = None,
+        ):
+            seen_hooks.append(hook)
+            if hook == "voice.status":
+                self.assertIsNone(governor_decision)
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    hook=hook,
+                    repo_root=str(self.home),
+                    command=["voice.status"],
+                    exit_code=0,
+                    output={"result": {"ready": True, "reason": "ready", "reply_text": "Voice ready."}},
+                    payload=payload,
+                    stderr="",
+                    stdout="",
+                )
+            self.assertEqual(hook, "voice.speak")
+            self.assertEqual(payload["text"], "Hello from the CLI harness.")
+            governor = payload["governor_decision"]
+            self.assertEqual(governor_decision, governor)
+            self.assertEqual(governor["schema_version"], "governor-decision-v1")
+            self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.speak")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                hook=hook,
+                repo_root=str(self.home),
+                command=["voice.speak"],
+                exit_code=0,
+                output={
+                    "result": {
+                        "provider_id": "local",
+                        "voice_id": "voice-1",
+                        "model_id": "test",
+                        "mime_type": "audio/ogg",
+                        "filename": "voice.ogg",
+                        "voice_compatible": True,
+                        "audio_base64": "aGVsbG8=",
+                    }
+                },
+                payload=payload,
+                stderr="",
+                stdout="",
+            )
+
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting", side_effect=fake_voice_hook):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "Say: Hello from the CLI harness.",
+                "--home",
+                str(self.home),
+                "--harness-id",
+                "voice.io",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        authority = payload["envelope"]["turn_intent_payload"]
+        self.assertEqual(authority["schema_version"], "turn-intent-envelope-vnext")
+        self.assertEqual(authority["action_authority"]["state"], "executable")
+        self.assertIn(
+            "capability:spark-voice-comms:voice.speak",
+            {action["capability_id"] for action in authority["proposed_actions"]},
+        )
+        self.assertEqual(seen_hooks, ["voice.status", "voice.speak"])
 
     def test_harness_status_returns_registry_and_runtime_payload(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

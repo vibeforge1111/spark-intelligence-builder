@@ -15,6 +15,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _build_browser_search_context,
     _browser_reply_denies_browsing,
     _build_contextual_task,
+    _execute_browser_hook,
     _build_open_memory_recall_answer,
     _detect_open_memory_recall_query,
     _detect_explicit_decision_statement,
@@ -38,6 +39,107 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def _browser_turn_intent(self, *, allowed_tools: list[str] | None = None) -> object:
+        from spark_intelligence.harness_contract import parse_turn_intent_envelope
+
+        return parse_turn_intent_envelope(
+            {
+                "schema": "spark.turn_intent.v1",
+                "turnId": "turn-browser-test",
+                "traceId": "trace-browser-test",
+                "surface": "telegram",
+                "directive": {
+                    "mode": "execute",
+                    "noExecution": False,
+                    "noPublish": True,
+                    "localOnly": False,
+                    "explanationOnly": False,
+                    "quotedOrMetaLanguage": False,
+                },
+                "selectedIntent": {
+                    "kind": "tool_call",
+                    "ownerSystem": "spark-browser",
+                    "action": "browser.search",
+                    "confidence": "high",
+                    "requiresConfirmation": False,
+                    "source": "test",
+                },
+                "sessionScope": {
+                    "sessionKey": "session:telegram:dm:111",
+                    "surface": "telegram",
+                    "conversationKind": "dm",
+                    "userRef": "human:telegram:111",
+                    "chatRef": "111",
+                    "memoryLoadPolicy": "fresh",
+                    "pendingStateScope": "turn",
+                },
+                "toolPolicy": {
+                    "allowedTools": allowed_tools
+                    or [
+                        "browser.status",
+                        "browser.navigate",
+                        "browser.tab.wait",
+                        "browser.page.dom_extract",
+                        "browser.page.interactives.list",
+                        "browser.page.text_extract",
+                        "browser.page.snapshot",
+                    ],
+                    "deniedTools": [],
+                    "enabledToolsets": ["browser"],
+                    "mutationClassesAllowed": ["external_network"],
+                    "requiresApprovalFor": [],
+                    "networkPolicy": "allowed",
+                    "elevatedAllowed": False,
+                },
+                "executionPolicy": {
+                    "canMutateFiles": False,
+                    "canLaunchMission": False,
+                    "canWriteMemory": False,
+                    "canDeleteSchedule": False,
+                    "canCreateChip": False,
+                    "canPublish": False,
+                    "canUseExternalNetwork": True,
+                },
+                "threatDefense": {"reasonCodes": []},
+            }
+        )
+
+    def _browser_turn_intent_vnext(self) -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        browser_hooks = [
+            "browser.status",
+            "browser.navigate",
+            "browser.tab.wait",
+            "browser.page.dom_extract",
+            "browser.page.interactives.list",
+            "browser.page.text_extract",
+            "browser.page.snapshot",
+        ]
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human:telegram:111",
+            request_id="req-browser-vnext-test",
+            source_kind="test_browser_search_explicit",
+            intent_summary="User explicitly requested browser-grounded source capture.",
+            raw_turn_summary="Raw browser-search turn is offloaded in the test fixture.",
+            actions=[
+                {
+                    "tool_name": hook,
+                    "owner_system": "spark-browser",
+                    "mutation_class": "external_network",
+                    "external_network": True,
+                    "args_path": f"builder://browser-test/{hook.replace('.', '-')}",
+                }
+                for hook in browser_hooks
+            ],
+        )
+
+    def _assert_all_browser_hook_calls_used_vnext(self, hook_mock) -> None:
+        self.assertGreater(hook_mock.call_count, 0)
+        for call in hook_mock.call_args_list:
+            self.assertIsInstance(call.kwargs.get("turn_intent_envelope_vnext"), dict)
+
     def test_build_contextual_task_sanitizes_untrusted_prompt_blocks(self) -> None:
         prompt = _build_contextual_task(
             user_message="Can you help?\u200b",
@@ -76,6 +178,119 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(query, "official IANA page about reserved example domains")
+
+    def test_build_browser_search_context_meta_browser_words_do_not_execute_hooks(self) -> None:
+        with patch("spark_intelligence.researcher_bridge.advisory._execute_browser_hook") as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message=(
+                    "Bug report: the quoted words 'search the web' are examples, "
+                    "not a command. Do not browse; just explain the routing risk."
+                ),
+                request_id="req-browser-no-authority",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertEqual(result, {"context": "", "blocked_reply": None, "blocked_code": None})
+        hook_mock.assert_not_called()
+
+    def test_execute_browser_hook_without_turn_intent_does_not_call_chip_hook(self) -> None:
+        with patch("spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting") as hook_mock:
+            result = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-no-authority",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+            )
+
+        self.assertEqual(result, (None, None))
+        hook_mock.assert_not_called()
+
+    def test_execute_browser_hook_with_legacy_turn_intent_does_not_call_chip_hook(self) -> None:
+        with patch("spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting") as hook_mock:
+            result = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-legacy-authority",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+            )
+
+        self.assertEqual(result, (None, None))
+        hook_mock.assert_not_called()
+        policy_blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=5)
+        self.assertTrue(policy_blocks)
+        self.assertEqual(policy_blocks[0]["facts_json"]["authority_state"], "legacy_present_without_governor")
+
+    def test_execute_browser_hook_with_vnext_governor_authority_calls_chip_hook(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                output={"status": "succeeded", "result": {"extension": {"running": True}}},
+                chip_key="spark-browser",
+            ),
+        ) as hook_mock:
+            result = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-authorized",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
+            )
+
+        self.assertEqual(result, ({"status": "succeeded", "result": {"extension": {"running": True}}}, "spark-browser"))
+        hook_mock.assert_called_once()
+
+    def test_execute_browser_hook_maps_retired_browser_lane_to_explicit_unavailable(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.run_first_chip_hook_supporting",
+            side_effect=ValueError(
+                "The legacy browser extension lane is disabled. Use the guarded Spark CLI browser-use MCP lane instead."
+            ),
+        ) as hook_mock:
+            output, chip_key = _execute_browser_hook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                hook="browser.status",
+                payload={"kind": "browser.status"},
+                run_id=None,
+                request_id="req-browser-helper-retired-lane",
+                channel_kind="telegram",
+                session_id="session:telegram:dm:111",
+                human_id="human:telegram:111",
+                agent_id="agent:human:telegram:111",
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
+            )
+
+        self.assertIsNone(chip_key)
+        self.assertIsInstance(output, dict)
+        self.assertEqual(output["status"], "failed")
+        self.assertEqual(output["error"]["code"], "BROWSER_SESSION_UNAVAILABLE")
+        self.assertIn("governed browser-use session", output["error"]["message"])
+        hook_mock.assert_called_once()
 
     def test_memory_source_quality_plan_does_not_trigger_browser_search(self) -> None:
         self.assertFalse(
@@ -691,6 +906,16 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "Open https://vibeship.co and tell me what you think."
             )
         )
+        self.assertTrue(
+            _should_collect_browser_search_context(
+                "Browse example.com and tell me the page title and main link."
+            )
+        )
+        self.assertTrue(
+            _should_collect_browser_search_context(
+                "Open https://www.iana.org/domains/reserved and tell me which example domains are reserved there."
+            )
+        )
         self.assertFalse(_should_collect_browser_search_context("open the discussion"))
 
     def test_select_search_result_candidate_from_text_result_prefers_external_domain(self) -> None:
@@ -936,6 +1161,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
             )
 
         self.assertEqual(result, {"context": "", "blocked_reply": None, "blocked_code": None})
@@ -943,6 +1170,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(hook_mock.call_args_list[0].kwargs["hook"], "browser.status")
         self.assertEqual(hook_mock.call_args_list[1].kwargs["hook"], "browser.status")
         self.assertEqual(hook_mock.call_args_list[2].kwargs["hook"], "browser.navigate")
+        self._assert_all_browser_hook_calls_used_vnext(hook_mock)
 
     def test_build_browser_search_context_uses_interactives_fallback_for_external_result(self) -> None:
         with patch(
@@ -1044,6 +1272,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
             )
 
         self.assertIn("source_url=https://coinmarketcap.com/currencies/bitcoin/", str(result["context"]))
@@ -1063,6 +1293,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "browser.page.text_extract",
             ],
         )
+        self._assert_all_browser_hook_calls_used_vnext(hook_mock)
 
     def test_build_browser_search_context_opens_direct_domain_request_without_search_results(self) -> None:
         with patch(
@@ -1153,6 +1384,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
             )
 
         self.assertIn("browser_mode=direct_open", str(result["context"]))
@@ -1185,6 +1418,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             hook_mock.call_args_list[1].kwargs["payload"]["arguments"]["url"],
             "https://example.com",
         )
+        self._assert_all_browser_hook_calls_used_vnext(hook_mock)
 
     def test_build_browser_search_context_uses_snapshot_fallback_when_direct_page_text_extract_fails(self) -> None:
         with patch(
@@ -1285,6 +1519,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
             )
 
         self.assertIn("source_title=IANA-managed Reserved Domains", str(result["context"]))
@@ -1304,6 +1540,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "browser.page.snapshot",
             ],
         )
+        self._assert_all_browser_hook_calls_used_vnext(hook_mock)
 
     def test_build_browser_search_context_recovers_with_standalone_snapshot_after_invalid_live_request(self) -> None:
         with patch(
@@ -1424,6 +1661,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 agent_id="agent:human:telegram:111",
                 human_id="human:telegram:111",
                 session_id="session:telegram:dm:111",
+                turn_intent_envelope=self._browser_turn_intent(),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(),
             )
 
         self.assertIn("browser_mode=direct_open", str(result["context"]))
@@ -1445,6 +1684,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "browser.page.snapshot",
             ],
         )
+        self._assert_all_browser_hook_calls_used_vnext(hook_mock)
 
     def test_browser_reply_denies_browsing_detects_false_capability_claim(self) -> None:
         self.assertTrue(

@@ -11,10 +11,106 @@ from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_intent_envelope
 
 
 class AttachmentHookTests(SparkTestCase):
+    def _governor_decision_for_hook(
+        self,
+        *,
+        hook: str = "evaluate",
+        request_id: str = "req-chip-hook-governor",
+        owner_system: str = "spark-intelligence-builder",
+        mutation_class: str = "writes_files",
+        external_network: bool = False,
+    ) -> dict[str, object]:
+        from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        tool_name = hook if hook.startswith(("browser.", "voice.", "chip.")) else f"chip.{hook}"
+        envelope = build_vnext_action_intent_envelope(
+            surface="cli",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_chip_hook_governor",
+            intent_summary=f"Test authorizes {tool_name}.",
+            raw_turn_summary=f"Run {tool_name} in test.",
+            actions=[
+                {
+                    "tool_name": tool_name,
+                    "owner_system": owner_system,
+                    "mutation_class": mutation_class,
+                    "external_network": external_network,
+                    "args_path": f"builder://test/{request_id}/{tool_name}",
+                }
+            ],
+        )
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+            state_db=self.state_db,
+            request_id=request_id,
+            actor_id="test",
+            component="test",
+        )
+        self.assertTrue(authority.allowed, authority.reason_codes)
+        self.assertIsInstance(authority.governor_decision, dict)
+        return authority.governor_decision
+
+    def _chip_evaluate_turn_intent_vnext(self, *, request_id: str = "req-chip-vnext") -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_active_chip_explicit",
+            intent_summary="User explicitly requested startup chip guidance for the current turn.",
+            raw_turn_summary="Raw active-chip test turn is offloaded in the fixture.",
+            actions=[
+                {
+                    "tool_name": "chip.evaluate",
+                    "owner_system": "spark-intelligence-builder",
+                    "mutation_class": "writes_files",
+                    "args_path": f"builder://active-chip/{request_id}/chip-evaluate",
+                }
+            ],
+        )
+
+    def _browser_turn_intent_vnext(self, *, request_id: str = "req-browser-vnext-test") -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        browser_hooks = [
+            "browser.status",
+            "browser.navigate",
+            "browser.tab.wait",
+            "browser.page.dom_extract",
+            "browser.page.interactives.list",
+            "browser.page.text_extract",
+            "browser.page.snapshot",
+        ]
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_browser_search_explicit",
+            intent_summary="User explicitly requested browser-grounded source capture.",
+            raw_turn_summary="Raw browser-search turn is offloaded in the fixture.",
+            actions=[
+                {
+                    "tool_name": hook,
+                    "owner_system": "spark-browser",
+                    "mutation_class": "external_network",
+                    "external_network": True,
+                    "args_path": f"builder://browser-test/{hook.replace('.', '-')}",
+                }
+                for hook in browser_hooks
+            ],
+        )
+
     def test_legacy_browser_extension_hooks_are_disabled_at_execution_boundary(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -109,6 +205,39 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(hook_exit, 2)
         self.assertIn("legacy browser extension lane is disabled", hook_stderr)
         self.assertIn("browser-use MCP lane", hook_stderr)
+
+    def test_run_chip_hook_without_governor_does_not_call_subprocess(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        with patch("spark_intelligence.attachments.hooks.run_governed_command") as run_mock:
+            with self.assertRaises(RuntimeError) as blocked:
+                run_chip_hook(
+                    self.config_manager,
+                    chip_key="startup-yc",
+                    hook="evaluate",
+                    payload={"situation": "no authority"},
+                )
+
+        run_mock.assert_not_called()
+        self.assertIn("requires Harness Core Governor authority", str(blocked.exception))
+
+    def test_run_chip_hook_with_governor_executes_subprocess(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        governor_decision = self._governor_decision_for_hook(request_id="req-chip-hook-valid")
+
+        execution = run_chip_hook(
+            self.config_manager,
+            chip_key="startup-yc",
+            hook="evaluate",
+            payload={"situation": "We have growth but poor retention"},
+            governor_decision=governor_decision,
+        )
+
+        self.assertTrue(execution.ok)
+        self.assertEqual(execution.governor_verification["allowed"], True)
+        self.assertIn("Startup YC doctrine", execution.output["result"]["analysis"])
 
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
@@ -553,7 +682,7 @@ class AttachmentHookTests(SparkTestCase):
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.run_chip_hook",
             return_value=fake_chip_execution,
-        ):
+        ) as run_hook_mock:
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -563,17 +692,216 @@ class AttachmentHookTests(SparkTestCase):
                 session_id="session-1",
                 channel_kind="telegram",
                 user_message="What should this startup focus on next?",
+                turn_intent_envelope=make_turn_intent_envelope(
+                    turn_id="turn:chip-fallback",
+                    trace_id="trace:chip-fallback",
+                ),
+                turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
+                    request_id="req-chip-fallback"
+                ),
             )
 
         self.assertEqual(result.reply_text, "Tighten the user pain wedge first.")
+        run_hook_mock.assert_called_once()
+        self.assertIsInstance(run_hook_mock.call_args.kwargs.get("governor_decision"), dict)
         self.assertIn("[Active chip guidance]", str(captured["user_prompt"]))
         self.assertIn("chip_key=startup-yc", str(captured["user_prompt"]))
         self.assertIn("Startup YC doctrine: focus on the narrowest urgent founder pain first.", str(captured["user_prompt"]))
         self.assertIsNotNone(captured["governance"])
 
-    def test_researcher_bridge_injects_browser_search_evidence_from_non_active_chip(self) -> None:
-        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+    def test_researcher_bridge_without_turn_intent_does_not_run_active_chip_evaluate(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="minimax-secret",
+            source="test",
+        )
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:under-supported",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            captured["user_prompt"] = user_prompt
+            captured["governance"] = governance
+            return {"raw_response": "We can reason about the startup without running chip hooks."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._is_conversational_fallback_candidate",
+            return_value=True,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=type(
+                "Selection",
+                (),
+                {"provider": provider, "model_family": "generic", "error": None},
+            )(),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.run_chip_hook",
+        ) as run_hook_mock:
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-chip-no-authority",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="What should this startup focus on next?",
+            )
+
+        self.assertEqual(result.reply_text, "We can reason about the startup without running chip hooks.")
+        run_hook_mock.assert_not_called()
+        self.assertNotIn("[Active chip guidance]", str(captured["user_prompt"]))
+        policy_blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=10)
+        self.assertTrue(
+            any(event.get("reason_code") == "active_chip_evaluate_authority_blocked" for event in policy_blocks)
+        )
+
+    def test_researcher_bridge_with_legacy_turn_intent_does_not_run_active_chip_evaluate(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="minimax-secret",
+            source="test",
+        )
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:under-supported",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            captured["user_prompt"] = user_prompt
+            captured["governance"] = governance
+            return {"raw_response": "We can discuss the startup without running chip hooks."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._is_conversational_fallback_candidate",
+            return_value=True,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=type(
+                "Selection",
+                (),
+                {"provider": provider, "model_family": "generic", "error": None},
+            )(),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.run_chip_hook",
+        ) as run_hook_mock:
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-chip-legacy-only",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="What should this startup focus on next?",
+                turn_intent_envelope=make_turn_intent_envelope(
+                    turn_id="turn:chip-legacy-only",
+                    trace_id="trace:chip-legacy-only",
+                ),
+            )
+
+        self.assertEqual(result.reply_text, "We can discuss the startup without running chip hooks.")
+        run_hook_mock.assert_not_called()
+        self.assertNotIn("[Active chip guidance]", str(captured["user_prompt"]))
+        policy_blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=10)
+        matching = [
+            event
+            for event in policy_blocks
+            if event.get("reason_code") == "active_chip_evaluate_authority_blocked"
+        ]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["facts_json"]["authority_state"], "legacy_present_without_governor")
+
+    def test_researcher_bridge_injects_browser_search_evidence_from_governed_vnext_browser_lane(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
 
         runtime_root = self.home / "fake-researcher"
@@ -614,6 +942,99 @@ class AttachmentHookTests(SparkTestCase):
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run")
 
+        browser_hook_outputs = [
+            (
+                {
+                    "status": "succeeded",
+                    "result": {"extension": {"running": True}},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                        "tab": {"id": "tab-search-1"},
+                        "wait_hint": {
+                            "target": {
+                                "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                                "tab_id": "tab-search-1",
+                            }
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "title": "BTC price search at DuckDuckGo",
+                        "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                        "dom_outline": {
+                            "nodes": [
+                                {
+                                    "tag": "a",
+                                    "role": "link",
+                                    "text_summary": "Bitcoin price today, BTC to USD live price, market cap and chart | CoinGecko",
+                                    "href": "https://www.coingecko.com/en/coins/bitcoin",
+                                }
+                            ]
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                        "tab": {"id": "tab-source-1"},
+                        "wait_hint": {
+                            "target": {
+                                "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                                "tab_id": "tab-source-1",
+                            }
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "title": "Bitcoin price today | CoinGecko",
+                        "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                        "visible_text": {
+                            "summary": "Bitcoin price today is $84,321.18 USD according to the CoinGecko Bitcoin page.",
+                            "excerpt": "CoinGecko lists the live BTC to USD price and market summary.",
+                            "character_count": 112,
+                            "truncated": False,
+                            "redacted": False,
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+        ]
+
         with patch(
             "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
             return_value=(runtime_root, "configured"),
@@ -639,7 +1060,10 @@ class AttachmentHookTests(SparkTestCase):
                 (),
                 {"provider": provider, "model_family": "generic", "error": None},
             )(),
-        ):
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=browser_hook_outputs,
+        ) as hook_mock:
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -649,12 +1073,29 @@ class AttachmentHookTests(SparkTestCase):
                 session_id="session-1",
                 channel_kind="telegram",
                 user_message="Search the web and tell me the current BTC price in USD with the source you used.",
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(request_id="req-browser-fallback"),
             )
 
         self.assertIn("Source: https://www.coingecko.com/en/coins/bitcoin", result.reply_text)
         self.assertRegex(str(captured["system_prompt"]), r"Do not (?:say|claim) you cannot browse")
-        self.assertNotIn("[Browser search evidence]", str(captured["user_prompt"]))
-        self.assertIn("spark-browser mode=available router_invokable=no", str(captured["user_prompt"]))
+        self.assertIn("[Browser search evidence]", str(captured["user_prompt"]))
+        self.assertIn("search_query=current BTC price in USD", str(captured["user_prompt"]))
+        self.assertIn("source_url=https://www.coingecko.com/en/coins/bitcoin", str(captured["user_prompt"]))
+        self.assertIn("Bitcoin price today is $84,321.18 USD", str(captured["user_prompt"]))
+        self.assertEqual(
+            [call.kwargs["hook"] for call in hook_mock.call_args_list],
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.dom_extract",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.text_extract",
+            ],
+        )
+        for call in hook_mock.call_args_list:
+            self.assertIsInstance(call.kwargs.get("turn_intent_envelope_vnext"), dict)
 
     def test_researcher_bridge_returns_explicit_browser_permission_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -677,9 +1118,9 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is blocked because the legacy browser extension does not have host access "
-                    "for https://duckduckgo.com. Open the legacy extension popup and grant explicit site "
-                    "access for https://duckduckgo.com, then retry the search."
+                    "Web search is blocked because browser-use does not have host access "
+                    "for https://duckduckgo.com. Grant explicit site access for https://duckduckgo.com, "
+                    "then retry the search."
                 ),
                 "blocked_code": "HOST_PERMISSION_REQUIRED",
             },
@@ -712,7 +1153,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "browser_permission_required")
         self.assertEqual(result.escalation_hint, "grant_origin_access")
         self.assertIn("does not have host access for https://duckduckgo.com", result.reply_text)
-        self.assertIn("grant explicit site access for https://duckduckgo.com", result.reply_text)
+        self.assertIn("Grant explicit site access for https://duckduckgo.com", result.reply_text)
 
     def test_researcher_bridge_returns_explicit_browser_session_unavailable_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -735,8 +1176,8 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is currently unavailable because the legacy browser extension live session "
-                    "is disconnected. Reload or reconnect the extension, then retry the search."
+                    "Web search is currently unavailable because the governed browser-use session "
+                    "is disconnected. Reconnect browser-use, then retry the search."
                 ),
                 "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
             },
@@ -768,4 +1209,4 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(result.mode, "blocked")
         self.assertEqual(result.routing_decision, "browser_unavailable")
         self.assertEqual(result.escalation_hint, "reconnect_browser_session")
-        self.assertIn("live session is disconnected", result.reply_text)
+        self.assertIn("governed browser-use session is disconnected", result.reply_text)

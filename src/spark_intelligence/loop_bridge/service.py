@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 
 # Natural language for kicking off a chip loop. Anchored on loop vocabulary
 # AND a chip reference so we do not hijack generic "run X" which is the
@@ -58,6 +60,11 @@ def _extract_rounds(message: str) -> int | None:
 def detect_loop_invoke_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("loop", "run", "iterate", "improve", "evaluate", "tune", "refine"),
+    ):
         return None
     matched = False
     for pat in _LOOP_PATTERNS:

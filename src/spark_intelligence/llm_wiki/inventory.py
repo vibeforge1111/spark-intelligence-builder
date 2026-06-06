@@ -9,6 +9,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.bootstrap import bootstrap_llm_wiki
 from spark_intelligence.llm_wiki.compile_system import compile_system_wiki
+from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.llm_wiki.status import BOOTSTRAP_WIKI_FILES, SYSTEM_COMPILE_WIKI_FILES
 from spark_intelligence.state.db import StateDB
 
@@ -56,7 +57,7 @@ def build_llm_wiki_inventory(
     refresh: bool = False,
     limit: int = 40,
 ) -> LlmWikiInventoryResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     refreshed_files: tuple[str, ...] = ()
     if refresh:
         bootstrap_llm_wiki(config_manager=config_manager, output_dir=root)

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.llm_wiki.paths import wiki_root
 
 
 VALID_INBOX_STATUSES = {"candidate", "verified", "all"}
@@ -75,7 +76,7 @@ def build_llm_wiki_candidate_inbox(
     status: str = "candidate",
     limit: int = 40,
 ) -> LlmWikiCandidateInboxResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     status_filter = _normalize_status(status)
     improvements_dir = root / "improvements"
     warnings: list[str] = []

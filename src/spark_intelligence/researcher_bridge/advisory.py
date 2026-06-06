@@ -44,6 +44,22 @@ from spark_intelligence.build_quality_review import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
+    build_telegram_memory_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
+from spark_intelligence.harness_contract import (
+    TurnIntentEnvelope,
+    MutationClass,
+    authorize_tool_call,
+    authorize_vnext_tool_call,
+    build_vnext_action_intent_envelope,
+    parse_turn_intent_envelope,
+    verify_governor_tool_authority,
+)
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -2980,7 +2996,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     configured_root = config.get("spark", {}).get("researcher", {}).get("runtime_root")
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
-        return (path if path.exists() else None, "configured")
+        return (path, "configured")
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
     if autodetect.exists():
@@ -4038,9 +4054,37 @@ def _rewrite_browser_search_capability_denial(reply_text: str, *, browser_search
     )
 
 
+def _browser_search_boundary_blocks_adapter_authority(user_message: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered:
+        return True
+    action_words = (
+        r"browse|browser|search the web|web search|websearch|look up|find online|"
+        r"search online|google|open|visit|go to|source"
+    )
+    if re.search(
+        rf"\b(?:do not|don't|dont|please don't|please dont|no need to|without)\b.{{0,80}}\b(?:{action_words})\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        rf"\b(?:{action_words})\b.{{0,80}}\b(?:not a request|not an instruction|not a command|quoted|bug report|word alone|words alone|meta-language|meta language)\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        rf"\b(?:quoted|bug report|word alone|words alone|meta-language|meta language|not a request|not an instruction|not a command)\b.{{0,100}}\b(?:{action_words})\b",
+        lowered,
+    ):
+        return True
+    return False
+
+
 def _should_collect_browser_search_context(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lowered:
+        return False
+    if _browser_search_boundary_blocks_adapter_authority(lowered):
         return False
     if _detect_memory_quality_evaluation_plan_query(lowered) or _detect_memory_source_explanation_query(lowered):
         return False
@@ -4069,6 +4113,51 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     return any(signal in lowered for signal in current_fact_signals) and any(
         token in lowered for token in ("search", "look", "find", "source")
     )
+
+
+_BROWSER_AUTHORITY_HOOKS: tuple[str, ...] = (
+    "browser.status",
+    "browser.navigate",
+    "browser.tab.wait",
+    "browser.page.dom_extract",
+    "browser.page.interactives.list",
+    "browser.page.text_extract",
+    "browser.page.snapshot",
+)
+
+
+def _build_browser_search_turn_intent_payload_vnext(
+    *,
+    request_id: str,
+    channel_kind: str,
+    human_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    if not _should_collect_browser_search_context(user_message):
+        return None
+    actions = [
+        {
+            "tool_name": hook,
+            "owner_system": "spark-browser",
+            "mutation_class": "external_network",
+            "external_network": True,
+            "args_path": f"builder://browser-search/{request_id}/{hook.replace('.', '-')}",
+        }
+        for hook in _BROWSER_AUTHORITY_HOOKS
+    ]
+    try:
+        return build_vnext_action_intent_envelope(
+            surface=channel_kind,
+            actor_id_ref=human_id,
+            request_id=f"{request_id}:browser-search",
+            source_kind="researcher_browser_search_explicit",
+            intent_summary="User explicitly requested browser-grounded current or source-backed web context.",
+            raw_turn_summary="Raw turn offloaded; browser search detector accepted this fresh user turn.",
+            actions=actions,
+            confidence=0.94,
+        )
+    except Exception:
+        return None
 
 
 def _detect_memory_source_explanation_query(user_message: str) -> bool:
@@ -4241,6 +4330,580 @@ def _is_search_engine_url(url: str) -> bool:
     return _is_search_engine_host(host)
 
 
+def _parse_optional_turn_intent_payload(payload: dict[str, Any] | None) -> TurnIntentEnvelope | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return parse_turn_intent_envelope(payload)
+    except ValueError:
+        return None
+
+
+def _parse_optional_turn_intent_payload_vnext(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if isinstance(payload, dict) and payload.get("schema_version") == "turn-intent-envelope-vnext":
+        return payload
+    return None
+
+
+def _authorize_researcher_tool_call(
+    *,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+    external_network: bool = False,
+) -> tuple[str, tuple[str, ...], str, str | None]:
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authorization = authorize_vnext_tool_call(
+            turn_intent_envelope_vnext,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        return (
+            authorization.verdict,
+            authorization.reason_codes,
+            "turn_intent_envelope_vnext",
+            str(turn_intent_envelope_vnext.get("turn_id") or "") or None,
+        )
+    verdict, reasons = authorize_tool_call(
+        turn_intent_envelope,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        external_network=external_network,
+    )
+    return (
+        verdict,
+        reasons,
+        "turn_intent_envelope",
+        turn_intent_envelope.turn_id if turn_intent_envelope is not None else None,
+    )
+
+
+def _governor_authorizes_researcher_tool_call(
+    *,
+    governor_decision: dict[str, Any] | None,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+) -> tuple[str, tuple[str, ...], str, str | None]:
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        allow_read_only=mutation_class in ("none", "read_only"),
+    )
+    decision_id = str(verification.get("decision_id") or "").strip() or None
+    reason_codes = tuple(str(reason) for reason in verification.get("reason_codes") or [])
+    source_kind = str(verification.get("source_kind") or "governor_decision")
+    if verification.get("allowed") is True:
+        return ("allowed", (), source_kind, decision_id)
+    if reason_codes:
+        return ("blocked", reason_codes, source_kind, decision_id)
+    return ("blocked", ("governor_consumer_verification_failed",), source_kind, decision_id)
+
+
+def _vnext_proposes_builder_chip_evaluate(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for action in payload.get("proposed_actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if (
+            str(action.get("capability_id") or "") == "capability:spark-intelligence-builder:chip.evaluate"
+            and str(action.get("action_type") or "") == "edit_file"
+        ):
+            return True
+    return False
+
+
+def _build_researcher_memory_write_governor_decision(
+    *,
+    governor_decision: dict[str, Any] | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
+    state_db: StateDB,
+    request_id: str,
+    run_id: str | None,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    if isinstance(governor_decision, dict):
+        return governor_decision
+    return None
+
+
+def _authorize_researcher_browser_hook(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    hook: str,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    blocked_stage: str,
+) -> dict[str, Any] | None:
+    governor_decision = None
+    authority_source_kind = "missing_governor_decision"
+    authority_source_ref = None
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name=hook,
+            owner_system="spark-browser",
+            mutation_class="external_network",
+            external_network=True,
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        governor_decision = authority.governor_decision
+        authority_source_kind = "governor_decision"
+        authority_source_ref = (
+            str(governor_decision.get("decision_id") or "")
+            if isinstance(governor_decision, dict)
+            else str(turn_intent_envelope_vnext.get("turn_id") or "")
+        ) or None
+    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=governor_decision,
+        tool_name=hook,
+        owner_system="spark-browser",
+        mutation_class="external_network",
+    )
+    if verdict == "allowed":
+        return governor_decision if isinstance(governor_decision, dict) else None
+    if governor_source_kind != "missing_governor_decision":
+        authority_source_kind = governor_source_kind
+    if governor_source_ref is not None:
+        authority_source_ref = governor_source_ref
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="governor_authority",
+            gate_name="researcher_bridge.browser_hook",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked browser chip execution without matching Governor authority.",
+            action="blocked",
+            reason_code="browser_hook_authority_blocked",
+            blocked_stage=blocked_stage,
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={"owner_system": "spark-browser", "human_id": human_id, "agent_id": agent_id},
+            facts={
+                "hook": hook,
+                "reason_codes": list(reasons),
+                "authority_state": (
+                    "governor_decision"
+                    if isinstance(governor_decision, dict)
+                    else (
+                        "vnext_present_without_governor"
+                        if isinstance(turn_intent_envelope_vnext, dict)
+                        else ("legacy_present_without_governor" if turn_intent_envelope is not None else "missing")
+                    )
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return None
+
+
+def _authorize_researcher_active_chip_evaluate(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    selected_chip_keys: list[str],
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    governor_decision = None
+    authority_source_kind = "missing_governor_decision"
+    authority_source_ref = None
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name="chip.evaluate",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_files",
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        governor_decision = authority.governor_decision
+        authority_source_kind = "governor_decision"
+        authority_source_ref = (
+            str(governor_decision.get("decision_id") or "")
+            if isinstance(governor_decision, dict)
+            else str(turn_intent_envelope_vnext.get("turn_id") or "")
+        ) or None
+    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=governor_decision,
+        tool_name="chip.evaluate",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_files",
+    )
+    if verdict == "allowed":
+        return governor_decision if isinstance(governor_decision, dict) else None
+    if governor_source_kind != "missing_governor_decision":
+        authority_source_kind = governor_source_kind
+    if governor_source_ref is not None:
+        authority_source_ref = governor_source_ref
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="governor_authority",
+            gate_name="researcher_bridge.active_chip_evaluate",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked active chip evaluation without matching Governor authority.",
+            action="blocked",
+            reason_code="active_chip_evaluate_authority_blocked",
+            blocked_stage="active_chip_evaluate",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "spark-intelligence-builder",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "chip.evaluate",
+                "selected_chip_keys": selected_chip_keys,
+                "reason_codes": list(reasons),
+                "authority_state": (
+                    "governor_decision"
+                    if isinstance(governor_decision, dict)
+                    else (
+                        "vnext_present_without_governor"
+                        if isinstance(turn_intent_envelope_vnext, dict)
+                        else ("legacy_present_without_governor" if turn_intent_envelope is not None else "missing")
+                    )
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return None
+
+
+def _build_researcher_memory_turn_intent_envelope(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> TurnIntentEnvelope | None:
+    payload = build_telegram_memory_turn_intent_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if payload is None:
+        return None
+    try:
+        return parse_turn_intent_envelope(payload)
+    except ValueError:
+        return None
+
+
+def _build_researcher_memory_read_turn_intent_envelope(
+    *,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    user_message: str,
+    source_kind: str,
+) -> TurnIntentEnvelope | None:
+    payload = build_telegram_memory_read_turn_intent_payload(
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if payload is None:
+        return None
+    try:
+        return parse_turn_intent_envelope(payload)
+    except ValueError:
+        return None
+
+
+def _authorize_researcher_memory_read(
+    *,
+    state_db: StateDB,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    source_kind: str,
+    read_kind: str,
+    allow_missing_envelope: bool = True,
+) -> bool:
+    if turn_intent_envelope_vnext is None and turn_intent_envelope is None and allow_missing_envelope:
+        return True
+    authority_vnext = turn_intent_envelope_vnext
+    authority_envelope = turn_intent_envelope
+    adapter_envelope_used = False
+    adapter_vnext_used = False
+    if authority_vnext is None and authority_envelope is None and channel_kind == "telegram":
+        authority_vnext = build_telegram_memory_read_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_vnext_used = authority_vnext is not None
+    if authority_vnext is None and authority_envelope is None and channel_kind == "telegram":
+        authority_envelope = _build_researcher_memory_read_turn_intent_envelope(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_envelope_used = authority_envelope is not None
+    verdict, reasons, authority_source_kind, authority_source_ref = _authorize_researcher_tool_call(
+        turn_intent_envelope_vnext=authority_vnext,
+        turn_intent_envelope=authority_envelope,
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+    if verdict == "allowed":
+        return True
+    reason_codes = list(reasons)
+    if turn_intent_envelope is not None and "provided_envelope_not_memory_read_authority" not in reason_codes:
+        reason_codes.append("provided_envelope_not_memory_read_authority")
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.memory_read",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked memory read without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="memory_read_authority_blocked",
+            blocked_stage="memory_read",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "domain-chip-memory",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "memory.read",
+                "read_kind": read_kind,
+                "source_kind": source_kind,
+                "reason_codes": reason_codes,
+                "authority_state": (
+                    "adapter_vnext_envelope"
+                    if adapter_vnext_used
+                    else (
+                        "adapter_envelope"
+                        if adapter_envelope_used
+                        else (
+                            "vnext_present"
+                            if turn_intent_envelope_vnext is not None
+                            else ("present" if turn_intent_envelope is not None else "missing")
+                        )
+                    )
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return False
+
+
+def _authorize_researcher_memory_write(
+    *,
+    state_db: StateDB,
+    governor_decision: dict[str, Any] | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    source_kind: str,
+    operation: str,
+    allow_adapter_envelope: bool,
+) -> bool:
+    authority_vnext = turn_intent_envelope_vnext
+    authority_envelope = turn_intent_envelope
+    adapter_envelope_used = False
+    adapter_vnext_used = False
+    if authority_vnext is None and authority_envelope is None and allow_adapter_envelope:
+        authority_vnext = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_vnext_used = authority_vnext is not None
+    if authority_vnext is None and authority_envelope is None and allow_adapter_envelope:
+        authority_envelope = _build_researcher_memory_turn_intent_envelope(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        adapter_envelope_used = authority_envelope is not None
+    effective_governor_decision = governor_decision
+    verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=effective_governor_decision,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    if verdict == "allowed":
+        return True
+    reason_codes = list(reasons)
+    if turn_intent_envelope is not None and "provided_envelope_not_memory_authority" not in reason_codes:
+        reason_codes.append("provided_envelope_not_memory_authority")
+    if turn_intent_envelope is None and allow_adapter_envelope and not adapter_envelope_used:
+        reason_codes.append("telegram_memory_adapter_boundary")
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="turn_intent",
+            gate_name="researcher_bridge.memory_write",
+            source_kind=authority_source_kind,
+            source_ref=authority_source_ref,
+            summary="Researcher bridge blocked memory promotion without matching TurnIntent authority.",
+            action="blocked",
+            reason_code="memory_write_authority_blocked",
+            blocked_stage="memory_write",
+            input_ref=request_id,
+            severity="low",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={
+                "owner_system": "domain-chip-memory",
+                "human_id": human_id,
+                "agent_id": agent_id,
+            },
+            facts={
+                "tool_name": "memory.write",
+                "operation": operation,
+                "source_kind": source_kind,
+                "reason_codes": reason_codes,
+                "authority_state": (
+                    "governor_decision"
+                    if isinstance(effective_governor_decision, dict)
+                    else (
+                        "adapter_vnext_envelope"
+                        if adapter_vnext_used
+                        else (
+                            "adapter_envelope"
+                            if adapter_envelope_used
+                            else (
+                                "vnext_present_without_governor"
+                                if turn_intent_envelope_vnext is not None
+                                else ("present_without_governor" if turn_intent_envelope is not None else "missing")
+                            )
+                        )
+                    )
+                ),
+            },
+        )
+    except Exception:
+        pass
+    return False
+
+
+def _researcher_memory_read_side_effects_authorized(
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+) -> bool:
+    verdict, _, _, _ = _authorize_researcher_tool_call(
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        turn_intent_envelope=turn_intent_envelope,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    return verdict == "allowed"
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -4253,9 +4916,51 @@ def _execute_browser_hook(
     session_id: str,
     human_id: str,
     agent_id: str,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    governor_decision = _authorize_researcher_browser_hook(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        hook=hook,
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        blocked_stage="browser_hook_execution",
+    )
+    if governor_decision is None:
+        return None, None
     try:
-        execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+        execution = run_first_chip_hook_supporting(
+            config_manager,
+            hook=hook,
+            payload=payload,
+            governor_decision=governor_decision,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "legacy browser extension lane is disabled" in message.lower():
+            return (
+                {
+                    "status": "failed",
+                    "error": {
+                        "code": "BROWSER_SESSION_UNAVAILABLE",
+                        "message": (
+                            "The governed browser-use session is not connected for researcher browser search."
+                        ),
+                        "details": {
+                            "replacement_surface": "spark-cli browser-use agent",
+                            "retired_lane": "legacy_browser_extension",
+                        },
+                    },
+                },
+                None,
+            )
+        return None, None
     except Exception:
         return None, None
     if not execution or not execution.ok:
@@ -4537,6 +5242,8 @@ def _build_direct_browser_snapshot_context(
     human_id: str,
     session_id: str,
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, str | None]:
     direct_target_host = str(urlparse(direct_target_url).hostname or "").strip().lower()
     navigate_output, chip_key = _execute_browser_hook(
@@ -4555,6 +5262,8 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output or {})
     if blocked_reply:
@@ -4585,6 +5294,8 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -4609,6 +5320,8 @@ def _build_direct_browser_snapshot_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
     if blocked_reply:
@@ -4669,6 +5382,8 @@ def _build_browser_search_context(
     human_id: str,
     session_id: str,
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, str | None]:
     empty = {
         "context": "",
@@ -4676,6 +5391,28 @@ def _build_browser_search_context(
         "blocked_code": None,
     }
     if not _should_collect_browser_search_context(user_message):
+        return empty
+    browser_authority_vnext = turn_intent_envelope_vnext
+    if not isinstance(browser_authority_vnext, dict):
+        browser_authority_vnext = _build_browser_search_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            human_id=human_id,
+            user_message=user_message,
+        )
+    if not _authorize_researcher_browser_hook(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
+        hook="browser.navigate",
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        blocked_stage="browser_context_collection",
+    ):
         return empty
 
     session_unavailable = {
@@ -4705,6 +5442,8 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     if not _browser_hook_succeeded(status_output):
         status_error_code = _browser_hook_error_code(status_output)
@@ -4725,6 +5464,8 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             if retried_status_output:
                 status_output = retried_status_output
@@ -4757,6 +5498,8 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     if not navigate_output:
         if direct_target_url:
@@ -4771,6 +5514,8 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output)
@@ -4789,6 +5534,8 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
     navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
@@ -4809,6 +5556,8 @@ def _build_browser_search_context(
                 human_id=human_id,
                 session_id=session_id,
                 run_id=run_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
         return empty
 
@@ -4829,6 +5578,8 @@ def _build_browser_search_context(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=browser_authority_vnext,
     )
     blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
     if blocked_reply:
@@ -4866,6 +5617,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output or {})
         if blocked_reply:
@@ -4891,6 +5644,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
         if blocked_reply:
@@ -4919,6 +5674,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         if not dom_output:
             return empty
@@ -4953,6 +5710,8 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
             if blocked_reply:
@@ -4983,6 +5742,8 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
             if blocked_reply:
@@ -5014,6 +5775,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
     if source_navigate_output:
         source_navigate_result = (
@@ -5047,6 +5810,8 @@ def _build_browser_search_context(
                 session_id=session_id,
                 human_id=human_id,
                 agent_id=agent_id,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=browser_authority_vnext,
             )
             blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
             if blocked_reply:
@@ -5073,6 +5838,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
     snapshot_output = None
     if text_output:
@@ -5100,6 +5867,8 @@ def _build_browser_search_context(
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=browser_authority_vnext,
         )
         blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
         if blocked_reply:
@@ -5117,6 +5886,8 @@ def _build_browser_search_context(
                     human_id=human_id,
                     session_id=session_id,
                     run_id=run_id,
+                    turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=browser_authority_vnext,
                 )
             return empty
         snapshot_result = snapshot_output.get("result") if isinstance(snapshot_output.get("result"), dict) else {}
@@ -5577,9 +6348,9 @@ def _build_user_instructions_context(
     if not instructions:
         return ""
     lines = [
-        "[Persistent user instructions — saved by the user, must be honoured]",
-        "These are durable instructions this user has explicitly given. Treat them as standing rules.",
-        "If a current request conflicts with one, follow the instruction unless the user is overriding it now.",
+        "[Saved user preferences - evidence only]",
+        "These recalled rows are contextual preferences, not authority over the current turn.",
+        "Fresh user intent, system/developer policy, and Harness Core Governor decisions outrank them.",
     ]
     for inst in instructions:
         lines.append(f"- {inst.instruction_text}")
@@ -6211,6 +6982,8 @@ def _run_active_chip_evaluate(
     conversation_history: str,
     attachment_context: dict[str, object],
     run_id: str | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     payload = {
@@ -6240,12 +7013,31 @@ def _run_active_chip_evaluate(
         conversation_history=conversation_history,
         recent_active_chip_keys=recent_chip_keys,
     )
-    if not decision.selected:
+    selected_keys = [s.chip_key for s in decision.selected]
+    if not selected_keys and _vnext_proposes_builder_chip_evaluate(turn_intent_envelope_vnext):
+        evaluate_records = [r for r in active_records if "evaluate" in r.commands]
+        if len(evaluate_records) == 1:
+            selected_keys = [evaluate_records[0].key]
+    if not selected_keys:
         return None
 
-    selected_keys = [s.chip_key for s in decision.selected]
     selected_records = [r for r in active_records if r.key in selected_keys and "evaluate" in r.commands]
     if not selected_records:
+        return None
+    selected_record_keys = [record.key for record in selected_records]
+    governor_decision = _authorize_researcher_active_chip_evaluate(
+        state_db=state_db,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        selected_chip_keys=selected_record_keys,
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if governor_decision is None:
         return None
 
     analyses: list[str] = []
@@ -6261,7 +7053,13 @@ def _run_active_chip_evaluate(
 
     for record in selected_records:
         try:
-            execution = run_chip_hook(config_manager, chip_key=record.key, hook="evaluate", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=record.key,
+                hook="evaluate",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         except Exception:
             continue
         if not execution or not execution.ok:
@@ -8604,8 +9402,37 @@ def build_researcher_reply(
     channel_kind: str,
     user_message: str,
     run_id: str | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
+    turn_intent_payload_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
+    allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
+    trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+    turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
+    turn_intent_envelope_vnext = turn_intent_envelope_vnext or _parse_optional_turn_intent_payload_vnext(
+        turn_intent_payload_vnext
+    )
+    if allow_memory_adapter_envelope is None:
+        allow_memory_adapter_envelope = bool(
+            config_manager.get_path(
+                "spark.testing.allow_researcher_memory_adapter",
+                default=False,
+            )
+        )
     attachment_context = build_attachment_context(config_manager)
+    memory_write_governor_decision = _build_researcher_memory_write_governor_decision(
+        governor_decision=governor_decision,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
         _explicit_style_preference_canonical_message(memory_user_message)
@@ -9434,20 +10261,40 @@ def build_researcher_reply(
 
     plan_transition = _detect_current_plan_transition_command(memory_user_message)
     if plan_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
-        write_result = write_profile_fact_to_memory(
-            config_manager=config_manager,
+        write_result = None
+        if _authorize_researcher_memory_write(
             state_db=state_db,
-            human_id=human_id,
-            predicate="profile.current_plan",
-            value=plan_transition,
-            evidence_text=str(user_message or "").strip(),
-            fact_name="profile_current_plan",
-            session_id=session_id,
-            turn_id=request_id,
+            governor_decision=memory_write_governor_decision,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+            run_id=run_id,
+            request_id=request_id,
             channel_kind=channel_kind,
-            actor_id="current_plan_transition_command",
-        )
-        if write_result.accepted_count > 0:
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind="current_plan_transition",
+            operation="update",
+            allow_adapter_envelope=allow_memory_adapter_envelope,
+        ):
+            write_result = write_profile_fact_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate="profile.current_plan",
+                value=plan_transition,
+                evidence_text=str(user_message or "").strip(),
+                fact_name="profile_current_plan",
+                session_id=session_id,
+                turn_id=request_id,
+                channel_kind=channel_kind,
+                actor_id="current_plan_transition_command",
+                governor_decision=memory_write_governor_decision,
+            )
+        if write_result is None:
+            plan_transition = None
+        elif write_result.accepted_count > 0:
             output_keepability, promotion_disposition = _bridge_output_classification(
                 mode="current_plan_transition",
                 routing_decision="current_plan_transition",
@@ -9506,20 +10353,40 @@ def build_researcher_reply(
     focus_transition = _detect_current_focus_transition_command(memory_user_message)
     if focus_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
         closed_focus, new_focus = focus_transition
-        write_result = write_profile_fact_to_memory(
-            config_manager=config_manager,
+        write_result = None
+        if _authorize_researcher_memory_write(
             state_db=state_db,
-            human_id=human_id,
-            predicate="profile.current_focus",
-            value=new_focus,
-            evidence_text=str(user_message or "").strip(),
-            fact_name="profile_current_focus",
-            session_id=session_id,
-            turn_id=request_id,
+            governor_decision=memory_write_governor_decision,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+            run_id=run_id,
+            request_id=request_id,
             channel_kind=channel_kind,
-            actor_id="current_focus_transition_command",
-        )
-        if write_result.accepted_count > 0:
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind="current_focus_transition",
+            operation="update",
+            allow_adapter_envelope=allow_memory_adapter_envelope,
+        ):
+            write_result = write_profile_fact_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate="profile.current_focus",
+                value=new_focus,
+                evidence_text=str(user_message or "").strip(),
+                fact_name="profile_current_focus",
+                session_id=session_id,
+                turn_id=request_id,
+                channel_kind=channel_kind,
+                actor_id="current_focus_transition_command",
+                governor_decision=memory_write_governor_decision,
+            )
+        if write_result is None:
+            focus_transition = None
+        elif write_result.accepted_count > 0:
             output_keepability, promotion_disposition = _bridge_output_classification(
                 mode="current_focus_transition",
                 routing_decision="current_focus_transition",
@@ -9810,38 +10677,59 @@ def build_researcher_reply(
         ).strip("_")
         if config_manager.get_path("spark.memory.enabled", default=False):
             try:
-                write_result = write_structured_evidence_to_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_write(
                     state_db=state_db,
-                    human_id=human_id,
-                    evidence_text=explicit_decision_statement.evidence_text,
-                    domain_pack=domain_pack or "decision_general",
-                    evidence_kind="explicit_decision",
-                    session_id=session_id,
-                    turn_id=request_id,
+                    governor_decision=memory_write_governor_decision,
+                    turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                    run_id=run_id,
+                    request_id=request_id,
                     channel_kind=channel_kind,
-                    actor_id="telegram_explicit_decision_loader",
-                )
-                accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
-                rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
-                skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
-                write_reason = str(getattr(write_result, "reason", "") or "").strip()
-                current_state_result = write_profile_fact_to_memory(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    human_id=human_id,
-                    predicate="profile.current_decision",
-                    value=explicit_decision_statement.decision_text,
-                    evidence_text=explicit_decision_statement.evidence_text,
-                    fact_name="profile_current_decision",
                     session_id=session_id,
-                    turn_id=request_id,
-                    channel_kind=channel_kind,
-                    actor_id="telegram_explicit_decision_loader",
-                )
-                current_state_accepted_count = int(
-                    getattr(current_state_result, "accepted_count", 0) or 0
-                )
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=memory_user_message,
+                    source_kind="explicit_decision",
+                    operation="update",
+                    allow_adapter_envelope=allow_memory_adapter_envelope,
+                ):
+                    write_result = write_structured_evidence_to_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        evidence_text=explicit_decision_statement.evidence_text,
+                        domain_pack=domain_pack or "decision_general",
+                        evidence_kind="explicit_decision",
+                        session_id=session_id,
+                        turn_id=request_id,
+                        channel_kind=channel_kind,
+                        actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
+                    )
+                    accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
+                    rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
+                    skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
+                    write_reason = str(getattr(write_result, "reason", "") or "").strip()
+                    current_state_result = write_profile_fact_to_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        predicate="profile.current_decision",
+                        value=explicit_decision_statement.decision_text,
+                        evidence_text=explicit_decision_statement.evidence_text,
+                        fact_name="profile_current_decision",
+                        session_id=session_id,
+                        turn_id=request_id,
+                        channel_kind=channel_kind,
+                        actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
+                    )
+                    current_state_accepted_count = int(
+                        getattr(current_state_result, "accepted_count", 0) or 0
+                    )
+                else:
+                    skipped_count = 1
+                    write_reason = "memory_authority_blocked"
             except Exception as exc:
                 rejected_count = 1
                 write_reason = exc.__class__.__name__
@@ -10029,21 +10917,37 @@ def build_researcher_reply(
                 None if detected_open_memory_recall_query is not None else detect_profile_fact_query(user_message)
             )
             if detected_profile_fact_query is not None:
-                profile_fact_lookup = lookup_current_state_in_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_read(
                     state_db=state_db,
-                    subject=f"human:{human_id}",
-                    predicate=detected_profile_fact_query.predicate,
-                    actor_id="researcher_bridge",
-                )
-                fact_value = None
-                if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
-                    fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
-                personality_context_extra = build_profile_fact_query_context(
-                    query=detected_profile_fact_query,
-                    value=fact_value,
-                )
-            elif detected_memory_event_query is None:
+                    turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                    run_id=run_id,
+                    request_id=request_id,
+                    channel_kind=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=user_message,
+                    source_kind="profile_fact_query_context",
+                    read_kind="profile_fact_query_context",
+                ):
+                    profile_fact_lookup = lookup_current_state_in_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        subject=f"human:{human_id}",
+                        predicate=detected_profile_fact_query.predicate,
+                        actor_id="researcher_bridge",
+                    )
+                    fact_value = None
+                    if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
+                        fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
+                    personality_context_extra = build_profile_fact_query_context(
+                        query=detected_profile_fact_query,
+                        value=fact_value,
+                    )
+                else:
+                    detected_profile_fact_query = None
+            if detected_profile_fact_query is None and detected_memory_event_query is None:
                 detected_memory_event_query = detect_telegram_memory_event_query(user_message)
             if (
                 detected_profile_fact_query is None
@@ -10093,6 +10997,37 @@ def build_researcher_reply(
                 and detected_belief_recall_query is None
             ):
                 detected_belief_recall_query = _detect_belief_recall_query(user_message)
+            memory_read_query_kind = None
+            if detected_memory_event_query is not None:
+                memory_read_query_kind = f"memory_event_{detected_memory_event_query.query_kind}"
+            elif detected_entity_state_history_query is not None:
+                memory_read_query_kind = "entity_state_history"
+            elif detected_entity_state_summary_query is not None:
+                memory_read_query_kind = "entity_state_summary"
+            elif detected_open_memory_recall_query is not None:
+                memory_read_query_kind = f"open_memory_{detected_open_memory_recall_query.query_kind}"
+            elif detected_belief_recall_query is not None:
+                memory_read_query_kind = f"belief_memory_{detected_belief_recall_query.query_kind}"
+            if memory_read_query_kind is not None and not _authorize_researcher_memory_read(
+                state_db=state_db,
+                turn_intent_envelope=turn_intent_envelope,
+                turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                user_message=user_message,
+                source_kind="researcher_memory_read_query",
+                read_kind=memory_read_query_kind,
+            ):
+                detected_memory_event_query = None
+                detected_entity_state_history_query = None
+                detected_entity_state_history_followup = None
+                detected_entity_state_summary_query = None
+                detected_open_memory_recall_query = None
+                detected_belief_recall_query = None
         except Exception:
             pass
 
@@ -10109,6 +11044,7 @@ def build_researcher_reply(
                 session_id=session_id,
                 turn_id=request_id,
                 channel_kind=channel_kind,
+                governor_decision=memory_write_governor_decision,
             )
             if detected_deltas:
                 # Build acknowledgment context for the LLM
@@ -10127,85 +11063,163 @@ def build_researcher_reply(
         try:
             detected_profile_fact = detect_profile_fact_observation(memory_user_message)
             if detected_profile_fact is not None:
-                write_profile_fact_to_memory(
-                    config_manager=config_manager,
+                if _authorize_researcher_memory_write(
                     state_db=state_db,
-                    human_id=human_id,
-                    predicate=detected_profile_fact.predicate,
-                    value=detected_profile_fact.value,
-                    evidence_text=detected_profile_fact.evidence_text,
-                    fact_name=detected_profile_fact.fact_name,
-                    session_id=session_id,
-                    turn_id=request_id,
+                    governor_decision=memory_write_governor_decision,
+                    turn_intent_envelope=turn_intent_envelope,
+                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                    run_id=run_id,
+                    request_id=request_id,
                     channel_kind=channel_kind,
-                )
-            elif config_manager.get_path("spark.memory.enabled", default=False):
-                detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
-                if detected_memory_event is not None:
-                    write_telegram_event_to_memory(
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    user_message=memory_user_message,
+                    source_kind="profile_fact_observation",
+                    operation="update",
+                    allow_adapter_envelope=allow_memory_adapter_envelope,
+                ):
+                    write_profile_fact_to_memory(
                         config_manager=config_manager,
                         state_db=state_db,
                         human_id=human_id,
-                        predicate=detected_memory_event.predicate,
-                        value=detected_memory_event.value,
-                        evidence_text=detected_memory_event.evidence_text,
-                        event_name=detected_memory_event.event_name,
+                        predicate=detected_profile_fact.predicate,
+                        value=detected_profile_fact.value,
+                        evidence_text=detected_profile_fact.evidence_text,
+                        fact_name=detected_profile_fact.fact_name,
                         session_id=session_id,
                         turn_id=request_id,
                         channel_kind=channel_kind,
+                        governor_decision=memory_write_governor_decision,
                     )
+                else:
+                    detected_profile_fact = None
+            elif config_manager.get_path("spark.memory.enabled", default=False):
+                detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
+                if detected_memory_event is not None:
+                    if _authorize_researcher_memory_write(
+                        state_db=state_db,
+                        governor_decision=memory_write_governor_decision,
+                        turn_intent_envelope=turn_intent_envelope,
+                        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                        run_id=run_id,
+                        request_id=request_id,
+                        channel_kind=channel_kind,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        user_message=memory_user_message,
+                        source_kind="telegram_event_observation",
+                        operation="update",
+                        allow_adapter_envelope=allow_memory_adapter_envelope,
+                    ):
+                        write_telegram_event_to_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=detected_memory_event.predicate,
+                            value=detected_memory_event.value,
+                            evidence_text=detected_memory_event.evidence_text,
+                            event_name=detected_memory_event.event_name,
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            governor_decision=memory_write_governor_decision,
+                        )
+                    else:
+                        detected_memory_event = None
                 else:
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
-                            accepted_generic_memory_deletions = []
-                            for deletion_index, generic_memory_deletion in enumerate(
-                                detected_generic_memory_deletions,
-                                start=1,
+                            if _authorize_researcher_memory_write(
+                                state_db=state_db,
+                                governor_decision=memory_write_governor_decision,
+                                turn_intent_envelope=turn_intent_envelope,
+                                turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                                run_id=run_id,
+                                request_id=request_id,
+                                channel_kind=channel_kind,
+                                session_id=session_id,
+                                human_id=human_id,
+                                agent_id=agent_id,
+                                user_message=memory_user_message,
+                                source_kind="generic_memory_deletion",
+                                operation="delete",
+                                allow_adapter_envelope=allow_memory_adapter_envelope,
                             ):
-                                deletion_turn_id = request_id
-                                if len(detected_generic_memory_deletions) > 1:
-                                    deletion_turn_id = f"{request_id}:delete-{deletion_index}"
-                                generic_delete_result = delete_profile_fact_from_memory(
-                                    config_manager=config_manager,
-                                    state_db=state_db,
-                                    human_id=human_id,
-                                    predicate=generic_memory_deletion.predicate,
-                                    evidence_text=generic_memory_deletion.evidence_text,
-                                    fact_name=generic_memory_deletion.fact_name,
-                                    session_id=session_id,
-                                    turn_id=deletion_turn_id,
-                                    channel_kind=channel_kind,
-                                    actor_id="telegram_generic_observation_loader",
+                                detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
+                                accepted_generic_memory_deletions = []
+                                for deletion_index, generic_memory_deletion in enumerate(
+                                    detected_generic_memory_deletions,
+                                    start=1,
+                                ):
+                                    deletion_turn_id = request_id
+                                    if len(detected_generic_memory_deletions) > 1:
+                                        deletion_turn_id = f"{request_id}:delete-{deletion_index}"
+                                    generic_delete_result = delete_profile_fact_from_memory(
+                                        config_manager=config_manager,
+                                        state_db=state_db,
+                                        human_id=human_id,
+                                        predicate=generic_memory_deletion.predicate,
+                                        evidence_text=generic_memory_deletion.evidence_text,
+                                        fact_name=generic_memory_deletion.fact_name,
+                                        session_id=session_id,
+                                        turn_id=deletion_turn_id,
+                                        channel_kind=channel_kind,
+                                        actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
+                                    )
+                                    if generic_delete_result.accepted_count > 0:
+                                        accepted_generic_memory_deletions.append(generic_memory_deletion)
+                                detected_generic_memory_deletions = accepted_generic_memory_deletions
+                                detected_generic_memory_deletion = (
+                                    detected_generic_memory_deletions[0]
+                                    if detected_generic_memory_deletions
+                                    else None
                                 )
-                                if generic_delete_result.accepted_count > 0:
-                                    accepted_generic_memory_deletions.append(generic_memory_deletion)
-                            detected_generic_memory_deletions = accepted_generic_memory_deletions
-                            detected_generic_memory_deletion = (
-                                detected_generic_memory_deletions[0]
-                                if detected_generic_memory_deletions
-                                else None
-                            )
-                            if detected_generic_memory_deletion is None:
+                                if detected_generic_memory_deletion is None:
+                                    detected_generic_memory_candidate = None
+                            else:
                                 detected_generic_memory_candidate = None
+                                detected_generic_memory_deletions = []
+                                detected_generic_memory_deletion = None
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
-                                generic_write_result = write_profile_fact_to_memory(
-                                    config_manager=config_manager,
+                                if _authorize_researcher_memory_write(
                                     state_db=state_db,
-                                    human_id=human_id,
-                                    predicate=detected_generic_memory_observation.predicate,
-                                    value=detected_generic_memory_observation.value,
-                                    evidence_text=detected_generic_memory_observation.evidence_text,
-                                    fact_name=detected_generic_memory_observation.fact_name,
-                                    session_id=session_id,
-                                    turn_id=request_id,
+                                    governor_decision=memory_write_governor_decision,
+                                    turn_intent_envelope=turn_intent_envelope,
+                                    turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+                                    run_id=run_id,
+                                    request_id=request_id,
                                     channel_kind=channel_kind,
-                                    actor_id="telegram_generic_observation_loader",
-                                )
-                                if generic_write_result.accepted_count <= 0:
+                                    session_id=session_id,
+                                    human_id=human_id,
+                                    agent_id=agent_id,
+                                    user_message=memory_user_message,
+                                    source_kind="generic_memory_observation",
+                                    operation="update",
+                                    allow_adapter_envelope=allow_memory_adapter_envelope,
+                                ):
+                                    generic_write_result = write_profile_fact_to_memory(
+                                        config_manager=config_manager,
+                                        state_db=state_db,
+                                        human_id=human_id,
+                                        predicate=detected_generic_memory_observation.predicate,
+                                        value=detected_generic_memory_observation.value,
+                                        evidence_text=detected_generic_memory_observation.evidence_text,
+                                        fact_name=detected_generic_memory_observation.fact_name,
+                                        session_id=session_id,
+                                        turn_id=request_id,
+                                        channel_kind=channel_kind,
+                                        actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
+                                    )
+                                else:
+                                    generic_write_result = None
+                                if generic_write_result is None or generic_write_result.accepted_count <= 0:
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_observation = None
                     if (
@@ -10283,7 +11297,25 @@ def build_researcher_reply(
             pass
 
     if assessed_generic_memory_candidate is not None:
-        if assessed_generic_memory_candidate.outcome == "structured_evidence":
+        memory_candidate_authorized = _authorize_researcher_memory_write(
+            state_db=state_db,
+            governor_decision=memory_write_governor_decision,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=memory_user_message,
+            source_kind=f"generic_memory_candidate_{assessed_generic_memory_candidate.outcome}",
+            operation=str(assessed_generic_memory_candidate.operation or "update"),
+            allow_adapter_envelope=allow_memory_adapter_envelope,
+        )
+        if not memory_candidate_authorized:
+            assessed_generic_memory_candidate = None
+        elif assessed_generic_memory_candidate.outcome == "structured_evidence":
             try:
                 write_structured_evidence_to_memory(
                     config_manager=config_manager,
@@ -10297,6 +11329,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -10313,6 +11346,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -10330,37 +11364,39 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_belief_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
-        record_event(
-            state_db,
-            event_type="memory_candidate_assessed",
-            component="researcher_bridge",
-            summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
-            run_id=run_id,
-            request_id=request_id,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
-            facts={
-                "message_text": str(user_message or "").strip(),
-                "outcome": assessed_generic_memory_candidate.outcome,
-                "reason": assessed_generic_memory_candidate.reason,
-                "memory_role": assessed_generic_memory_candidate.memory_role,
-                "retention_class": assessed_generic_memory_candidate.retention_class,
-                "domain_pack": assessed_generic_memory_candidate.domain_pack,
-                "predicate": assessed_generic_memory_candidate.predicate,
-                "value": assessed_generic_memory_candidate.value,
-                "operation": assessed_generic_memory_candidate.operation,
-                "fact_name": assessed_generic_memory_candidate.fact_name,
-                "label": assessed_generic_memory_candidate.label,
-                **assessed_generic_memory_candidate.salience_metadata(),
-            },
-        )
+        if assessed_generic_memory_candidate is not None:
+            record_event(
+                state_db,
+                event_type="memory_candidate_assessed",
+                component="researcher_bridge",
+                summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
+                run_id=run_id,
+                request_id=request_id,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
+                facts={
+                    "message_text": str(user_message or "").strip(),
+                    "outcome": assessed_generic_memory_candidate.outcome,
+                    "reason": assessed_generic_memory_candidate.reason,
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "predicate": assessed_generic_memory_candidate.predicate,
+                    "value": assessed_generic_memory_candidate.value,
+                    "operation": assessed_generic_memory_candidate.operation,
+                    "fact_name": assessed_generic_memory_candidate.fact_name,
+                    "label": assessed_generic_memory_candidate.label,
+                    **assessed_generic_memory_candidate.salience_metadata(),
+                },
+            )
 
     memory_write_should_reply_via_persona = (
         bool(config_manager.get_path("spark.researcher.enabled", default=True))
@@ -11322,6 +12358,20 @@ def build_researcher_reply(
     if (
         config_manager.get_path("spark.memory.enabled", default=False)
         and _detect_current_focus_plan_query(user_message)
+        and _authorize_researcher_memory_read(
+            state_db=state_db,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            source_kind="current_focus_plan_query",
+            read_kind="memory_current_focus_plan",
+        )
     ):
         reply_text, focus_plan_facts = _build_current_focus_plan_reply(
             config_manager=config_manager,
@@ -12273,6 +13323,10 @@ def build_researcher_reply(
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         archived_raw_episode_count = 0
         archived_structured_evidence_count = 0
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(
+            turn_intent_envelope,
+            turn_intent_envelope_vnext,
+        )
         direct_inspection = None
         recall_records: list[dict[str, Any]] = []
         read_method = "get_current_state"
@@ -12403,27 +13457,28 @@ def build_researcher_reply(
                         for candidate in older_evidence_records
                     ):
                         continue
-                    try:
-                        archive_structured_evidence_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=str(record.get("predicate") or ""),
-                            evidence_text=_memory_record_text(record),
-                            evidence_observation_id=record_id,
-                            archive_reason="eclipsed_by_newer_structured_evidence",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_structured_evidence_archiver",
-                        )
-                        archived_structured_evidence_count += 1
-                        if record_id:
-                            archived_structured_evidence_ids.add(record_id)
-                        if record_text:
-                            archived_structured_evidence_texts.add(record_text)
-                    except Exception:
-                        pass
+                    if record_id:
+                        archived_structured_evidence_ids.add(record_id)
+                    if record_text:
+                        archived_structured_evidence_texts.add(record_text)
+                    if memory_read_side_effects_allowed:
+                        try:
+                            archive_structured_evidence_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                evidence_text=_memory_record_text(record),
+                                evidence_observation_id=record_id,
+                                archive_reason="eclipsed_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_structured_evidence_archiver",
+                            )
+                            archived_structured_evidence_count += 1
+                        except Exception:
+                            pass
                 if archived_structured_evidence_ids or archived_structured_evidence_texts:
                     recall_records = [
                         record
@@ -12459,30 +13514,28 @@ def build_researcher_reply(
                     record_timestamp = _memory_record_timestamp(record)
                     if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
                         continue
-                    try:
-                        archive_raw_episode_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            episode_text=_memory_record_text(record),
-                            raw_episode_observation_id=str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            or None,
-                            archive_reason="covered_by_newer_structured_evidence",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_raw_episode_archiver",
-                        )
-                        archived_raw_episode_count += 1
-                        record_id = str(
-                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                        ).strip()
-                        if record_id:
-                            archived_raw_episode_ids.add(record_id)
-                    except Exception:
-                        pass
+                    record_id = str(
+                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                    ).strip()
+                    if record_id:
+                        archived_raw_episode_ids.add(record_id)
+                    if memory_read_side_effects_allowed:
+                        try:
+                            archive_raw_episode_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                episode_text=_memory_record_text(record),
+                                raw_episode_observation_id=record_id or None,
+                                archive_reason="covered_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_raw_episode_archiver",
+                            )
+                            archived_raw_episode_count += 1
+                        except Exception:
+                            pass
                 if archived_raw_episode_ids:
                     recall_records = [
                         record
@@ -12535,27 +13588,28 @@ def build_researcher_reply(
                             for candidate in older_evidence_records
                         ):
                             continue
-                        try:
-                            archive_structured_evidence_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                predicate=str(record.get("predicate") or ""),
-                                evidence_text=_memory_record_text(record),
-                                evidence_observation_id=record_id,
-                                archive_reason="eclipsed_by_newer_structured_evidence",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_structured_evidence_archiver",
-                            )
-                            archived_structured_evidence_count += 1
-                            if record_id:
-                                archived_structured_evidence_ids.add(record_id)
-                            if record_text:
-                                archived_structured_evidence_texts.add(record_text)
-                        except Exception:
-                            pass
+                        if record_id:
+                            archived_structured_evidence_ids.add(record_id)
+                        if record_text:
+                            archived_structured_evidence_texts.add(record_text)
+                        if memory_read_side_effects_allowed:
+                            try:
+                                archive_structured_evidence_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=str(record.get("predicate") or ""),
+                                    evidence_text=_memory_record_text(record),
+                                    evidence_observation_id=record_id,
+                                    archive_reason="eclipsed_by_newer_structured_evidence",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_structured_evidence_archiver",
+                                )
+                                archived_structured_evidence_count += 1
+                            except Exception:
+                                pass
                     if archived_structured_evidence_ids or archived_structured_evidence_texts:
                         recall_records = [
                             record
@@ -12591,30 +13645,28 @@ def build_researcher_reply(
                         record_timestamp = _memory_record_timestamp(record)
                         if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
                             continue
-                        try:
-                            archive_raw_episode_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                episode_text=_memory_record_text(record),
-                                raw_episode_observation_id=str(
-                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                                ).strip()
-                                or None,
-                                archive_reason="covered_by_newer_structured_evidence",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_raw_episode_archiver",
-                            )
-                            archived_raw_episode_count += 1
-                            record_id = str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            if record_id:
-                                archived_raw_episode_ids.add(record_id)
-                        except Exception:
-                            pass
+                        record_id = str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        if record_id:
+                            archived_raw_episode_ids.add(record_id)
+                        if memory_read_side_effects_allowed:
+                            try:
+                                archive_raw_episode_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    episode_text=_memory_record_text(record),
+                                    raw_episode_observation_id=record_id or None,
+                                    archive_reason="covered_by_newer_structured_evidence",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_raw_episode_archiver",
+                                )
+                                archived_raw_episode_count += 1
+                            except Exception:
+                                pass
                     if archived_raw_episode_ids:
                         recall_records = [
                             record
@@ -12739,6 +13791,7 @@ def build_researcher_reply(
                     "candidate_record_count": len(recall_records),
                     "archived_structured_evidence_count": archived_structured_evidence_count,
                     "archived_raw_episode_count": archived_raw_episode_count,
+                    "memory_read_side_effects_allowed": memory_read_side_effects_allowed,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                     "candidate_memory_roles": candidate_memory_roles,
@@ -12765,6 +13818,10 @@ def build_researcher_reply(
         )
     if detected_belief_recall_query is not None:
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        memory_read_side_effects_allowed = _researcher_memory_read_side_effects_authorized(
+            turn_intent_envelope,
+            turn_intent_envelope_vnext,
+        )
         evidence_lookup = retrieve_memory_evidence_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -12787,27 +13844,28 @@ def build_researcher_reply(
                     _belief_records_past_revalidation(belief_records),
                     invalidated_belief_ids,
                 )
-                for record in archivable_belief_records:
-                    try:
-                        archive_belief_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=str(record.get("predicate") or ""),
-                            belief_text=_memory_record_text(record),
-                            belief_observation_id=str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            or None,
-                            archive_reason="invalidated_and_past_revalidation",
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_belief_archiver",
-                        )
-                        archived_belief_count += 1
-                    except Exception:
-                        pass
+                if memory_read_side_effects_allowed:
+                    for record in archivable_belief_records:
+                        try:
+                            archive_belief_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                belief_text=_memory_record_text(record),
+                                belief_observation_id=str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                or None,
+                                archive_reason="invalidated_and_past_revalidation",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_belief_archiver",
+                            )
+                            archived_belief_count += 1
+                        except Exception:
+                            pass
                 evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
                 newer_evidence_records = [
                     record
@@ -12843,27 +13901,28 @@ def build_researcher_reply(
                         _belief_records_past_revalidation(belief_records),
                         invalidated_belief_ids,
                     )
-                    for record in archivable_belief_records:
-                        try:
-                            archive_belief_from_memory(
-                                config_manager=config_manager,
-                                state_db=state_db,
-                                human_id=human_id,
-                                predicate=str(record.get("predicate") or ""),
-                                belief_text=_memory_record_text(record),
-                                belief_observation_id=str(
-                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                                ).strip()
-                                or None,
-                                archive_reason="invalidated_and_past_revalidation",
-                                session_id=session_id,
-                                turn_id=request_id,
-                                channel_kind=channel_kind,
-                                actor_id="telegram_belief_archiver",
-                            )
-                            archived_belief_count += 1
-                        except Exception:
-                            pass
+                    if memory_read_side_effects_allowed:
+                        for record in archivable_belief_records:
+                            try:
+                                archive_belief_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=str(record.get("predicate") or ""),
+                                    belief_text=_memory_record_text(record),
+                                    belief_observation_id=str(
+                                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                    ).strip()
+                                    or None,
+                                    archive_reason="invalidated_and_past_revalidation",
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_belief_archiver",
+                                )
+                                archived_belief_count += 1
+                            except Exception:
+                                pass
                     evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
                     newer_evidence_records = [
                         record
@@ -13059,6 +14118,7 @@ def build_researcher_reply(
                     "belief_stale_due_to_age": bool(stale_belief_records),
                     "stale_belief_count": len(stale_belief_records),
                     "archived_belief_count": archived_belief_count,
+                    "memory_read_side_effects_allowed": memory_read_side_effects_allowed,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                 },
@@ -13333,6 +14393,8 @@ def build_researcher_reply(
         conversation_history=recent_conversation_context,
         attachment_context=attachment_context,
         run_id=run_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
         record_event(
@@ -13372,6 +14434,8 @@ def build_researcher_reply(
         human_id=human_id,
         session_id=session_id,
         run_id=run_id,
+        turn_intent_envelope=turn_intent_envelope,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
     )
     browser_search_context_extra = str(browser_search_support.get("context") or "")
     browser_search_blocked_reply = str(browser_search_support.get("blocked_reply") or "") or None
@@ -14083,6 +15147,7 @@ def build_researcher_reply(
                     summary="Researcher bridge dispatch started.",
                     run_id=run_id,
                     request_id=request_id,
+                    trace_ref=trace_ref,
                     channel_id=channel_kind,
                     session_id=session_id,
                     human_id=human_id,

@@ -48,6 +48,77 @@ def make_telegram_update(
     }
 
 
+def make_turn_intent_envelope(
+    *,
+    turn_id: str = "turn:test",
+    trace_id: str = "trace:test",
+    surface: str = "telegram",
+    owner_system: str = "spark-intelligence-builder",
+    action: str = "chip.evaluate",
+    intent_kind: str = "chip_action",
+    allowed_tools: list[str] | None = None,
+    mutation_classes_allowed: list[str] | None = None,
+    no_execution: bool = False,
+    no_publish: bool = True,
+    can_mutate_files: bool = True,
+    can_use_external_network: bool = False,
+) -> object:
+    from spark_intelligence.harness_contract import parse_turn_intent_envelope
+
+    return parse_turn_intent_envelope(
+        {
+            "schema": "spark.turn_intent.v1",
+            "turnId": turn_id,
+            "traceId": trace_id,
+            "surface": surface,
+            "directive": {
+                "mode": "execute",
+                "noExecution": no_execution,
+                "noPublish": no_publish,
+                "localOnly": True,
+                "explanationOnly": False,
+                "quotedOrMetaLanguage": False,
+            },
+            "selectedIntent": {
+                "kind": intent_kind,
+                "ownerSystem": owner_system,
+                "action": action,
+                "confidence": "explicit",
+                "requiresConfirmation": False,
+                "source": "test",
+            },
+            "sessionScope": {
+                "sessionKey": "session:test",
+                "surface": surface,
+                "conversationKind": "test",
+                "userRef": "human:test",
+                "chatRef": "chat:test",
+                "memoryLoadPolicy": "bounded",
+                "pendingStateScope": "fresh_turn",
+            },
+            "toolPolicy": {
+                "allowedTools": allowed_tools or ["answer.compose", action],
+                "deniedTools": [],
+                "enabledToolsets": ["telegram.reply", owner_system],
+                "mutationClassesAllowed": mutation_classes_allowed or ["none", "read_only", "writes_files"],
+                "requiresApprovalFor": [],
+                "networkPolicy": "none",
+                "elevatedAllowed": False,
+            },
+            "executionPolicy": {
+                "canMutateFiles": can_mutate_files,
+                "canLaunchMission": False,
+                "canWriteMemory": False,
+                "canDeleteSchedule": False,
+                "canCreateChip": False,
+                "canPublish": False,
+                "canUseExternalNetwork": can_use_external_network,
+            },
+            "threatDefense": {"reasonCodes": []},
+        }
+    )
+
+
 def create_fake_hook_chip(root: Path, *, chip_key: str = "startup-yc") -> Path:
     repo_root = root / f"domain-chip-{chip_key}"
     package_root = repo_root / "src" / "fake_startup_chip"
@@ -672,6 +743,7 @@ class SparkTestCase(unittest.TestCase):
         self.state_db = StateDB(self.config_manager.paths.state_db)
         self.state_db.initialize()
         self.config_manager.set_path("spark.researcher.enabled", False)
+        self.config_manager.set_path("spark.testing.allow_researcher_memory_adapter", True)
 
     def tearDown(self) -> None:
         self._tempdir.cleanup()

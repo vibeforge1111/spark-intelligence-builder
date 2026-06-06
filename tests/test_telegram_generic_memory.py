@@ -11,6 +11,10 @@ from spark_intelligence.gateway.tracing import append_gateway_trace, append_outb
 from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
 from spark_intelligence.observability.store import (
     latest_events_by_type,
     record_event,
@@ -25,10 +29,77 @@ from spark_intelligence.researcher_bridge.advisory import (
     build_researcher_reply,
 )
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, make_turn_intent_envelope
 
 
 class TelegramGenericMemoryTests(SparkTestCase):
+    def memory_write_authority(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        human_id: str,
+        user_message: str,
+        source_kind: str = "telegram_runtime_profile_fact_observation",
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            agent_id="agent-1",
+            actor_id="test",
+            component="test",
+        )
+        self.assertTrue(verdict.allowed)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return payload, verdict.governor_decision
+
+    def build_researcher_reply_with_memory_write_authority(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        user_message: str,
+        human_id: str = "human-1",
+        agent_id: str = "agent-1",
+        channel_kind: str = "telegram",
+        source_kind: str = "telegram_runtime_profile_fact_observation",
+    ):
+        payload, governor = self.memory_write_authority(
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        )
+        return build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id=request_id,
+            agent_id=agent_id,
+            human_id=human_id,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            user_message=user_message,
+            turn_intent_envelope_vnext=payload,
+            governor_decision=governor,
+            allow_memory_adapter_envelope=False,
+        )
+
     def test_open_recall_keeps_metadata_role_entity_current_state_records(self) -> None:
         records = [
             {
@@ -99,14 +170,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=fake_execute_direct_provider_prompt,
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-memory-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-memory-update",
-                channel_kind="telegram",
                 user_message="My cofounder is Omar.",
             )
 
@@ -147,14 +213,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for family shared-time observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-family-shared-time-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-family-shared-time-update",
-                channel_kind="telegram",
                 user_message="My mom came over yesterday and I spent time with my sister at the park.",
             )
 
@@ -171,14 +232,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-family-shared-time-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-family-shared-time-query-seed",
-            channel_kind="telegram",
             user_message="My mom came over yesterday and I spent time with my sister at the park.",
         )
 
@@ -215,14 +271,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for plan or commitment memory"),
         ):
-            plan_update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            plan_update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-plan-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-plan-commitment",
-                channel_kind="telegram",
                 user_message="The plan is to run weekly Telegram memory probes.",
             )
             plan_query = build_researcher_reply(
@@ -235,14 +286,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What is my current plan?",
             )
-            commitment_update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            commitment_update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-commitment-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-plan-commitment",
-                channel_kind="telegram",
                 user_message="We committed to ship deletion memory checks today.",
             )
             commitment_query = build_researcher_reply(
@@ -285,14 +331,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for explicit plan memory"),
         ):
-            plan_update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            plan_update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-explicit-plan-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-explicit-plan",
-                channel_kind="telegram",
                 user_message=(
                     "Memory update: my current plan is Neon Harbor Telegram memory test. "
                     "Please save this as my current plan."
@@ -330,14 +371,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for current plan transition"),
         ):
-            plan_update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            plan_update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-set-current-plan-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-set-current-plan",
-                channel_kind="telegram",
                 user_message="Set my current plan to evaluate open-ended persistent memory recall.",
             )
             plan_query = build_researcher_reply(
@@ -393,24 +429,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for current focus and plan query"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-set-current-focus-for-combined-query",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-current-focus-plan",
-                channel_kind="telegram",
                 user_message="Set my current focus to persistent memory quality evaluation.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-set-current-plan-for-combined-query",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-current-focus-plan",
-                channel_kind="telegram",
                 user_message="Set my current plan to evaluate open-ended persistent memory recall.",
             )
             result = build_researcher_reply(
@@ -541,6 +567,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
     def test_build_researcher_reply_answers_natural_sol_purpose_recall_without_provider(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
+        _payload, governor_decision = self.memory_write_authority(
+            request_id="req-sol-purpose-seed-authority",
+            session_id="session-sol-purpose",
+            human_id="human-1",
+            user_message="Remember that Sol was used as our low-stakes episodic recall probe.",
+            source_kind="telegram_generic_memory_test_seed",
+        )
         write_raw_episode_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
@@ -553,6 +586,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
             session_id="session-sol-purpose",
             turn_id="req-sol-purpose-seed",
             channel_kind="telegram",
+            governor_decision=governor_decision,
         )
 
         with patch(
@@ -602,24 +636,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for plan correction/deletion memory"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-plan-original",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-plan-correction",
-                channel_kind="telegram",
                 user_message="The plan is to run weekly Telegram memory probes.",
             )
-            correction = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            correction = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-plan-correction",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-plan-correction",
-                channel_kind="telegram",
                 user_message="Actually, the plan is to run live Telegram deletion checks.",
             )
             current_query = build_researcher_reply(
@@ -642,14 +666,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What was my previous plan?",
             )
-            deletion = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            deletion = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-plan-delete",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-plan-correction",
-                channel_kind="telegram",
                 user_message="Forget my current plan.",
             )
             post_delete_query = build_researcher_reply(
@@ -687,14 +706,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for favorite preference memory"),
         ):
-            update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-favorite-color-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-favorite-color",
-                channel_kind="telegram",
                 user_message="My favorite color is cobalt blue.",
             )
             query = build_researcher_reply(
@@ -707,14 +721,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What is my favorite color?",
             )
-            deletion = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            deletion = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-favorite-color-delete",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-favorite-color",
-                channel_kind="telegram",
                 user_message="Forget my favorite color.",
             )
             post_delete_query = build_researcher_reply(
@@ -741,6 +750,164 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("domain_pack"), "preferences")
         self.assertEqual(facts.get("retention_class"), "durable_profile")
 
+    def test_build_researcher_reply_blocks_memory_write_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-chat-only-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+
+        self.assertNotEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertFalse(write_events)
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
+    def test_build_researcher_reply_blocks_memory_read_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        seed = self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-memory-read-authority-seed",
+            session_id="session-memory-read-authority",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+        self.config_manager.set_path("spark.researcher.enabled", False)
+        blocked = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-read-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-read-authority",
+            channel_kind="telegram",
+            user_message="What evidence do you have about onboarding?",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+
+        self.assertIn(seed.mode, {"memory_generic_observation_update", "memory_structured_evidence_update"})
+        self.assertNotEqual(blocked.mode, "memory_open_recall")
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_read_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
+    def test_build_researcher_reply_does_not_mint_memory_authority_by_default(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.config_manager.set_path("spark.testing.allow_researcher_memory_adapter", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-default-no-local-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-default-no-local-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+        )
+
+        self.assertNotEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertFalse(write_events)
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
+    def test_build_researcher_reply_blocks_memory_delete_with_chat_only_turn_intent(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        update_payload, update_governor = self.memory_write_authority(
+            request_id="req-memory-delete-authority-seed",
+            session_id="session-memory-delete-authority",
+            human_id="human-1",
+            user_message="My favorite color is cobalt blue.",
+        )
+        update = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-authority-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="My favorite color is cobalt blue.",
+            turn_intent_envelope_vnext=update_payload,
+            governor_decision=update_governor,
+            allow_memory_adapter_envelope=False,
+        )
+        deletion = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-chat-only-authority",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="Forget my favorite color.",
+            turn_intent_envelope=make_turn_intent_envelope(
+                action="answer.compose",
+                intent_kind="chat_only",
+                allowed_tools=["answer.compose"],
+                mutation_classes_allowed=["none", "read_only"],
+                no_execution=True,
+                can_mutate_files=False,
+                can_use_external_network=False,
+            ),
+        )
+        query = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-delete-authority-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-memory-delete-authority",
+            channel_kind="telegram",
+            user_message="What is my favorite color?",
+        )
+
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertNotEqual(deletion.mode, "memory_generic_observation_delete")
+        self.assertEqual(query.reply_text, "Your favorite color is cobalt blue.")
+        gate_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(
+            any(record.get("reason_code") == "memory_write_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
     def test_build_researcher_reply_handles_favorite_food_preference_phrase(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -752,14 +919,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for favorite food memory"),
         ):
-            update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-favorite-food-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-favorite-food",
-                channel_kind="telegram",
                 user_message="The food I love the most is shakshuka.",
             )
             query = build_researcher_reply(
@@ -772,14 +934,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What is my favorite food?",
             )
-            deletion = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            deletion = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-favorite-food-delete",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-favorite-food",
-                channel_kind="telegram",
                 user_message="Forget my favorite food.",
             )
 
@@ -1063,14 +1220,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=fake_execute_direct_provider_prompt,
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-candidate-assessment",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-candidate-assessment",
-                channel_kind="telegram",
                 user_message="Users keep dropping during onboarding because Stripe verification fails.",
             )
 
@@ -1159,14 +1311,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=fake_execute_direct_provider_prompt,
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-belief",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-belief",
-                channel_kind="telegram",
                 user_message="I think enterprise teams need hands-on onboarding.",
             )
 
@@ -1208,14 +1355,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-belief-write",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-belief-write",
-            channel_kind="telegram",
             user_message="I think enterprise teams need hands-on onboarding.",
         )
 
@@ -1259,24 +1401,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-belief-write-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-belief-write-1",
-            channel_kind="telegram",
             user_message="I think self-serve onboarding will work.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-belief-write-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-belief-write-2",
-            channel_kind="telegram",
             user_message="I think enterprise teams need hands-on onboarding.",
         )
 
@@ -1306,24 +1438,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-belief-stale-write",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-belief-stale-write",
-            channel_kind="telegram",
             user_message="I think self-serve onboarding will work.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-belief-stale-evidence",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-belief-stale-evidence",
-            channel_kind="telegram",
             user_message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
         )
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
@@ -1401,14 +1523,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
             ),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id=request_id,
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-mixed-belief-recall",
-                channel_kind="telegram",
                 user_message=message,
             )
 
@@ -1464,14 +1581,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
             ),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id=request_id,
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-mixed-evidence-consolidation",
-                channel_kind="telegram",
                 user_message=message,
             )
 
@@ -1535,14 +1647,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
             ),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id=request_id,
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-evidence-only-belief",
-                channel_kind="telegram",
                 user_message=message,
             )
 
@@ -1575,14 +1682,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-belief-old-write",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-belief-old-write",
-                channel_kind="telegram",
                 user_message="I think enterprise teams need hands-on onboarding.",
             )
 
@@ -1665,14 +1767,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=fake_execute_direct_provider_prompt,
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-raw-episode",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-raw-episode",
-                channel_kind="telegram",
                 user_message="The pricing page felt confusing during the demo.",
             )
 
@@ -1716,14 +1813,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-open-evidence-write",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-open-evidence-write",
-            channel_kind="telegram",
             user_message="Users keep dropping during onboarding because Stripe verification fails.",
         )
 
@@ -1786,14 +1878,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-told-you-evidence-write",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-told-you-evidence-write",
-            channel_kind="telegram",
             user_message="Users keep dropping during onboarding because Stripe verification fails.",
         )
 
@@ -1869,24 +1956,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-belief-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-belief-seed-1",
-            channel_kind="telegram",
             user_message="Users keep dropping during onboarding because Stripe verification fails.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-belief-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-belief-seed-2",
-            channel_kind="telegram",
             user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
         )
 
@@ -1929,24 +2006,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-blocker-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-blocker-seed-1",
-            channel_kind="telegram",
             user_message="Users keep dropping during onboarding because Stripe verification fails.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-blocker-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-blocker-seed-2",
-            channel_kind="telegram",
             user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
         )
 
@@ -1977,24 +2044,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-dependency-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-dependency-seed-1",
-            channel_kind="telegram",
             user_message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-dependency-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-dependency-seed-2",
-            channel_kind="telegram",
             user_message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
         )
 
@@ -2025,24 +2082,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-constraint-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-constraint-seed-1",
-            channel_kind="telegram",
             user_message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-constraint-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-constraint-seed-2",
-            channel_kind="telegram",
             user_message="Users still wait during onboarding because we're limited by founder bandwidth.",
         )
 
@@ -2073,24 +2120,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-risk-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-risk-seed-1",
-            channel_kind="telegram",
             user_message="There is still a risk of enterprise churn during onboarding because activation is weak.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-risk-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-risk-seed-2",
-            channel_kind="telegram",
             user_message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
         )
 
@@ -2121,24 +2158,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-status-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-status-seed-1",
-            channel_kind="telegram",
             user_message="Status update: pending security review for the onboarding rollout.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-status-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-status-seed-2",
-            channel_kind="telegram",
             user_message="Status update: still pending security review for the onboarding rollout.",
         )
 
@@ -2169,24 +2196,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-owner-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-owner-seed-1",
-            channel_kind="telegram",
             user_message="The onboarding rollout is currently owned by Nadia.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-evidence-owner-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-evidence-owner-seed-2",
-            channel_kind="telegram",
             user_message="The onboarding rollout is still owned by Nadia during security review.",
         )
 
@@ -2257,14 +2274,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         for index, (seed_message, query_message, expected_label, expected_value) in enumerate(cases, start=1):
             with self.subTest(query=query_message):
-                build_researcher_reply(
-                    config_manager=self.config_manager,
-                    state_db=self.state_db,
+                self.build_researcher_reply_with_memory_write_authority(
                     request_id=f"req-evidence-project-state-seed-{index}",
-                    agent_id="agent-1",
                     human_id=f"human-project-state-{index}",
                     session_id=f"session-evidence-project-state-seed-{index}",
-                    channel_kind="telegram",
                     user_message=seed_message,
                 )
 
@@ -2299,14 +2312,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.memory.orchestrator._now_iso",
             return_value="2025-03-01T09:00:00Z",
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-stale-plan-seed",
-                agent_id="agent-1",
                 human_id="human-stale-plan",
                 session_id="session-stale-plan",
-                channel_kind="telegram",
                 user_message="Our current plan is to simplify onboarding approvals.",
             )
 
@@ -2400,7 +2409,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("active_state_maintenance_actions"), ["stale_preserved"])
         self.assertTrue(facts.get("stale_current_fact"))
 
-    def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
+    def test_build_researcher_reply_does_not_archive_structured_evidence_during_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -2467,7 +2476,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_open_recall")
         self.assertIn("identity retry flow is confusing", result.reply_text.lower())
         self.assertNotIn("users keep dropping during onboarding because stripe verification fails.", result.reply_text.lower())
-        mocked_archive.assert_called_once()
+        mocked_archive.assert_not_called()
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         facts = next(
@@ -2478,20 +2487,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ),
             {},
         )
-        self.assertEqual(facts.get("archived_structured_evidence_count"), 1)
+        self.assertEqual(facts.get("archived_structured_evidence_count"), 0)
+        self.assertFalse(facts.get("memory_read_side_effects_allowed"))
 
     def test_build_researcher_reply_answers_open_raw_episode_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-open-episode-write",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-open-episode-write",
-            channel_kind="telegram",
             user_message="The pricing page felt confusing during the demo.",
         )
 
@@ -2530,31 +2535,21 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("episodic", facts.get("retrieved_memory_roles") or [])
 
-    def test_build_researcher_reply_archives_stale_raw_episode_when_newer_evidence_exists(self) -> None:
+    def test_build_researcher_reply_does_not_archive_raw_episode_during_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-open-episode-old-write",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-open-episode-old-write",
-                channel_kind="telegram",
                 user_message="The pricing page felt confusing during the demo.",
             )
 
         with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-03-20T00:00:00+00:00"):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-open-episode-evidence-write",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-open-episode-evidence-write",
-                channel_kind="telegram",
                 user_message="During the demo, users got confused because the pricing page explanation was unclear.",
             )
 
@@ -2590,7 +2585,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ),
             {},
         )
-        self.assertEqual(facts.get("archived_raw_episode_count"), 1)
+        self.assertEqual(facts.get("archived_raw_episode_count"), 0)
+        self.assertFalse(facts.get("memory_read_side_effects_allowed"))
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
         archive_write = next(
             (
@@ -2602,8 +2598,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
             {},
         )
         archive_observations = archive_write.get("observations") or []
-        self.assertTrue(archive_observations)
-        self.assertEqual(archive_observations[0].get("raw_episode_lifecycle_action"), "archived")
+        self.assertFalse(archive_observations)
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2616,14 +2611,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-plan-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-plan-update",
-                channel_kind="telegram",
                 user_message="We plan to launch Atlas in enterprise first.",
             )
 
@@ -2649,14 +2639,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-focus-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-focus-update",
-                channel_kind="telegram",
                 user_message="Actually, our priority is fixing onboarding retention.",
             )
 
@@ -2683,14 +2668,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for explicit focus memory"),
         ):
-            focus_update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            focus_update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-explicit-focus-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-explicit-focus",
-                channel_kind="telegram",
                 user_message="Memory update: my current focus is Telegram memory routing cleanup.",
             )
             focus_query = build_researcher_reply(
@@ -2725,14 +2705,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for low-stakes test fact memory"),
         ):
-            update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-low-stakes-test-fact-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-low-stakes-test-fact",
-                channel_kind="telegram",
                 user_message=(
                     "For the natural recall test: remember that my low-stakes test fact "
                     "is that the tiny desk plant is named Mira."
@@ -2778,14 +2753,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for natural named-object memory"),
         ):
-            update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-natural-named-object-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-natural-named-object",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is named Mira.",
             )
             query = build_researcher_reply(
@@ -2808,14 +2778,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="Desk plant?",
             )
-            correction = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            correction = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-natural-named-object-correction",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-natural-named-object",
-                channel_kind="telegram",
                 user_message="Actually, the tiny desk plant is named Sol.",
             )
             updated_query = build_researcher_reply(
@@ -2886,14 +2851,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
-            update = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            update = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-location-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-location",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is on the kitchen shelf.",
             )
             query = build_researcher_reply(
@@ -2949,34 +2909,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-plant-name-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-isolation",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is named Sol.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-desk-location-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-isolation",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is on the kitchen shelf.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-office-location-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-isolation",
-                channel_kind="telegram",
                 user_message="For later, the office plant is on the balcony.",
             )
             desk_query = build_researcher_reply(
@@ -3031,34 +2976,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-location-name",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-location-conflict",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is named Sol.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-location-old",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-location-conflict",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is on the kitchen shelf.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-location-new",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-location-conflict",
-                channel_kind="telegram",
                 user_message="Actually, the tiny desk plant is on the balcony.",
             )
             query = build_researcher_reply(
@@ -3115,24 +3045,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-owner-old",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-owner-conflict",
-                channel_kind="telegram",
                 user_message="For later, Omar owns the launch checklist.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-owner-unrelated",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-owner-conflict",
-                channel_kind="telegram",
                 user_message="For later, Lina owns the investor update.",
             )
             old_query = build_researcher_reply(
@@ -3155,14 +3075,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="Who owns the investor update?",
             )
-            correction = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            correction = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-owner-new",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-owner-conflict",
-                channel_kind="telegram",
                 user_message="Actually, Maya owns the launch checklist.",
             )
             current_query = build_researcher_reply(
@@ -3235,6 +3150,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         def ask(request_id: str, message: str):
+            if request_id.endswith(("-old", "-new")):
+                return self.build_researcher_reply_with_memory_write_authority(
+                    request_id=request_id,
+                    session_id="session-entity-extended-attributes",
+                    user_message=message,
+                )
             return build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -3435,6 +3356,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         def ask(request_id: str, message: str):
+            if request_id.endswith(("-old", "-new")):
+                return self.build_researcher_reply_with_memory_write_authority(
+                    request_id=request_id,
+                    session_id="session-entity-history-followup",
+                    user_message=message,
+                )
             return build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -3492,6 +3419,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         def ask(request_id: str, message: str):
+            if not request_id.endswith(("-query", "-source")):
+                return self.build_researcher_reply_with_memory_write_authority(
+                    request_id=request_id,
+                    session_id="session-entity-state-summary",
+                    user_message=message,
+                )
             return build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -3566,6 +3499,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
         def ask(request_id: str, message: str):
+            if request_id.endswith(("-dup-1", "-dup-2")):
+                return self.build_researcher_reply_with_memory_write_authority(
+                    request_id=request_id,
+                    session_id="session-entity-duplicate-history",
+                    user_message=message,
+                )
             return build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -3628,34 +3567,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-delete-desk-seed",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-delete",
-                channel_kind="telegram",
                 user_message="For later, the tiny desk plant is on the kitchen shelf.",
             )
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-delete-office-seed",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-delete",
-                channel_kind="telegram",
                 user_message="For later, the office plant is on the balcony.",
             )
-            deletion = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            deletion = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-entity-delete-desk",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-entity-delete",
-                channel_kind="telegram",
                 user_message="Forget where the tiny desk plant is.",
             )
             desk_query = build_researcher_reply(
@@ -3711,14 +3635,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for explicit current-state correction"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-focus-correction-direct-ack",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-focus-correction-direct-ack",
-                channel_kind="telegram",
                 user_message="Actually, my current focus is diagnostics scan verification.",
             )
 
@@ -3741,14 +3660,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for current focus transition"),
         ):
-            transition = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            transition = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-focus-transition",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-focus-transition",
-                channel_kind="telegram",
                 user_message=(
                     "Mark context capsule verification closed. "
                     "Set my current focus to persistent memory quality evaluation."
@@ -3796,14 +3710,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-decision-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-decision-update",
-                channel_kind="telegram",
                 user_message="We decided to launch Atlas through agency partners first.",
             )
 
@@ -3845,14 +3754,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-blocker-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-blocker-update",
-                channel_kind="telegram",
                 user_message="We're blocked on onboarding instrumentation.",
             )
 
@@ -3878,14 +3782,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-status-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-status-update",
-                channel_kind="telegram",
                 user_message="Status update: private beta is live with 14 design partners.",
             )
 
@@ -3911,14 +3810,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-commitment-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-commitment-update",
-                channel_kind="telegram",
                 user_message="We committed to closing the pilot by June 1.",
             )
 
@@ -3944,14 +3838,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-milestone-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-milestone-update",
-                channel_kind="telegram",
                 user_message="Our next milestone is activation above 50 weekly teams.",
             )
 
@@ -3977,14 +3866,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-risk-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-risk-update",
-                channel_kind="telegram",
                 user_message="Our main risk is enterprise churn during onboarding.",
             )
 
@@ -4010,14 +3894,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-dependency-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-dependency-update",
-                channel_kind="telegram",
                 user_message="Our dependency is Stripe approval.",
             )
 
@@ -4043,14 +3922,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-constraint-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-constraint-update",
-                channel_kind="telegram",
                 user_message="Our constraint is limited founder bandwidth.",
             )
 
@@ -4076,14 +3950,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-assumption-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-assumption-update",
-                channel_kind="telegram",
                 user_message="Our assumption is users will self-serve after onboarding.",
             )
 
@@ -4109,14 +3978,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-owner-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-owner-update",
-                channel_kind="telegram",
                 user_message="Our owner is Omar.",
             )
 
@@ -4142,14 +4006,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic owner observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-owner-still-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-owner-still-update",
-                channel_kind="telegram",
                 user_message="The onboarding rollout is still owned by Nadia during security review.",
             )
 
@@ -4176,14 +4035,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic memory observations"),
         ):
-            result = build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            result = self.build_researcher_reply_with_memory_write_authority(
                 request_id="req-generic-manager-update",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-manager-update",
-                channel_kind="telegram",
                 user_message="My manager is Leila.",
             )
 
@@ -4199,14 +4053,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-memory-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-memory-write-query-seed",
-            channel_kind="telegram",
             user_message="My cofounder is Omar.",
         )
 
@@ -4236,14 +4085,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-plan-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-plan-write-query-seed",
-            channel_kind="telegram",
             user_message="We plan to launch Atlas in enterprise first.",
         )
 
@@ -4273,14 +4117,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-focus-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-focus-write-query-seed",
-            channel_kind="telegram",
             user_message="Actually, our priority is fixing onboarding retention.",
         )
 
@@ -4310,14 +4149,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-decision-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-decision-write-query-seed",
-            channel_kind="telegram",
             user_message="We decided to launch Atlas through agency partners first.",
         )
 
@@ -4350,14 +4184,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-blocker-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-blocker-write-query-seed",
-            channel_kind="telegram",
             user_message="We're blocked on onboarding instrumentation.",
         )
 
@@ -4390,14 +4219,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-status-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-status-write-query-seed",
-            channel_kind="telegram",
             user_message="Status update: private beta is live with 14 design partners.",
         )
 
@@ -4430,14 +4254,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-commitment-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-commitment-write-query-seed",
-            channel_kind="telegram",
             user_message="We committed to closing the pilot by June 1.",
         )
 
@@ -4470,14 +4289,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-milestone-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-milestone-write-query-seed",
-            channel_kind="telegram",
             user_message="Our next milestone is activation above 50 weekly teams.",
         )
 
@@ -4510,14 +4324,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-risk-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-risk-write-query-seed",
-            channel_kind="telegram",
             user_message="Our main risk is enterprise churn during onboarding.",
         )
 
@@ -4547,14 +4356,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-dependency-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-dependency-write-query-seed",
-            channel_kind="telegram",
             user_message="Our dependency is Stripe approval.",
         )
 
@@ -4584,14 +4388,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-constraint-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-constraint-write-query-seed",
-            channel_kind="telegram",
             user_message="Our constraint is limited founder bandwidth.",
         )
 
@@ -4621,14 +4420,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-assumption-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-assumption-write-query-seed",
-            channel_kind="telegram",
             user_message="Our assumption is users will self-serve after onboarding.",
         )
 
@@ -4658,14 +4452,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-owner-write-query-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-owner-write-query-seed",
-            channel_kind="telegram",
             user_message="Our owner is Omar.",
         )
 
@@ -4695,24 +4484,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-cofounder-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-cofounder-history",
-            channel_kind="telegram",
             user_message="My cofounder is Omar.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-cofounder-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-cofounder-history",
-            channel_kind="telegram",
             user_message="Actually, my cofounder is Sara.",
         )
 
@@ -4757,25 +4536,15 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-cofounder-delete-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-cofounder-delete",
-            channel_kind="telegram",
             user_message="My cofounder is Omar.",
         )
 
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-cofounder-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-cofounder-delete",
-            channel_kind="telegram",
             user_message="Forget my cofounder.",
         )
         current_result = build_researcher_reply(
@@ -4826,45 +4595,25 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ["profile.cofounder_name", "profile.current_owner", "entity.owner"],
         )
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-multi-delete-cofounder-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-multi-delete",
-            channel_kind="telegram",
             user_message="My cofounder is Omar.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-multi-delete-owner-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-multi-delete",
-            channel_kind="telegram",
             user_message="My current owner is Maya.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-multi-delete-launch-owner-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-multi-delete",
-            channel_kind="telegram",
             user_message="For later, Maya owns the launch checklist.",
         )
 
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-multi-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-multi-delete",
-            channel_kind="telegram",
             user_message=(
                 "Forget my cofounder.\n"
                 "Forget my current owner.\n"
@@ -4972,14 +4721,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-forget-postcondition-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-forget-postcondition",
-            channel_kind="telegram",
             user_message="Our owner is Maya.",
         )
         record_event(
@@ -5052,14 +4796,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-memory-doctor-topic-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-memory-doctor-topic",
-            channel_kind="telegram",
             user_message="Our owner is Maya.",
         )
 
@@ -5078,14 +4817,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-memory-doctor-entity-topic-seed",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-memory-doctor-entity-topic",
-            channel_kind="telegram",
             user_message="For later, Maya owns the launch checklist.",
         )
 
@@ -5586,24 +5320,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-decision-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-decision-history",
-            channel_kind="telegram",
             user_message="We decided to launch Atlas through agency partners first.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-decision-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-decision-history",
-            channel_kind="telegram",
             user_message="Update: we're going with self-serve onboarding first.",
         )
 
@@ -5637,14 +5361,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our decision history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-decision-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-decision-history",
-            channel_kind="telegram",
             user_message="Forget our decision.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -5691,24 +5410,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-blocker-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-blocker-history",
-            channel_kind="telegram",
             user_message="We're blocked on onboarding instrumentation.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-blocker-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-blocker-history",
-            channel_kind="telegram",
             user_message="Our bottleneck is enterprise lead volume.",
         )
 
@@ -5742,14 +5451,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our blocker history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-blocker-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-blocker-history",
-            channel_kind="telegram",
             user_message="Forget our blocker.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -5796,24 +5500,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-status-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-status-history",
-            channel_kind="telegram",
             user_message="Status update: private beta is live with 14 design partners.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-status-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-status-history",
-            channel_kind="telegram",
             user_message="Project status is onboarding activation is above 40 percent.",
         )
 
@@ -5847,14 +5541,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our status history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-status-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-status-history",
-            channel_kind="telegram",
             user_message="Forget our status.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -5901,24 +5590,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-commitment-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-commitment-history",
-            channel_kind="telegram",
             user_message="We committed to closing the pilot by June 1.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-commitment-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-commitment-history",
-            channel_kind="telegram",
             user_message="Update: our commitment is to close the pilot by June 10.",
         )
 
@@ -5952,14 +5631,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our commitment history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-commitment-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-commitment-history",
-            channel_kind="telegram",
             user_message="Forget our commitment.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6006,24 +5680,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-milestone-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-milestone-history",
-            channel_kind="telegram",
             user_message="Our next milestone is activation above 50 weekly teams.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-milestone-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-milestone-history",
-            channel_kind="telegram",
             user_message="The current milestone is 10 enterprise design partners live.",
         )
 
@@ -6057,14 +5721,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our milestone history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-milestone-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-milestone-history",
-            channel_kind="telegram",
             user_message="Forget our milestone.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6111,24 +5770,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-risk-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-risk-history",
-            channel_kind="telegram",
             user_message="Our main risk is enterprise churn during onboarding.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-risk-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-risk-history",
-            channel_kind="telegram",
             user_message="The biggest risk is delayed product instrumentation.",
         )
 
@@ -6162,14 +5811,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our risk history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-risk-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-risk-history",
-            channel_kind="telegram",
             user_message="Forget our risk.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6213,24 +5857,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-dependency-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-dependency-history",
-            channel_kind="telegram",
             user_message="Our dependency is Stripe approval.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-dependency-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-dependency-history",
-            channel_kind="telegram",
             user_message="The current dependency is partner API access.",
         )
 
@@ -6264,14 +5898,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our dependency history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-dependency-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-dependency-history",
-            channel_kind="telegram",
             user_message="Forget our dependency.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6315,24 +5944,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-constraint-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-constraint-history",
-            channel_kind="telegram",
             user_message="Our constraint is limited founder bandwidth.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-constraint-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-constraint-history",
-            channel_kind="telegram",
             user_message="The current constraint is budget for only one engineer.",
         )
 
@@ -6366,14 +5985,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our constraint history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-constraint-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-constraint-history",
-            channel_kind="telegram",
             user_message="Forget our constraint.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6417,24 +6031,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-assumption-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-assumption-history",
-            channel_kind="telegram",
             user_message="Our assumption is users will self-serve after onboarding.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-assumption-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-assumption-history",
-            channel_kind="telegram",
             user_message="The current assumption is enterprise teams need hands-on setup first.",
         )
 
@@ -6468,14 +6072,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our assumption history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-assumption-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-assumption-history",
-            channel_kind="telegram",
             user_message="Forget our assumption.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6522,24 +6121,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-owner-history-seed-1",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-owner-history",
-            channel_kind="telegram",
             user_message="Our owner is Omar.",
         )
-        build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-owner-history-seed-2",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-owner-history",
-            channel_kind="telegram",
             user_message="The current owner is Sara.",
         )
 
@@ -6573,14 +6162,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Show our owner history.",
         )
-        delete_result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
+        delete_result = self.build_researcher_reply_with_memory_write_authority(
             request_id="req-generic-owner-delete",
-            agent_id="agent-1",
-            human_id="human-1",
             session_id="session-generic-owner-history",
-            channel_kind="telegram",
             user_message="Forget our owner.",
         )
         current_after_delete_result = build_researcher_reply(
@@ -6636,14 +6220,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "Our main risk is model drift in onboarding scoring.",
         )
         for index, message in enumerate(seed_messages, start=1):
-            build_researcher_reply(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
+            self.build_researcher_reply_with_memory_write_authority(
                 request_id=f"req-generic-long-run-{index}",
-                agent_id="agent-1",
-                human_id="human-1",
                 session_id="session-generic-long-run",
-                channel_kind="telegram",
                 user_message=message,
             )
 

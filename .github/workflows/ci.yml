@@ -17,6 +17,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Require Harness Core repo token
+        env:
+          SPARK_CI_REPO_TOKEN: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+        run: |
+          if [ -z "$SPARK_CI_REPO_TOKEN" ]; then
+            echo "::error::SPARK_CI_REPO_TOKEN is required to checkout private vibeforge1111/spark-harness-core for authority tests."
+            exit 1
+          fi
+
+      - name: Checkout Harness Core
+        uses: actions/checkout@v4
+        with:
+          repository: vibeforge1111/spark-harness-core
+          ref: codex/genesis-harness-core-20260602
+          path: spark-harness-core
+          token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -34,6 +51,8 @@ jobs:
         run: uv sync --locked
 
       - name: Run focused tests
+        env:
+          SPARK_HARNESS_CORE_SOURCE: ${{ github.workspace }}/spark-harness-core/src
         run: |
           uv run --with pytest python -m pytest \
             tests/test_secret_file_permissions.py \

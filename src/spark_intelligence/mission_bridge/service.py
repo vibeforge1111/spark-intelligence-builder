@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
 
@@ -30,6 +32,11 @@ _BOARD_PATTERNS = (
 def detect_board_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
+        return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("show board", "show missions", "open board", "open mission", "start", "run", "route"),
+    ):
         return None
     for pat in _BOARD_PATTERNS:
         if pat.search(text):

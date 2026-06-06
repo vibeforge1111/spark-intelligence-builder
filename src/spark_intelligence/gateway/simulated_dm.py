@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.bridge_authority import (
+    build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
+    build_telegram_memory_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload_vnext,
+    detect_telegram_memory_read_authority_source_kind,
+)
 from spark_intelligence.identity.service import resolve_inbound_dm
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
@@ -61,6 +68,46 @@ def resolve_simulated_dm(
                 "message_text": user_message,
             },
         )
+        turn_intent_payload = None
+        turn_intent_payload_vnext = None
+        if channel_id == "telegram":
+            read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+            if read_source_kind is not None:
+                source_kind = f"gateway_simulated_dm_{read_source_kind}"
+                turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
+                    request_id=request_id,
+                    channel_kind=channel_id,
+                    session_id=resolution.session_id,
+                    human_id=resolution.human_id,
+                    user_message=user_message,
+                    source_kind=source_kind,
+                )
+                turn_intent_payload_vnext = build_telegram_memory_read_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind=channel_id,
+                    session_id=resolution.session_id,
+                    human_id=resolution.human_id,
+                    user_message=user_message,
+                    source_kind=source_kind,
+                )
+            if turn_intent_payload is None:
+                turn_intent_payload = build_telegram_memory_turn_intent_payload(
+                    request_id=request_id,
+                    channel_kind=channel_id,
+                    session_id=resolution.session_id,
+                    human_id=resolution.human_id,
+                    user_message=user_message,
+                    source_kind="gateway_simulated_dm_memory",
+                )
+            if turn_intent_payload_vnext is None:
+                turn_intent_payload_vnext = build_telegram_memory_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind=channel_id,
+                    session_id=resolution.session_id,
+                    human_id=resolution.human_id,
+                    user_message=user_message,
+                    source_kind="gateway_simulated_dm_memory",
+                )
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
             state_db=state_db,
@@ -71,6 +118,10 @@ def resolve_simulated_dm(
             channel_kind=channel_id,
             user_message=user_message,
             run_id=run_id,
+            turn_intent_payload=turn_intent_payload,
+            turn_intent_payload_vnext=turn_intent_payload_vnext,
+            governor_decision=None,
+            allow_memory_adapter_envelope=False,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         outbound_text = bridge_result.reply_text

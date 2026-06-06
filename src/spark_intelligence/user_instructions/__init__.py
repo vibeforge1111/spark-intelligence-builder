@@ -1,5 +1,6 @@
 from spark_intelligence.user_instructions.service import (
     UserInstruction,
+    UserInstructionAuthorityError,
     add_instruction,
     archive_instruction,
     detect_instruction_intent,
@@ -9,6 +10,7 @@ from spark_intelligence.user_instructions.service import (
 
 __all__ = [
     "UserInstruction",
+    "UserInstructionAuthorityError",
     "add_instruction",
     "archive_instruction",
     "detect_instruction_intent",

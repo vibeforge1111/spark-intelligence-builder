@@ -6,7 +6,18 @@ from datetime import UTC, datetime
 from typing import Iterable
 from uuid import uuid4
 
+from spark_intelligence.harness_contract import verify_governor_tool_authority
+from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
+
+
+USER_INSTRUCTION_WRITE_TOOL = "user_instruction.write"
+USER_INSTRUCTION_ARCHIVE_TOOL = "user_instruction.archive"
+USER_INSTRUCTION_OWNER_SYSTEM = "spark-intelligence-builder"
+
+
+class UserInstructionAuthorityError(PermissionError):
+    pass
 
 
 @dataclass
@@ -58,6 +69,11 @@ def detect_instruction_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
         return None
+    if has_conversation_only_boundary(text) or denies_intent(
+        text,
+        ("remember", "save", "forget", "store", "delete"),
+    ):
+        return None
     for pattern in _FORGET_PREFIXES:
         match = pattern.match(text)
         if match:
@@ -87,6 +103,7 @@ def add_instruction(
     channel_kind: str,
     instruction_text: str,
     source: str = "explicit",
+    governor_decision: dict | None = None,
 ) -> UserInstruction:
     text = str(instruction_text or "").strip()
     if not text:
@@ -95,6 +112,10 @@ def add_instruction(
     channel = str(channel_kind or "").strip()
     if not user or not channel:
         raise ValueError("external_user_id and channel_kind are required")
+    _require_user_instruction_authority(
+        governor_decision,
+        tool_name=USER_INSTRUCTION_WRITE_TOOL,
+    )
     instruction_id = f"inst-{uuid4().hex}"
     created_at = datetime.now(UTC).isoformat()
     with state_db.connect() as conn:
@@ -157,9 +178,18 @@ def list_active_instructions(
     ]
 
 
-def archive_instruction(state_db: StateDB, *, instruction_id: str) -> bool:
+def archive_instruction(
+    state_db: StateDB,
+    *,
+    instruction_id: str,
+    governor_decision: dict | None = None,
+) -> bool:
     if not instruction_id:
         return False
+    _require_user_instruction_authority(
+        governor_decision,
+        tool_name=USER_INSTRUCTION_ARCHIVE_TOOL,
+    )
     archived_at = datetime.now(UTC).isoformat()
     with state_db.connect() as conn:
         cur = conn.execute(
@@ -202,3 +232,22 @@ def matching_instructions_to_archive(
         scored.append((overlap, inst))
     scored.sort(key=lambda pair: -pair[0])
     return [inst for _, inst in scored[:limit]]
+
+
+def _require_user_instruction_authority(
+    governor_decision: dict | None,
+    *,
+    tool_name: str,
+) -> dict:
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name=tool_name,
+        owner_system=USER_INSTRUCTION_OWNER_SYSTEM,
+        mutation_class="writes_memory",
+    )
+    if verification.get("allowed") is True:
+        return verification
+    reasons = ",".join(str(reason) for reason in verification.get("reason_codes") or [])
+    raise UserInstructionAuthorityError(
+        f"Saved preference mutation requires Harness Core Governor authority: {reasons or 'governor_consumer_verification_failed'}"
+    )

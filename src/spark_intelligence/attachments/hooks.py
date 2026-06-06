@@ -17,6 +17,7 @@ from spark_intelligence.execution.governed import (
     run_governed_command,
     screen_governed_tool_text,
 )
+from spark_intelligence.harness_contract import MutationClass, verify_governor_tool_authority
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
@@ -38,6 +39,7 @@ class ChipHookExecution:
     stderr: str
     payload: dict[str, Any]
     output: dict[str, Any]
+    governor_verification: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -54,6 +56,7 @@ class ChipHookExecution:
             "stderr": self.stderr,
             "payload": self.payload,
             "output": self.output,
+            "governor_verification": self.governor_verification,
             "ok": self.ok,
         }
 
@@ -110,9 +113,10 @@ def run_chip_hook(
     chip_key: str,
     hook: str,
     payload: dict[str, Any],
+    governor_decision: dict[str, Any] | None = None,
 ) -> ChipHookExecution:
     record = resolve_chip_record(config_manager, chip_key=chip_key)
-    return execute_chip_hook_record(record, hook=hook, payload=payload)
+    return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
 
 
 def run_first_active_chip_hook(
@@ -120,10 +124,11 @@ def run_first_active_chip_hook(
     *,
     hook: str,
     payload: dict[str, Any],
+    governor_decision: dict[str, Any] | None = None,
 ) -> ChipHookExecution | None:
     for record in list_active_chip_records(config_manager):
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
     return None
 
 
@@ -132,17 +137,18 @@ def run_first_chip_hook_supporting(
     *,
     hook: str,
     payload: dict[str, Any],
+    governor_decision: dict[str, Any] | None = None,
 ) -> ChipHookExecution | None:
     active_records = list_active_chip_records(config_manager)
     active_roots = {record.repo_root for record in active_records}
     for record in active_records:
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
     for record in list_chip_records(config_manager):
         if record.repo_root in active_roots:
             continue
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
     return None
 
 
@@ -151,6 +157,7 @@ def execute_chip_hook_record(
     *,
     hook: str,
     payload: dict[str, Any],
+    governor_decision: dict[str, Any] | None = None,
 ) -> ChipHookExecution:
     if record.kind != "chip":
         raise ValueError(f"Attachment '{record.key}' is not a chip.")
@@ -164,6 +171,11 @@ def execute_chip_hook_record(
     if not command:
         supported = ", ".join(sorted(record.commands)) if record.commands else "none"
         raise ValueError(f"Chip '{record.key}' does not define hook '{hook}'. Supported hooks: {supported}")
+    governor_verification = _verify_chip_hook_governor_authority(
+        record=record,
+        hook=hook,
+        governor_decision=governor_decision,
+    )
 
     repo_root = Path(record.repo_root)
     final_command = _normalize_command(command)
@@ -198,7 +210,46 @@ def execute_chip_hook_record(
         stderr=completed.stderr,
         payload=payload,
         output=output,
+        governor_verification=governor_verification,
     )
+
+
+def _verify_chip_hook_governor_authority(
+    *,
+    record: AttachmentRecord,
+    hook: str,
+    governor_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    tool_name, owner_system, mutation_class, external_network = chip_hook_authority_contract(hook)
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        external_network=external_network,
+        require_pre_execution_ledger=True,
+        allow_read_only=mutation_class in {"none", "read_only"},
+    )
+    if verification.get("allowed") is True:
+        return verification
+    reasons = [str(reason) for reason in verification.get("reason_codes") or [] if str(reason)]
+    reason_text = ", ".join(reasons) if reasons else "governor_consumer_verification_failed"
+    raise RuntimeError(
+        "Chip hook execution requires Harness Core Governor authority "
+        f"for {owner_system}:{tool_name} before running {record.key}.{hook}. "
+        f"Reason: {reason_text}."
+    )
+
+
+def chip_hook_authority_contract(hook: str) -> tuple[str, str, MutationClass, bool]:
+    normalized = str(hook or "").strip()
+    if normalized.startswith("browser."):
+        return normalized, "spark-browser", "external_network", True
+    if normalized.startswith("voice."):
+        external = normalized in {"voice.speak", "voice.transcribe"}
+        return normalized, "spark-voice-comms", "external_network" if external else "read_only", external
+    tool_name = normalized if normalized.startswith("chip.") else f"chip.{normalized}"
+    return tool_name, "spark-intelligence-builder", "writes_files", False
 
 
 def _is_disabled_legacy_browser_hook(chip_key: str, hook: str) -> bool:

@@ -126,7 +126,7 @@ class SystemRegistryTests(SparkTestCase):
         self.assertFalse(browser["degraded"])
         self.assertEqual(browser["metadata"]["backend_kind"], "browser_use_adapter")
 
-    def test_build_system_registry_marks_browser_use_adapter_standby_without_status_proof(self) -> None:
+    def test_build_system_registry_marks_browser_use_adapter_degraded_without_status_proof(self) -> None:
         with patch(
             "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
             return_value={
@@ -144,8 +144,8 @@ class SystemRegistryTests(SparkTestCase):
 
         records = {str(record["key"]): record for record in payload["records"]}
         browser = records["spark_browser"]
-        self.assertEqual(browser["status"], "standby")
-        self.assertTrue(browser["available"])
+        self.assertEqual(browser["status"], "degraded")
+        self.assertFalse(browser["available"])
         self.assertTrue(browser["degraded"])
         self.assertIn("no passing status proof", browser["limitations"][0])
 

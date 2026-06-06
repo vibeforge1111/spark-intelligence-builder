@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.llm_wiki.promote import (
     _clean_list,
     _compact,
@@ -68,7 +69,7 @@ def promote_llm_wiki_user_note(
     invalidation_trigger: str = "",
     overwrite: bool = False,
 ) -> LlmWikiUserNotePromotionResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     normalized_human_id = _compact(human_id)
     normalized_title = _compact(title)
     normalized_summary = _compact(summary) or normalized_title

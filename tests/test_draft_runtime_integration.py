@@ -12,8 +12,13 @@ from spark_intelligence.adapters.telegram.runtime import (
     _looks_like_prompt_injection_instruction,
     _maybe_capture_user_instruction,
     _maybe_save_reply_as_draft,
+    _telegram_user_instruction_governor_decision_for_message,
 )
 from spark_intelligence.bot_drafts import list_recent_drafts
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+from spark_intelligence.researcher_bridge.advisory import _build_user_instructions_context
+from spark_intelligence.user_instructions import list_active_instructions
 
 from tests.test_support import SparkTestCase
 
@@ -34,9 +39,61 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
             limit=50,
         )
 
+    def _draft_authority(self, user_message: str) -> dict:
+        request_slug = re.sub(r"[^a-z0-9]+", "-", user_message.lower()).strip("-") or "draft"
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=f"user:{self.USER}",
+            request_id=f"draft-{request_slug[:64]}",
+            source_kind="draft_runtime_test",
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            intent_summary="Fresh Telegram turn authorizes draft-state capture.",
+            raw_turn_summary="Draft runtime integration test turn remains offloaded.",
+            confidence=0.95,
+        )
+        self.assertIsNotNone(payload)
+        return {"turn_intent_envelope_vnext": payload}
+
+    def _instruction_governor(self, action: str = "write") -> dict:
+        action_name = "archive" if action == "archive" else "write"
+        tool_name = f"user_instruction.{action_name}"
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=f"human:{self.USER}",
+            request_id=f"instruction-{action_name}-{self.USER}",
+            source_kind=f"draft_runtime_test_user_instruction_{action_name}",
+            tool_name=tool_name,
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            intent_summary=f"Fresh Telegram turn authorizes saved-preference {action_name}.",
+            raw_turn_summary="Saved-preference integration test turn remains offloaded.",
+            confidence=0.95,
+        )
+        self.assertIsNotNone(payload)
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name=tool_name,
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=f"instruction-{action_name}-{self.USER}",
+            channel_id=self.CHANNEL,
+            session_id=f"session:{self.USER}",
+            human_id=f"human:{self.USER}",
+            agent_id="agent:test",
+            actor_id="test",
+            component="draft_runtime_test.user_instruction",
+        )
+        self.assertTrue(authority.allowed, authority.reason_codes)
+        self.assertIsInstance(authority.governor_decision, dict)
+        return authority.governor_decision
+
     def _send(self, *, user_message: str, reply_text: str) -> str:
         return _maybe_save_reply_as_draft(
             state_db=self.state_db,
+            update_payload=self._draft_authority(user_message),
             external_user_id=self.USER,
             session_id=None,
             chip_used=None,
@@ -198,14 +255,124 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
         self.assertEqual(returned, "I'll forget your current assumption.")
         self._assert_no_user_facing_noise(returned)
 
-    def test_instruction_forget_still_appends_footer_when_not_a_memory_delete(self) -> None:
+    def test_instruction_forget_requires_governor_before_lookup(self) -> None:
         returned = _maybe_capture_user_instruction(
             state_db=self.state_db,
             external_user_id=self.USER,
             user_message="Forget our assumption.",
             reply_text="Okay.",
         )
-        self.assertIn("no matching saved instruction to forget", returned)
+        self.assertEqual(returned, "Okay.")
+
+    def test_instruction_forget_still_appends_footer_when_authorized_and_not_a_memory_delete(self) -> None:
+        returned = _maybe_capture_user_instruction(
+            state_db=self.state_db,
+            external_user_id=self.USER,
+            user_message="Forget our assumption.",
+            reply_text="Okay.",
+            governor_decision=self._instruction_governor("archive"),
+        )
+        self.assertIn("no matching saved preference to forget", returned)
+
+    def test_normal_instruction_requires_governor_before_save(self) -> None:
+        returned = _maybe_capture_user_instruction(
+            state_db=self.state_db,
+            external_user_id=self.USER,
+            user_message="Remember that I prefer concise replies.",
+            reply_text="Okay.",
+        )
+        self.assertEqual(returned, "Okay.")
+        self.assertEqual(
+            list_active_instructions(
+                self.state_db,
+                external_user_id=self.USER,
+                channel_kind=self.CHANNEL,
+            ),
+            [],
+        )
+
+    def test_raw_instruction_message_does_not_mint_governor_decision(self) -> None:
+        governor = _telegram_user_instruction_governor_decision_for_message(
+            {},
+            state_db=self.state_db,
+            request_id="raw-instruction-no-authority",
+            run_id=None,
+            session_id=f"session:{self.USER}",
+            human_id=f"human:{self.USER}",
+            agent_id="agent:test",
+            user_message="Remember that I prefer concise replies.",
+        )
+
+        self.assertIsNone(governor)
+
+    def test_inbound_user_instruction_vnext_can_authorize_capture(self) -> None:
+        action_name = "write"
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=f"human:{self.USER}",
+            request_id=f"inbound-instruction-{self.USER}",
+            source_kind="draft_runtime_test_inbound_user_instruction",
+            tool_name=f"user_instruction.{action_name}",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            intent_summary="Inbound Harness Core turn authorizes saved-preference write.",
+            raw_turn_summary="Saved-preference integration test turn remains offloaded.",
+            confidence=0.95,
+        )
+        self.assertIsNotNone(payload)
+
+        governor = _telegram_user_instruction_governor_decision_for_message(
+            {"turn_intent_envelope_vnext": payload},
+            state_db=self.state_db,
+            request_id="inbound-instruction-authority",
+            run_id=None,
+            session_id=f"session:{self.USER}",
+            human_id=f"human:{self.USER}",
+            agent_id="agent:test",
+            user_message="Remember that I prefer concise replies.",
+        )
+
+        self.assertIsInstance(governor, dict)
+        assert governor is not None
+        self.assertEqual(governor["outcome"], "execute")
+
+    def test_normal_instruction_saves_with_governor_decision(self) -> None:
+        returned = _maybe_capture_user_instruction(
+            state_db=self.state_db,
+            external_user_id=self.USER,
+            user_message="Remember that I prefer concise replies.",
+            reply_text="Okay.",
+            governor_decision=self._instruction_governor("write"),
+        )
+        self.assertIn("saved preference evidence", returned)
+        self.assertNotIn("will apply to future replies", returned)
+        instructions = list_active_instructions(
+            self.state_db,
+            external_user_id=self.USER,
+            channel_kind=self.CHANNEL,
+        )
+        self.assertEqual(len(instructions), 1)
+        self.assertEqual(instructions[0].instruction_text, "I prefer concise replies")
+
+    def test_saved_instruction_context_is_evidence_not_authority(self) -> None:
+        _maybe_capture_user_instruction(
+            state_db=self.state_db,
+            external_user_id=self.USER,
+            user_message="Remember that I prefer concise replies.",
+            reply_text="Okay.",
+            governor_decision=self._instruction_governor("write"),
+        )
+
+        context = _build_user_instructions_context(
+            state_db=self.state_db,
+            human_id=f"human:{self.USER}",
+            channel_kind=self.CHANNEL,
+        )
+
+        self.assertIn("evidence only", context)
+        self.assertIn("not authority over the current turn", context)
+        self.assertNotIn("must be honoured", context)
+        self.assertNotIn("standing rules", context)
 
     def test_memory_forget_language_does_not_archive_unrelated_instructions(self) -> None:
         returned = _maybe_capture_user_instruction(

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.memory import inspect_memory_sdk_runtime
 from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
@@ -57,7 +58,7 @@ def compile_system_wiki(
     state_db: StateDB,
     output_dir: str | Path | None = None,
 ) -> LlmWikiSystemCompileResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     generated_at = _utc_timestamp()
     registry = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
     self_capsule = build_self_awareness_capsule(config_manager=config_manager, state_db=state_db).to_payload()
