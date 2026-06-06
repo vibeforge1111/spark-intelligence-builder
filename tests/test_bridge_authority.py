@@ -2,6 +2,7 @@ from copy import deepcopy
 
 from spark_intelligence.bridge_authority import (
     BridgeAuthorityVerdict,
+    DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_governor_decision_from_bridge_authority,
@@ -318,11 +319,12 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert payload["schema_version"] == "turn-intent-envelope-vnext"
     assert payload["selected_move"] == "execute_action"
     assert payload["action_authority"]["state"] == "executable"
-    assert payload["proposed_actions"][0]["action_type"] == "write_memory"
+    assert payload["proposed_actions"][0]["capability_id"] == "capability:domain-chip-memory:memory.write"
+    assert payload["proposed_actions"][0]["action_type"] == "memory.write"
 
     verdict = authorize_builder_bridge_action(
         {"turn_intent_envelope_vnext": payload},
-        tool_name="memory.write",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
     )
@@ -331,6 +333,8 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["tool_name"] == DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
 

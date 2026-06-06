@@ -10290,6 +10290,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_plan_transition_command",
+                governor_decision=memory_write_governor_decision,
             )
         if write_result is None:
             plan_transition = None
@@ -10381,6 +10382,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_focus_transition_command",
+                governor_decision=memory_write_governor_decision,
             )
         if write_result is None:
             focus_transition = None
@@ -10702,6 +10704,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
                     )
                     accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
                     rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
@@ -10719,6 +10722,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
                     )
                     current_state_accepted_count = int(
                         getattr(current_state_result, "accepted_count", 0) or 0
@@ -11040,6 +11044,7 @@ def build_researcher_reply(
                 session_id=session_id,
                 turn_id=request_id,
                 channel_kind=channel_kind,
+                governor_decision=memory_write_governor_decision,
             )
             if detected_deltas:
                 # Build acknowledgment context for the LLM
@@ -11085,6 +11090,7 @@ def build_researcher_reply(
                         session_id=session_id,
                         turn_id=request_id,
                         channel_kind=channel_kind,
+                        governor_decision=memory_write_governor_decision,
                     )
                 else:
                     detected_profile_fact = None
@@ -11118,6 +11124,7 @@ def build_researcher_reply(
                             session_id=session_id,
                             turn_id=request_id,
                             channel_kind=channel_kind,
+                            governor_decision=memory_write_governor_decision,
                         )
                     else:
                         detected_memory_event = None
@@ -11161,6 +11168,7 @@ def build_researcher_reply(
                                         turn_id=deletion_turn_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
                                     )
                                     if generic_delete_result.accepted_count > 0:
                                         accepted_generic_memory_deletions.append(generic_memory_deletion)
@@ -11207,6 +11215,7 @@ def build_researcher_reply(
                                         turn_id=request_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
                                     )
                                 else:
                                     generic_write_result = None
@@ -11320,6 +11329,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11336,6 +11346,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11353,6 +11364,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_belief_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
