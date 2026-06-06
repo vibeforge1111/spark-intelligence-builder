@@ -1500,7 +1500,7 @@ def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
     if not match:
         return None
-    return match.group(0).rstrip(".,;!?}]")
+    return match.group(0).rstrip(".,;:!?}>]'\"")
 
 
 def _validate_browser_harness_url(url: str) -> None:
