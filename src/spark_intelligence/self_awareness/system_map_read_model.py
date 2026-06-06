@@ -18,6 +18,7 @@ _RAW_READ_FLAGS = (
 )
 
 
+# guard: defensive wrapping
 def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, Any]:
     output_dir, resolution = _resolve_system_map_dir(config_manager)
     files = {

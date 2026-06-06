@@ -566,7 +566,7 @@ def _build_recent_invocation_claims(
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
             events = latest_events_by_type(state_db, event_type=event_type, limit=8)
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             events = []
         for event in events:
             facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
@@ -600,7 +600,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
             events.extend(latest_events_by_type(state_db, event_type=event_type, limit=80))
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             continue
     events.sort(key=lambda event: (_event_created_at(event), str(event.get("event_id") or "")), reverse=True)
     for event in events:
@@ -1168,11 +1168,11 @@ def _build_improvement_claims(
 def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
     try:
         runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         runtime = {"ready": False, "reason": f"runtime_inspection_failed:{exc.__class__.__name__}"}
     try:
         wiki_metadata = inspect_wiki_packet_metadata(config_manager=config_manager)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         wiki_metadata = {
             "status": "error",
             "reason": f"wiki_metadata_inspection_failed:{exc.__class__.__name__}",
@@ -1181,7 +1181,7 @@ def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
         }
     try:
         movement_status = inspect_memory_movement_status(config_manager=config_manager)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         movement_status = {
             "status": "error",
             "reason": f"movement_inspection_failed:{exc.__class__.__name__}",

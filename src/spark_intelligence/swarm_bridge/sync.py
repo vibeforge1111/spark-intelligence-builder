@@ -1738,7 +1738,10 @@ def _resolve_active_path_collective_payload(
     if not payload_path.exists():
         return None
     try:
+        try:
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Failed to load Swarm payload from {payload_path}: {exc}") from exc
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
