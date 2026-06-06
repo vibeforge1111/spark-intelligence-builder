@@ -6101,6 +6101,35 @@ def _build_hybrid_memory_context_packet(
     dropped_count = 0
     source_mix: dict[str, int] = {}
     selected_candidates = [candidate for candidate in candidates if candidate.selected]
+    # --- non_override enforcement --------------------------------------------------
+    # Reject candidates that would breach non_override_rules before they are
+    # placed into sections.  This prevents memory-poisoning via wiki packets
+    # or dashboard movements silently replacing current_state for mutable
+    # user facts.
+    _enforced_candidates: list[HybridMemoryCandidate] = []
+    _non_override_violations: list[dict[str, Any]] = []
+    for candidate in selected_candidates:
+        if _violates_non_override_rules(candidate):
+            candidate = HybridMemoryCandidate(
+                lane=candidate.lane,
+                source_class=candidate.source_class,
+                score=candidate.score,
+                selected=False,
+                record=candidate.record,
+                reason_selected=candidate.reason_selected,
+                reason_discarded="non_override_rule_violation",
+            )
+            _non_override_violations.append({
+                "lane": candidate.lane,
+                "source_class": candidate.source_class,
+                "predicate": candidate.record.get("predicate"),
+                "reason": "non_override_rule_violation",
+            })
+            dropped_count += 1
+        else:
+            _enforced_candidates.append(candidate)
+    selected_candidates = _enforced_candidates
+    # -----------------------------------------------------------------------
     for candidate in selected_candidates:
         section_name = _hybrid_memory_context_section(candidate)
         section = sections_by_name.setdefault(
@@ -6182,9 +6211,67 @@ def _build_hybrid_memory_context_packet(
             "section_count": len(sections),
             "score_adaptive_truncation": True,
             "project_knowledge_first": project_knowledge_first,
+            "non_override_violations": _non_override_violations,
             "promotion_gates": promotion_gates,
         },
     )
+
+
+
+# Non-override enforcement constants --------------------------------------------------
+# These patterns mirror the non_override_rules exported in movement/wiki payloads.
+# They prevent non-authoritative sources from silently overriding current_state
+# memory for mutable user facts -- the core memory-poisoning defence.
+
+_NON_OVERRIDE_SOURCE_CLASSES: set[str] = {
+    "obsidian_llm_wiki_packets",
+    "graphiti_temporal_graph",
+}
+
+_NON_OVERRIDE_MOVEMENT_STATES: set[str] = {
+    "captured",
+    "summarized",
+    "retrieved",
+}
+
+_NON_OVERRIDE_LANES: set[str] = {
+    "wiki_packets",
+    "typed_temporal_graph",
+}
+
+
+def _violates_non_override_rules(candidate: HybridMemoryCandidate) -> bool:
+    """Return True when a candidate would breach non_override_rules.
+
+    Non-authoritative sources (wiki packets, graph sidecar, dashboard
+    movements) must not silently replace current_state memory for mutable
+    user facts.  When a candidate from such a source targets a current_state
+    predicate we conservatively reject it and record the violation.
+    """
+    if candidate.source_class not in _NON_OVERRIDE_SOURCE_CLASSES:
+        return False
+    if candidate.lane not in _NON_OVERRIDE_LANES:
+        return False
+    # The candidate is from a non-authoritative source.  Reject it only
+    # when it could override current_state (mutable user facts).
+    record = candidate.record if isinstance(candidate.record, dict) else {}
+    predicate = str(record.get("predicate") or "").strip()
+    memory_role = str(record.get("memory_role") or "").strip()
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    movement_state = str(metadata.get("movement_state") or "").strip()
+
+    # If the record explicitly targets current_state or the predicate belongs
+    # to a mutable fact namespace, block the override.
+    if memory_role == "current_state":
+        return True
+    if predicate.startswith("personality."):
+        return True
+    if predicate.startswith("belief."):
+        return True
+    # Dashboard movements summarised from current_state are advisory only.
+    if movement_state in _NON_OVERRIDE_MOVEMENT_STATES:
+        return True
+    return False
 
 
 _AUTHORITY_MEMORY_SOURCE_CLASSES: set[str] = {"current_state", "historical_state"}
