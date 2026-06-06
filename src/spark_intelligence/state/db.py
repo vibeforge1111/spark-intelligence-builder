@@ -14,6 +14,34 @@ def _quote_sqlite_identifier(identifier: str) -> str:
     return f'"{identifier}"'
 
 
+# Whitelist of allowed SQL column type definitions used in ALTER TABLE ADD COLUMN.
+_ALLOWED_COLUMN_DEFINITIONS = frozenset({
+    "TEXT",
+    "TEXT NOT NULL",
+    "INTEGER",
+    "INTEGER NOT NULL",
+    "REAL",
+    "REAL NOT NULL",
+    "BLOB",
+    "BLOB NOT NULL",
+    "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    "INTEGER NOT NULL DEFAULT 0",
+    "INTEGER NOT NULL DEFAULT 1",
+    "REAL NOT NULL DEFAULT 0",
+    "TEXT NOT NULL DEFAULT 'active'",
+    "TEXT NOT NULL DEFAULT 'paired_user'",
+})
+
+
+def _validate_column_definition(definition: str) -> None:
+    """Validate that a column definition is in the allowed whitelist."""
+    if definition not in _ALLOWED_COLUMN_DEFINITIONS:
+        raise ValueError(
+            f"Unsafe column definition: {definition!r}. "
+            "Only pre-approved SQL type definitions are allowed."
+        )'
+
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS schema_info (
@@ -921,6 +949,7 @@ class StateDB:
     def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         quoted_table = _quote_sqlite_identifier(table)
         quoted_column = _quote_sqlite_identifier(column)
+        _validate_column_definition(definition)
         columns = {
             str(row["name"])
             for row in conn.execute(f"PRAGMA table_info({quoted_table})").fetchall()
