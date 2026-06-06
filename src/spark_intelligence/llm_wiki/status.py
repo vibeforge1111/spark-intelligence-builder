@@ -168,7 +168,7 @@ def _wiki_retrieval_probe(*, config_manager: ConfigManager, state_db: StateDB) -
             source_surface="wiki_status_probe",
             record_activity=False,
         )
-    except Exception:
+    except (OSError, RuntimeError):
         return "error", 0, False, {}
     wiki_lane = next(
         (

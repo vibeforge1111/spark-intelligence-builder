@@ -14,6 +14,12 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
 
+def _safe_json_loads(text: str) -> dict[str, Any]:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+
 
 _URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
 _VOICE_SPEAK_RE = re.compile(
@@ -420,7 +426,7 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                "summary_json": _safe_json_loads(str(row["summary_json"])) if row["summary_json"] else {},
             }
         )
     summary = {

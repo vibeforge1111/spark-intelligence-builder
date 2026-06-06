@@ -208,7 +208,7 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except (ConnectionError, TimeoutError, OSError, RuntimeError):
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
