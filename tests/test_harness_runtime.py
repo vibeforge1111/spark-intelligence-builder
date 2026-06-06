@@ -358,6 +358,34 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_execute_harness_chain_returns_primary_unchanged_when_no_follow_ups(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What chips are active right now?",
+        )
+
+        result_no_follow_ups = execute_harness_chain(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+            follow_up_harness_ids=None,
+        )
+
+        self.assertEqual(result_no_follow_ups.envelope.harness_id, "builder.direct")
+        self.assertIsNone(result_no_follow_ups.chain_status)
+        self.assertIsNone(result_no_follow_ups.chained_results)
+
+        result_blank_follow_ups = execute_harness_chain(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+            follow_up_harness_ids=["", "   "],
+        )
+
+        self.assertIsNone(result_blank_follow_ups.chain_status)
+        self.assertIsNone(result_blank_follow_ups.chained_results)
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
