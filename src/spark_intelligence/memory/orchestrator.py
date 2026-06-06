@@ -2747,6 +2747,16 @@ def recover_task_context_in_memory(
             reason="sdk_unavailable",
             shadow_only=False,
         )
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="recover_task_context",
+            subject=subject,
+            predicate=None,
+            query=query,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
         _record_memory_read_event(
             state_db=state_db,
             result=read_result,
@@ -2832,6 +2842,16 @@ def recall_episodic_context_in_memory(
             abstained=True,
             reason="sdk_unavailable",
             shadow_only=False,
+        )
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="recall_episodic_context",
+            subject=subject,
+            predicate=None,
+            query=query,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
         )
         _record_memory_read_event(
             state_db=state_db,
