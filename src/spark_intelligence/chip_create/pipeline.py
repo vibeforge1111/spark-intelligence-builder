@@ -71,6 +71,29 @@ def _ensure_chip_labs_importable(root: Path) -> None:
         sys.path.insert(0, src)
 
 
+def _ensure_chip_labs_scaffold_present(root: Path) -> None:
+    expected = root / "src" / "chip_labs" / "chip_factory" / "scaffold.py"
+    if not expected.exists():
+        raise ModuleNotFoundError(
+            f"chip_labs.chip_factory.scaffold not found under {root / 'src'}"
+        )
+
+
+def _evict_stale_chip_labs_modules(root: Path) -> None:
+    expected_src = (root / "src").resolve()
+    for name, module in list(sys.modules.items()):
+        if name != "chip_labs" and not name.startswith("chip_labs."):
+            continue
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            del sys.modules[name]
+            continue
+        try:
+            Path(module_file).resolve().relative_to(expected_src)
+        except ValueError:
+            del sys.modules[name]
+
+
 def _strip_code_fences(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -272,8 +295,10 @@ def create_chip_from_prompt(
             error=f"chip-labs root not found: {chip_labs_root}",
         )
 
-    _ensure_chip_labs_importable(chip_labs_root)
     try:
+        _ensure_chip_labs_scaffold_present(chip_labs_root)
+        _ensure_chip_labs_importable(chip_labs_root)
+        _evict_stale_chip_labs_modules(chip_labs_root)
         from chip_labs.chip_factory.scaffold import scaffold_chip
     except Exception as exc:
         return ChipCreateResult(
