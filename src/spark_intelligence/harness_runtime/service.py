@@ -367,11 +367,39 @@ def execute_harness_chain(
             human_id=envelope.human_id,
             agent_id=envelope.agent_id,
         )
-        current_result = execute_harness_task(
-            config_manager=config_manager,
-            state_db=state_db,
-            envelope=next_envelope,
-        )
+        try:
+            current_result = execute_harness_task(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=next_envelope,
+            )
+        except Exception as exc:
+            record_event(
+                state_db,
+                event_type="harness_chain_interrupted",
+                component="harness_runtime",
+                summary=(
+                    f"Harness chain interrupted at {harness_id} after "
+                    f"{len(chained_results)} prior follow-up step(s)."
+                ),
+                run_id=primary_result.run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code="harness_chain_interrupted",
+                facts={
+                    "primary_harness_id": primary_result.envelope.harness_id,
+                    "interrupted_harness_id": harness_id,
+                    "completed_follow_up_harness_ids": [
+                        item.envelope.harness_id for item in chained_results
+                    ],
+                    "completed_follow_up_count": len(chained_results),
+                    "error": str(exc),
+                },
+            )
+            raise
         chained_results.append(current_result)
         if current_result.status not in {"completed", "prepared"}:
             chain_status = "blocked"
