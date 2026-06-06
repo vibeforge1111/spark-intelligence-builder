@@ -329,7 +329,7 @@ def _maybe_save_reply_as_draft(
             save_draft,
             update_draft_content,
         )
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return reply_text
 
     user = str(external_user_id or "").strip()
@@ -350,7 +350,7 @@ def _maybe_save_reply_as_draft(
                 f"{timestamp}Z user={user} iter={is_iteration} "
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         pass
 
     if is_iteration:
@@ -362,13 +362,13 @@ def _maybe_save_reply_as_draft(
                 channel_kind="telegram",
                 user_message=user_message,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             source_draft = None
         if source_draft is not None:
             on_topic = True
             try:
                 on_topic = reply_resembles_draft(source_draft.content, reply)
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 on_topic = True
             if on_topic:
                 try:
@@ -378,7 +378,7 @@ def _maybe_save_reply_as_draft(
                         content=reply,
                         chip_used=chip_used,
                     )
-                except Exception:
+                except (OSError, RuntimeError, ValueError):
                     pass
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
@@ -393,7 +393,7 @@ def _maybe_save_reply_as_draft(
                     session_id=session_id,
                     chip_used=chip_used,
                 )
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 pass
             return reply_text
         try:
@@ -405,7 +405,7 @@ def _maybe_save_reply_as_draft(
                 session_id=session_id,
                 chip_used=chip_used,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
         return reply_text
 
@@ -419,7 +419,7 @@ def _maybe_save_reply_as_draft(
                 session_id=session_id,
                 chip_used=chip_used,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
         return reply_text
 
@@ -442,7 +442,7 @@ def _maybe_capture_user_instruction(
             detect_instruction_intent,
             matching_instructions_to_archive,
         )
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return reply_text
     if not user_message or not external_user_id:
         return reply_text
@@ -468,7 +468,7 @@ def _maybe_capture_user_instruction(
                 needle=text_value,
                 limit=3,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             return reply_text
         if not matches:
             return f"{base}\n\n_(no matching saved instruction to forget for: \"{text_value[:120]}\")_\n"
@@ -477,7 +477,7 @@ def _maybe_capture_user_instruction(
             try:
                 if archive_instruction(state_db, instruction_id=inst.instruction_id):
                     archived_texts.append(inst.instruction_text)
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 continue
         if not archived_texts:
             return reply_text
@@ -491,7 +491,7 @@ def _maybe_capture_user_instruction(
             instruction_text=text_value,
             source="explicit",
         )
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return reply_text
     return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
 
@@ -868,7 +868,7 @@ def _build_voice_chip_payload(
                 "claim_boundary": "Provider identity can guide recommendations; dedicated STT/TTS probes decide readiness.",
             }
         )
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         payload["provider_error"] = str(exc)
     if normalized is not None:
         payload.update(
@@ -891,7 +891,7 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
         return None
     try:
         audio_bytes = base64.b64decode(encoded, validate=True)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise RuntimeError("Telegram runner provided invalid embedded audio bytes.") from exc
     if not audio_bytes:
         raise RuntimeError("Telegram runner provided empty embedded audio bytes.")
@@ -1012,7 +1012,7 @@ def _prepare_telegram_media_input(
                 audio_bytes=audio_bytes,
                 file_path=file_path,
             )
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return {
             "effective_text": None,
             "transcript_text": None,
@@ -1052,7 +1052,7 @@ def _prepare_telegram_media_input(
             audio_bytes=audio_bytes,
             file_path=file_path,
         )
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return {
             "effective_text": None,
             "transcript_text": None,
@@ -1221,7 +1221,7 @@ def simulate_telegram_update(
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
-                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                except (OSError, RuntimeError, ValueError) as exc:  # pragma: no cover - exercised by live adapter failures
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
@@ -1289,7 +1289,7 @@ def simulate_telegram_update(
                             detect_instruction_intent as _detect_instruction_intent,
                         )
                         _instruction_intent = _detect_instruction_intent(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _instruction_intent = None
                     if _instruction_intent is not None:
                         try:
@@ -1302,7 +1302,7 @@ def simulate_telegram_update(
 
                                 if _detect_generic_memory_deletion(effective_text) is not None:
                                     _instruction_intent = None
-                        except Exception:
+                        except (OSError, RuntimeError, ValueError):
                             pass
                     try:
                         memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
@@ -1313,7 +1313,7 @@ def simulate_telegram_update(
                             )
 
                             _generic_memory_observation = _detect_generic_memory_observation(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _generic_memory_observation = None
                     try:
                         from spark_intelligence.mission_control import (
@@ -1321,7 +1321,7 @@ def simulate_telegram_update(
                         )
 
                         _mission_control_query = _looks_like_mission_control_query(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _mission_control_query = False
                     try:
                         from spark_intelligence.schedule_bridge import (
@@ -1347,7 +1347,7 @@ def simulate_telegram_update(
                         _pending_delete = _peek_pending_delete(str(normalized.telegram_user_id))
                         _confirmation_yes = _is_confirm_yes(effective_text)
                         _confirmation_no = _is_confirm_no(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _schedule_intent = None
                         _delete_intent = None
                         _pending_delete = None
@@ -1359,7 +1359,7 @@ def simulate_telegram_update(
                         sid = str(_pending_delete.get("schedule_id") or "")
                         try:
                             ok = _delete_schedule(sid) if sid else False
-                        except Exception:
+                        except (OSError, RuntimeError, ValueError):
                             ok = False
                         if ok:
                             outbound_text = _fmt_delete_success(_pending_delete)
@@ -1381,7 +1381,7 @@ def simulate_telegram_update(
                     _shortcircuited = True
                     try:
                         existing = _fetch_schedules()
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         existing = []
                     matches = _match_schedules(existing, _delete_intent.get("hints", {}))
                     if len(matches) == 0:
@@ -1410,14 +1410,14 @@ def simulate_telegram_update(
                             format_board_from_spawner as _fmt_board,
                         )
                         _board_intent = _detect_board_intent(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _board_intent = None
                     try:
                         from spark_intelligence.loop_bridge import (
                             detect_loop_invoke_intent as _detect_loop_intent,
                         )
                         _loop_intent = _detect_loop_intent(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _loop_intent = None
                     _chip_create_intent = None
                     _schedule_create_intent = None
@@ -1427,7 +1427,7 @@ def simulate_telegram_update(
                             format_chip_create_suggestion as _fmt_chip_create,
                         )
                         _chip_create_intent = _detect_chip_create_intent(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _chip_create_intent = None
                     try:
                         from spark_intelligence.schedule_create_bridge import (
@@ -1435,7 +1435,7 @@ def simulate_telegram_update(
                             format_schedule_create_suggestion as _fmt_sch_create,
                         )
                         _schedule_create_intent = _detect_sch_create_intent(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _schedule_create_intent = None
                     if _generic_memory_observation is not None or _mission_control_query:
                         pass
@@ -1504,7 +1504,7 @@ def simulate_telegram_update(
                         # "what's running" queries.
                         try:
                             show_board = re.search(r"\brunning\b", effective_text, re.IGNORECASE) and _has_live_missions()
-                        except Exception:
+                        except (OSError, RuntimeError, ValueError):
                             show_board = False
                         if show_board:
                             outbound_text = _fmt_board()
@@ -1513,7 +1513,7 @@ def simulate_telegram_update(
                         else:
                             try:
                                 outbound_text = _fmt_schedules()
-                            except Exception as exc:
+                            except (OSError, RuntimeError, ValueError) as exc:
                                 outbound_text = f"Could not reach scheduler: {exc}"
                             bridge_mode = "schedule_list_shortcircuit"
                             routing_decision = "schedule_list_shortcircuit"
@@ -1542,7 +1542,7 @@ def simulate_telegram_update(
                             format_clarifying_question as _fmt_clarify,
                         )
                         _ambiguous = _detect_ambiguous(effective_text)
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         _ambiguous = None
                     if _ambiguous is not None:
                         _shortcircuited = True
@@ -1688,7 +1688,7 @@ def simulate_telegram_update(
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
-                except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                except (OSError, RuntimeError, ValueError) as exc:  # pragma: no cover - exercised by live adapter failures
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
@@ -2749,7 +2749,7 @@ def _telegram_voice_registry_profile() -> dict[str, Any]:
     registry_path = _telegram_voice_profile_registry_path()
     try:
         payload = json.loads(registry_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return {}
     profiles = payload.get("profiles") if isinstance(payload, dict) else None
     if not isinstance(profiles, dict):
@@ -3047,7 +3047,7 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                 "audio_effect": "parrot",
                 "audio_effect_version": TELEGRAM_PARROT_EFFECT_VERSION,
             }
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return payload
 
 
@@ -3337,7 +3337,7 @@ def _send_telegram_reply(
                     voice_input_runtime_state=voice_input_runtime_state,
                 )
                 delivery_medium = "audio"
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 voice_error = _safe_voice_error_message(exc)
                 guarded["actions"] = ["voice_reply_fallback_to_text", *list(guarded["actions"])]
                 if force_voice:
@@ -3702,7 +3702,7 @@ def _load_telegram_persona_surface_state(
     )
     try:
         agent_name = read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_name
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         agent_name = None
     return profile, agent_name
 
@@ -6086,7 +6086,7 @@ def _memory_doctor_previous_gateway_record(
         from spark_intelligence.gateway.tracing import read_gateway_traces
 
         traces = read_gateway_traces(config_manager, limit=80)
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return None
     normalized_user_id = str(external_user_id or "").strip()
     normalized_session_id = str(session_id or "").strip()
@@ -7589,7 +7589,7 @@ def _telegram_voice_bot_update_probe(config_manager: ConfigManager) -> dict[str,
         return {"ready": False, "status": "bot token missing"}
     try:
         payload = client._call("getWebhookInfo", {})
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return {"ready": False, "status": f"Bot API check failed: {_safe_voice_error_message(exc)}"}
     info = payload.get("result") if isinstance(payload, dict) else {}
     if not isinstance(info, dict):
@@ -8040,7 +8040,7 @@ def _telegram_voice_secret_is_available(
         return False
     try:
         return bool(str(config_manager.read_env_map().get(env_name) or "").strip())
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -8052,7 +8052,7 @@ def _telegram_voice_env_value(env_name: str, *, config_manager: ConfigManager | 
         return ""
     try:
         return str(config_manager.read_env_map().get(env_name) or "").strip()
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return ""
 
 
@@ -8303,7 +8303,7 @@ def _telegram_voice_dashboard_agent_label(*, state_db: StateDB, human_id: str | 
             name = str(read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_name or "").strip()
             if name:
                 return name
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
     if agent_id:
         return f"Agent {hashlib.sha256(str(agent_id).encode('utf-8')).hexdigest()[:8]}"
@@ -8625,7 +8625,7 @@ def _list_elevenlabs_voices(*, config_manager: ConfigManager | None = None) -> t
         return [], f"ElevenLabs returned HTTP {exc.code}."
     except URLError as exc:
         return [], f"ElevenLabs is unreachable: {_safe_voice_error_message(exc)}"
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return [], _safe_voice_error_message(exc)
     raw_voices = payload.get("voices") if isinstance(payload, dict) else None
     if not isinstance(raw_voices, list):
