@@ -110,9 +110,16 @@ class HarnessCliTests(SparkTestCase):
     def test_harness_execute_voice_io_attaches_local_authority_before_hooks(self) -> None:
         seen_hooks: list[str] = []
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(
+            _config_manager,
+            *,
+            hook: str,
+            payload: dict[str, object],
+            governor_decision: dict[str, object] | None = None,
+        ):
             seen_hooks.append(hook)
             if hook == "voice.status":
+                self.assertIsNone(governor_decision)
                 return SimpleNamespace(
                     ok=True,
                     chip_key="domain-chip-voice-comms",
@@ -128,6 +135,7 @@ class HarnessCliTests(SparkTestCase):
             self.assertEqual(hook, "voice.speak")
             self.assertEqual(payload["text"], "Hello from the CLI harness.")
             governor = payload["governor_decision"]
+            self.assertEqual(governor_decision, governor)
             self.assertEqual(governor["schema_version"], "governor-decision-v1")
             self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.speak")
             return SimpleNamespace(
