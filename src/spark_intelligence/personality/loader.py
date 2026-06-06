@@ -2078,6 +2078,7 @@ def detect_and_persist_nl_preferences(
     session_id: str | None = None,
     turn_id: str | None = None,
     channel_kind: str | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, float] | None:
     """Detect NL personality preferences in a user message and persist them.
 
@@ -2111,6 +2112,7 @@ def detect_and_persist_nl_preferences(
                 session_id=session_id,
                 turn_id=turn_id,
                 channel_kind=channel_kind,
+                governor_decision=governor_decision,
             )
         except Exception:
             pass

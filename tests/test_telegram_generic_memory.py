@@ -567,6 +567,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
     def test_build_researcher_reply_answers_natural_sol_purpose_recall_without_provider(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
+        _payload, governor_decision = self.memory_write_authority(
+            request_id="req-sol-purpose-seed-authority",
+            session_id="session-sol-purpose",
+            human_id="human-1",
+            user_message="Remember that Sol was used as our low-stakes episodic recall probe.",
+            source_kind="telegram_generic_memory_test_seed",
+        )
         write_raw_episode_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
@@ -579,6 +586,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
             session_id="session-sol-purpose",
             turn_id="req-sol-purpose-seed",
             channel_kind="telegram",
+            governor_decision=governor_decision,
         )
 
         with patch(
