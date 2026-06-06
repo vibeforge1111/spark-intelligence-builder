@@ -358,6 +358,72 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_harness_execution_result_payload_serializes_chain_status_and_chained_results(self) -> None:
+        from spark_intelligence.harness_runtime.service import (
+            HarnessExecutionResult,
+            HarnessTaskEnvelope,
+        )
+
+        def _make_envelope(envelope_id: str, harness_id: str) -> HarnessTaskEnvelope:
+            return HarnessTaskEnvelope(
+                envelope_id=envelope_id,
+                task="Task for " + harness_id,
+                harness_id=harness_id,
+                owner_system="owner",
+                backend_kind="backend",
+                session_scope="task",
+                prompt_strategy="direct",
+                route_mode="router",
+                required_capabilities=[],
+                artifacts_expected=[],
+                next_actions=[],
+                limitations=[],
+                channel_kind=None,
+                session_id=None,
+                human_id=None,
+                agent_id=None,
+            )
+
+        chained = HarnessExecutionResult(
+            envelope=_make_envelope("htask:chained", "voice.io"),
+            run_id="run:chained",
+            status="completed",
+            summary="Chained voice harness summary.",
+            artifacts={"spoken_audio": {"audio_bytes": 5}},
+            next_actions=[],
+        )
+        primary = HarnessExecutionResult(
+            envelope=_make_envelope("htask:primary", "researcher.advisory"),
+            run_id="run:primary",
+            status="completed",
+            summary="Primary researcher harness summary.",
+            artifacts={"reply_text": "Researcher reply."},
+            next_actions=["follow-up next action"],
+            chain_status="completed",
+            chained_results=[chained],
+        )
+
+        payload = primary.to_payload()
+
+        self.assertEqual(payload["chain_status"], "completed")
+        self.assertEqual(len(payload["chained_results"]), 1)
+        chained_payload = payload["chained_results"][0]
+        self.assertEqual(chained_payload["envelope"]["harness_id"], "voice.io")
+        self.assertEqual(chained_payload["run_id"], "run:chained")
+        self.assertEqual(chained_payload["status"], "completed")
+
+        no_chain = HarnessExecutionResult(
+            envelope=_make_envelope("htask:solo", "builder.direct"),
+            run_id="run:solo",
+            status="prepared",
+            summary="Solo builder.direct.",
+            artifacts={},
+            next_actions=[],
+        )
+        solo_payload = no_chain.to_payload()
+        self.assertIsNone(solo_payload["chain_status"])
+        self.assertEqual(solo_payload["chained_results"], [])
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
