@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -601,7 +602,7 @@ def _execute_voice_io_harness(
                 step="voice_speak_retry",
             )
             artifacts["retry_token"] = {
-                "retry_command": f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} --home {config_manager.paths.home} --harness-id voice.io",
+                "retry_command": f"python -m spark_intelligence.cli harness execute {shlex.quote(json.dumps(envelope.task))} --home {shlex.quote(str(config_manager.paths.home))} --harness-id voice.io",
                 "reason": str(exc),
             }
             return (
@@ -695,7 +696,7 @@ def _execute_swarm_escalation_harness(
             step="swarm_payload_repair",
         )
         artifacts["retry_token"] = {
-            "retry_command": f"python -m spark_intelligence.cli swarm status --home {config_manager.paths.home}",
+            "retry_command": f"python -m spark_intelligence.cli swarm status --home {shlex.quote(str(config_manager.paths.home))}",
             "reason": "Inspect Swarm bridge readiness before retrying this harness.",
         }
         return (
@@ -721,11 +722,11 @@ def _execute_swarm_escalation_harness(
     }
     artifacts["resume_token"] = {
         "resume_kind": "swarm_dispatch",
-        "resume_command": f"python -m spark_intelligence.cli swarm sync --home {config_manager.paths.home}",
+        "resume_command": f"python -m spark_intelligence.cli swarm sync --home {shlex.quote(str(config_manager.paths.home))}",
         "reason": "Dispatch the prepared Spark Swarm collective payload when you want to move from dry-run to upload.",
     }
     artifacts["retry_token"] = {
-        "retry_command": f"python -m spark_intelligence.cli swarm sync --dry-run --home {config_manager.paths.home}",
+        "retry_command": f"python -m spark_intelligence.cli swarm sync --dry-run --home {shlex.quote(str(config_manager.paths.home))}",
         "reason": "Rebuild the latest collective payload before retrying if the Swarm state changes.",
     }
     if sync_result.ok:
@@ -845,11 +846,12 @@ def _build_harness_resume_token(
     step: str,
 ) -> dict[str, Any]:
     command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
-        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
+        f"python -m spark_intelligence.cli harness execute {shlex.quote(json.dumps(envelope.task))} "
+        f"--home {shlex.quote(str(config_manager.paths.home))} "
+        f"--harness-id {shlex.quote(str(envelope.harness_id))}"
     )
     if envelope.channel_kind:
-        command += f" --channel-kind {envelope.channel_kind}"
+        command += f" --channel-kind {shlex.quote(str(envelope.channel_kind))}"
     return {
         "resume_kind": step,
         "resume_command": command,
