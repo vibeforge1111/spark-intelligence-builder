@@ -181,6 +181,14 @@ def build_harness_task_envelope(
     )
 
 
+def _terminal_event_type_for_status(status: str) -> str | None:
+    if status == "blocked":
+        return "harness_execution_blocked"
+    if status == "needs_input":
+        return "harness_execution_needs_input"
+    return None
+
+
 def execute_harness_task(
     *,
     config_manager: ConfigManager,
@@ -296,6 +304,26 @@ def execute_harness_task(
                 "artifact_keys": sorted(artifacts.keys()),
             },
         )
+        terminal_event_type = _terminal_event_type_for_status(status)
+        if terminal_event_type:
+            record_event(
+                state_db,
+                event_type=terminal_event_type,
+                component="harness_runtime",
+                summary=summary,
+                run_id=run.run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code=terminal_event_type,
+                facts={
+                    "harness_id": envelope.harness_id,
+                    "execution_status": status,
+                    "artifact_keys": sorted(artifacts.keys()),
+                },
+            )
         return HarnessExecutionResult(
             envelope=envelope,
             run_id=run.run_id,
