@@ -4518,7 +4518,10 @@ def handle_status(args: argparse.Namespace) -> int:
         "auth": json.loads(auth_report.to_json()),
         "gateway": json.loads(gateway.to_json()),
         "researcher": json.loads(researcher.to_json()),
-        "swarm": json.loads(swarm.to_json()),
+        try:
+            "swarm": json.loads(swarm.to_json()),
+        except json.JSONDecodeError:
+            return {}  # malformed JSON, return safe default
         "browser": browser,
         "runtime": {
             "install_profile": config_manager.get_path("runtime.install.profile"),
