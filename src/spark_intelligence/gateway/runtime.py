@@ -26,6 +26,7 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
+from spark_intelligence.gateway.tool_ledger import TOOL_LEDGER_INGEST_COMMANDS, ingest_tool_ledger_payload
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.observability.store import record_environment_snapshot
@@ -479,6 +480,15 @@ def gateway_serve_stdio(
             if command in {"shutdown", "stop"}:
                 write_response({"ok": True, "request_id": request_id, "status": "shutdown"})
                 break
+            if command in TOOL_LEDGER_INGEST_COMMANDS:
+                ingest_result = ingest_tool_ledger_payload(state_db, request)
+                response = {"ok": True, "request_id": request_id}
+                response.update(ingest_result.to_payload())
+                if response.get("status"):
+                    response["ledger_status"] = response["status"]
+                response["status"] = "ingested"
+                write_response(response)
+                continue
             if command not in {"simulate_telegram_update", "telegram_update"}:
                 raise ValueError(f"unsupported stdio command: {command}")
             update_payload = request.get("update_payload")

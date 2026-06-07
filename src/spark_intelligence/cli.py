@@ -68,6 +68,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
+from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
 from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import (
@@ -2190,6 +2191,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="simulation",
         help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
     )
+    gateway_ingest_tool_ledger_parser = gateway_subparsers.add_parser(
+        "ingest-tool-ledger",
+        help="Persist one governed tool-ledger row into the canonical observability store",
+    )
+    gateway_ingest_tool_ledger_parser.add_argument("ledger_file", help="JSON ledger row file, or '-' for stdin")
+    gateway_ingest_tool_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_ingest_tool_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
         help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
@@ -5648,6 +5656,24 @@ def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
         error_stream=sys.stderr,
         simulation=args.origin != "telegram-runtime",
     )
+
+
+def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        raw_payload = sys.stdin.read() if args.ledger_file == "-" else Path(args.ledger_file).read_text(encoding="utf-8-sig")
+        payload = json.loads(raw_payload)
+        if not isinstance(payload, dict):
+            raise ValueError("ledger file must contain a JSON object")
+        result = ingest_tool_ledger_payload(state_db, payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(result.to_json() if args.json else result.to_text())
+    return 0
 
 
 def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
@@ -9797,6 +9823,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "serve-stdio":
         return handle_gateway_serve_stdio(args)
+    if args.command == "gateway" and args.gateway_command == "ingest-tool-ledger":
+        return handle_gateway_ingest_tool_ledger(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "shadow-telegram":
