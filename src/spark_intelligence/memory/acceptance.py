@@ -772,8 +772,13 @@ def export_telegram_memory_acceptance_pack(
             "operator_markdown": str(resolved_markdown_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_markdown_path.write_text(_render_operator_acceptance_markdown(payload), encoding="utf-8")
+    import os as _os
+    _tmp1 = resolved_write_path.with_suffix(".tmp")
+    _tmp1.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _os.replace(_tmp1, resolved_write_path)
+    _tmp2 = resolved_markdown_path.with_suffix(".tmp")
+    _tmp2.write_text(_render_operator_acceptance_markdown(payload), encoding="utf-8")
+    _os.replace(_tmp2, resolved_markdown_path)
     return TelegramMemoryAcceptancePackExportResult(output_dir=resolved_output_dir, payload=payload)
 
 
@@ -856,7 +861,10 @@ def run_telegram_memory_acceptance(
             "summary_json": str(resolved_write_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    import os as _os
+    _resolved_write_path_tmp = resolved_write_path.with_suffix(".tmp")
+    _resolved_write_path_tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _os.replace(_resolved_write_path_tmp, resolved_write_path)
     return TelegramMemoryAcceptanceResult(output_dir=resolved_output_dir, payload=payload)
 
 
@@ -913,7 +921,10 @@ def run_telegram_memory_gauntlet(
             message_id_base=message_id_base,
         )
         update_path = update_dir / f"{index:02d}-{case.case_id}.json"
-        update_path.write_text(json.dumps(update_payload, indent=2), encoding="utf-8")
+        import os as _os
+    _update_path_tmp = update_path.with_suffix(".tmp")
+    _update_path_tmp.write_text(json.dumps(update_payload, indent=2), encoding="utf-8")
+    _os.replace(_update_path_tmp, update_path)
         movement_before = _movement_snapshot(config_manager=config_manager)
         raw = gateway_simulate_telegram_update(
             config_manager=config_manager,
@@ -963,7 +974,10 @@ def run_telegram_memory_gauntlet(
             "telegram_updates_dir": str(update_dir),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    import os as _os
+    _resolved_write_path_tmp = resolved_write_path.with_suffix(".tmp")
+    _resolved_write_path_tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _os.replace(_resolved_write_path_tmp, resolved_write_path)
     return TelegramMemoryGauntletResult(output_dir=resolved_output_dir, payload=payload)
 
 
