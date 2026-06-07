@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -982,10 +983,11 @@ def _build_harness_resume_token(
 ) -> dict[str, Any]:
     command = (
         f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
-        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
+        f"--home {shlex.quote(str(config_manager.paths.home))} "
+        f"--harness-id {shlex.quote(envelope.harness_id)}"
     )
     if envelope.channel_kind:
-        command += f" --channel-kind {envelope.channel_kind}"
+        command += f" --channel-kind {shlex.quote(envelope.channel_kind)}"
     return {
         "resume_kind": step,
         "resume_command": command,
