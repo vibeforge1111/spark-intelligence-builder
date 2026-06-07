@@ -94,6 +94,7 @@ def execute_direct_provider_prompt(
                 f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
             )
     except Exception as exc:
+        redacted_msg = _redact_provider_error(exc, provider)
         _record_provider_execution_event(
             state_db=state_db,
             provider=provider,
@@ -101,9 +102,9 @@ def execute_direct_provider_prompt(
             event_type="dispatch_failed",
             summary=f"Direct provider {provider.provider_id} failed.",
             route_latency_ms=_elapsed_ms(started),
-            failure_reason=_redact_provider_error(exc, provider),
+            failure_reason=redacted_msg,
         )
-        raise
+        raise RuntimeError(redacted_msg) from exc
     _record_provider_execution_event(
         state_db=state_db,
         provider=provider,
