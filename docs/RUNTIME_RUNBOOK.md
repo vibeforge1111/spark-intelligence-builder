@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Runtime Runbook
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 This runbook is for local operators and future implementation sessions. It captures the safe checks to run before calling Builder healthy.
 
@@ -97,6 +97,35 @@ For gateway integrations that cannot call Python APIs directly, use the stdio in
 ```
 
 Rows missing the authority join fields must be rejected. Ingest is audit persistence only; it does not authorize execution.
+
+## Self-Evolution Checks
+
+Builder self-evolution remains supervised. The safe baseline is a no-op
+manifest drill, not autonomous mutation.
+
+For observe-only readiness:
+
+```powershell
+spark-intelligence harness self-evolution-snapshot --json
+```
+
+For a supervised no-op private-promotion drill:
+
+```powershell
+spark-intelligence harness change-manifest-runner `
+  --manifest <change-manifest-v1.json> `
+  --requested-verdict promote_private `
+  --run-tests `
+  --allow-private-promotion `
+  --cwd C:\Users\USER\.spark\modules\spark-intelligence-builder\source `
+  --json
+```
+
+Reference evidence: [SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md](./SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md).
+
+Do not claim autonomous self-evolution until a real manifest has exact artifact
+refs, protected-component approvals where needed, dry-run apply proof, test
+proof, and rollback proof.
 
 ## Provider Rotation
 

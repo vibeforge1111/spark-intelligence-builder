@@ -21,7 +21,7 @@ Evidence checked on 2026-06-08:
   `C:\Users\USER\.spark\modules\spark-harness-core\source`
 - `spark-intelligence-builder` installed source at
   `C:\Users\USER\.spark\modules\spark-intelligence-builder\source`
-- `spark-cli` working tree at `C:\tmp\s20bu\tools\spark-cli`
+- `spark-cli` installed tool tree at `C:\Users\USER\.spark\tools\spark-cli`
 - live Builder state at `C:\Users\USER\.spark\state\spark-intelligence`
 - Spawner and Telegram source trees in read-only audit mode only, because their
   worktrees are dirty from a parallel test/fix session
@@ -46,14 +46,16 @@ ledger spine, but Spark is not done.
   governed ledgers.
 - Fixed: installed Builder manifest provenance is back to AGPL-3.0-only and
   declares `spark-harness-core`.
-- Partially fixed: self-evolution now has Builder evidence plumbing and a
-  guarded change-manifest test runner, but no automatic code mutation,
-  rollback executor, or production promotion loop.
+- Partially fixed: self-evolution now has Builder evidence plumbing, a guarded
+  change-manifest test runner, and a supervised no-op private-promotion drill,
+  but no automatic code mutation, rollback executor, or production promotion
+  loop.
 - Partially fixed: observability has a canonical governed tool ledger, but the
   live ledger currently contains only `spark_cli` and `telegram` rows. Builder
   and Spawner execution are not yet fully represented as first-class surfaces.
-- Still open: `state.db` is still large, about 655 MB, and needs a controlled
-  retention plus VACUUM pass with backup and before/after counts.
+- Closed for this pass: `state.db` retention and VACUUM were run with backup,
+  before/after counts, and doctor verification. The DB shrank from about 655 MB
+  to about 225 MB while preserving canonical tool ledgers.
 - Still open: source-of-truth is not globally solved. The installed Builder is
   fixed, but `C:\Users\USER\Desktop\spark-intelligence-builder` remains dirty
   and divergent.
@@ -74,10 +76,10 @@ ledger spine, but Spark is not done.
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Live ledger adoption | live doctor reports `total=82 surfaces=spark_cli=69, telegram=13` | Partial |
-| Live DB size | `state.db` is 654,868,480 bytes; `builder_events=61022`, `event_log=61022` | Open |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; after drill/check events the DB is 224,911,360 bytes with `builder_events=15,350`, `event_log=15,350`, and `tool_call_ledger=82` | Closed for this pass |
 | Orphaned root rivers | root `.spark` now has only `outcomes.jsonl` and `predictions.jsonl` from March 2026 | Mostly closed, verify archive policy |
 | Builder source truth | installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty | Partial |
-| Self-evolution | Builder has observe snapshot and change-manifest runner; no automatic mutation executor | Partial |
+| Self-evolution | Builder has observe snapshot, change-manifest runner, and supervised no-op drill `evt-de49f89186f4`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
 
@@ -108,6 +110,10 @@ ledger spine, but Spark is not done.
   expectations.
 - Added Builder self-evolution observation and change-manifest runner surfaces
   that consume canonical ledger evidence and can run guarded test commands.
+- Ran the supervised no-op change-manifest drill documented in
+  `SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`.
+- Ran the controlled state retention/VACUUM pass documented in
+  `SPARK_STATE_DB_RETENTION_RUN_2026-06-08.md`.
 
 ### Spark CLI
 
@@ -164,13 +170,12 @@ until that session completes and the final diff is tested.
 
 ### P1 - Observability And State Hygiene
 
-5. Run a controlled state retention and VACUUM pass.
-   - Back up `state.db`.
-   - Run `jobs prune-observability` with explicit cutoff and
-     `--include-gateway-logs`.
-   - Run SQLite `VACUUM` only after before/after row counts are captured.
-   - Verify doctor stays green and ledger rows newer than the cutoff remain.
-   - Record final DB size. Current DB size is about 655 MB.
+5. Keep the controlled state retention procedure repeatable.
+   - Completed on 2026-06-08 with backup, explicit cutoff, before/after
+     counts, `--include-gateway-logs`, `VACUUM`, and doctor verification.
+   - Re-run only with a fresh backup and a new before/after evidence record.
+   - Add a scheduled safe report for large table counts and DB file size before
+     future pruning.
 
 6. Backfill or map the cross-surface join key.
    - `turn_id` is now canonical for tool ledgers, but SIB still has many older
@@ -201,11 +206,13 @@ until that session completes and the final diff is tested.
      apply step, rollback step, manifest provenance, and maintainer approval for
      protected components.
 
-10. Add a no-op mutation drill.
-    - Create a harmless change manifest that changes no production code.
-    - Run required tests through the Builder change-manifest runner.
-    - Verify promotion can reach `promote_private` only with explicit flags and
-      cannot touch protected components without approval evidence.
+10. Preserve the no-op mutation drill as the private-promotion baseline.
+    - Completed on 2026-06-08 with event `evt-de49f89186f4`.
+    - Required test passed through the Builder change-manifest runner.
+    - The result reached `promote_private` only with explicit
+      `--allow-private-promotion`.
+    - Next proof must cover protected-component approval rejection, dry-run
+      apply, and rollback before any real mutation claim.
 
 11. Define the mutation executor boundary before writing one.
     - Executor input: accepted manifest, exact patch/artifact refs, required
@@ -267,7 +274,7 @@ git -C C:\Users\USER\.spark\modules\spawner-ui\source status --short
 git -C C:\Users\USER\.spark\modules\spark-telegram-bot\source status --short
 git -C C:\Users\USER\.spark\modules\spark-intelligence-builder\source status --short
 git -C C:\Users\USER\.spark\modules\spark-harness-core\source status --short
-git -C C:\tmp\s20bu\tools\spark-cli status --short
+git -C C:\Users\USER\.spark\tools\spark-cli status --short
 ```
 
 ```powershell
@@ -290,8 +297,8 @@ npm run build
 python -c "import sys; sys.path.insert(0, 'src'); import pytest; raise SystemExit(pytest.main(['tests/test_cli.py', '-q']))"
 ```
 
-Use the Spark CLI test command from `C:\tmp\s20bu\tools\spark-cli`; the explicit
-`src` insertion avoids accidentally importing the older installed CLI package.
+Use the Spark CLI test command from `C:\Users\USER\.spark\tools\spark-cli`; the
+explicit `src` insertion avoids accidentally importing a different CLI package.
 
 ## Suggested Next Execution Order
 
@@ -303,11 +310,12 @@ Use the Spark CLI test command from `C:\tmp\s20bu\tools\spark-cli`; the explicit
    `spawner`.
 4. Add Builder self-persist coverage for the busiest governed Builder tool paths
    and verify live adoption includes `builder`.
-5. Run controlled `state.db` prune plus VACUUM with backup and before/after
-   counts.
+5. Add the scheduled state-size/large-table retention report so future cleanup
+   is evidence-first.
 6. Resolve the Desktop Builder source-of-truth decision and update operator
    docs/memory to stop future stale-tree audits.
-7. Run the self-evolution no-op mutation drill and document the claim boundary.
+7. Define the self-evolution executor boundary, then prove dry-run apply and
+   rollback before touching production code.
 
 ## Current Claim Boundary
 

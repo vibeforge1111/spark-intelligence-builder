@@ -1,6 +1,6 @@
 # Spark Harness Contract
 
-Status: active runtime contract, updated 2026-06-07
+Status: active runtime contract, updated 2026-06-08
 
 ## Role Of This Repo
 
@@ -41,7 +41,13 @@ spark-intelligence gateway serve-stdio
 spark-intelligence harness tool-ledgers --turn-id <turn-id> --json
 spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
 spark-intelligence harness self-evolution-snapshot --json
+spark-intelligence harness change-manifest-runner --manifest <change-manifest-v1.json> --run-tests --json
 ```
+
+The 2026-06-08 supervised no-op drill is recorded in
+`docs/SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`. It proves private,
+explicitly flagged no-op promotion through the guarded runner; it does not prove
+autonomous mutation, protected-component approval handling, or rollback.
 
 ## Ledger Row Contract
 
