@@ -137,12 +137,14 @@ class AgentBlackBoxReport:
     checked_at: str
     request_id: str | None
     entries: list[BlackBoxEntry]
+    session_id: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "schema_version": AGENT_EVENT_SCHEMA_VERSION,
             "checked_at": self.checked_at,
             "request_id": self.request_id,
+            "session_id": self.session_id,
             "counts": {
                 "entries": len(self.entries),
                 "blocker_events": sum(1 for entry in self.entries if entry.blockers),
@@ -338,10 +340,16 @@ def build_agent_black_box_entries(
     state_db: StateDB,
     *,
     request_id: str | None = None,
+    session_id: str | None = None,
     limit: int = 20,
     external_entries: list[BlackBoxEntry] | None = None,
 ) -> list[BlackBoxEntry]:
-    rows = _recent_agent_event_rows(state_db, request_id=request_id, limit=limit)
+    rows = _recent_agent_event_rows(
+        state_db,
+        request_id=request_id,
+        session_id=session_id,
+        limit=limit,
+    )
     entries = [_black_box_entry_from_row(row) for row in rows]
     entries.extend(external_entries or [])
     entries.sort(key=lambda entry: (entry.created_at or "", entry.event_id), reverse=True)
@@ -352,15 +360,18 @@ def build_agent_black_box_report(
     state_db: StateDB,
     *,
     request_id: str | None = None,
+    session_id: str | None = None,
     limit: int = 20,
     external_entries: list[BlackBoxEntry] | None = None,
 ) -> AgentBlackBoxReport:
     return AgentBlackBoxReport(
         checked_at=utc_now_iso(),
         request_id=request_id,
+        session_id=session_id,
         entries=build_agent_black_box_entries(
             state_db,
             request_id=request_id,
+            session_id=session_id,
             limit=limit,
             external_entries=external_entries,
         ),
@@ -371,6 +382,7 @@ def _recent_agent_event_rows(
     state_db: StateDB,
     *,
     request_id: str | None,
+    session_id: str | None = None,
     limit: int,
 ) -> list[dict[str, Any]]:
     placeholders = ", ".join("?" for _ in AGENT_EVENT_TYPES)
@@ -380,6 +392,9 @@ def _recent_agent_event_rows(
     if request_id:
         where.append("request_id = ?")
         params.append(request_id)
+    if session_id:
+        where.append("session_id = ?")
+        params.append(session_id)
     params.append(max(1, int(limit)))
     with state_db.connect() as conn:
         rows = conn.execute(
