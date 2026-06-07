@@ -149,6 +149,11 @@ class TelegramBotApiClient:
             body = response.read().decode("utf-8")
         return self._decode_response(method, body)
 
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        """Remove control characters that could inject HTTP headers."""
+        return re.sub(r"[\r\n\x00]", "", filename).replace('"', '\\"')
+
     def _call_multipart(
         self,
         method: str,
@@ -159,6 +164,7 @@ class TelegramBotApiClient:
         mime_type: str,
         file_bytes: bytes,
     ) -> dict[str, Any]:
+        sanitized_filename = self._sanitize_filename(filename)
         boundary = f"----SparkTelegram{uuid.uuid4().hex}"
         body_parts: list[bytes] = []
         for name, value in fields.items():
@@ -177,7 +183,7 @@ class TelegramBotApiClient:
                 f"--{boundary}\r\n".encode("utf-8"),
                 (
                     f'Content-Disposition: form-data; name="{file_field}"; '
-                    f'filename="{filename}"\r\n'
+                    f'filename="{sanitized_filename}"\r\n'
                 ).encode("utf-8"),
                 f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
                 file_bytes,
