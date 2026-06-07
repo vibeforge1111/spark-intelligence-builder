@@ -322,6 +322,30 @@ def execute_harness_task(
             artifacts=artifacts,
             next_actions=list(envelope.next_actions),
         )
+    except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="harness_validation_failed",
+            summary=str(exc),
+            facts={"error": str(exc), "harness_id": envelope.harness_id, "error_type": "ValueError"},
+        )
+        record_event(
+            state_db,
+            event_type="harness_validation_failed",
+            component="harness_runtime",
+            summary=str(exc),
+            run_id=run.run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_validation_failed",
+            facts={"error": str(exc), "harness_id": envelope.harness_id},
+        )
+        raise
     except Exception as exc:
         close_run(
             state_db,
