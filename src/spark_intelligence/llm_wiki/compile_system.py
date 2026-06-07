@@ -91,7 +91,9 @@ def compile_system_wiki(
     for relative_path, content in pages.items():
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
         generated_files.append(relative_path)
     return LlmWikiSystemCompileResult(
         output_dir=root,
