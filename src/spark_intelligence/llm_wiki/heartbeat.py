@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -271,10 +272,18 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
     return reports_dir / f"{timestamp}.json"
 
 
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Temp + os.replace so a crash mid-write cannot truncate a canonical
+    observability file consumed by downstream wiki-status readers."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_json(report_path, payload)
     latest_path = config_manager.paths.home / "artifacts" / "wiki-heartbeat" / "latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_json(latest_path, payload)
 
 
 def _utc_timestamp() -> str:
