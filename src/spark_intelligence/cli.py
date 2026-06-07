@@ -63,6 +63,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_simulate_discord_message,
     gateway_simulate_telegram_update,
     gateway_simulate_whatsapp_message,
+    gateway_serve_stdio,
     gateway_start,
     gateway_status,
     gateway_trace_view,
@@ -2173,6 +2174,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
     )
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_serve_stdio_parser = gateway_subparsers.add_parser(
+        "serve-stdio",
+        help="Serve Telegram gateway turns over newline-delimited JSON on stdio",
+    )
+    gateway_serve_stdio_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_serve_stdio_parser.add_argument(
+        "--origin",
+        choices=("simulation", "telegram-runtime"),
+        default="simulation",
+        help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
+    )
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
         help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
@@ -5593,6 +5605,21 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    return gateway_serve_stdio(
+        config_manager,
+        state_db,
+        input_stream=sys.stdin,
+        output_stream=sys.stdout,
+        error_stream=sys.stderr,
+        simulation=args.origin != "telegram-runtime",
+    )
 
 
 def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
@@ -9571,6 +9598,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_oauth_callback(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
+    if args.command == "gateway" and args.gateway_command == "serve-stdio":
+        return handle_gateway_serve_stdio(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "shadow-telegram":
