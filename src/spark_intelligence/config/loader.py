@@ -500,7 +500,7 @@ class ConfigManager:
                 error_message=error_message,
                 summary=summary,
             )
-        except Exception:
+        except Exception as _e:
             return
 
     @staticmethod
