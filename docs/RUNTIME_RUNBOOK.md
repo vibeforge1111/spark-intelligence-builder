@@ -98,7 +98,7 @@ After authority or observability changes, verify the canonical ledger path:
 spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
 spark-intelligence harness tool-ledgers --surface spark_cli --limit 5 --json
 spark-intelligence harness trace-turn --turn-id <turn-id> --json
-spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --json
+spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --include-unowned-jsonl --json
 ```
 
 Use `harness trace-turn` when debugging one governed turn. It returns exact
@@ -109,6 +109,9 @@ the join and should not be claimed as fully traceable.
 Run `jobs observability-report` before any future prune/VACUUM pass. It reports
 `state.db` size, table counts, prunable row counts for the cutoff, and optional
 gateway JSONL sizes without deleting anything.
+With `--include-unowned-jsonl`, it also lists loose `.jsonl` files under the
+Spark root by size and ownership class without opening, moving, or deleting
+them.
 
 For gateway integrations that cannot call Python APIs directly, use the stdio ingest seam:
 

@@ -79,7 +79,7 @@ ledger spine, but Spark is not done.
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Live ledger adoption | live doctor reports `total=87 surfaces=builder=1, spark_cli=69, telegram=17` | Partial; Spawner missing |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
-| Orphaned root rivers | root `.spark` now has only `outcomes.jsonl` and `predictions.jsonl` from March 2026 | Mostly closed, verify archive policy |
+| Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 189,956,105 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor` | Reportable; archive/quarantine policy pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, and Builder ledger `ledger:fd24aee5b4fb46e08bc36925`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
@@ -106,6 +106,8 @@ ledger spine, but Spark is not done.
 - Added `harness import-cli-ledgers` for Spark CLI approval ledger files.
 - Added retention/prune plumbing for canonical ledgers and gateway logs.
 - Added live doctor visibility for ledger adoption by surface.
+- Added read-only loose JSONL residue reporting to `jobs observability-report`
+  so large legacy rivers can be classified before any archive/quarantine pass.
 - Restored installed Builder AGPL-3.0-only provenance and declared
   `spark-harness-core` in `needs.modules`.
 - Added installed `docs/SOURCE_TRUTH.md` so future audits treat
@@ -206,11 +208,14 @@ until that session completes and the final diff is tested.
      them to Builder's gateway.
 
 8. Keep orphaned rivers quarantined.
-   - Root `.spark` now only shows `outcomes.jsonl` and `predictions.jsonl`.
-   - Decide whether these two March 2026 files are evidence to archive or dead
-     residue to quarantine.
-   - Add a scheduled safe report that lists large unowned JSONL files without
+   - Root `.spark` now only shows `outcomes.jsonl` and `predictions.jsonl`,
+     but recursive `.spark` JSONL residue is about 190 MB across 251 files.
+   - Added `jobs observability-report --include-unowned-jsonl` to list loose
+     `.jsonl` files by size and ownership class without opening, moving, or
      deleting them.
+   - Remaining work: decide whether root `outcomes.jsonl` and
+     `predictions.jsonl`, plus larger legacy `recursion`, `logs`, `queue`, and
+     `advisor` rivers, are evidence to archive or dead residue to quarantine.
 
 ### P1 - Self-Evolution Reality
 
@@ -331,6 +336,7 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    the change-manifest runner.
 5. Run `jobs observability-report` before the next retention pass so future
    cleanup remains evidence-first.
+   - Include `--include-unowned-jsonl` when checking loose JSONL residue.
 6. Archive, relabel, or clean the Desktop Builder backlog tree so future stale
    tree audits stop at the source-truth warning instead of re-deriving runtime
    truth from it.

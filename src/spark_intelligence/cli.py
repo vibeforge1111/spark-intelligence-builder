@@ -164,6 +164,7 @@ from spark_intelligence.observability.store import (
     record_observer_handoff_record,
     trace_turn,
 )
+from spark_intelligence.observability.jsonl_residue import build_jsonl_residue_report
 from spark_intelligence.ops import (
     build_observer_handoff_payload,
     build_personality_report,
@@ -2916,6 +2917,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also report gateway JSONL trace and outbound audit sizes/counts",
     )
+    jobs_observability_report_parser.add_argument(
+        "--include-unowned-jsonl",
+        action="store_true",
+        help="Also report loose JSONL files under the Spark root without opening or deleting them",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--spark-root",
+        help="Override Spark root for loose JSONL reporting; defaults to SPARK_HOME or the .spark ancestor of --home",
+    )
+    jobs_observability_report_parser.add_argument("--jsonl-limit", type=int, default=40, help="Maximum loose JSONL files to list")
+    jobs_observability_report_parser.add_argument("--jsonl-min-bytes", type=int, default=0, help="Minimum loose JSONL size to list")
     jobs_observability_report_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
@@ -8479,9 +8491,18 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
     gateway_report = None
     if bool(getattr(args, "include_gateway_logs", False)):
         gateway_report = gateway_log_report(config_manager, older_than=older_than)
+    jsonl_report = None
+    if bool(getattr(args, "include_unowned_jsonl", False)):
+        jsonl_report = build_jsonl_residue_report(
+            config_manager,
+            root=getattr(args, "spark_root", None),
+            limit=int(getattr(args, "jsonl_limit", 40) or 40),
+            min_bytes=int(getattr(args, "jsonl_min_bytes", 0) or 0),
+        ).to_payload()
     payload = {
         "state_db": state_report.to_payload(),
         "gateway_logs": gateway_report,
+        "unowned_jsonl": jsonl_report,
     }
     if args.json:
         print(json.dumps(payload, indent=2))
@@ -8502,6 +8523,15 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             lines.append(f"- gateway_log_bytes: {gateway_report['total_bytes']}")
             lines.append(f"- gateway_log_records: {gateway_report['total_records']}")
             lines.append(f"- gateway_log_old_records: {gateway_report['total_old_records']}")
+        if jsonl_report is not None:
+            lines.append(f"- unowned_jsonl_root: {jsonl_report['root']}")
+            lines.append(f"- unowned_jsonl_files: {jsonl_report['total_files']}")
+            lines.append(f"- unowned_jsonl_bytes: {jsonl_report['total_bytes']}")
+            for item in jsonl_report["reported_files"][:10]:
+                lines.append(
+                    f"- jsonl {item['relative_path']} "
+                    f"bytes={item['bytes']} class={item['classification']}"
+                )
         print("\n".join(lines))
     return 0
 

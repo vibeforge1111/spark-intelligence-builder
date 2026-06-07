@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from spark_intelligence.gateway.tracing import (
     outbound_log_path,
@@ -293,6 +294,42 @@ class ObservabilityRetentionCliTests(SparkTestCase):
                 conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:retention-report-cli-old'").fetchone()[0],
                 1,
             )
+
+    def test_jobs_observability_report_cli_reports_unowned_jsonl_without_opening(self) -> None:
+        spark_root = self.home / "fake-spark-root"
+        (spark_root / "recursion").mkdir(parents=True)
+        (spark_root / "state" / "spark-intelligence" / "logs").mkdir(parents=True)
+        (spark_root / "outcomes.jsonl").write_text("{}\n", encoding="utf-8")
+        (spark_root / "recursion" / "mutations.jsonl").write_text("x" * 25, encoding="utf-8")
+        gateway_log = spark_root / "state" / "spark-intelligence" / "logs" / "gateway-trace.jsonl"
+        gateway_log.write_text("owned\n", encoding="utf-8")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "observability-report",
+            "--home",
+            str(spark_root / "state" / "spark-intelligence"),
+            "--include-unowned-jsonl",
+            "--spark-root",
+            str(spark_root),
+            "--jsonl-limit",
+            "10",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        report = payload["unowned_jsonl"]
+        by_relative_path = {item["relative_path"]: item for item in report["reported_files"]}
+        self.assertEqual(report["total_files"], 3)
+        self.assertIn("outcomes.jsonl", by_relative_path)
+        self.assertEqual(by_relative_path["outcomes.jsonl"]["classification"], "root_unowned_jsonl")
+        self.assertEqual(by_relative_path[str(Path("recursion") / "mutations.jsonl")]["classification"], "legacy_runtime_river")
+        self.assertEqual(
+            by_relative_path[str(Path("state") / "spark-intelligence" / "logs" / "gateway-trace.jsonl")]["classification"],
+            "builder_gateway_log",
+        )
+        self.assertEqual(gateway_log.read_text(encoding="utf-8"), "owned\n")
 
     def test_jobs_prune_observability_cli_can_prune_gateway_logs(self) -> None:
         old_timestamp = "2025-01-01T00:00:00+00:00"

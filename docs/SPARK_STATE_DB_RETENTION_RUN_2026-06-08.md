@@ -107,6 +107,6 @@ pass, canonical ledgers were preserved, and doctor has no follow-up surfaces.
 - Re-run this retention procedure only with a fresh backup and before/after
   counts.
 - Use `spark-intelligence jobs observability-report --older-than <cutoff>
-  --include-gateway-logs --json` before pruning to capture `state.db` bytes,
-  table counts, prunable row counts, and gateway JSONL sizes without deleting
-  anything.
+  --include-gateway-logs --include-unowned-jsonl --json` before pruning to
+  capture `state.db` bytes, table counts, prunable row counts, gateway JSONL
+  sizes, and loose JSONL residue without deleting anything.
