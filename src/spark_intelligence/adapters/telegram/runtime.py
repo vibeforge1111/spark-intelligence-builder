@@ -2576,12 +2576,12 @@ def _telegram_security_policy(config_manager: ConfigManager) -> dict[str, Any]:
 
 def _describe_telegram_delivery_exception(exc: Exception) -> str:
     if isinstance(exc, RuntimeError):
-        return str(exc)
+        return _safe_voice_error_message(exc)
     if isinstance(exc, HTTPError):
         return f"HTTP {exc.code}"
     if isinstance(exc, URLError):
         return str(exc.reason)
-    return str(exc)
+    return _safe_voice_error_message(exc)
 
 
 def _synthesize_telegram_voice_reply(
@@ -8914,7 +8914,7 @@ def _handle_telegram_chip_command(
     except ValueError as exc:
         return {
             "command": command,
-            "reply_text": f"Chip command payload is invalid.\nReason: {_with_terminal_period(str(exc))}",
+            "reply_text": f"Chip command payload is invalid.\nReason: {_with_terminal_period(_safe_voice_error_message(exc))}",
         }
 
     try:
@@ -8927,12 +8927,12 @@ def _handle_telegram_chip_command(
     except ValueError as exc:
         return {
             "command": command,
-            "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
+            "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(_safe_voice_error_message(exc))}",
         }
     except RuntimeError as exc:
         return {
             "command": command,
-            "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
+            "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(_safe_voice_error_message(exc))}",
         }
 
     record_chip_hook_execution(
@@ -9294,7 +9294,7 @@ def _run_swarm_bridge_command(
 
 
 def _render_swarm_unavailable_reply(verdict: str, exc: RuntimeError) -> str:
-    detail = str(exc).strip()
+    detail = _safe_voice_error_message(exc)
     lines = [verdict]
     if detail:
         lines.append(f"Reason: {_with_terminal_period(detail)}")
