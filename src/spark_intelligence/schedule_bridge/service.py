@@ -14,6 +14,22 @@ from spark_intelligence.intent_boundary import denies_intent, has_conversation_o
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
 
+_ALLOWED_SPAWNER_HOSTS: frozenset[str] = frozenset({
+    "127.0.0.1",
+    "localhost",
+    "::1",
+})
+
+
+def _validate_spawner_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if hostname not in _ALLOWED_SPAWNER_HOSTS:
+        raise ValueError(
+            f"spawner_url hostname '{hostname}' is not in the allowed spawner host list."
+        )
+
+
 # Scope note: scheduler-related vocabulary the bot should route here.
 # We match on any message that (a) asks about the scheduler surface or
 # (b) asks a "what's running / what's set up / what's automated" type
@@ -194,6 +210,7 @@ def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
 
 def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
     base = (spawner_url or _SPAWNER_URL).rstrip("/")
+    _validate_spawner_url(base)
     req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
