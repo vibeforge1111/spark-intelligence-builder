@@ -81,7 +81,7 @@ ledger spine, but Spark is not done.
 | Live ledger adoption | live doctor reports `total=87 surfaces=builder=1, spark_cli=69, telegram=17` | Partial; Spawner missing |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
-| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog | Closed for live Builder; archive/relabel pending |
+| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line at HEAD `878017f`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, and commit `7bf79b5` proving rollback-plan/protected-approval boundaries; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
@@ -259,8 +259,12 @@ until that session completes and the final diff is tested.
       `spark-harness-core`, and now carries `docs/SOURCE_TRUTH.md`.
     - The Desktop Builder tree remains dirty, divergent, and backlog-only until
       curated.
+    - Latest read-only Desktop check: branch `codex/browser-use-receipts` has a
+      gone remote, many dirty files, untracked `LICENSE`, and no
+      `spark-harness-core` entry in `needs.modules`.
     - Remaining housekeeping: archive, relabel, or clean the Desktop tree so it
-      cannot be mistaken for live runtime truth in future sessions.
+      cannot be mistaken for live runtime truth in future sessions. Do this
+      through a backlog manifest, not a wholesale merge.
 
 13. Recheck release mirrors and vendored Harness Core copies.
     - Ensure release mirrors carry correct AGPL/MIT boundaries.

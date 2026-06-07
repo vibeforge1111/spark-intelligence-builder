@@ -84,21 +84,26 @@ git -C C:\Users\USER\Desktop\spark-intelligence-builder status --short --branch
 git -C C:\Users\USER\Desktop\spark-intelligence-builder rev-parse HEAD
 ```
 
-Current 2026-06-08 evidence:
+Current 2026-06-08 evidence, refreshed after the remediation documentation
+commits:
 
-- installed Builder HEAD: `35fe207c414d64a61471ae5bc0ffbe0e71253405`
+- installed Builder HEAD: `878017fe45cb62074bffcd063a51f5fa7e8844c8`
 - Desktop Builder HEAD: `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a`
 - installed Builder status: clean detached checkout
 - Desktop Builder status: dirty `codex/browser-use-receipts` branch whose
   remote ref is gone
 - installed Builder manifest: AGPL-3.0-only and `needs.modules =
   ["spark-harness-core"]`
-- Desktop Builder manifest: AGPL fix exists only as an uncommitted diff and
-  `spark-harness-core` is not declared in `needs.modules`
+- Desktop Builder manifest: AGPL metadata is visible only in the dirty working
+  tree, `LICENSE` is untracked, and `spark-harness-core` is still not declared
+  in `needs.modules`
 
 ## Current Next Safe Action
 
 Keep the installed Builder source canonical. Re-derive selected Desktop backlog
 slices only when they have a named behavior, focused tests, and a rollback path.
 Do not use the Desktop tree to contradict installed-runtime evidence without
-first stating that the Desktop tree is stale/backlog evidence.
+first stating that the Desktop tree is stale/backlog evidence. If the Desktop
+tree is curated later, create a backlog manifest first: branch, HEAD, changed
+files, behavior to port, tests to run, legal/provenance state, and rollback
+path.
