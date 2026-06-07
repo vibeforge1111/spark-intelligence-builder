@@ -7,12 +7,21 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
+
+
+@dataclass
+class FetchSchedulesResult:
+    """Rich result from fetch_schedules_rich carrying both data and errors."""
+    schedules: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+    ok: bool = True
 
 # Scope note: scheduler-related vocabulary the bot should route here.
 # We match on any message that (a) asks about the scheduler surface or
@@ -193,22 +202,35 @@ def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
 
 
 def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    """Backward-compatible wrapper: returns only the schedules list, errors swallowed."""
+    return fetch_schedules_rich(spawner_url, timeout=timeout).schedules
+
+
+def fetch_schedules_rich(spawner_url: str | None = None, *, timeout: float = 5.0) -> FetchSchedulesResult:
+    """Fetch schedules from the spawner with full error context."""
     base = (spawner_url or _SPAWNER_URL).rstrip("/")
     req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return []
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        error_msg = f"Spawner unreachable: {type(exc).__name__}: {exc}"
+        return FetchSchedulesResult(schedules=[], error=error_msg, ok=False)
     if not isinstance(data, dict):
-        return []
+        return FetchSchedulesResult(schedules=[], ok=True)
     records = data.get("schedules")
-    return records if isinstance(records, list) else []
+    return FetchSchedulesResult(schedules=records if isinstance(records, list) else [], ok=True)
 
 
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
-    schedules = fetch_schedules(spawner_url)
-    return format_schedule_list(schedules)
+    result = fetch_schedules_rich(spawner_url)
+    if result.error:
+        return (
+            f"Could not reach the schedule spawner.\n"
+            f"Error: {result.error}\n"
+            "Check that the spawner service is running and try again."
+        )
+    return format_schedule_list(result.schedules)
 
 
 # --- Delete intent + confirmation gate ----------------------------------
