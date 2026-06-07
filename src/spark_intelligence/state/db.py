@@ -62,8 +62,8 @@ SCHEMA_STATEMENTS = [
         issuer TEXT,
         account_subject TEXT,
         scope TEXT,
-        access_token_ciphertext TEXT,
-        refresh_token_ciphertext TEXT,
+        access_token TEXT,
+        refresh_token TEXT,
         access_expires_at TEXT,
         refresh_expires_at TEXT,
         last_refresh_at TEXT,
@@ -863,6 +863,14 @@ class ClosingConnection(sqlite3.Connection):
         return False
 
 
+def _rename_column_if_exists(conn: sqlite3.Connection, table: str, old_name: str, new_name: str) -> None:
+    """Rename a column if it exists. Idempotent for repeat initialization."""
+    quoted_table = _quote_sqlite_identifier(table)
+    columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({quoted_table})").fetchall()}
+    if old_name in columns and new_name not in columns:
+        conn.execute(f"ALTER TABLE {quoted_table} RENAME COLUMN {_quote_sqlite_identifier(old_name)} TO {_quote_sqlite_identifier(new_name)}")
+
+
 class StateDB:
     def __init__(self, path: Path):
         self.path = path
@@ -876,6 +884,9 @@ class StateDB:
             self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_source", "TEXT")
             self._ensure_column(conn, "humans", "user_address", "TEXT")
+            # Migration: rename misleading ciphertext columns (tokens stored plaintext)
+            _rename_column_if_exists(conn, "oauth_credentials", "access_token_ciphertext", "access_token")
+            _rename_column_if_exists(conn, "oauth_credentials", "refresh_token_ciphertext", "refresh_token")
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """

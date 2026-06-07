@@ -13,7 +13,11 @@ from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, ge
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
 from spark_intelligence.config.loader import ConfigManager
+import logging
+
 from spark_intelligence.state.db import StateDB
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS = 600
@@ -407,8 +411,8 @@ def logout_provider(
             """
             UPDATE oauth_credentials
             SET
-                access_token_ciphertext = NULL,
-                refresh_token_ciphertext = NULL,
+                access_token = NULL,
+                refresh_token = NULL,
                 access_expires_at = NULL,
                 refresh_expires_at = NULL,
                 status = 'revoked',
@@ -469,14 +473,14 @@ def refresh_provider(
     with state_db.connect() as conn:
         row = conn.execute(
             """
-            SELECT refresh_token_ciphertext
+            SELECT refresh_token
             FROM oauth_credentials
             WHERE auth_profile_id = ?
             LIMIT 1
             """,
             (auth_profile_id,),
         ).fetchone()
-    refresh_token = str(row["refresh_token_ciphertext"]) if row and row["refresh_token_ciphertext"] else ""
+    refresh_token = str(row["refresh_token"]) if row and row["refresh_token"] else ""
     if not refresh_token:
         _mark_oauth_refresh_failure(
             state_db=state_db,
@@ -576,7 +580,7 @@ def run_oauth_refresh_maintenance(
                 ap.auth_profile_id,
                 oc.access_expires_at,
                 oc.refresh_expires_at,
-                oc.refresh_token_ciphertext
+                oc.refresh_token
             FROM auth_profiles ap
             JOIN oauth_credentials oc ON oc.auth_profile_id = ap.auth_profile_id
             WHERE ap.auth_method = 'oauth'
@@ -595,7 +599,7 @@ def run_oauth_refresh_maintenance(
             skipped.append(f"{provider_id}:not_due")
             continue
         due += 1
-        if not row["refresh_token_ciphertext"]:
+        if not row["refresh_token"]:
             skipped.append(f"{provider_id}:missing_refresh_token")
             continue
         if _timestamp_expired(row["refresh_expires_at"]):
@@ -757,6 +761,15 @@ def _persist_oauth_tokens(
     token_payload: dict[str, object],
     refreshed: bool = False,
 ) -> None:
+    # SECURITY WARNING: OAuth tokens are stored in plaintext.  This column
+    # was previously named with a "_ciphertext" suffix, which was misleading.
+    # Proper encryption-at-rest should be implemented before production use.
+    logger.warning(
+        "OAuth tokens for provider=%s profile=%s are stored in plaintext. "
+        "Encrypt tokens before storing in production.",
+        provider,
+        auth_profile_id,
+    )
     issuer = _issuer_from_url(get_provider_spec(provider).oauth.authorize_url)
     access_expires_at = _timestamp_from_expires_in(token_payload.get("expires_in"))
     refresh_expires_at = _timestamp_from_expires_in(
@@ -771,8 +784,8 @@ def _persist_oauth_tokens(
                 issuer,
                 account_subject,
                 scope,
-                access_token_ciphertext,
-                refresh_token_ciphertext,
+                access_token,
+                refresh_token,
                 access_expires_at,
                 refresh_expires_at,
                 last_refresh_at,
@@ -784,8 +797,8 @@ def _persist_oauth_tokens(
                 issuer=excluded.issuer,
                 account_subject=excluded.account_subject,
                 scope=excluded.scope,
-                access_token_ciphertext=excluded.access_token_ciphertext,
-                refresh_token_ciphertext=excluded.refresh_token_ciphertext,
+                access_token=excluded.access_token,
+                refresh_token=excluded.refresh_token,
                 access_expires_at=excluded.access_expires_at,
                 refresh_expires_at=excluded.refresh_expires_at,
                 last_refresh_error=NULL,
