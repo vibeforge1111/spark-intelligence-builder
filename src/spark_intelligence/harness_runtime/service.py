@@ -125,6 +125,9 @@ def build_harness_task_envelope(
     agent_id: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
 ) -> HarnessTaskEnvelope:
+    normalized_task = str(task or "").strip()
+    if not normalized_task:
+        raise ValueError("Task cannot be empty or whitespace.")
     from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
     normalized_forced_harness_id = str(forced_harness_id or "").strip()
@@ -136,6 +139,11 @@ def build_harness_task_envelope(
             available = ", ".join(sorted(contracts))
             raise ValueError(
                 f"Unknown harness id '{normalized_forced_harness_id}'. Available harnesses: {available}"
+            )
+        if not contract.available or contract.degraded:
+            status_desc = "degraded" if contract.degraded else "unavailable"
+            raise ValueError(
+                f"Forced harness '{normalized_forced_harness_id}' is currently {status_desc}."
             )
         selection_payload = {
             "harness_id": contract.harness_id,
@@ -249,6 +257,12 @@ def execute_harness_task(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> HarnessExecutionResult:
+    from spark_intelligence.harness_registry import build_harness_registry
+    registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
+    known_harness_ids = {contract.harness_id for contract in registry.contracts}
+    if envelope.harness_id not in known_harness_ids:
+        raise ValueError(f"Unknown harness id '{envelope.harness_id}' in runtime.")
+
     run = open_run(
         state_db,
         run_kind=f"harness:{envelope.harness_id}",
@@ -331,7 +345,7 @@ def execute_harness_task(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="closed",
+            status=status,
             close_reason="harness_execution_completed",
             summary=summary,
             facts={
@@ -413,7 +427,7 @@ def execute_harness_chain(
     current_result = primary_result
     for harness_id in normalized_follow_ups:
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
         derived_task = _derive_follow_up_task(
             current_result=current_result,
@@ -437,13 +451,16 @@ def execute_harness_chain(
         )
         chained_results.append(current_result)
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
 
+    top_status = primary_result.status
+    if chain_status in {"blocked", "needs_input"}:
+        top_status = chain_status
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
-        status=primary_result.status,
+        status=top_status,
         summary=primary_result.summary,
         artifacts=primary_result.artifacts,
         next_actions=primary_result.next_actions,
@@ -538,11 +555,18 @@ def _execute_researcher_advisory_harness(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
-    result = _run_researcher_bridge_reply(
-        config_manager=config_manager,
-        state_db=state_db,
-        envelope=envelope,
-    )
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _run_researcher_bridge_reply,
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
+        try:
+            result = future.result(timeout=120.0)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError("Researcher advisory harness execution timed out after 120 seconds.")
     artifacts = {
         "reply_text": _bridge_result_reply_text(result),
         "evidence_summary": result.evidence_summary,
@@ -676,7 +700,12 @@ def _execute_voice_io_harness(
             )
         speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
         audio_base64 = str(speak_result.get("audio_base64") or "")
-        audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
+        audio_bytes = b""
+        if audio_base64:
+            try:
+                audio_bytes = base64.b64decode(audio_base64.encode("ascii"), validate=True)
+            except Exception:
+                audio_bytes = b""
         artifacts["spoken_audio"] = {
             "chip_key": speak_chip_key,
             "provider_id": str(speak_result.get("provider_id") or ""),
@@ -837,6 +866,7 @@ def _run_voice_hook(
     hook: str,
     payload: dict[str, Any],
     run_id: str,
+    timeout_seconds: float = 30.0,
 ) -> tuple[dict[str, Any], str]:
     authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
     if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
@@ -861,12 +891,7 @@ def _run_voice_hook(
                 payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(
-        config_manager,
-        hook=hook,
-        payload=payload,
-        governor_decision=payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None,
-    )
+    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:
@@ -1018,6 +1043,17 @@ def _derive_follow_up_task(
             base.append(f"Upstream summary: {current_result.summary}")
         return "\n".join(base)
     if normalized_target == "researcher.advisory":
+        if current_result.envelope.harness_id == "browser.grounded":
+            url = None
+            nav = current_result.artifacts.get("browser_navigate_payload")
+            if isinstance(nav, dict):
+                url = nav.get("url")
+            if not url:
+                status = current_result.artifacts.get("browser_status_payload")
+                if isinstance(status, dict):
+                    url = status.get("url") or status.get("current_url")
+            if url:
+                return f"Analyze the page content at: {url}\nContext: {current_result.envelope.task}"
         reply_text = _extract_reply_text_from_result(current_result)
         return reply_text or current_result.envelope.task
     if normalized_target == "builder.direct":
