@@ -373,6 +373,12 @@ class HarnessCliTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="harness_change_manifest_runner_evaluated", limit=1)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["facts_json"]["promotion_verdict"], "not_ready")
+        self.assertEqual(events[0]["facts_json"]["builder_ledger_id"], payload["builder_ledger_id"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["ledger_id"], payload["builder_ledger_id"])
+        self.assertEqual(ledgers[0]["tool_name"], "harness.change_manifest_runner")
+        self.assertEqual(ledgers[0]["status"], "success")
 
     def test_harness_change_manifest_runner_runs_allowlisted_tests_and_promotes_private(self) -> None:
         self._persist_self_evolution_ledger()
@@ -403,6 +409,12 @@ class HarnessCliTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="harness_change_manifest_runner_evaluated", limit=1)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["facts_json"]["promotion_verdict"], "promote_private")
+        self.assertEqual(events[0]["facts_json"]["builder_ledger_id"], payload["builder_ledger_id"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["ledger_id"], payload["builder_ledger_id"])
+        self.assertEqual(ledgers[0]["tool_name"], "harness.change_manifest_runner")
+        self.assertEqual(ledgers[0]["status"], "success")
 
     def test_harness_execute_supports_follow_up_harness_chain(self) -> None:
         self._enable_fake_researcher()

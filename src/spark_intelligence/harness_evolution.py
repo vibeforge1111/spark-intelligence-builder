@@ -19,6 +19,9 @@ _EVOLUTION_MODES = {"observe", "propose", "sandbox", "live_qa", "promote", "roll
 _PROMOTION_VERDICTS = {"promote_private", "promote_release_candidate", "rollback"}
 _SHELL_META_CHARS = set("&|;<>()`$")
 _MAX_COMMAND_OUTPUT_CHARS = 4000
+_CHANGE_MANIFEST_RUNNER_TOOL = "harness.change_manifest_runner"
+_CHANGE_MANIFEST_RUNNER_OWNER = "spark-intelligence-builder"
+_CHANGE_MANIFEST_RUNNER_MUTATION = "writes_files"
 
 
 def build_harness_self_evolution_snapshot(
@@ -155,6 +158,18 @@ def run_harness_change_manifest_runner(
     status_counts = Counter(str(row.get("status") or "unknown") for row in ledgers)
     surface_counts = Counter(str(row.get("surface") or "unknown") for row in ledgers)
     selected_commands = _select_runner_commands(commands=commands, manifests=manifests, run_tests=run_tests)
+    runner_request_id = _runner_request_id(manifests)
+    runner_authority = (
+        _authorize_change_manifest_runner(
+            state_db,
+            manifests=manifests,
+            mode=normalized_mode,
+            requested_verdict=normalized_requested,
+            request_id=runner_request_id,
+        )
+        if persist_event
+        else None
+    )
     test_results = (
         _run_test_commands(selected_commands, cwd=cwd, timeout_seconds=timeout_seconds)
         if run_tests
@@ -261,6 +276,7 @@ def run_harness_change_manifest_runner(
         },
     )
     event_id = None
+    result_event_id = None
     if persist_event:
         event_id = record_event(
             state_db,
@@ -280,14 +296,28 @@ def run_harness_change_manifest_runner(
                 "test_statuses": [result["status"] for result in test_results],
                 "readiness_status": readiness_score["overall"]["status"],
                 "readiness_score": readiness_score["overall"]["score"],
+                "builder_ledger_id": _authority_ledger_id(runner_authority),
+                "builder_ledger_event_id": getattr(runner_authority, "ledger_event_id", None),
                 "self_evolution_run": evolution_run,
             },
+        )
+        result_event_id = _record_change_manifest_runner_result_ledger(
+            state_db,
+            authority=runner_authority,
+            event_id=event_id,
+            request_id=runner_request_id,
+            promotion_verdict=str(evolution_run["promotion_decision"]["verdict"]),
+            all_tests_passed=all_tests_passed,
+            run_tests=run_tests,
         )
     return {
         "ok": True,
         "mode": normalized_mode,
         "requested_verdict": normalized_requested,
         "event_id": event_id,
+        "builder_ledger_id": _authority_ledger_id(runner_authority),
+        "builder_ledger_event_id": getattr(runner_authority, "ledger_event_id", None),
+        "builder_result_event_id": result_event_id,
         "manifest_count": len(manifests),
         "ledger_count": len(ledgers),
         "status_counts": dict(status_counts),
@@ -385,6 +415,98 @@ def _select_runner_commands(
     if run_tests and required:
         return list(dict.fromkeys(required))
     return required or ["observe-only: no commands executed"]
+
+
+def _authorize_change_manifest_runner(
+    state_db: StateDB,
+    *,
+    manifests: list[dict[str, Any]],
+    mode: str,
+    requested_verdict: str | None,
+    request_id: str,
+) -> Any:
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+    from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+    payload = build_vnext_tool_intent_envelope(
+        surface="builder",
+        actor_id_ref="human:local-operator",
+        request_id=request_id,
+        source_kind="builder_cli_harness_change_manifest_runner",
+        tool_name=_CHANGE_MANIFEST_RUNNER_TOOL,
+        owner_system=_CHANGE_MANIFEST_RUNNER_OWNER,
+        mutation_class=_CHANGE_MANIFEST_RUNNER_MUTATION,
+        intent_summary=(
+            "Local operator invoked the supervised Builder change-manifest runner."
+        ),
+        raw_turn_summary=(
+            "Builder CLI change-manifest runner invocation; raw operator shell "
+            f"context remains offloaded. mode={mode}; requested_verdict={requested_verdict or 'auto'}; "
+            f"manifest_count={len(manifests)}."
+        ),
+        confidence=0.99,
+        requires_confirmation=False,
+        args_path=f"builder://harness/change-manifest-runner/{request_id}",
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("Builder change-manifest runner could not build Harness authority payload.")
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name=_CHANGE_MANIFEST_RUNNER_TOOL,
+        owner_system=_CHANGE_MANIFEST_RUNNER_OWNER,
+        mutation_class=_CHANGE_MANIFEST_RUNNER_MUTATION,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="builder",
+        actor_id="builder_cli",
+        component="harness_evolution",
+    )
+    if not getattr(verdict, "allowed", False):
+        reasons = ", ".join(str(item) for item in getattr(verdict, "reason_codes", ()) or ())
+        raise ValueError(f"Builder change-manifest runner authority denied: {reasons or 'unknown'}")
+    return verdict
+
+
+def _record_change_manifest_runner_result_ledger(
+    state_db: StateDB,
+    *,
+    authority: Any,
+    event_id: str | None,
+    request_id: str,
+    promotion_verdict: str,
+    all_tests_passed: bool,
+    run_tests: bool,
+) -> str | None:
+    if authority is None:
+        return None
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    status = "success" if (not run_tests or all_tests_passed) else "partial"
+    return record_bridge_tool_call_result_ledger(
+        state_db,
+        authority,
+        status=status,
+        summary=f"Builder change-manifest runner completed with {promotion_verdict}.",
+        output_path=f"builder://harness/change-manifest-runner/events/{event_id or 'unrecorded'}",
+        component="harness_evolution",
+        request_id=request_id,
+        channel_id="builder",
+        actor_id="builder_cli",
+        initial_ledger_event_id=getattr(authority, "ledger_event_id", None),
+    )
+
+
+def _runner_request_id(manifests: list[dict[str, Any]]) -> str:
+    change_ids = [str(manifest.get("change_id") or "").strip() for manifest in manifests]
+    first_change_id = next((change_id for change_id in change_ids if change_id), "change:unknown")
+    return f"builder:harness-change-manifest-runner:{first_change_id}"
+
+
+def _authority_ledger_id(authority: Any) -> str | None:
+    ledger = getattr(authority, "tool_call_ledger", None)
+    if not isinstance(ledger, dict):
+        return None
+    return str(ledger.get("ledger_id") or "") or None
 
 
 def _run_test_commands(commands: list[str], *, cwd: str | None, timeout_seconds: int) -> list[dict[str, Any]]:
