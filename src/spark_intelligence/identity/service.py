@@ -473,6 +473,7 @@ def _reanchor_builder_persona_rows(
         """,
         (builder_agent_id,),
     ).fetchone()
+    # NOTE: f-string SQL with table/column interpolation. The identifiers come from hardcoded whitelists in this module; do not pass user input here.
     source_row = conn.execute(
         f"""
         SELECT agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
