@@ -5581,7 +5581,10 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
 
 def _load_shadow_telegram_pack(path: Path) -> list[dict[str, str | None]]:
     if path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            return {}  # malformed JSON, return safe default
         if not isinstance(payload, list):
             raise ValueError("Shadow Telegram pack JSON must be a list.")
         entries: list[dict[str, str | None]] = []
