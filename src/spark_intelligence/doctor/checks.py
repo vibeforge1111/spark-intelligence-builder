@@ -432,6 +432,7 @@ def _module_registry_roots(config_manager: ConfigManager) -> list[Path]:
     home = config_manager.paths.home
     _append_existing_root(roots, home / "modules")
     _append_existing_root(roots, home.parent / "modules")
+    _append_existing_root(roots, home.parent / ".spark" / "modules")
 
     spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
     if spark_home:

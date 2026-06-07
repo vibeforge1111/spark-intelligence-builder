@@ -2677,6 +2677,31 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertNotIn("commit_drift", checks["builder-source-truth"].detail)
         self.assertIn("mirrors=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
 
+    def test_doctor_discovers_sibling_spark_module_registry_by_default(self) -> None:
+        from spark_intelligence.config.loader import ConfigManager
+        from spark_intelligence.state.db import StateDB
+
+        runtime_home = self.home / ".spark-intelligence"
+        config_manager = ConfigManager.from_home(str(runtime_home))
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        live = self.home / ".spark" / "modules" / "spark-intelligence-builder" / "source"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+
+        report = run_doctor(config_manager, state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertTrue(checks["builder-source-truth"].ok)
+        self.assertIn("installs=spark-intelligence-builder", checks["builder-source-truth"].detail)
+
     def test_doctor_reports_stale_python_editable_import_source(self) -> None:
         modules_root = self.home / "modules"
         live = modules_root / "spark-intelligence-builder" / "source"
