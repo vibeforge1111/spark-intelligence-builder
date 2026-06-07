@@ -187,6 +187,12 @@ def execute_harness_task(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> HarnessExecutionResult:
+    from spark_intelligence.harness_registry import build_harness_registry
+    registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
+    known_harness_ids = {contract.harness_id for contract in registry.contracts}
+    if envelope.harness_id not in known_harness_ids:
+        raise ValueError(f"Unknown harness id '{envelope.harness_id}' in runtime.")
+
     run = open_run(
         state_db,
         run_kind=f"harness:{envelope.harness_id}",
