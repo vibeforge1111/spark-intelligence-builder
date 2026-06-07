@@ -3932,7 +3932,7 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
 
     incidents.sort(
         key=lambda item: (
-            str(item.get("severity") or ""),
+            _observer_packet_sort_order(str(item.get("severity") or "")),
             str(item.get("recorded_at") or ""),
             str(item.get("item_ref") or ""),
         ),
