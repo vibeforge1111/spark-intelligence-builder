@@ -86,7 +86,7 @@ def record_governed_tool_result(
     merged_facts = {
         "exit_code": execution.exit_code,
         "ok": execution.ok,
-        "stderr": execution.stderr[:200] if execution.stderr else "",
+        "stderr_present": bool(execution.stderr),
         **(facts or {}),
     }
     record_event(
