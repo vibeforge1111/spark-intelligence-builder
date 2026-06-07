@@ -6,12 +6,27 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import urlparse
 
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
+
+ALLOWED_PROVIDER_HOSTS = frozenset(
+    {
+        "api.anthropic.com",
+        "api.groq.com",
+        "api.minimax.io",
+        "api.openai.com",
+        "api.together.xyz",
+        "api.z.ai",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -318,7 +333,21 @@ def _extract_anthropic_text(payload: dict[str, object]) -> str:
         raise RuntimeError("Anthropic response contained no text content.")
     return joined
 
+def _validate_provider_base_url(base_url: str) -> str:
+    """Validate that base_url points to a known-safe provider host."""
+    parsed = urlparse(str(base_url).strip())
+    host = (parsed.hostname or "").lower()
+    if not host or host not in ALLOWED_PROVIDER_HOSTS:
+        allowed = ", ".join(sorted(ALLOWED_PROVIDER_HOSTS))
+        raise RuntimeError(
+            f"Provider base URL host is not allowed: {host or '<missing>'}. "
+            f"Allowed hosts: {allowed}."
+        )
+    return str(base_url).strip()
+
+
 def _join_url(base_url: str, suffix: str) -> str:
+    _validate_provider_base_url(base_url)
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
 
