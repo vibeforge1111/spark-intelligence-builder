@@ -511,7 +511,7 @@ def _build_diagnostics_lines(*, config_manager: ConfigManager) -> list[str]:
     lines = [f"- latest_note: {latest.name}"]
     try:
         text = latest.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return lines
     summary = _extract_diagnostic_summary(text)
     if summary.get("generated_at"):
