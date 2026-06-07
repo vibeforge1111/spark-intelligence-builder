@@ -772,8 +772,12 @@ def export_telegram_memory_acceptance_pack(
             "operator_markdown": str(resolved_markdown_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_markdown_path.write_text(_render_operator_acceptance_markdown(payload), encoding="utf-8")
+    tmp = resolved_write_path.with_suffix(resolved_write_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(resolved_write_path)
+    tmp2 = resolved_markdown_path.with_suffix(resolved_markdown_path.suffix + ".tmp")
+    tmp2.write_text(_render_operator_acceptance_markdown(payload), encoding="utf-8")
+    tmp2.replace(resolved_markdown_path)
     return TelegramMemoryAcceptancePackExportResult(output_dir=resolved_output_dir, payload=payload)
 
 
