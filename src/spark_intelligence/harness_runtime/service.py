@@ -273,7 +273,7 @@ def execute_harness_task(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="closed",
+            status=status,
             close_reason="harness_execution_completed",
             summary=summary,
             facts={
