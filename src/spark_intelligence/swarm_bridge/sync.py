@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,6 +21,30 @@ from spark_intelligence.observability.store import latest_events_by_type, record
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_name = handle.name
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except Exception:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
 
 
 @dataclass
@@ -751,7 +776,7 @@ def sync_swarm_collective(
     if _normalize_collective_payload(payload):
         payload_changed = True
     if payload_changed:
-        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_text(payload_path, json.dumps(payload, indent=2))
     _record_swarm_sync_state(
         state_db,
         mode="payload_built",
@@ -1767,7 +1792,7 @@ def _resolve_active_path_collective_payload(
     if not isinstance(payload, dict):
         return None
     if _normalize_collective_payload(payload):
-        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_text(payload_path, json.dumps(payload, indent=2))
     return payload, payload_path
 
 
@@ -1793,7 +1818,7 @@ def _build_collective_payload(
     payload_path = Path(str(export_info["payload_path"]))
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     if _normalize_collective_payload(payload):
-        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_text(payload_path, json.dumps(payload, indent=2))
     return payload, payload_path
 
 
