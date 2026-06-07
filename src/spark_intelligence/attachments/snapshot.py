@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +133,33 @@ def _hide_superseded_legacy_voice_chip(records: list[AttachmentRecord]) -> list[
 def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB) -> AttachmentSnapshot:
     snapshot = build_attachment_snapshot(config_manager)
     snapshot_path = Path(snapshot.snapshot_path)
-    snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
+    # Write the canonical attachments snapshot file via temp + os.replace so a
+    # crash mid-write cannot truncate the on-disk attachments.snapshot.json
+    # pointer that capability_router, mission_control, llm_wiki, gateway,
+    # and the chip-hook resolver all read between rounds. Sister-pattern
+    # to llm_wiki/heartbeat (#254) and memory/architecture_soak (#252).
+    serialized = snapshot.to_json()
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{snapshot_path.name}.",
+        suffix=".tmp",
+        dir=str(snapshot_path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_name, snapshot_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     summary = {
         "workspace_id": snapshot.workspace_id,
         "record_count": len(snapshot.records),
