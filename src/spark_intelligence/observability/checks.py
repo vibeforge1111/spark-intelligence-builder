@@ -120,8 +120,8 @@ def evaluate_stop_ship_issues(
     if emit_contradictions:
         try:
             _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as _e:  # SILENT-CATCH-PATCH
+            import logging as _log; _log.getLogger(__name__).warning("DB check error: %s", _e)
     return issues
 
 

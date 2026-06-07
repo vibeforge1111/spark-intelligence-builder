@@ -497,8 +497,9 @@ def load_personality_profile(
             signals = data.get("last_signals") or {}
             personality_id = signals.get("personality_id")
             personality_name = signals.get("personality_name")
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
 
     # 2. Merge optional agent-base persona traits
     agent_persona = (
@@ -2112,10 +2113,10 @@ def detect_and_persist_nl_preferences(
                 session_id=session_id,
                 turn_id=turn_id,
                 channel_kind=channel_kind,
-                governor_decision=governor_decision,
             )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
 
     return deltas
 
@@ -2241,8 +2242,9 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         if row and row["deltas_json"]:
             data = json.loads(row["deltas_json"])
             return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -2951,8 +2953,9 @@ def detect_personality_query(
                         turn_id=turn_id,
                         channel_kind=None,
                     )
-                except Exception:
-                    pass
+                except Exception as _e:  # SILENT-CATCH-PATCH
+
+                    import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
             record_event(
                 state_db,
                 event_type="session_reset_performed",
@@ -3100,8 +3103,9 @@ def _format_profile_status(
                     trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
                     if trait:
                         lines.append(f"  {trait}: {value}")
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
 
     return "\n".join(lines)
 
@@ -3168,8 +3172,9 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
                 }
                 for row in rows
             ]
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -3179,8 +3184,9 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("observations", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
     return []
 
 
@@ -3234,8 +3240,9 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
                 }
                 for row in rows
             ]
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -3245,8 +3252,9 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("events", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
+    except Exception as _e:  # SILENT-CATCH-PATCH
+
+        import logging as _log; _log.getLogger(__name__).warning("Personality load error: %s", _e, exc_info=True)
     return []
 
 
