@@ -440,6 +440,34 @@ def execute_harness_chain(
             chain_status = "blocked"
             break
 
+    record_event(
+        state_db,
+        event_type="harness_chain_completed",
+        component="harness_runtime",
+        summary=(
+            f"Harness chain {chain_status} after {len(chained_results)} follow-up step(s) "
+            f"behind primary {primary_result.envelope.harness_id}."
+        ),
+        run_id=primary_result.run_id,
+        request_id=envelope.envelope_id,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        reason_code="harness_chain_completed",
+        facts={
+            "primary_harness_id": primary_result.envelope.harness_id,
+            "primary_status": primary_result.status,
+            "chain_status": chain_status,
+            "completed_follow_up_count": len(chained_results),
+            "completed_follow_up_harness_ids": [
+                item.envelope.harness_id for item in chained_results
+            ],
+            "final_follow_up_status": (
+                chained_results[-1].status if chained_results else None
+            ),
+        },
+    )
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
