@@ -131,9 +131,10 @@ def _handle_whatsapp_verification(
             status_code=401,
             message="WhatsApp webhook verify token is invalid.",
         )
+    safe_challenge = challenge.replace("\r", "").replace("\n", "")
     return WhatsAppWebhookResponse(
         status_code=200,
-        body=challenge,
+        body=safe_challenge,
         content_type="text/plain",
     )
 
