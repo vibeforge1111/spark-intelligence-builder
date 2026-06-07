@@ -7316,7 +7316,10 @@ def handle_memory_inspect_human(args: argparse.Namespace) -> int:
             "human_id": args.human_id,
             "subject": result.subject,
             "runtime": result.runtime,
-            "current_state": json.loads(result.to_json()).get("read_result"),
+            try:
+                "current_state": json.loads(result.to_json()).get("read_result"),
+            except json.JSONDecodeError:
+                return {}  # malformed JSON, return safe default
             "recent_events": _build_recent_human_memory_events(
                 state_db=state_db,
                 human_id=args.human_id,
