@@ -56,6 +56,14 @@ def apply_inbound_rate_limit(
     limit_per_minute: int,
     notice_cooldown_seconds: int,
 ) -> dict[str, Any]:
+    # NOTE: TOCTOU race condition — this function performs a read-then-write
+    # on the rate-limit state key without holding a lock.  Under concurrent
+    # requests from the same user, two goroutines/threads could both read
+    # the same timestamp list, both decide the limit is not reached, and
+    # both append a new timestamp.  The practical impact is low because
+    # SQLite serialises writes per-connection and the window is narrow, but
+    # strict guarantees would require an atomic compare-and-swap or advisory
+    # lock at the database level.
     state_key = f"{channel_id}:rate_limit:{external_user_id}"
     raw = _load_json_object(state_db=state_db, state_key=state_key)
     now = int(time.time())
