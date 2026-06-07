@@ -230,7 +230,10 @@ def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
 
 
 def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key: str) -> None:
-    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     if not doc.get("chip_name"):
         doc["chip_name"] = chip_key
     normalized = _normalize_commands(doc.get("commands"))
