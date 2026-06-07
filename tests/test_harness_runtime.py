@@ -10,6 +10,7 @@ from spark_intelligence.harness_runtime import (
     execute_harness_task,
     with_harness_local_operator_turn_intent,
 )
+from spark_intelligence.observability.store import latest_events_by_type
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
@@ -357,6 +358,31 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "needs_input")
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
+
+    def test_execute_harness_task_emits_failure_event_when_runner_raises(self) -> None:
+        self._enable_fake_researcher()
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Draft a direct answer for this operator question.",
+            forced_harness_id="researcher.advisory",
+        )
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
+            side_effect=RuntimeError("synthetic researcher failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                execute_harness_task(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    envelope=envelope,
+                )
+
+        failure_events = latest_events_by_type(
+            self.state_db, event_type="harness_execution_failed", limit=5
+        )
+        self.assertTrue(failure_events, "expected at least one harness_execution_failed event")
 
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
