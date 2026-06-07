@@ -885,6 +885,26 @@ def _execute_swarm_escalation_harness(
         "reason": "Rebuild the latest collective payload before retrying if the Swarm state changes.",
     }
     if sync_result.ok:
+        record_event(
+            state_db,
+            event_type="harness_swarm_payload_prepared",
+            component="harness_runtime",
+            summary="Swarm escalation harness prepared a collective payload via dry-run sync.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_swarm_payload_prepared",
+            facts={
+                "harness_id": envelope.harness_id,
+                "workspace_id": artifacts["swarm_sync_result"]["workspace_id"],
+                "payload_path": artifacts["swarm_sync_result"]["payload_path"],
+                "api_url": artifacts["swarm_sync_result"]["api_url"],
+                "mode": artifacts["swarm_sync_result"]["mode"],
+            },
+        )
         return (
             artifacts,
             "Executed the Swarm harness by building the latest collective payload in dry-run mode.",
