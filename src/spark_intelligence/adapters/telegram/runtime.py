@@ -7971,6 +7971,31 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
     return "\n".join(lines)
 
 
+def _humanize_created_at_for_operator(raw: str | None, now: datetime | None = None) -> str:
+    """Render an ISO 8601 created_at value as human-relative time for operator-facing replies."""
+    text = str(raw or "").strip()
+    if not text:
+        return text
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    reference = now or datetime.now(timezone.utc)
+    delta = reference - parsed.astimezone(timezone.utc)
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes} minute ago" if minutes == 1 else f"{minutes} minutes ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hour ago" if hours == 1 else f"{hours} hours ago"
+    if seconds < 172800:
+        return f"yesterday at {parsed.astimezone(timezone.utc).strftime('%H:%M UTC')}"
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d at %H:%M UTC")
+
+
 def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
     if not rows:
         return (
@@ -7984,7 +8009,7 @@ def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
         created_at = str(row.get("created_at") or "").strip()
         detail = name
         if created_at:
-            detail += f" at {created_at}"
+            detail += f" at {_humanize_created_at_for_operator(created_at)} ({created_at})"
         if summary:
             detail += f": {summary}"
         lines.append(f"{index}. {detail}")
