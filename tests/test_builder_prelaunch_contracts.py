@@ -2649,6 +2649,34 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("missing_harness_dep=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
         self.assertIn("missing_python_deps=spark-intelligence-builder-release:jsonschema+referencing", checks["builder-source-truth"].detail)
 
+    def test_doctor_allows_declared_noncanonical_builder_release_mirror(self) -> None:
+        modules_root = self.home / "modules"
+        live = modules_root / "spark-intelligence-builder" / "source"
+        release = modules_root / "spark-intelligence-builder-release" / "source"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+        self._write_builder_install_fixture(
+            release,
+            commit="b" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=[],
+            dependencies=[],
+            source_truth_canonical=False,
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertTrue(checks["builder-source-truth"].ok)
+        self.assertNotIn("commit_drift", checks["builder-source-truth"].detail)
+        self.assertIn("mirrors=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
+
     def test_doctor_reports_stale_python_editable_import_source(self) -> None:
         modules_root = self.home / "modules"
         live = modules_root / "spark-intelligence-builder" / "source"
@@ -2687,23 +2715,32 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         license_name: str,
         needs_modules: list[str],
         dependencies: list[str],
+        source_truth_canonical: bool | None = None,
     ) -> None:
         source_root = Path(root)
         source_root.mkdir(parents=True, exist_ok=True)
         needs_modules_text = ", ".join(f'"{module}"' for module in needs_modules)
         dependencies_text = "\n".join(f'  "{dependency}",' for dependency in dependencies)
-        (source_root / "spark.toml").write_text(
-            "\n".join(
+        manifest_lines = [
+            "[module]",
+            'name = "spark-intelligence-builder"',
+            f'license = "{license_name}"',
+            "",
+            "[needs]",
+            f"modules = [{needs_modules_text}]",
+            "",
+        ]
+        if source_truth_canonical is not None:
+            manifest_lines.extend(
                 [
-                    "[module]",
-                    'name = "spark-intelligence-builder"',
-                    f'license = "{license_name}"',
-                    "",
-                    "[needs]",
-                    f"modules = [{needs_modules_text}]",
+                    "[source_truth]",
+                    f"canonical = {str(source_truth_canonical).lower()}",
+                    'mirror_of = "spark-intelligence-builder"',
                     "",
                 ]
-            ),
+            )
+        (source_root / "spark.toml").write_text(
+            "\n".join(manifest_lines),
             encoding="utf-8",
         )
         (source_root / "pyproject.toml").write_text(

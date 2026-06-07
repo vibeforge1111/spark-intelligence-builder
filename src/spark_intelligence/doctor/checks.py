@@ -299,8 +299,17 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
         root_detail = ", ".join(str(root) for root in roots)
         return DoctorCheck("builder-source-truth", True, f"no Builder installs under {root_detail}")
 
+    install_records = [record for record in records if record.get("canonical") is not False]
+    mirror_records = [record for record in records if record.get("canonical") is False]
+    if not install_records:
+        mirror_summary = _builder_install_summary(mirror_records)
+        detail = "no canonical Builder installs"
+        if mirror_summary:
+            detail = f"{detail}; mirrors={mirror_summary}"
+        return DoctorCheck("builder-source-truth", False, detail)
+
     issues: list[str] = []
-    commits = {record["commit"] for record in records if record["commit"] != "unknown"}
+    commits = {record["commit"] for record in install_records if record["commit"] != "unknown"}
     if len(commits) > 1:
         issues.append("commit_drift=" + ",".join(sorted(commits)))
 
@@ -314,7 +323,7 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
 
     missing_harness_dep = [
         str(record["name"])
-        for record in records
+        for record in install_records
         if "spark-harness-core" not in record["needs_modules"]
     ]
     if missing_harness_dep:
@@ -322,7 +331,7 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
 
     missing_core_deps: list[str] = []
     required_deps = ("jsonschema", "referencing")
-    for record in records:
+    for record in install_records:
         deps = record["dependencies"]
         missing = [dep for dep in required_deps if not any(str(item).startswith(dep) for item in deps)]
         if missing:
@@ -330,13 +339,14 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
     if missing_core_deps:
         issues.append("missing_python_deps=" + ",".join(missing_core_deps))
 
-    summary = "; ".join(
-        f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
-        for record in records
-    )
+    summary = _builder_install_summary(install_records)
+    mirror_summary = _builder_install_summary(mirror_records)
+    detail_suffix = f"installs={summary}"
+    if mirror_summary:
+        detail_suffix = f"{detail_suffix}; mirrors={mirror_summary}"
     if issues:
-        return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; installs={summary}")
-    return DoctorCheck("builder-source-truth", True, f"installs={summary}")
+        return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; {detail_suffix}")
+    return DoctorCheck("builder-source-truth", True, detail_suffix)
 
 
 def _python_import_source_check(config_manager: ConfigManager) -> DoctorCheck:
@@ -448,6 +458,9 @@ def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
             manifest_payload = _read_toml(manifest)
             module = manifest_payload.get("module") if isinstance(manifest_payload.get("module"), dict) else {}
             needs = manifest_payload.get("needs") if isinstance(manifest_payload.get("needs"), dict) else {}
+            source_truth = (
+                manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
+            )
             pyproject = _read_toml(source_root / "pyproject.toml")
             project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
             records.append(
@@ -458,9 +471,18 @@ def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
                     "license": str(module.get("license") or ""),
                     "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
                     "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
+                    "canonical": source_truth.get("canonical") is not False,
+                    "mirror_of": str(source_truth.get("mirror_of") or ""),
                 }
             )
     return records
+
+
+def _builder_install_summary(records: list[dict[str, object]]) -> str:
+    return "; ".join(
+        f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
+        for record in records
+    )
 
 
 def _read_toml(path: Path) -> dict[str, object]:
