@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,9 @@ from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayR
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
+
+
+_logger = logging.getLogger(__name__)
 
 
 DISCORD_WEBHOOK_PATH = "/webhooks/discord"
@@ -228,7 +232,8 @@ def _validate_discord_webhook_auth(
         return (503, "Discord webhook auth secret is not configured.")
     expected_secret = config_manager.read_env_map().get(str(secret_ref), "")
     if not expected_secret:
-        return (503, f"Discord webhook auth secret ref '{secret_ref}' is unresolved.")
+        _logger.warning("Discord webhook auth secret ref %r is unresolved.", secret_ref)
+        return (503, "Discord webhook configuration error.")
     if not provided_secret:
         return (401, "Discord webhook secret header is missing.")
     if not hmac.compare_digest(expected_secret, provided_secret):
