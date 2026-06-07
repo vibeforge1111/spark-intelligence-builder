@@ -309,8 +309,6 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
     if configured:
         candidate = config_manager.normalize_runtime_path(configured)
         if candidate is not None:
-            candidate = candidate.resolve()
-        if candidate.exists():
             return candidate
     candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
     if candidate.exists():
@@ -382,7 +380,10 @@ def _load_round_history(repo_root: Path, path_key: str) -> dict[str, Any] | None
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON (local.py)") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"Expected a JSON object in {path}")
     return payload
