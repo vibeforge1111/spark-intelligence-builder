@@ -18,7 +18,10 @@ WATCHLIST_BUCKETS: dict[str, str] = {
 
 
 def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
 
 
 def _render_list(items: list[str], indent: str = "- ") -> list[str]:
