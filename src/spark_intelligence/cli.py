@@ -7208,7 +7208,7 @@ def handle_auth_refresh(args: argparse.Namespace) -> int:
             state_db=state_db,
             provider=args.provider,
         )
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     print(result.to_json() if args.json else result.to_text())
