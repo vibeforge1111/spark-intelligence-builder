@@ -409,6 +409,7 @@ class ConfigManager:
             check=True,
             capture_output=True,
             text=True,
+            timeout=30,
         )
 
     def _windows_env_permission_status(self) -> tuple[bool, str]:
@@ -418,6 +419,7 @@ class ConfigManager:
             check=True,
             capture_output=True,
             text=True,
+            timeout=30,
         )
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         acl_lines: list[str] = []
@@ -456,6 +458,7 @@ class ConfigManager:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
