@@ -39,13 +39,38 @@ def is_duplicate_event(
     event_id: int,
     window_size: int,
 ) -> bool:
+    """Check and record an event ID atomically using BEGIN IMMEDIATE to prevent TOCTOU races."""
     state_key = f"{channel_id}:recent_event_ids"
-    recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
-    if event_id in recent_ids:
-        return True
-    trimmed = (recent_ids + [event_id])[-max(window_size, 1) :]
-    set_runtime_state_value(state_db=state_db, state_key=state_key, value=json.dumps(trimmed))
-    return False
+    conn = state_db.connect()
+    try:
+        conn.isolation_level = None  # autocommit mode — we manage the transaction manually
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)
+        ).fetchone()
+        recent_ids: list[int] = []
+        if row and row["value"]:
+            try:
+                payload = json.loads(str(row["value"]))
+                if isinstance(payload, list):
+                    recent_ids = [int(item) for item in payload if isinstance(item, (int, float))]
+            except (json.JSONDecodeError, ValueError):
+                pass
+        if event_id in recent_ids:
+            conn.execute("ROLLBACK")
+            return True
+        trimmed = (recent_ids + [event_id])[-max(window_size, 1):]
+        upsert_runtime_state(conn, state_key=state_key, value=json.dumps(trimmed), component="gateway_guardrails")
+        conn.execute("COMMIT")
+        return False
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def apply_inbound_rate_limit(
@@ -56,34 +81,61 @@ def apply_inbound_rate_limit(
     limit_per_minute: int,
     notice_cooldown_seconds: int,
 ) -> dict[str, Any]:
+    """Check and update the per-user rate limit atomically using BEGIN IMMEDIATE to prevent TOCTOU races."""
     state_key = f"{channel_id}:rate_limit:{external_user_id}"
-    raw = _load_json_object(state_db=state_db, state_key=state_key)
-    now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
-    timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
-    if len(timestamps) >= max(limit_per_minute, 1):
-        retry_after_seconds = max(1, 60 - (now - timestamps[0]))
-        notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
-        if notice_allowed:
-            last_notice_at = now
-        set_runtime_state_value(
-            state_db=state_db,
+    conn = state_db.connect()
+    try:
+        conn.isolation_level = None  # autocommit mode — we manage the transaction manually
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)
+        ).fetchone()
+        raw: dict[str, Any] = {}
+        if row and row["value"]:
+            try:
+                payload = json.loads(str(row["value"]))
+                if isinstance(payload, dict):
+                    raw = payload
+            except (json.JSONDecodeError, ValueError):
+                pass
+        now = int(time.time())
+        timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
+        timestamps = [item for item in timestamps if item > now - 60]
+        last_notice_at = int(raw.get("last_notice_at", 0) or 0)
+        if len(timestamps) >= max(limit_per_minute, 1):
+            retry_after_seconds = max(1, 60 - (now - timestamps[0]))
+            notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
+            if notice_allowed:
+                last_notice_at = now
+            upsert_runtime_state(
+                conn,
+                state_key=state_key,
+                value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
+                component="gateway_guardrails",
+            )
+            conn.execute("COMMIT")
+            return {
+                "allowed": False,
+                "retry_after_seconds": retry_after_seconds,
+                "notice_allowed": notice_allowed,
+            }
+        timestamps.append(now)
+        upsert_runtime_state(
+            conn,
             state_key=state_key,
             value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
+            component="gateway_guardrails",
         )
-        return {
-            "allowed": False,
-            "retry_after_seconds": retry_after_seconds,
-            "notice_allowed": notice_allowed,
-        }
-    timestamps.append(now)
-    set_runtime_state_value(
-        state_db=state_db,
-        state_key=state_key,
-        value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
-    )
-    return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
+        conn.execute("COMMIT")
+        return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def prepare_outbound_text(
