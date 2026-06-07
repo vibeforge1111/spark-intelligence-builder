@@ -440,10 +440,13 @@ def execute_harness_chain(
             chain_status = "blocked"
             break
 
+    top_status = primary_result.status
+    if chain_status in {"blocked", "needs_input"}:
+        top_status = chain_status
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
-        status=primary_result.status,
+        status=top_status,
         summary=primary_result.summary,
         artifacts=primary_result.artifacts,
         next_actions=primary_result.next_actions,
