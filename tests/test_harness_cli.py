@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger, recent_tool_call_ledgers, record_event
+from spark_intelligence.harness_evolution import run_harness_change_manifest_runner
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
@@ -475,6 +476,64 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(ledgers[0]["tool_name"], "harness.change_manifest_runner")
         self.assertEqual(ledgers[0]["status"], "success")
 
+    def test_harness_change_manifest_runner_rejects_manifest_without_rollback_plan(self) -> None:
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        del manifest["rollback_plan"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(Exception, "rollback_plan"):
+            run_harness_change_manifest_runner(
+                self.state_db,
+                manifest_paths=[str(manifest_path)],
+                persist_event=False,
+            )
+
+    def test_harness_change_manifest_runner_rejects_protected_manifest_without_approval(self) -> None:
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["target_component"]["component_type"] = "authority_policy"
+        manifest["target_component"]["editable_by_evolution"] = False
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(Exception, "human_approval_ref"):
+            run_harness_change_manifest_runner(
+                self.state_db,
+                manifest_paths=[str(manifest_path)],
+                persist_event=False,
+            )
+
+    def test_harness_change_manifest_runner_promotes_protected_manifest_with_approval(self) -> None:
+        self._persist_self_evolution_ledger()
+        manifest_path = self._write_self_evolution_manifest(
+            required_tests=["python -m unittest --help"],
+            component_type="authority_policy",
+            human_approval=True,
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "change-manifest-runner",
+            "--home",
+            str(self.home),
+            "--manifest",
+            str(manifest_path),
+            "--requested-verdict",
+            "promote_private",
+            "--run-tests",
+            "--allow-private-promotion",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["self_evolution_run"]["promotion_decision"]["verdict"], "promote_private")
+        self.assertEqual(
+            payload["self_evolution_run"]["target_components"][0]["component_type"],
+            "authority_policy",
+        )
+        self.assertIn("human_approval_ref", payload["self_evolution_run"]["change_manifests"][0])
+
     def test_harness_execute_supports_follow_up_harness_chain(self) -> None:
         self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
@@ -756,7 +815,13 @@ class HarnessCliTests(SparkTestCase):
             component="telegram_runtime",
         )
 
-    def _write_self_evolution_manifest(self, *, required_tests: list[str]):
+    def _write_self_evolution_manifest(
+        self,
+        *,
+        required_tests: list[str],
+        component_type: str = "middleware",
+        human_approval: bool = False,
+    ):
         from spark_intelligence.harness_contract import _ensure_harness_core_importable
 
         _ensure_harness_core_importable()
@@ -765,7 +830,7 @@ class HarnessCliTests(SparkTestCase):
         kernel = HarnessKernel(surface="builder")
         component = kernel.component(
             component_id="component:builder-self-evolution-runner",
-            component_type="middleware",
+            component_type=component_type,
             owner_repo="spark-intelligence-builder",
             path="src/spark_intelligence/harness_evolution.py",
             summary="Builder self-evolution runner adapter.",
@@ -788,6 +853,16 @@ class HarnessCliTests(SparkTestCase):
             required_tests=required_tests,
             rollback_plan="Revert the Builder harness change-manifest runner adapter.",
             verdict="accepted",
+            human_approval_ref=(
+                evidence_ref(
+                    "human_confirmation",
+                    "tests/test_harness_cli.py",
+                    "Test operator explicitly approved protected self-evolution boundary proof.",
+                    confidence=1.0,
+                )
+                if human_approval
+                else None
+            ),
         )
         path = self.home / "self-evolution-manifest.json"
         path.write_text(json.dumps(manifest), encoding="utf-8")
