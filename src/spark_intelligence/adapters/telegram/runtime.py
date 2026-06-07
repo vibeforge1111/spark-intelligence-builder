@@ -326,8 +326,8 @@ def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | No
         if candidate is not None:
             operation = str(getattr(candidate, "operation", "") or "candidate")
             return f"telegram_runtime_generic_memory_{operation}"
-    except Exception:
-        pass
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
     return None
 
 
