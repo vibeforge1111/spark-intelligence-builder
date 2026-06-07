@@ -92,7 +92,7 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
             return
         try:
             resolved = path.expanduser().resolve()
-        except Exception:
+        except Exception as _e:
             resolved = path.expanduser()
         key = str(resolved).casefold()
         if key in seen:
