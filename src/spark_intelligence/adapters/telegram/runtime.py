@@ -3455,7 +3455,8 @@ def _telegram_voice_registry_profile() -> dict[str, Any]:
     registry_path = _telegram_voice_profile_registry_path()
     try:
         payload = json.loads(registry_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return {}
     profiles = payload.get("profiles") if isinstance(payload, dict) else None
     if not isinstance(profiles, dict):
