@@ -718,6 +718,94 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIsNotNone(row)
         self.assertIn("superseded=1", row["last_result"])
 
+    def test_jobs_tick_runs_harness_self_evolution_observe_job(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "turn_id": "turn:jobs-self-evolution",
+                "action_id": "action:jobs-self-evolution",
+                "capability_id": "capability:domain-chip-memory:memory.write",
+                "authorization_decision_id": "decision:jobs-self-evolution",
+                "ledger_id": "ledger:jobs-self-evolution",
+                "tool_name": "memory.write",
+                "owner_system": "domain-chip-memory",
+                "mutation_class": "writes_memory",
+                "outcome": "execute",
+                "status": "success",
+                "surface": "telegram",
+                "request_id": "req:jobs-self-evolution",
+                "trace_ref": "trace:jobs-self-evolution",
+                "summary": "Memory write completed.",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:jobs-self-evolution",
+                    "turn_id": "turn:jobs-self-evolution",
+                    "result": {"status": "success", "summary": "Memory write completed."},
+                },
+            },
+            component="telegram_runtime",
+        )
+        fake_memory = SimpleNamespace(
+            status="succeeded",
+            reason=None,
+            maintenance={
+                "manual_observations_before": 0,
+                "manual_observations_after": 0,
+                "active_deletion_count": 0,
+                "active_state_still_current_count": 0,
+                "active_state_stale_preserved_count": 0,
+                "active_state_superseded_count": 0,
+                "active_state_archived_count": 0,
+            },
+        )
+        fake_prune = SimpleNamespace(
+            cutoff="2026-01-01T00:00:00Z",
+            total_deleted=0,
+            deleted_counts={"event_log": 0, "tool_call_ledger": 0, "provider_runtime_events": 0},
+            vacuumed=False,
+        )
+
+        with patch(
+            "spark_intelligence.jobs.service.run_oauth_refresh_maintenance",
+            return_value={"scanned": 0, "due": 0, "refreshed": [], "failed": [], "skipped": []},
+        ), patch(
+            "spark_intelligence.jobs.service.run_memory_sdk_maintenance",
+            return_value=fake_memory,
+        ), patch(
+            "spark_intelligence.jobs.service.prune_observability_store",
+            return_value=fake_prune,
+        ):
+            output = jobs_tick(self.config_manager, self.state_db)
+
+        self.assertIn("harness:self-evolution-observe", output)
+        self.assertIn("mode=observe ledgers=1", output)
+        events = latest_events_by_type(self.state_db, event_type="harness_self_evolution_observed", limit=1)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["facts_json"]["ledger_count"], 1)
+        with self.state_db.connect() as conn:
+            job_row = conn.execute(
+                """
+                SELECT last_result
+                FROM job_records
+                WHERE job_id = 'harness:self-evolution-observe'
+                LIMIT 1
+                """
+            ).fetchone()
+            run_row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'job:harness_self_evolution_observe'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(job_row)
+        self.assertIn("mode=observe ledgers=1", job_row["last_result"])
+        self.assertIsNotNone(run_row)
+        self.assertEqual(run_row["status"], "closed")
+        self.assertEqual(run_row["close_reason"], "job_completed")
+
     def test_jobs_tick_records_failed_run_on_exception(self) -> None:
         with patch("spark_intelligence.jobs.service.run_oauth_refresh_maintenance", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):

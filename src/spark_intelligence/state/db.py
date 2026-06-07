@@ -937,6 +937,28 @@ class StateDB:
                     updated_at=CURRENT_TIMESTAMP
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('observability:retention', 'observability_retention', 'scheduled', 'builtin:observability_retention')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('harness:self-evolution-observe', 'harness_self_evolution_observe', 'scheduled', 'builtin:harness_self_evolution_observe')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
