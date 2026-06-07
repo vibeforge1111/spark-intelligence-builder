@@ -1413,6 +1413,8 @@ def _build_context_capsule_findings(context_capsule: dict[str, object]) -> list[
     if context_capsule.get("status") == "request_not_found":
         gateway_trace = context_capsule.get("gateway_trace") if isinstance(context_capsule.get("gateway_trace"), dict) else {}
         gateway_status = gateway_trace.get("status") if isinstance(gateway_trace, dict) else None
+        if gateway_status in {None, "not_requested"}:
+            return []
         return [
             MemoryDoctorFinding(
                 name="context_capsule_request_not_found",
@@ -2363,7 +2365,7 @@ def _record_brain_snapshot(
                 "non_override_rule": "doctor brain snapshots are diagnostics, not memory facts or repair authority",
             },
         )
-    except Exception:
+    except Exception as _e:
         return
 
 
