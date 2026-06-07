@@ -95,6 +95,8 @@ class HarnessSelectionDecision:
     reason: str
     next_actions: list[str]
     limitations: list[str]
+    retry_policy: str = ""
+    approval_mode: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -112,6 +114,8 @@ class HarnessSelectionDecision:
             "reason": self.reason,
             "next_actions": self.next_actions,
             "limitations": self.limitations,
+            "retry_policy": self.retry_policy,
+            "approval_mode": self.approval_mode,
         }
 
     def to_json(self) -> str:
@@ -340,6 +344,8 @@ def build_harness_selection(
         reason=route_decision.reason,
         next_actions=_dedupe_preserve_order(next_actions)[:4],
         limitations=_dedupe_preserve_order(limitations)[:6],
+        retry_policy=str(contract.get("retry_policy") or ""),
+        approval_mode=str(contract.get("approval_mode") or ""),
     )
 
 
