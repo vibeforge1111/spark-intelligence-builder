@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -150,7 +151,12 @@ def export_shadow_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    # Write the shadow-replay artifact atomically so the immediate
+    # validate_shadow_replay + run_shadow_report stages always read a
+    # complete prior replay or a complete new replay — never a torn blob
+    # that would surface as a validator JSONDecodeError. Sister-pattern:
+    # PR #252 (memory architecture_soak atomic), #254 (llm_wiki heartbeat).
+    _atomic_write_text(output_path, json.dumps(payload, indent=2, ensure_ascii=True))
     validation = None
     if validate:
         validation = validate_shadow_replay(
@@ -208,7 +214,7 @@ def export_shadow_replay_batch(
             "writable_roles": payload.get("writable_roles") or list(DEFAULT_WRITABLE_ROLES),
             "conversations": chunk,
         }
-        file_path.write_text(json.dumps(file_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        _atomic_write_text(file_path, json.dumps(file_payload, indent=2, ensure_ascii=True))
         files.append(
             ShadowReplayExportResult(
                 path=file_path,
@@ -1094,6 +1100,30 @@ def _validation_ok(validation: dict[str, Any] | None) -> bool:
 
 def _chunked(items: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:
     return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _normalized_timestamp(value: Any) -> str | None:
