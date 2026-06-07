@@ -429,3 +429,28 @@ class HarnessRuntimeTests(SparkTestCase):
         voice_result = (result.chained_results or [])[0]
         self.assertEqual(voice_result.envelope.harness_id, "voice.io")
         self.assertEqual(voice_result.status, "completed")
+
+    def test_build_harness_runtime_snapshot_survives_malformed_summary_json(self) -> None:
+        """Ensure build_harness_runtime_snapshot does not crash when the database
+        contains malformed JSON in the summary_json column."""
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_runs (
+                    run_id, run_kind, origin_surface, status,
+                    summary_json, opened_at, closed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "run-malformed-1",
+                    "harness:builder.direct",
+                    "test",
+                    "open",
+                    "this is not valid json {{{",
+                    "2025-01-01T00:00:00Z",
+                    None,
+                ),
+            )
+        snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
+        self.assertEqual(snapshot.summary["recent_run_count"], 1)
+        self.assertEqual(snapshot.recent_runs[0]["summary_json"], {})
