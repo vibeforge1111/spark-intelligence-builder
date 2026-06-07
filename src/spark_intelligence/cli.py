@@ -5102,7 +5102,7 @@ def _json_object_arg(raw: str, arg_name: str) -> dict[str, object]:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{arg_name} must be valid JSON") from exc
+        raise ValueError(f"{arg_name} must be valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg})") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"{arg_name} must be a JSON object")
     return payload
