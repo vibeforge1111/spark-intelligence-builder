@@ -7,11 +7,11 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import tempfile
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import SubprocessError
 from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -29,7 +29,26 @@ from spark_intelligence.attachments import (
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    authorize_pending_confirmation,
+    build_telegram_memory_diagnostic_turn_intent_payload,
+    build_telegram_memory_diagnostic_turn_intent_payload_vnext,
+    build_telegram_memory_read_turn_intent_payload,
+    build_telegram_memory_read_turn_intent_payload_vnext,
+    build_telegram_memory_turn_intent_payload,
+    build_telegram_memory_turn_intent_payload_vnext,
+    build_telegram_voice_delivery_turn_intent_payload_vnext,
+    detect_telegram_memory_read_authority_source_kind,
+    extract_turn_intent_envelope,
+    extract_turn_intent_envelope_vnext,
+    record_bridge_tool_call_result_ledger,
+    record_scoped_bridge_tool_call_results,
+    reset_bridge_authority_ledger_context,
+    set_bridge_authority_ledger_context,
+)
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.execution import run_governed_command
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
     is_duplicate_event,
@@ -53,6 +72,9 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_status,
 )
 from spark_intelligence.memory import run_memory_doctor
+from spark_intelligence.memory.episodic_events import detect_telegram_memory_event_observation
+from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
+from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
@@ -67,7 +89,11 @@ from spark_intelligence.personality import (
     resolve_builder_persona_agent_id,
     restore_agent_persona_savepoint,
 )
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.researcher_bridge.advisory import (
+    _detect_current_focus_transition_command,
+    _detect_current_plan_transition_command,
+    _detect_explicit_decision_statement,
     build_researcher_reply,
     record_researcher_bridge_result,
     try_spark_character_fallback,
@@ -266,6 +292,299 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
+def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    try:
+        if _detect_current_plan_transition_command(text) is not None:
+            return "telegram_runtime_current_plan_transition"
+    except Exception:
+        pass
+    try:
+        if _detect_current_focus_transition_command(text) is not None:
+            return "telegram_runtime_current_focus_transition"
+    except Exception:
+        pass
+    try:
+        if _detect_explicit_decision_statement(text) is not None:
+            return "telegram_runtime_explicit_decision"
+    except Exception:
+        pass
+    try:
+        if detect_profile_fact_observation(text) is not None:
+            return "telegram_runtime_profile_fact_observation"
+    except Exception:
+        pass
+    try:
+        if detect_telegram_memory_event_observation(text) is not None:
+            return "telegram_runtime_event_observation"
+    except Exception:
+        pass
+    try:
+        candidate = classify_telegram_generic_memory_candidate(text)
+        if candidate is not None:
+            operation = str(getattr(candidate, "operation", "") or "candidate")
+            return f"telegram_runtime_generic_memory_{operation}"
+    except Exception:
+        pass
+    return None
+
+
+def _attach_telegram_turn_intent_payloads(
+    update_payload: dict[str, Any],
+    *,
+    legacy_payload: dict[str, Any],
+    vnext_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    enriched = dict(update_payload)
+    enriched["spark_turn_intent"] = legacy_payload
+    if vnext_payload is not None:
+        enriched["turn_intent_envelope_vnext"] = vnext_payload
+    message = enriched.get("message")
+    if isinstance(message, dict):
+        enriched_message = dict(message)
+        enriched_message["spark_turn_intent"] = legacy_payload
+        if vnext_payload is not None:
+            enriched_message["turn_intent_envelope_vnext"] = vnext_payload
+        enriched["message"] = enriched_message
+    return enriched
+
+
+def _with_telegram_memory_turn_intent(
+    *,
+    config_manager: ConfigManager | None = None,
+    update_payload: dict[str, Any] | None,
+    request_id: str,
+    session_id: str,
+    human_id: str,
+    external_user_id: str = "",
+    user_message: str,
+) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return update_payload
+    if (
+        extract_turn_intent_envelope(update_payload) is not None
+        or extract_turn_intent_envelope_vnext(update_payload) is not None
+    ):
+        return update_payload
+    diagnostic_source_kind = _detect_telegram_memory_diagnostic_authority_source_kind(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        request_id=request_id,
+        user_message=user_message,
+    )
+    if diagnostic_source_kind is not None:
+        turn_intent_payload = build_telegram_memory_diagnostic_turn_intent_payload(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            source_kind=diagnostic_source_kind,
+        )
+        if turn_intent_payload is not None:
+            return _attach_telegram_turn_intent_payloads(
+                update_payload,
+                legacy_payload=turn_intent_payload,
+                vnext_payload=build_telegram_memory_diagnostic_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind="telegram",
+                    session_id=session_id,
+                    human_id=human_id,
+                    source_kind=diagnostic_source_kind,
+                ),
+            )
+    read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+    if read_source_kind is not None:
+        turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=read_source_kind,
+        )
+        if turn_intent_payload is not None:
+            return _attach_telegram_turn_intent_payloads(
+                update_payload,
+                legacy_payload=turn_intent_payload,
+                vnext_payload=build_telegram_memory_read_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind="telegram",
+                    session_id=session_id,
+                    human_id=human_id,
+                    user_message=user_message,
+                    source_kind=read_source_kind,
+                ),
+            )
+    source_kind = _detect_telegram_memory_authority_source_kind(user_message)
+    if source_kind is None:
+        return update_payload
+    turn_intent_payload = build_telegram_memory_turn_intent_payload(
+        request_id=request_id,
+        channel_kind="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if turn_intent_payload is None:
+        return update_payload
+
+    return _attach_telegram_turn_intent_payloads(
+        update_payload,
+        legacy_payload=turn_intent_payload,
+        vnext_payload=build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=source_kind,
+        ),
+    )
+
+
+def _telegram_researcher_memory_write_governor_decision(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    return _inbound_governor_decision(update_payload)
+
+
+def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return None
+    candidates: list[Any] = [update_payload.get("governor_decision")]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message.get("governor_decision"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("schema_version") == "governor-decision-v1":
+            return candidate
+    return None
+
+
+def _telegram_user_instruction_governor_decision_from_inbound_authority(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    action: str | None,
+) -> dict[str, Any] | None:
+    if not action:
+        return None
+    action_name = "archive" if action == "forget" else "write"
+    tool_name = f"user_instruction.{action_name}"
+    inbound_governor = _inbound_governor_decision(update_payload)
+    if isinstance(inbound_governor, dict):
+        return inbound_governor
+    if extract_turn_intent_envelope_vnext(update_payload) is None:
+        return None
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime.user_instruction",
+    )
+    return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+
+
+def _telegram_user_instruction_governor_decision_for_message(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    try:
+        from spark_intelligence.user_instructions import detect_instruction_intent
+    except Exception:
+        return None
+    intent = detect_instruction_intent(user_message)
+    if not intent:
+        return None
+    return _telegram_user_instruction_governor_decision_from_inbound_authority(
+        update_payload,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        action=str(intent.get("action") or "remember"),
+    )
+
+
+def _detect_telegram_memory_diagnostic_authority_source_kind(
+    *,
+    config_manager: ConfigManager | None,
+    external_user_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    lowered = " ".join(text.split()).lower()
+    if lowered.startswith("/memory doctor"):
+        try:
+            target = _memory_doctor_target_from_slash_command(text)
+            if bool(target.get("help_requested")):
+                return None
+        except Exception:
+            pass
+        return "telegram_runtime_memory_doctor_slash"
+    try:
+        target = _match_natural_memory_doctor_command(text)
+    except Exception:
+        target = None
+    if isinstance(target, dict):
+        if bool(target.get("help_requested")):
+            return None
+        return "telegram_runtime_memory_doctor_natural"
+    if config_manager is None:
+        return None
+    try:
+        target = _match_contextual_memory_doctor_command(
+            inbound_text=text,
+            config_manager=config_manager,
+            external_user_id=external_user_id,
+            session_id=session_id,
+            current_request_id=request_id,
+        )
+    except Exception:
+        target = None
+    if isinstance(target, dict):
+        return "telegram_runtime_memory_doctor_contextual"
+    return None
+
+
 def _format_chip_metric_value(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
@@ -311,6 +630,7 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
 def _maybe_save_reply_as_draft(
     *,
     state_db,
+    update_payload: dict[str, Any] | None = None,
     external_user_id: str,
     session_id: str | None,
     chip_used: str | None,
@@ -338,6 +658,19 @@ def _maybe_save_reply_as_draft(
 
     is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
     is_generative = bool(user_message) and detect_generative_intent(user_message)
+    if is_iteration or is_generative:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=state_db,
+            channel_id="telegram",
+            session_id=session_id,
+            component="telegram_bridge",
+        )
+        if not authority.allowed:
+            return reply_text
 
     try:
         from pathlib import Path as _P
@@ -433,6 +766,7 @@ def _maybe_capture_user_instruction(
     reply_text: str,
     bridge_mode: str | None = None,
     routing_decision: str | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> str:
     try:
         from spark_intelligence.user_instructions import (
@@ -458,6 +792,8 @@ def _maybe_capture_user_instruction(
     text_value = str(intent.get("instruction_text") or "").strip()
     if not text_value:
         return reply_text
+    if not isinstance(governor_decision, dict):
+        return reply_text
     if intent.get("action") == "forget":
         try:
             matches = matching_instructions_to_archive(
@@ -470,18 +806,22 @@ def _maybe_capture_user_instruction(
         except Exception:
             return reply_text
         if not matches:
-            return f"{base}\n\n_(no matching saved instruction to forget for: \"{text_value[:120]}\")_\n"
+            return f"{base}\n\n_(no matching saved preference to forget for: \"{text_value[:120]}\")_\n"
         archived_texts: list[str] = []
         for inst in matches:
             try:
-                if archive_instruction(state_db, instruction_id=inst.instruction_id):
+                if archive_instruction(
+                    state_db,
+                    instruction_id=inst.instruction_id,
+                    governor_decision=governor_decision,
+                ):
                     archived_texts.append(inst.instruction_text)
             except Exception:
                 continue
         if not archived_texts:
             return reply_text
         joined = "; ".join(t[:120] for t in archived_texts)
-        return f"{base}\n\n_(forgot {len(archived_texts)} saved instruction(s): {joined})_\n"
+        return f"{base}\n\n_(forgot {len(archived_texts)} saved preference(s): {joined})_\n"
     try:
         saved = add_instruction(
             state_db,
@@ -489,10 +829,11 @@ def _maybe_capture_user_instruction(
             channel_kind="telegram",
             instruction_text=text_value,
             source="explicit",
+            governor_decision=governor_decision,
         )
     except Exception:
         return reply_text
-    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
+    return f"{base}\n\n_(saved preference evidence: \"{saved.instruction_text[:160]}\" - available as future context)_\n"
 
 
 def _looks_like_memory_forget_request(user_message: str) -> bool:
@@ -819,12 +1160,13 @@ def _build_voice_chip_payload(
     normalized: Any | None = None,
     audio_bytes: bytes | None = None,
     file_path: str | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": "telegram",
         "human_id": human_id,
         "agent_id": agent_id,
-        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
         "advisor_context": {
             "runtime": {
                 "os": platform.system() or "unknown",
@@ -840,6 +1182,10 @@ def _build_voice_chip_payload(
             ],
         },
     }
+    if isinstance(turn_intent_payload, dict):
+        payload["turn_intent_envelope_vnext"] = turn_intent_payload
+    if isinstance(governor_decision, dict):
+        payload["governor_decision"] = governor_decision
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
         secret_ref = getattr(provider, "secret_ref", None)
@@ -899,6 +1245,21 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
     return audio_bytes, filename
 
 
+def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "effective_text": None,
+        "transcript_text": None,
+        "routing_decision": "voice_transcription_authority_blocked",
+        "reply_text": (
+            "I can transcribe that voice message, but this turn is missing Spark authority for voice transcription.\n"
+            f"Reason: {reason_text}.\n"
+            "Send the voice note as a fresh authorized Spark media turn and I will process it."
+        ),
+        "error": reason_text,
+    }
+
+
 def _transcribe_telegram_audio_bytes(
     *,
     config_manager: ConfigManager,
@@ -906,6 +1267,8 @@ def _transcribe_telegram_audio_bytes(
     normalized: Any,
     audio_bytes: bytes,
     file_path: str,
+    turn_intent_payload: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     transcribe_started = perf_counter()
     execution = run_first_chip_hook_supporting(
@@ -917,7 +1280,10 @@ def _transcribe_telegram_audio_bytes(
             normalized=normalized,
             audio_bytes=audio_bytes,
             file_path=file_path,
+            turn_intent_payload=turn_intent_payload,
+            governor_decision=governor_decision,
         ),
+        governor_decision=governor_decision,
     )
     transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
     if execution is None:
@@ -993,6 +1359,7 @@ def _prepare_telegram_media_input(
     config_manager: ConfigManager,
     state_db: StateDB,
     normalized: Any,
+    update_payload: dict[str, Any] | None,
     client: TelegramBotApiClient | None,
 ) -> dict[str, Any]:
     if normalized.message_kind not in {"voice", "audio"}:
@@ -1001,6 +1368,20 @@ def _prepare_telegram_media_input(
             "transcript_text": None,
             "routing_decision": None,
         }
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.transcribe",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=f"telegram:{normalized.update_id}",
+        channel_id="telegram",
+        component="telegram_runtime",
+    )
+    if not authority.allowed:
+        return _voice_transcription_authority_blocked_input(authority.reason_codes)
+    governor_decision = authority.governor_decision
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
         if embedded_audio is not None:
@@ -1011,6 +1392,8 @@ def _prepare_telegram_media_input(
                 normalized=normalized,
                 audio_bytes=audio_bytes,
                 file_path=file_path,
+                turn_intent_payload=authority.harness_core_envelope,
+                governor_decision=governor_decision,
             )
     except Exception as exc:
         return {
@@ -1051,6 +1434,8 @@ def _prepare_telegram_media_input(
             normalized=normalized,
             audio_bytes=audio_bytes,
             file_path=file_path,
+            turn_intent_payload=authority.harness_core_envelope,
+            governor_decision=governor_decision,
         )
     except Exception as exc:
         return {
@@ -1141,11 +1526,13 @@ def simulate_telegram_update(
     voice_answer_requested_for_bridge = False
     runtime_command_metadata: dict[str, Any] | None = None
     media_input: dict[str, Any] = {}
+    researcher_update_payload = update_payload
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         media_input = _prepare_telegram_media_input(
             config_manager=config_manager,
             state_db=state_db,
             normalized=normalized,
+            update_payload=update_payload,
             client=client,
         )
         if media_input.get("reply_text"):
@@ -1169,15 +1556,40 @@ def simulate_telegram_update(
         else:
             effective_text = str(media_input.get("effective_text") or normalized.text)
             transcript_text = media_input.get("transcript_text")
+            researcher_update_payload = _with_telegram_memory_turn_intent(
+                config_manager=config_manager,
+                update_payload=update_payload,
+                request_id=request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                external_user_id=normalized.telegram_user_id,
+                user_message=effective_text,
+            ) or update_payload
         voice_answer_request = _extract_voice_answer_request(effective_text)
+        command_result_override = None
         if voice_answer_request:
-            effective_text = voice_answer_request
-            voice_answer_requested_for_bridge = True
-        command_result = _handle_runtime_command(
+            authorized, blocked = _authorize_voice_delivery_action(
+                update_payload=researcher_update_payload,
+                command="/voice ask",
+                tool_name="voice.speak",
+                natural_command=False,
+                state_db=state_db,
+                request_id=request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+            )
+            if authorized:
+                effective_text = voice_answer_request
+                voice_answer_requested_for_bridge = True
+            else:
+                command_result_override = blocked
+        command_result = command_result_override or _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
+            update_payload=researcher_update_payload,
             run_id=None,
             request_id=request_id,
             session_id=resolution.session_id,
@@ -1210,6 +1622,17 @@ def simulate_telegram_update(
                 spoken_source = str(command_result.get("voice_text") or outbound_text)
                 spoken_text = _prepare_voice_reply_text(spoken_source)
                 try:
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                        update_payload=researcher_update_payload,
+                        existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        state_db=state_db,
+                        request_id=request_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        user_message=effective_text,
+                        source_kind="telegram_voice_command_delivery",
+                    )
                     voice_payload = _synthesize_telegram_voice_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -1219,6 +1642,7 @@ def simulate_telegram_update(
                         text=spoken_text,
                         tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -1357,14 +1781,50 @@ def simulate_telegram_update(
                     _shortcircuited = True
                     if _confirmation_yes:
                         sid = str(_pending_delete.get("schedule_id") or "")
-                        try:
-                            ok = _delete_schedule(sid) if sid else False
-                        except Exception:
+                        confirmation_authority = authorize_pending_confirmation(
+                            update_payload,
+                            tool_name="schedule.delete",
+                            owner_system="spark-intelligence-builder",
+                            mutation_class="deletes_schedule",
+                            state_db=state_db,
+                            request_id=request_id,
+                            channel_id="telegram",
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            actor_id="telegram_runtime",
+                            component="telegram_runtime",
+                        )
+                        pending_authorized = _pending_delete.get("authority") == "schedule.delete"
+                        if not pending_authorized or not confirmation_authority.allowed:
                             ok = False
+                        else:
+                            try:
+                                ok = _delete_schedule(sid) if sid else False
+                            except Exception:
+                                ok = False
                         if ok:
                             outbound_text = _fmt_delete_success(_pending_delete)
+                        elif not pending_authorized or not confirmation_authority.allowed:
+                            outbound_text = "I can see the pending schedule delete, but this turn was not authorized to delete it. Send the delete request again plainly and I will ask for confirmation."
                         else:
                             outbound_text = f"Tried to kill {sid}, but the scheduler rejected it. Run 'show my schedules' to check."
+                        _record_telegram_direct_tool_result(
+                            state_db,
+                            confirmation_authority,
+                            status="success" if ok else "failure",
+                            summary=(
+                                f"Schedule delete confirmed and executed for {sid}."
+                                if ok
+                                else "Schedule delete confirmation did not execute."
+                            ),
+                            command="schedule.delete.confirm",
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                        )
                     else:
                         outbound_text = _fmt_delete_cancelled()
                     _clear_pending_delete(str(normalized.telegram_user_id))
@@ -1379,18 +1839,55 @@ def simulate_telegram_update(
                     bridge_result = None
                 elif _delete_intent is not None and _instruction_intent is None:
                     _shortcircuited = True
-                    try:
-                        existing = _fetch_schedules()
-                    except Exception:
-                        existing = []
-                    matches = _match_schedules(existing, _delete_intent.get("hints", {}))
-                    if len(matches) == 0:
-                        outbound_text = _fmt_delete_notfound(_delete_intent.get("hints", {}))
-                    elif len(matches) == 1:
-                        _arm_pending_delete(str(normalized.telegram_user_id), matches[0])
-                        outbound_text = _fmt_delete_prompt(matches[0])
+                    delete_authority = authorize_builder_bridge_action(
+                        update_payload,
+                        tool_name="schedule.delete",
+                        owner_system="spark-intelligence-builder",
+                        mutation_class="deletes_schedule",
+                        state_db=state_db,
+                        request_id=request_id,
+                        channel_id="telegram",
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        actor_id="telegram_runtime",
+                        component="telegram_runtime",
+                    )
+                    if not delete_authority.allowed:
+                        outbound_text = "I can talk through schedules, but I will not arm a delete from this turn. Send the delete request plainly if you want me to queue the confirmation."
                     else:
-                        outbound_text = _fmt_delete_ambiguous(matches)
+                        delete_result_status = "failure"
+                        delete_result_summary = "Schedule delete was authorized, but no matching schedule was found."
+                        try:
+                            existing = _fetch_schedules()
+                        except Exception:
+                            existing = []
+                        matches = _match_schedules(existing, _delete_intent.get("hints", {}))
+                        if len(matches) == 0:
+                            outbound_text = _fmt_delete_notfound(_delete_intent.get("hints", {}))
+                        elif len(matches) == 1:
+                            pending_schedule = dict(matches[0])
+                            pending_schedule["authority"] = "schedule.delete"
+                            _arm_pending_delete(str(normalized.telegram_user_id), pending_schedule)
+                            outbound_text = _fmt_delete_prompt(matches[0])
+                            delete_result_status = "partial"
+                            delete_result_summary = "Schedule delete confirmation was armed; delete not executed yet."
+                        else:
+                            outbound_text = _fmt_delete_ambiguous(matches)
+                            delete_result_status = "partial"
+                            delete_result_summary = "Schedule delete matched multiple schedules and asked for clarification."
+                        _record_telegram_direct_tool_result(
+                            state_db,
+                            delete_authority,
+                            status=delete_result_status,
+                            summary=delete_result_summary,
+                            command="schedule.delete",
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                        )
                     trace_ref = None
                     bridge_mode = "schedule_delete_shortcircuit"
                     attachment_context = None
@@ -1511,10 +2008,60 @@ def simulate_telegram_update(
                             bridge_mode = "board_shortcircuit"
                             routing_decision = "board_shortcircuit"
                         else:
-                            try:
-                                outbound_text = _fmt_schedules()
-                            except Exception as exc:
-                                outbound_text = f"Could not reach scheduler: {exc}"
+                            schedule_list_authority = authorize_builder_bridge_action(
+                                update_payload,
+                                tool_name="schedule.list",
+                                owner_system="spark-intelligence-builder",
+                                mutation_class="read_only",
+                                state_db=state_db,
+                                request_id=request_id,
+                                channel_id="telegram",
+                                session_id=resolution.session_id,
+                                human_id=resolution.human_id,
+                                agent_id=resolution.agent_id,
+                                actor_id="telegram_runtime",
+                                component="telegram_runtime",
+                            )
+                            if not schedule_list_authority.allowed:
+                                reason_text = (
+                                    ", ".join(schedule_list_authority.reason_codes)
+                                    if schedule_list_authority.reason_codes
+                                    else "turn_not_authorized"
+                                )
+                                outbound_text = (
+                                    "I can talk through schedules, but this turn is missing Spark authority to read scheduler state.\n"
+                                    f"Reason: {reason_text}.\n"
+                                    "Ask for schedules as a fresh schedule-status request and I will check."
+                                )
+                            else:
+                                try:
+                                    outbound_text = _fmt_schedules()
+                                    _record_telegram_direct_tool_result(
+                                        state_db,
+                                        schedule_list_authority,
+                                        status="success",
+                                        summary="Schedule list was fetched from Telegram schedule shortcut.",
+                                        command="schedule.list",
+                                        request_id=request_id,
+                                        run_id=None,
+                                        session_id=resolution.session_id,
+                                        human_id=resolution.human_id,
+                                        agent_id=resolution.agent_id,
+                                    )
+                                except Exception as exc:
+                                    outbound_text = f"Could not reach scheduler: {exc}"
+                                    _record_telegram_direct_tool_result(
+                                        state_db,
+                                        schedule_list_authority,
+                                        status="failure",
+                                        summary=f"Schedule list failed: {exc}",
+                                        command="schedule.list",
+                                        request_id=request_id,
+                                        run_id=None,
+                                        session_id=resolution.session_id,
+                                        human_id=resolution.human_id,
+                                        agent_id=resolution.agent_id,
+                                    )
                             bridge_mode = "schedule_list_shortcircuit"
                             routing_decision = "schedule_list_shortcircuit"
                         trace_ref = None
@@ -1556,26 +2103,16 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
-                if not _shortcircuited and _instruction_intent is not None:
-                    _shortcircuited = True
-                    outbound_text = _maybe_capture_user_instruction(
-                        state_db=state_db,
-                        user_message=effective_text,
-                        external_user_id=normalized.telegram_user_id,
-                        reply_text="",
-                        bridge_mode="user_instruction_shortcircuit",
-                        routing_decision="user_instruction_shortcircuit",
-                    )
-                    trace_ref = None
-                    bridge_mode = "user_instruction_shortcircuit"
-                    attachment_context = None
-                    routing_decision = "user_instruction_shortcircuit"
-                    active_chip_key = None
-                    active_chip_task_type = None
-                    active_chip_evaluate_used = False
-                    evidence_summary = None
-                    bridge_result = None
                 if not _shortcircuited:
+                    researcher_memory_write_governor = _telegram_researcher_memory_write_governor_decision(
+                        researcher_update_payload,
+                        state_db=state_db,
+                        request_id=request_id,
+                        run_id=None,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                    )
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -1585,6 +2122,10 @@ def simulate_telegram_update(
                         session_id=resolution.session_id,
                         channel_kind="telegram",
                         user_message=effective_text,
+                        turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+                        turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        governor_decision=researcher_memory_write_governor,
+                        allow_memory_adapter_envelope=False,
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
                     spark_character_reply = _maybe_spark_character_reply(
@@ -1639,9 +2180,20 @@ def simulate_telegram_update(
                         reply_text=outbound_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
+                        governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                            researcher_update_payload,
+                            state_db=state_db,
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            user_message=effective_text,
+                        ),
                     )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
+                        update_payload=researcher_update_payload,
                         external_user_id=normalized.telegram_user_id,
                         session_id=resolution.session_id,
                         chip_used=bridge_result.active_chip_key,
@@ -1678,6 +2230,17 @@ def simulate_telegram_update(
             spoken_text = _prepare_voice_reply_text(outbound_text)
             if spoken_text:
                 try:
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                        update_payload=researcher_update_payload,
+                        existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                        state_db=state_db,
+                        request_id=request_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        user_message=effective_text,
+                        source_kind="telegram_voice_bridge_delivery",
+                    )
                     voice_payload = _synthesize_telegram_voice_reply(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -1686,9 +2249,11 @@ def simulate_telegram_update(
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
@@ -2059,6 +2624,7 @@ def poll_telegram_updates_once(
             config_manager=config_manager,
             state_db=state_db,
             normalized=normalized,
+            update_payload=update,
             client=client,
         )
         if media_input.get("reply_text"):
@@ -2135,16 +2701,42 @@ def poll_telegram_updates_once(
         voice_input_runtime_state = media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
         voice_answer_requested_for_bridge = False
+        researcher_update_payload = _with_telegram_memory_turn_intent(
+            config_manager=config_manager,
+            update_payload=update,
+            request_id=run.request_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            external_user_id=normalized.telegram_user_id,
+            user_message=effective_text,
+        ) or update
         voice_answer_request = _extract_voice_answer_request(effective_text)
+        command_result_override = None
         if voice_answer_request:
-            effective_text = voice_answer_request
-            voice_answer_requested_for_bridge = True
+            authorized, blocked = _authorize_voice_delivery_action(
+                update_payload=researcher_update_payload,
+                command="/voice ask",
+                tool_name="voice.speak",
+                natural_command=False,
+                state_db=state_db,
+                run_id=run.run_id,
+                request_id=run.request_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+            )
+            if authorized:
+                effective_text = voice_answer_request
+                voice_answer_requested_for_bridge = True
+            else:
+                command_result_override = blocked
 
-        command_result = _handle_runtime_command(
+        command_result = command_result_override or _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
+            update_payload=researcher_update_payload,
             run_id=run.run_id,
             request_id=run.request_id,
             session_id=resolution.session_id,
@@ -2209,6 +2801,8 @@ def poll_telegram_updates_once(
                     else (outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None)
                 ),
                 voice_input_runtime_state=voice_input_runtime_state,
+                turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                turn_intent_update_payload=researcher_update_payload,
                 respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
                 user_message=effective_text,
             )
@@ -2331,6 +2925,8 @@ def poll_telegram_updates_once(
                 force_voice=voice_origin_reply,
                 voice_text=outbound_text if voice_origin_reply else None,
                 voice_input_runtime_state=voice_input_runtime_state,
+                turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                turn_intent_update_payload=researcher_update_payload,
                 user_message=effective_text,
             )
             processed_count += 1
@@ -2393,6 +2989,15 @@ def poll_telegram_updates_once(
             },
         )
         bridge_result = build_researcher_reply(
+            governor_decision=_telegram_researcher_memory_write_governor_decision(
+                researcher_update_payload,
+                state_db=state_db,
+                request_id=f"telegram:{normalized.update_id}",
+                run_id=run.run_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+            ),
             config_manager=config_manager,
             state_db=state_db,
             request_id=f"telegram:{normalized.update_id}",
@@ -2402,6 +3007,9 @@ def poll_telegram_updates_once(
             channel_kind="telegram",
             user_message=effective_text,
             run_id=run.run_id,
+            turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+            turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
+            allow_memory_adapter_envelope=False,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         spark_character_reply = _maybe_spark_character_reply(
@@ -2448,9 +3056,20 @@ def poll_telegram_updates_once(
             reply_text=outbound_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
+            governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                researcher_update_payload,
+                state_db=state_db,
+                request_id=f"telegram:{normalized.update_id}",
+                run_id=run.run_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                user_message=effective_text,
+            ),
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
+            update_payload=researcher_update_payload,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
             chip_used=bridge_result.active_chip_key,
@@ -2482,6 +3101,8 @@ def poll_telegram_updates_once(
             force_voice=voice_origin_reply or voice_answer_requested_for_bridge,
             voice_text=outbound_text if voice_origin_reply or voice_answer_requested_for_bridge else None,
             voice_input_runtime_state=voice_input_runtime_state,
+            turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
+            turn_intent_update_payload=researcher_update_payload,
             user_message=effective_text,
         )
         processed_count += 1
@@ -2583,6 +3204,78 @@ def _describe_telegram_delivery_exception(exc: Exception) -> str:
     return str(exc)
 
 
+def _telegram_voice_speak_turn_intent_payload(
+    *,
+    update_payload: dict[str, Any] | None,
+    existing_turn_intent_payload: dict[str, Any] | None = None,
+    state_db: StateDB | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    user_message: str | None = None,
+    source_kind: str = "telegram_voice_delivery",
+) -> dict[str, Any] | None:
+    if isinstance(existing_turn_intent_payload, dict):
+        existing_authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": existing_turn_intent_payload},
+            tool_name="voice.speak",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        if existing_authority.allowed:
+            return existing_authority.harness_core_envelope or existing_turn_intent_payload
+    legacy_authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
+    )
+    if legacy_authority.allowed:
+        return legacy_authority.harness_core_envelope
+    clean_message = " ".join(str(user_message or "").split())
+    if not human_id or not session_id or not clean_message:
+        return None
+    vnext_payload = build_telegram_voice_delivery_turn_intent_payload_vnext(
+        request_id=request_id or f"telegram-voice-delivery:{uuid4().hex}",
+        channel_kind="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        source_kind=source_kind,
+        user_message=clean_message,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None
+    vnext_authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
+    )
+    if not vnext_authority.allowed:
+        return None
+    return vnext_authority.harness_core_envelope or vnext_payload
+
+
 def _synthesize_telegram_voice_reply(
     *,
     config_manager: ConfigManager,
@@ -2595,13 +3288,26 @@ def _synthesize_telegram_voice_reply(
     caption_text: str | None = None,
     coherence_mode: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    governor_decision: dict[str, Any] | None = None
+    if isinstance(turn_intent_payload, dict):
+        voice_authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_payload},
+            tool_name="voice.speak",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        governor_decision = voice_authority.governor_decision
     payload = {
         **_build_voice_chip_payload(
             config_manager=config_manager,
             state_db=state_db,
             human_id=human_id,
             agent_id=agent_id,
+            turn_intent_payload=turn_intent_payload,
+            governor_decision=governor_decision,
         ),
         "text": text,
         "surface": "telegram",
@@ -2634,6 +3340,7 @@ def _synthesize_telegram_voice_reply(
         config_manager,
         hook="voice.speak",
         payload=payload,
+        governor_decision=governor_decision,
     )
     synthesis_ms = int((perf_counter() - synthesis_started) * 1000)
     if execution is None:
@@ -3000,8 +3707,8 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
             input_path = temp_path / f"input{input_suffix}"
             output_path = temp_path / "parrot.ogg"
             input_path.write_bytes(audio_bytes)
-            subprocess.run(
-                [
+            execution = run_governed_command(
+                command=[
                     ffmpeg_path,
                     "-y",
                     "-hide_banner",
@@ -3029,8 +3736,11 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                     "voip",
                     str(output_path),
                 ],
-                check=True,
+                cwd=temp_path,
+                timeout_seconds=30,
             )
+            if not execution.ok:
+                return payload
             processed = output_path.read_bytes()
             if not processed:
                 return payload
@@ -3108,8 +3818,8 @@ def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) ->
             input_path = temp_path / "input.wav"
             output_path = temp_path / "output.ogg"
             input_path.write_bytes(bytes(payload["audio_bytes"]))
-            subprocess.run(
-                [
+            execution = run_governed_command(
+                command=[
                     ffmpeg_path,
                     "-y",
                     "-hide_banner",
@@ -3127,17 +3837,18 @@ def _convert_voice_payload_for_telegram_if_available(payload: dict[str, Any]) ->
                     "voip",
                     str(output_path),
                 ],
-                check=True,
-                capture_output=True,
-                timeout=30,
+                cwd=temp_path,
+                timeout_seconds=30,
             )
+            if not execution.ok:
+                return payload
             converted = dict(payload)
             converted["audio_bytes"] = output_path.read_bytes()
             converted["mime_type"] = "audio/ogg"
             converted["filename"] = f"{Path(filename or 'telegram-reply').stem}.ogg"
             converted["voice_compatible"] = True
             return converted
-    except (OSError, subprocess.SubprocessError, TimeoutError, ValueError):
+    except (OSError, SubprocessError, TimeoutError, ValueError):
         return payload
 
 
@@ -3255,6 +3966,8 @@ def _send_telegram_reply(
     force_voice: bool = False,
     voice_text: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
+    turn_intent_update_payload: dict[str, Any] | None = None,
     respect_voice_reply_state: bool = True,
     user_message: str | None = None,
 ) -> dict[str, Any]:
@@ -3285,6 +3998,20 @@ def _send_telegram_reply(
         respect_voice_reply_state
         and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
     )
+    if voice_requested:
+        turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+            update_payload=turn_intent_update_payload,
+            existing_turn_intent_payload=turn_intent_payload,
+            state_db=state_db,
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message or text,
+            source_kind="telegram_reply_voice_delivery",
+        )
+        if not isinstance(turn_intent_payload, dict):
+            voice_requested = False
     if voice_requested:
         filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
     guarded = prepare_outbound_text(
@@ -3331,6 +4058,7 @@ def _send_telegram_reply(
                     caption_text=voice_caption_text,
                     coherence_mode="caption_preview" if voice_text is not None else "exact",
                     voice_input_runtime_state=voice_input_runtime_state,
+                    turn_intent_payload=turn_intent_payload,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
@@ -3566,6 +4294,49 @@ def _record_telegram_voice_delivery_runtime_state(
             state_key=f"telegram:voice:last_runtime_state:{external_user_id}",
             value=encoded,
         )
+    _export_telegram_voice_runtime_state_for_spark_os(state_db=state_db, runtime_state=runtime_state)
+
+
+def _export_telegram_voice_runtime_state_for_spark_os(*, state_db: StateDB, runtime_state: dict[str, Any]) -> None:
+    if runtime_state.get("schema_version") != "spark.voice_runtime_state.v1":
+        return
+    spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
+    if spark_home:
+        root = Path(spark_home).expanduser()
+    else:
+        state_path = Path(state_db.path).expanduser()
+        root = state_path.parents[1] if len(state_path.parents) > 1 else state_path.parent
+    output_path = root / "state" / "spark-voice-comms" / "voice-runtime-state.json"
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(_public_telegram_voice_runtime_state(runtime_state), sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _public_telegram_voice_runtime_state(runtime_state: dict[str, Any]) -> dict[str, Any]:
+    public_state = json.loads(json.dumps(runtime_state))
+    tts = public_state.get("tts") if isinstance(public_state.get("tts"), dict) else {}
+    if tts.get("voice_id") and not tts.get("voice_id_masked"):
+        voice_id = str(tts.get("voice_id") or "")
+        tts["voice_id_masked"] = f"{voice_id[:4]}...{voice_id[-4:]}" if len(voice_id) > 8 else "***"
+    tts.pop("voice_id", None)
+    tts.pop("settings", None)
+    public_state["tts"] = tts
+    transcript = public_state.get("transcript")
+    if isinstance(transcript, dict):
+        public_state["transcript"] = {
+            "present": True,
+            "confidence": transcript.get("confidence"),
+            "provider_id": transcript.get("provider_id"),
+        }
+    public_state["redaction"] = (
+        "metadata only; raw audio, transcript bodies, provider secrets, and unmasked voice ids omitted"
+    )
+    return public_state
 
 
 def _telegram_voice_runtime_state_with_delivery(
@@ -3759,6 +4530,10 @@ def _telegram_route_probe_key(route_name: str) -> str | None:
     }.get(normalized)
 
 
+def _route_probe_requires_external_network(capability_key: str) -> bool:
+    return str(capability_key or "").strip() == "spark_browser"
+
+
 def _render_telegram_route_probe_help(*, route_name: str) -> str:
     if route_name:
         prefix = f"Unknown route `{route_name}`.\n"
@@ -3789,6 +4564,16 @@ def _render_telegram_route_probe_reply(probe: Any) -> str:
         lines.append(f"Evidence: {_with_terminal_period(summary)}")
     lines.append("Boundary: this is route evidence for the ledger, not proof that a user task completed.")
     return "\n".join(lines)
+
+
+def _render_telegram_route_probe_authority_blocked_reply(*, route_name: str, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    route_label = str(route_name or "").strip() or "that route"
+    return (
+        f"I can inspect route health for `{route_label}`, but this turn is missing Spark authority to run the probe.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized Spark route probe and I will record the evidence."
+    )
 
 
 _TELEGRAM_LEDGER_REVIEW_STATES = {"proposed", "scaffolded", "probed"}
@@ -3861,12 +4646,121 @@ def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, 
     return "\n".join(lines)
 
 
+def _with_tool_result_metadata(
+    result: dict[str, Any],
+    *,
+    status: str,
+    summary: str,
+) -> dict[str, Any]:
+    normalized_status = str(status or "").strip()
+    if normalized_status not in {"success", "failure", "partial", "rolled_back"}:
+        normalized_status = "partial"
+    enriched = dict(result)
+    enriched.setdefault("tool_result_status", normalized_status)
+    enriched.setdefault("tool_result_summary", str(summary or "").strip() or "Telegram runtime command returned.")
+    return enriched
+
+
+def _record_telegram_direct_tool_result(
+    state_db: StateDB,
+    verdict: Any,
+    *,
+    status: str,
+    summary: str,
+    command: str,
+    request_id: str | None,
+    run_id: str | None,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+) -> str | None:
+    normalized_status = str(status or "").strip()
+    if normalized_status not in {"success", "failure", "partial", "rolled_back"}:
+        normalized_status = "partial"
+    if not bool(getattr(verdict, "allowed", False)):
+        return None
+    ledger = getattr(verdict, "tool_call_ledger", None)
+    if not isinstance(ledger, dict):
+        return None
+    command_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(command or ledger.get("tool_name") or "tool").strip()).strip("-")
+    return record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=normalized_status,
+        summary=str(summary or "").strip() or "Telegram direct route returned.",
+        output_path=f"builder://telegram/runtime/{request_id or 'unknown'}/tool-results/{command_slug or 'tool'}",
+        component="telegram_runtime",
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
 def _handle_runtime_command(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
     external_user_id: str,
     inbound_text: str,
+    update_payload: dict[str, Any] | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any] | None:
+    token = set_bridge_authority_ledger_context(
+        state_db=state_db,
+        component="telegram_runtime",
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+    )
+    try:
+        result = _handle_runtime_command_impl(
+            config_manager=config_manager,
+            state_db=state_db,
+            external_user_id=external_user_id,
+            inbound_text=inbound_text,
+            update_payload=update_payload,
+            run_id=run_id,
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        if isinstance(result, dict):
+            command = str(result.get("command") or "telegram_runtime_command").strip()
+            result_status = str(result.get("tool_result_status") or "partial").strip()
+            if result_status not in {"success", "failure", "partial", "rolled_back"}:
+                result_status = "partial"
+            result_summary = str(result.get("tool_result_summary") or f"Telegram runtime command {command} returned.").strip()
+            record_scoped_bridge_tool_call_results(
+                status=result_status,
+                summary=result_summary,
+                output_path=f"builder://telegram/runtime/{request_id or 'unknown'}/tool-results/{command.strip('/').replace(' ', '-') or 'command'}",
+            )
+        return result
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+
+def _handle_runtime_command_impl(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    external_user_id: str,
+    inbound_text: str,
+    update_payload: dict[str, Any] | None = None,
     run_id: str | None = None,
     request_id: str | None = None,
     session_id: str | None = None,
@@ -3885,7 +4779,9 @@ def _handle_runtime_command(
             session_id=session_id or "",
             current_request_id=request_id or "",
         )
-    style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
+    explicit_style_command = _parse_style_command(normalized)
+    natural_style_command = None if explicit_style_command is not None else _match_natural_style_command(normalized)
+    style_command = explicit_style_command or natural_style_command
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
     if _is_memory_doctor_help_request(normalized):
@@ -3907,6 +4803,20 @@ def _handle_runtime_command(
     elif natural_memory_doctor_command is not None:
         memory_doctor_command = dict(natural_memory_doctor_command)
     if memory_doctor_command is not None:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="memory.diagnose",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+        )
+        if not authority.allowed:
+            return {
+                "command": "/memory doctor",
+                "reply_text": _render_memory_doctor_authority_blocked_reply(
+                    reason_codes=authority.reason_codes,
+                ),
+                "respect_voice_reply_state": True,
+            }
         return _handle_memory_doctor_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -3916,6 +4826,7 @@ def _handle_runtime_command(
             human_id=human_id,
             command=memory_doctor_command,
         )
+    explicit_think_command = lowered if lowered in {"/think", "/think on", "/think off"} else None
     if style_command is not None:
         return _handle_style_command(
             config_manager=config_manager,
@@ -3924,6 +4835,8 @@ def _handle_runtime_command(
             agent_id=agent_id,
             command=style_command["command"],
             payload=style_command.get("payload"),
+            update_payload=update_payload,
+            natural_command=natural_style_command is not None,
         )
     if lowered in {"/self", "/introspect"}:
         capsule = build_self_awareness_capsule(
@@ -3977,6 +4890,22 @@ def _handle_runtime_command(
                 "reply_text": _render_telegram_route_probe_help(route_name=route_name),
                 "respect_voice_reply_state": True,
             }
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="route.probe.run",
+            owner_system="spark-intelligence-builder",
+            mutation_class="writes_memory",
+            external_network=_route_probe_requires_external_network(capability_key),
+        )
+        if not authority.allowed:
+            return {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_authority_blocked_reply(
+                    route_name=route_name,
+                    reason_codes=authority.reason_codes,
+                ),
+                "respect_voice_reply_state": True,
+            }
         probe = run_route_probe_and_record(
             config_manager,
             state_db,
@@ -3986,11 +4915,16 @@ def _handle_runtime_command(
             session_id=session_id or "",
             human_id=human_id or f"human:telegram:{external_user_id}",
         )
-        return {
-            "command": "/probe",
-            "reply_text": _render_telegram_route_probe_reply(probe),
-            "respect_voice_reply_state": True,
-        }
+        probe_status = str(getattr(probe, "status", "") or "").strip()
+        return _with_tool_result_metadata(
+            {
+                "command": "/probe",
+                "reply_text": _render_telegram_route_probe_reply(probe),
+                "respect_voice_reply_state": True,
+            },
+            status="success" if probe_status == "success" else "failure",
+            summary=f"Route probe {capability_key} recorded {probe_status or 'unknown'} evidence.",
+        )
     if _is_ledger_runtime_command(lowered):
         return {
             "command": "/ledger" if lowered.startswith("/ledger") else "/capabilities",
@@ -4038,6 +4972,9 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
+            tool_name="voice.status",
+            mutation_class="read_only",
         )
     if lowered in {"/voice reply", "/voice reply status"} or natural_voice_command == ("/voice reply", None):
         enabled = _voice_reply_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -4056,22 +4993,34 @@ def _handle_runtime_command(
         ("/voice reply off", None),
     }:
         enabled = lowered == "/voice reply on" or natural_voice_command == ("/voice reply on", None)
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice reply",
+            tool_name="voice.reply.set",
+        )
+        if authority_block is not None:
+            return authority_block
         _set_voice_reply_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
             enabled=enabled,
         )
-        return {
-            "command": lowered,
-            "reply_text": (
-                "Voice replies enabled for this Telegram DM. "
-                "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
-                "or `/voice speak <text>` to read exact text."
-                if enabled
-                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
-            ),
-            "respect_voice_reply_state": False,
-        }
+        voice_reply_command = "/voice reply on" if enabled else "/voice reply off"
+        return _with_tool_result_metadata(
+            {
+                "command": voice_reply_command,
+                "reply_text": (
+                    "Voice replies enabled for this Telegram DM. "
+                    "Next: ask a normal question, use `/voice ask <question>` for one generated voice answer, "
+                    "or `/voice speak <text>` to read exact text."
+                    if enabled
+                    else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice ask <question>` or `/voice speak <text>`."
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary=f"Telegram voice reply state set to {'enabled' if enabled else 'disabled'}.",
+        )
     if lowered == "/voice plan" or natural_voice_command == ("/voice plan", None):
         return _run_voice_runtime_command(
             config_manager=config_manager,
@@ -4082,6 +5031,9 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
+            tool_name="voice.plan",
+            mutation_class="read_only",
         )
     if lowered in {"/voice map", "/voice architecture"} or natural_voice_command == ("/voice map", None):
         return {
@@ -4112,6 +5064,7 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
         )
     if lowered in {"/voice self-test", "/voice selftest", "/voice test", "/voice verify"} or natural_voice_command == (
         "/voice self-test",
@@ -4123,6 +5076,7 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
             external_user_id=external_user_id,
+            update_payload=update_payload,
         )
     if (
         lowered in {"/voice provider", "/voice providers", "/voice tts"}
@@ -4138,15 +5092,26 @@ def _handle_runtime_command(
             "respect_voice_reply_state": False,
         }
     if lowered in {"/voice undo", "/voice rollback"} or natural_voice_command == ("/voice undo", None):
-        return {
-            "command": "/voice undo",
-            "reply_text": _restore_telegram_voice_profile_undo(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice undo",
+            tool_name="voice.profile.undo",
+        )
+        if authority_block is not None:
+            return authority_block
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice undo",
+                "reply_text": _restore_telegram_voice_profile_undo(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile undo route completed.",
+        )
     if lowered.startswith("/voice guide ") or (natural_voice_command and natural_voice_command[0] == "/voice guide"):
         provider_target = (
             normalized[len("/voice guide") :].strip()
@@ -4180,6 +5145,13 @@ def _handle_runtime_command(
                 "reply_text": _render_telegram_voice_provider_help(),
                 "respect_voice_reply_state": False,
             }
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice provider",
+            tool_name="voice.provider.set",
+        )
+        if authority_block is not None:
+            return authority_block
         _push_telegram_voice_profile_undo(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -4191,11 +5163,15 @@ def _handle_runtime_command(
             agent_id=agent_id,
             provider_id=provider_id,
         )
-        return {
-            "command": "/voice provider",
-            "reply_text": _render_telegram_voice_provider_switched(provider_id=provider_id),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice provider",
+                "reply_text": _render_telegram_voice_provider_switched(provider_id=provider_id),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary=f"Telegram voice provider set to {provider_id}.",
+        )
     if (
         lowered == "/voice voices"
         or lowered.startswith("/voice voices ")
@@ -4213,11 +5189,21 @@ def _handle_runtime_command(
             prompt = str(natural_voice_command[1] or "").strip()
         else:
             prompt = ""
-        return {
-            "command": "/voice voices",
-            "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
-            "respect_voice_reply_state": False,
-        }
+        authority_block = _authorize_voice_search_action(
+            update_payload=update_payload,
+            command="/voice voices",
+        )
+        if authority_block is not None:
+            return authority_block
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice voices",
+                "reply_text": _render_elevenlabs_voice_search_reply(prompt=prompt, config_manager=config_manager),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice search route completed.",
+        )
     if (
         lowered.startswith("/voice voice ")
         or lowered.startswith("/voice choose ")
@@ -4232,17 +5218,29 @@ def _handle_runtime_command(
             target = normalized[len("/voice select") :].strip()
         else:
             target = str(natural_voice_command[1] or "").strip()
-        return {
-            "command": "/voice voice",
-            "reply_text": _select_elevenlabs_voice_for_telegram_dm(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-                target=target,
-                config_manager=config_manager,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice voice",
+            tool_name="voice.profile.select",
+            external_network=True,
+        )
+        if authority_block is not None:
+            return authority_block
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice voice",
+                "reply_text": _select_elevenlabs_voice_for_telegram_dm(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                    target=target,
+                    config_manager=config_manager,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile selection route completed.",
+        )
     if (
         lowered == "/voice mutate"
         or lowered.startswith("/voice mutate ")
@@ -4260,35 +5258,61 @@ def _handle_runtime_command(
             style = str(natural_voice_command[1] or "").strip()
         else:
             style = "warmer, natural, clear"
-        return {
-            "command": "/voice mutate",
-            "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
-                state_db=state_db,
-                external_user_id=external_user_id,
-                agent_id=agent_id,
-                style=style,
-            ),
-            "respect_voice_reply_state": False,
-        }
+        authority_block = _authorize_voice_state_action(
+            update_payload=update_payload,
+            command="/voice mutate",
+            tool_name="voice.profile.tune",
+        )
+        if authority_block is not None:
+            return authority_block
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice mutate",
+                "reply_text": _mutate_elevenlabs_voice_for_telegram_dm(
+                    state_db=state_db,
+                    external_user_id=external_user_id,
+                    agent_id=agent_id,
+                    style=style,
+                ),
+                "respect_voice_reply_state": False,
+            },
+            status="success",
+            summary="Telegram voice profile tuning route completed.",
+        )
     if (
         lowered == "/voice audition"
         or lowered.startswith("/voice audition ")
         or (natural_voice_command and natural_voice_command[0] == "/voice audition")
     ):
+        natural_audition_command = bool(natural_voice_command and natural_voice_command[0] == "/voice audition") and not (
+            lowered == "/voice audition" or lowered.startswith("/voice audition ")
+        )
         if lowered.startswith("/voice audition "):
             prompt = normalized[len("/voice audition") :].strip()
         elif natural_voice_command and natural_voice_command[0] == "/voice audition":
             prompt = str(natural_voice_command[1] or "").strip()
         else:
             prompt = ""
+        authorized, blocked = _authorize_voice_delivery_action(
+            update_payload=update_payload,
+            command="/voice audition",
+            tool_name="voice.speak",
+            natural_command=natural_audition_command,
+        )
+        if not authorized:
+            return blocked
         voice_text = _elevenlabs_audition_text(prompt)
-        return {
-            "command": "/voice audition",
-            "reply_text": "I’m auditioning the current voice now.\n\nIf it feels close, say `make it warmer`, `make it clearer`, or `make it more geeky`.",
-            "force_voice": True,
-            "voice_text": voice_text,
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice audition",
+                "reply_text": "I’m auditioning the current voice now.\n\nIf it feels close, say `make it warmer`, `make it clearer`, or `make it more geeky`.",
+                "force_voice": True,
+                "voice_text": voice_text,
+                "respect_voice_reply_state": False,
+            },
+            status="partial",
+            summary="Telegram voice audition was authorized and queued for voice delivery.",
+        )
     if (
         lowered == "/voice install"
         or lowered.startswith("/voice install ")
@@ -4329,6 +5353,10 @@ def _handle_runtime_command(
             agent_id=agent_id,
             external_user_id=external_user_id,
             payload_extra={"target": target},
+            update_payload=update_payload,
+            tool_name="voice.install",
+            mutation_class="writes_files",
+            external_network=True,
         )
     if (
         lowered in {"/voice onboard", "/voice onboarding", "/voice setup"}
@@ -4355,6 +5383,10 @@ def _handle_runtime_command(
             agent_id=agent_id,
             external_user_id=external_user_id,
             payload_extra=payload_extra,
+            update_payload=update_payload,
+            tool_name="voice.onboard",
+            mutation_class="writes_files",
+            external_network=True,
         )
     if lowered in {"/voice ask", "/voice answer"}:
         return {
@@ -4363,6 +5395,7 @@ def _handle_runtime_command(
             "respect_voice_reply_state": False,
         }
     if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
+        natural_speak_command = bool(natural_voice_command and natural_voice_command[0] == "/voice speak") and not lowered.startswith("/voice speak")
         speak_text = (
             normalized[len("/voice speak") :].strip()
             if lowered.startswith("/voice speak")
@@ -4377,20 +5410,33 @@ def _handle_runtime_command(
                 ),
                 "respect_voice_reply_state": False,
             }
-        return {
-            "command": "/voice speak",
-            "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
-            "force_voice": True,
-            "voice_text": speak_text,
-            "voice_tts": _voice_tts_override_from_text(speak_text),
-            "respect_voice_reply_state": False,
-        }
-    if lowered in {"/think", "/think on", "/think off"} or natural_think_command in {
+        authorized, blocked = _authorize_voice_delivery_action(
+            update_payload=update_payload,
+            command="/voice speak",
+            tool_name="voice.speak",
+            natural_command=natural_speak_command,
+        )
+        if not authorized:
+            return blocked
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice speak",
+                "reply_text": "Reading that exact text as a voice reply now.\n\nFor generated wording, use `/voice ask <question>`.",
+                "force_voice": True,
+                "voice_text": speak_text,
+                "voice_tts": _voice_tts_override_from_text(speak_text),
+                "respect_voice_reply_state": False,
+            },
+            status="partial",
+            summary="Telegram voice speak was authorized and queued for voice delivery.",
+        )
+    if explicit_think_command in {"/think", "/think on", "/think off"} or natural_think_command in {
         "/think",
         "/think on",
         "/think off",
     }:
-        if lowered == "/think" or natural_think_command == "/think":
+        think_command = explicit_think_command or natural_think_command
+        if think_command == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
             state_text = "on" if enabled else "off"
             return {
@@ -4400,26 +5446,40 @@ def _handle_runtime_command(
                     "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
                 ),
             }
-        enabled = lowered == "/think on" or natural_think_command == "/think on"
+        authorized, blocked = _authorize_builder_runtime_state_action(
+            update_payload=update_payload,
+            command=think_command or "/think",
+            tool_name="think.visibility.set",
+            natural_command=explicit_think_command is None,
+            action_label="update this setting",
+        )
+        if not authorized:
+            return blocked
+        enabled = think_command == "/think on"
         _set_think_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
             enabled=enabled,
         )
         state_text = "enabled" if enabled else "disabled"
-        return {
-            "command": natural_think_command or lowered,
-            "reply_text": (
-                f"Thinking visibility {state_text} for this Telegram DM. "
-                "This only affects `<think>` blocks in future replies."
-            ),
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": think_command or "/think",
+                "reply_text": (
+                    f"Thinking visibility {state_text} for this Telegram DM. "
+                    "This only affects `<think>` blocks in future replies."
+                ),
+            },
+            status="success",
+            summary=f"Telegram thinking visibility set to {state_text}.",
+        )
     chip_command = _parse_chip_command(normalized)
     if chip_command is not None:
         return _handle_telegram_chip_command(
             config_manager=config_manager,
             state_db=state_db,
             chip_command=chip_command,
+            update_payload=update_payload,
             run_id=run_id,
             request_id=request_id,
             session_id=session_id,
@@ -4613,6 +5673,15 @@ def _handle_runtime_command(
             renderer=_render_swarm_paths_reply,
         )
     if lowered == "/swarm sync" or natural_swarm_command == ("/swarm sync", None):
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="swarm.collective.sync",
+            owner_system="spark-swarm",
+            mutation_class="external_network",
+            external_network=True,
+        )
+        if not authority.allowed:
+            return _blocked_swarm_authority_result(command="/swarm sync", reason_codes=authority.reason_codes)
         result = sync_swarm_collective(
             config_manager=config_manager,
             state_db=state_db,
@@ -4633,6 +5702,8 @@ def _handle_runtime_command(
                 f"{result.message}\n"
                 "Next: `/swarm status` to confirm the current bridge state."
             ),
+            "tool_result_status": "success" if result.ok else "failure",
+            "tool_result_summary": f"Swarm collective sync {'completed' if result.ok else 'failed'} in {result.mode} mode.",
         }
     run_args = _parse_swarm_path_run_command(normalized)
     if run_args:
@@ -4643,6 +5714,8 @@ def _handle_runtime_command(
                 path_key=run_args["path_key"],
             ),
             renderer=_render_swarm_bridge_run_reply,
+            update_payload=update_payload,
+            tool_name="swarm.path.run",
         )
     run_resolution = _resolve_natural_swarm_run_target(
         inbound_text=normalized,
@@ -4658,6 +5731,8 @@ def _handle_runtime_command(
                 path_key=str(run_resolution["path_key"]),
             ),
             renderer=_render_swarm_bridge_run_reply,
+            update_payload=update_payload,
+            tool_name="swarm.path.run",
         )
     autoloop_args = _parse_swarm_autoloop_command(normalized)
     if autoloop_args:
@@ -4678,6 +5753,8 @@ def _handle_runtime_command(
                 force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
+            update_payload=update_payload,
+            tool_name="swarm.autoloop.run",
         )
     autoloop_resolution = _resolve_natural_swarm_autoloop_target(
         inbound_text=normalized,
@@ -4703,6 +5780,8 @@ def _handle_runtime_command(
                 force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
+            update_payload=update_payload,
+            tool_name="swarm.autoloop.run",
         )
     sessions_args = _parse_swarm_sessions_command(normalized)
     if sessions_args:
@@ -4765,6 +5844,8 @@ def _handle_runtime_command(
                 path_key=rerun_args.get("path_key"),
             ),
             renderer=_render_swarm_bridge_rerun_reply,
+            update_payload=update_payload,
+            tool_name="swarm.rerun.execute",
         )
     rerun_resolution = _resolve_natural_swarm_rerun_target(
         inbound_text=normalized,
@@ -4780,6 +5861,8 @@ def _handle_runtime_command(
                 path_key=str(rerun_resolution.get("path_key") or "") or None,
             ),
             renderer=_render_swarm_bridge_rerun_reply,
+            update_payload=update_payload,
+            tool_name="swarm.rerun.execute",
         )
     absorb_args = _parse_swarm_absorb_command(normalized)
     if absorb_args:
@@ -4792,6 +5875,9 @@ def _handle_runtime_command(
                 reason=absorb_args.get("reason"),
             ),
             renderer=_render_swarm_absorb_reply,
+            update_payload=update_payload,
+            tool_name="swarm.insight.absorb",
+            mutation_class="external_network",
         )
     absorb_resolution = _resolve_natural_swarm_absorb_target(
         inbound_text=normalized,
@@ -4813,6 +5899,9 @@ def _handle_runtime_command(
                 reason=str(absorb_resolution["reason"]) if absorb_resolution.get("reason") else None,
             ),
             renderer=_render_swarm_absorb_reply,
+            update_payload=update_payload,
+            tool_name="swarm.insight.absorb",
+            mutation_class="external_network",
         )
     review_args = _parse_swarm_review_command(normalized)
     if review_args:
@@ -4831,6 +5920,9 @@ def _handle_runtime_command(
                 reason=review_args["reason"],
             ),
             renderer=_render_swarm_review_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mastery.review",
+            mutation_class="external_network",
         )
     review_resolution = _resolve_natural_swarm_review_target(
         inbound_text=normalized,
@@ -4853,6 +5945,9 @@ def _handle_runtime_command(
                 reason=str(review_resolution["reason"]),
             ),
             renderer=_render_swarm_review_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mastery.review",
+            mutation_class="external_network",
         )
     mode_args = _parse_swarm_mode_command(normalized)
     if mode_args:
@@ -4865,6 +5960,9 @@ def _handle_runtime_command(
                 evolution_mode=mode_args["evolution_mode"],
             ),
             renderer=_render_swarm_mode_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mode.set",
+            mutation_class="external_network",
         )
     mode_resolution = _resolve_natural_swarm_mode_target(
         inbound_text=normalized,
@@ -4886,6 +5984,9 @@ def _handle_runtime_command(
                 evolution_mode=str(mode_resolution["evolution_mode"]),
             ),
             renderer=_render_swarm_mode_reply,
+            update_payload=update_payload,
+            tool_name="swarm.mode.set",
+            mutation_class="external_network",
         )
     deliver_args = _parse_swarm_deliver_command(normalized)
     if deliver_args:
@@ -4899,6 +6000,10 @@ def _handle_runtime_command(
                 pr_url=deliver_args.get("pr_url"),
             ),
             renderer=_render_swarm_delivery_reply,
+            update_payload=update_payload,
+            tool_name="swarm.upgrade.deliver",
+            mutation_class="external_network",
+            publishes=True,
         )
     deliver_resolution = _resolve_natural_swarm_deliver_target(
         inbound_text=normalized,
@@ -4919,6 +6024,10 @@ def _handle_runtime_command(
                 upgrade_id=str(deliver_resolution["upgrade_id"]),
             ),
             renderer=_render_swarm_delivery_reply,
+            update_payload=update_payload,
+            tool_name="swarm.upgrade.deliver",
+            mutation_class="external_network",
+            publishes=True,
         )
     sync_delivery_args = _parse_swarm_sync_delivery_command(normalized)
     if sync_delivery_args:
@@ -4931,6 +6040,9 @@ def _handle_runtime_command(
                 pr_url=sync_delivery_args.get("pr_url"),
             ),
             renderer=_render_swarm_delivery_sync_reply,
+            update_payload=update_payload,
+            tool_name="swarm.delivery.sync",
+            mutation_class="external_network",
         )
     sync_delivery_resolution = _resolve_natural_swarm_sync_delivery_target(
         inbound_text=normalized,
@@ -4951,6 +6063,9 @@ def _handle_runtime_command(
                 upgrade_id=str(sync_delivery_resolution["upgrade_id"]),
             ),
             renderer=_render_swarm_delivery_sync_reply,
+            update_payload=update_payload,
+            tool_name="swarm.delivery.sync",
+            mutation_class="external_network",
         )
     if lowered.startswith("/swarm evaluate") or (natural_swarm_command and natural_swarm_command[0] == "/swarm evaluate"):
         task = normalized[len("/swarm evaluate") :].strip() if lowered.startswith("/swarm evaluate") else str(natural_swarm_command[1] or "").strip()
@@ -5670,6 +6785,15 @@ def _render_memory_doctor_help_reply() -> str:
     )
 
 
+def _render_memory_doctor_authority_blocked_reply(*, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return (
+        "I can run Memory Doctor, but this turn is missing Spark authority for memory diagnostics.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized memory diagnostic and I will inspect the trace."
+    )
+
+
 def _handle_memory_doctor_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -5717,6 +6841,12 @@ def _handle_memory_doctor_runtime_command(
         "reply_text": reply_text,
         "respect_voice_reply_state": True,
         "runtime_command_metadata": metadata,
+        "tool_result_status": "success" if report.ok else "failure",
+        "tool_result_summary": (
+            "Memory Doctor completed with a healthy result."
+            if report.ok
+            else "Memory Doctor completed with findings."
+        ),
     }
 
 
@@ -6018,7 +7148,6 @@ def _memory_doctor_previous_failure_signals(record: dict[str, object] | None) ->
         signals.append("previous_researcher_previous_turn_route")
     return list(dict.fromkeys(signals))
 
-
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
     if not suffix:
@@ -6133,7 +7262,9 @@ def _handle_style_command(
     agent_id: str | None,
     command: str,
     payload: str | None,
-) -> dict[str, str]:
+    update_payload: dict[str, Any] | None = None,
+    natural_command: bool = False,
+) -> dict[str, str] | None:
     if command == "/style":
         return {
             "command": "/style",
@@ -6246,6 +7377,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.undo",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         restored_profile = pop_agent_persona_undo_snapshot(
             agent_id=agent_id,
             human_id=human_id,
@@ -6318,6 +7457,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.savepoint.create",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         create_agent_persona_savepoint(
             agent_id=agent_id,
             human_id=human_id,
@@ -6348,6 +7495,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.savepoint.restore",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         restored_profile = restore_agent_persona_savepoint(
             agent_id=agent_id,
             human_id=human_id,
@@ -6396,6 +7551,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.preset.apply",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         preset = _STYLE_PRESETS[preset_name]
         training_message = _build_style_training_message(str(preset.get("instruction") or ""))
         mutation = detect_and_persist_agent_persona_preferences(
@@ -6459,6 +7622,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.train",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         training_message = _build_style_training_message(instruction)
         mutation = detect_and_persist_agent_persona_preferences(
             agent_id=agent_id,
@@ -6520,6 +7691,14 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
+        authorized, blocked = _authorize_style_state_action(
+            update_payload=update_payload,
+            command=command,
+            tool_name="style.feedback.record",
+            natural_command=natural_command,
+        )
+        if not authorized:
+            return blocked
         training_message = _build_style_feedback_training_message(
             feedback=feedback,
             sentiment="positive" if command == "/style good" else ("negative" if command == "/style bad" else "neutral"),
@@ -7307,12 +8486,44 @@ def _run_voice_runtime_command(
     agent_id: str | None,
     external_user_id: str | None = None,
     payload_extra: dict[str, Any] | None = None,
+    update_payload: dict[str, Any] | None = None,
+    tool_name: str | None = None,
+    mutation_class: str = "read_only",
+    external_network: bool = False,
 ) -> dict[str, Any]:
+    governor_decision: dict[str, Any] | None = None
+    authority = None
+    if tool_name:
+        authority_payload = update_payload
+        if (
+            command == "/voice onboard"
+            and extract_turn_intent_envelope_vnext(update_payload) is None
+            and extract_turn_intent_envelope(update_payload) is None
+        ):
+            authority_payload = _build_voice_onboard_authority_payload(
+                external_user_id=external_user_id,
+                human_id=human_id,
+                tool_name=tool_name,
+                mutation_class=mutation_class,
+                external_network=external_network,
+            )
+        authority = authorize_builder_bridge_action(
+            authority_payload,
+            tool_name=tool_name,
+            owner_system="spark-voice-comms",
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        if not authority.allowed:
+            return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+        governor_decision = authority.governor_decision
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_payload=authority.harness_core_envelope if authority is not None else None,
+        governor_decision=governor_decision,
     )
     if payload_extra:
         payload.update(payload_extra)
@@ -7320,9 +8531,14 @@ def _run_voice_runtime_command(
         config_manager,
         hook=hook,
         payload=payload,
+        governor_decision=governor_decision,
     )
     if execution is None:
-        return {"command": command, "reply_text": fallback_reply}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": fallback_reply},
+            status="failure",
+            summary=f"Voice hook {hook} was authorized but no active chip supported it.",
+        )
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     reply_text = str((result or {}).get("reply_text") or "").strip()
     if command in {"/voice", "/voice status"}:
@@ -7343,18 +8559,300 @@ def _run_voice_runtime_command(
                 agent_id=agent_id,
             )
     if reply_text:
-        return {"command": command, "reply_text": reply_text}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": reply_text},
+            status="success" if execution.ok else "failure",
+            summary=f"Voice hook {hook} {'completed' if execution.ok else 'failed'}.",
+        )
     if execution.ok:
-        return {"command": command, "reply_text": fallback_reply}
+        return _with_tool_result_metadata(
+            {"command": command, "reply_text": fallback_reply},
+            status="success",
+            summary=f"Voice hook {hook} completed.",
+        )
     reason = ""
     if isinstance(execution.output, dict):
         reason = str(execution.output.get("error") or "").strip()
     if not reason:
         reason = str(execution.stderr or execution.stdout or "").strip()
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": f"{fallback_reply}\nReason: {reason}" if reason else fallback_reply,
+        },
+        status="failure",
+        summary=f"Voice hook {hook} failed.",
+    )
+
+
+def _telegram_voice_status_hook_governor_decision(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    request_id: str,
+    human_id: str | None,
+    agent_id: str | None,
+    external_user_id: str | None,
+    state_db: StateDB,
+) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision, ()
+    actor_ref = str(human_id or "").strip() or f"human:telegram:{str(external_user_id or 'unknown').strip() or 'unknown'}"
+    vnext_payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=f"{request_id}:{uuid4().hex[:8]}",
+        source_kind="telegram_voice_status_adapter",
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        intent_summary=f"User requested {command}, which requires reading voice runtime status.",
+        raw_turn_summary=command,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None, tuple(authority.reason_codes or ("harness_core_vnext_envelope_unavailable",))
+    hook_authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    if hook_authority.allowed and isinstance(hook_authority.governor_decision, dict):
+        return hook_authority.governor_decision, ()
+    return None, tuple(hook_authority.reason_codes or authority.reason_codes or ("missing_governor_decision",))
+
+
+def _build_voice_onboard_authority_payload(
+    *,
+    external_user_id: str | None,
+    human_id: str | None,
+    tool_name: str,
+    mutation_class: str,
+    external_network: bool,
+) -> dict[str, Any]:
+    actor_ref = str(human_id or "").strip()
+    if not actor_ref:
+        actor_ref = f"human:{str(external_user_id or 'telegram').strip() or 'telegram'}"
+    payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=f"voice-onboard-{uuid4().hex[:12]}",
+        source_kind="telegram_voice_onboard_explicit_request",
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class=mutation_class,  # type: ignore[arg-type]
+        external_network=external_network,
+        intent_summary="Fresh Telegram turn explicitly requested voice onboarding.",
+        raw_turn_summary="Voice onboarding request summarized by Telegram runtime.",
+        confidence=0.95,
+    )
+    return {"turn_intent_envelope_vnext": payload} if isinstance(payload, dict) else {}
+
+
+def _blocked_voice_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
     return {
         "command": command,
-        "reply_text": f"{fallback_reply}\nReason: {reason}" if reason else fallback_reply,
+        "reply_text": (
+            f"I can help set up voice, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
     }
+
+
+def _blocked_style_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help update style, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark style action and I will run it."
+        ),
+    }
+
+
+def _authorize_style_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_style_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _blocked_builder_runtime_state_authority_result(
+    *,
+    command: str,
+    reason_codes: tuple[str, ...],
+    action_label: str,
+) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    label = str(action_label or "update this setting").strip()
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help {label}, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark action and I will run it."
+        ),
+    }
+
+
+def _authorize_builder_runtime_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+    action_label: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_builder_runtime_state_authority_result(
+        command=command,
+        reason_codes=authority.reason_codes,
+        action_label=action_label,
+    )
+
+
+def _authorize_voice_state_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    external_network: bool = False,
+) -> dict[str, Any] | None:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class="writes_memory",
+        external_network=external_network,
+    )
+    if authority.allowed:
+        return None
+    return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _authorize_voice_search_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+) -> dict[str, Any] | None:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.search.run",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if authority.allowed:
+        return None
+    return _blocked_voice_authority_result(command=command, reason_codes=authority.reason_codes)
+
+
+def _blocked_voice_delivery_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can help with voice delivery, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
+def _blocked_voice_diagnostic_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, Any]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return {
+        "command": command,
+        "reply_text": (
+            f"I can inspect voice diagnostics, but this turn is missing Spark authority for `{command}`.\n"
+            f"Reason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark voice diagnostic action and I will run it."
+        ),
+        "respect_voice_reply_state": False,
+    }
+
+
+def _authorize_voice_delivery_action(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    tool_name: str,
+    natural_command: bool,
+    state_db: StateDB | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[bool, dict[str, Any] | None]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        run_id=run_id,
+        request_id=request_id,
+        channel_id="telegram" if state_db is not None else None,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime" if state_db is not None else None,
+        component="telegram_runtime" if state_db is not None else "bridge_authority",
+    )
+    if authority.allowed:
+        return True, None
+    if natural_command:
+        return False, None
+    return False, _blocked_voice_delivery_authority_result(command=command, reason_codes=authority.reason_codes)
 
 
 def _run_voice_doctor_command(
@@ -7364,39 +8862,72 @@ def _run_voice_doctor_command(
     human_id: str | None,
     agent_id: str | None,
     external_user_id: str,
+    update_payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.diagnostics.run",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+    )
+    if not authority.allowed:
+        return _blocked_voice_diagnostic_authority_result(
+            command="/voice doctor",
+            reason_codes=authority.reason_codes,
+        )
+    hook_governor, hook_reasons = _telegram_voice_status_hook_governor_decision(
+        update_payload=update_payload,
+        command="/voice doctor",
+        request_id=f"telegram-voice-doctor:{external_user_id}",
+        human_id=human_id,
+        agent_id=agent_id,
+        external_user_id=external_user_id,
+        state_db=state_db,
+    )
+    if hook_governor is None:
+        return _blocked_voice_diagnostic_authority_result(command="/voice doctor", reason_codes=hook_reasons)
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        governor_decision=hook_governor,
     )
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.status",
         payload=payload,
+        governor_decision=hook_governor,
     )
     if execution is None:
-        return {
-            "command": "/voice doctor",
-            "reply_text": _render_telegram_voice_doctor_missing_chip_reply(),
-            "respect_voice_reply_state": False,
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": "/voice doctor",
+                "reply_text": _render_telegram_voice_doctor_missing_chip_reply(),
+                "respect_voice_reply_state": False,
+            },
+            status="failure",
+            summary="Voice diagnostics could not run because no active voice status chip was available.",
+        )
     result = execution.output.get("result") if isinstance(execution.output, dict) else None
     if not isinstance(result, dict):
         result = {}
-    return {
-        "command": "/voice doctor",
-        "reply_text": _render_telegram_voice_doctor_reply(
-            result=result,
-            chip_key=str(execution.chip_key or ""),
-            state_db=state_db,
-            external_user_id=external_user_id,
-            agent_id=agent_id,
-            config_manager=config_manager,
-        ),
-        "respect_voice_reply_state": False,
-    }
+    return _with_tool_result_metadata(
+        {
+            "command": "/voice doctor",
+            "reply_text": _render_telegram_voice_doctor_reply(
+                result=result,
+                chip_key=str(execution.chip_key or ""),
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+                config_manager=config_manager,
+            ),
+            "respect_voice_reply_state": False,
+        },
+        status="success" if execution.ok else "failure",
+        summary=f"Voice diagnostics {'completed' if execution.ok else 'failed'}.",
+    )
 
 
 def _render_telegram_voice_doctor_missing_chip_reply() -> str:
@@ -7548,35 +9079,65 @@ def _run_voice_self_test_command(
     human_id: str | None,
     agent_id: str | None,
     external_user_id: str,
+    update_payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.self_test.run",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if not authority.allowed:
+        return _blocked_voice_diagnostic_authority_result(
+            command="/voice self-test",
+            reason_codes=authority.reason_codes,
+        )
+    hook_governor, hook_reasons = _telegram_voice_status_hook_governor_decision(
+        update_payload=update_payload,
+        command="/voice self-test",
+        request_id=f"telegram-voice-self-test:{external_user_id}",
+        human_id=human_id,
+        agent_id=agent_id,
+        external_user_id=external_user_id,
+        state_db=state_db,
+    )
+    if hook_governor is None:
+        return _blocked_voice_diagnostic_authority_result(command="/voice self-test", reason_codes=hook_reasons)
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        governor_decision=hook_governor,
     )
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.status",
         payload=payload,
+        governor_decision=hook_governor,
     )
     result = execution.output.get("result") if execution and isinstance(execution.output, dict) else {}
     if not isinstance(result, dict):
         result = {}
-    return {
-        "command": "/voice self-test",
-        "reply_text": _render_telegram_voice_self_test_reply(
-            result=result,
-            chip_key=str(execution.chip_key or "") if execution else "",
-            chip_ready=bool(execution),
-            bot_probe=_telegram_voice_bot_update_probe(config_manager),
-            state_db=state_db,
-            external_user_id=external_user_id,
-            agent_id=agent_id,
-            config_manager=config_manager,
-        ),
-        "respect_voice_reply_state": False,
-    }
+    return _with_tool_result_metadata(
+        {
+            "command": "/voice self-test",
+            "reply_text": _render_telegram_voice_self_test_reply(
+                result=result,
+                chip_key=str(execution.chip_key or "") if execution else "",
+                chip_ready=bool(execution),
+                bot_probe=_telegram_voice_bot_update_probe(config_manager),
+                state_db=state_db,
+                external_user_id=external_user_id,
+                agent_id=agent_id,
+                config_manager=config_manager,
+            ),
+            "respect_voice_reply_state": False,
+        },
+        status="success" if execution and execution.ok else "failure",
+        summary="Voice self-test completed." if execution and execution.ok else "Voice self-test could not complete.",
+    )
 
 
 def _telegram_voice_bot_update_probe(config_manager: ConfigManager) -> dict[str, Any]:
@@ -8862,6 +10423,7 @@ def _handle_telegram_chip_command(
     config_manager: ConfigManager,
     state_db: StateDB,
     chip_command: dict[str, Any],
+    update_payload: dict[str, Any] | None,
     run_id: str | None,
     request_id: str,
     session_id: str,
@@ -8912,23 +10474,47 @@ def _handle_telegram_chip_command(
             "reply_text": f"Chip command payload is invalid.\nReason: {_with_terminal_period(str(exc))}",
         }
 
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=f"chip.{hook}",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_files",
+    )
+    if not authority.allowed:
+        return {
+            "command": command,
+            "reply_text": _render_chip_authority_blocked_reply(
+                command=command,
+                reason_codes=authority.reason_codes,
+            ),
+        }
+
     try:
         execution = run_chip_hook(
             config_manager,
             chip_key=chip_key,
             hook=hook,
             payload=payload,
+            governor_decision=authority.governor_decision,
         )
     except ValueError as exc:
-        return {
-            "command": command,
-            "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} could not run for {chip_key}.",
+        )
     except RuntimeError as exc:
-        return {
-            "command": command,
-            "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
-        }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} failed before execution for {chip_key}.",
+        )
 
     record_chip_hook_execution(
         state_db,
@@ -8963,17 +10549,25 @@ def _handle_telegram_chip_command(
         trace_ref=f"trace:telegram:{request_id}",
     )
     if not screened["allowed"]:
-        return {
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": (
+                    "Chip output was blocked before Telegram delivery.\n"
+                    f"Reason: it contained secret-like material and was quarantined as {screened['quarantine_id']}."
+                ),
+            },
+            status="failure",
+            summary=f"Direct chip hook {hook} ran but output was blocked before delivery.",
+        )
+    return _with_tool_result_metadata(
+        {
             "command": command,
-            "reply_text": (
-                "Chip output was blocked before Telegram delivery.\n"
-                f"Reason: it contained secret-like material and was quarantined as {screened['quarantine_id']}."
-            ),
-        }
-    return {
-        "command": command,
-        "reply_text": str(screened["text"] or "").strip() or "Chip command completed with no displayable output.",
-    }
+            "reply_text": str(screened["text"] or "").strip() or "Chip command completed with no displayable output.",
+        },
+        status="success" if execution.ok else "failure",
+        summary=f"Direct chip hook {hook} {'completed' if execution.ok else 'failed'} for {chip_key}.",
+    )
 
 
 def _render_chip_help_reply() -> str:
@@ -8984,6 +10578,15 @@ def _render_chip_help_reply() -> str:
         "strategy_id=ema_pullback_long market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict`.\n"
         "Rule: direct chip commands run the chip hook locally in Telegram, but they do not create a Swarm insight, "
         "autoloop session, or GitHub delivery by themselves."
+    )
+
+
+def _render_chip_authority_blocked_reply(*, command: str, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return (
+        f"I can inspect chips, but this turn is missing Spark authority for `{command}`.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized Spark chip action and I will run it."
     )
 
 
@@ -9259,16 +10862,42 @@ def _run_swarm_action_command(
     command: str,
     runner: Any,
     renderer: Any,
-) -> dict[str, str]:
+    update_payload: dict[str, Any] | None,
+    tool_name: str,
+    mutation_class: str,
+    publishes: bool = False,
+    external_network: bool = True,
+) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-swarm",
+        mutation_class=mutation_class,
+        publishes=publishes,
+        external_network=external_network,
+    )
+    if not authority.allowed:
+        return _blocked_swarm_authority_result(command=command, reason_codes=authority.reason_codes)
     try:
         payload = runner()
         reply_text = renderer(payload)
     except RuntimeError as exc:
-        reply_text = _render_swarm_unavailable_reply("Swarm action is unavailable.", exc)
-    return {
-        "command": command,
-        "reply_text": reply_text,
-    }
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": _render_swarm_unavailable_reply("Swarm action is unavailable.", exc),
+            },
+            status="failure",
+            summary=f"Swarm action {tool_name} failed.",
+        )
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": reply_text,
+        },
+        status="success",
+        summary=f"Swarm action {tool_name} completed.",
+    )
 
 
 def _run_swarm_bridge_command(
@@ -9276,15 +10905,49 @@ def _run_swarm_bridge_command(
     command: str,
     runner: Any,
     renderer: Any,
-) -> dict[str, str]:
+    update_payload: dict[str, Any] | None,
+    tool_name: str,
+    mutation_class: str = "launches_mission",
+) -> dict[str, Any]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=tool_name,
+        owner_system="spark-swarm",
+        mutation_class=mutation_class,
+    )
+    if not authority.allowed:
+        return _blocked_swarm_authority_result(command=command, reason_codes=authority.reason_codes)
     try:
         result = runner()
         reply_text = renderer(result)
     except RuntimeError as exc:
-        reply_text = _render_swarm_unavailable_reply("Swarm bridge action is unavailable.", exc)
+        return _with_tool_result_metadata(
+            {
+                "command": command,
+                "reply_text": _render_swarm_unavailable_reply("Swarm bridge action is unavailable.", exc),
+            },
+            status="failure",
+            summary=f"Swarm bridge action {tool_name} failed.",
+        )
+    return _with_tool_result_metadata(
+        {
+            "command": command,
+            "reply_text": reply_text,
+        },
+        status="success",
+        summary=f"Swarm bridge action {tool_name} completed.",
+    )
+
+
+def _blocked_swarm_authority_result(*, command: str, reason_codes: tuple[str, ...]) -> dict[str, str]:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
     return {
         "command": command,
-        "reply_text": reply_text,
+        "reply_text": (
+            "I can help with that swarm action, but this turn is missing the Spark authority envelope "
+            f"for `{command}`.\nReason: {reason_text}.\n"
+            "Send it as a fresh authorized Spark action and I will run it."
+        ),
     }
 
 
