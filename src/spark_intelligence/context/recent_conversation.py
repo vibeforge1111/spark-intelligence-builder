@@ -80,7 +80,8 @@ def _load_builder_event_turns(
                 """,
                 (channel_kind, session_id, max(turn_limit * 4, 12)),
             ).fetchall()
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return []
 
     transcript: list[RecentConversationTurn] = []
