@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -139,7 +141,35 @@ def run_chip_autoloop(
             "history": history,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Atomic write so a Ctrl-C / OOM-kill between rounds doesn't
+        # leave <chip_key>.status.json half-written. The status file is
+        # what doctor / external loop watchers JSON.parse to report
+        # progress; a partial JSON file makes those readers think the
+        # loop never started rather than 'loop was at round N, just got
+        # interrupted'. Mirrors the temp-then-replace pattern used by
+        # sa-heartbeat-latest-atomic + wiki-heartbeat-latest-atomic in
+        # this same repo.
+        serialized = json.dumps(payload, indent=2)
+        tmp_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=status_path.parent,
+                prefix=f".{status_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                tmp_name = handle.name
+                handle.write(serialized)
+            os.replace(tmp_name, status_path)
+        except Exception:
+            if tmp_name:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+            raise
 
     for round_idx in range(1, rounds + 1):
         try:
