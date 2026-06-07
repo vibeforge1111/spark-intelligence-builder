@@ -65,7 +65,7 @@ def build_llm_wiki_inventory(
         refreshed_files = compile_result.generated_files
 
     markdown_files = sorted(path for path in root.rglob("*.md") if path.is_file()) if root.exists() else []
-    pages = [_page_payload(root, path) for path in markdown_files]
+    pages = [page for page in (_page_payload(root, path) for path in markdown_files) if page is not None]
     expected_files = tuple(dict.fromkeys((*BOOTSTRAP_WIKI_FILES, *SYSTEM_COMPILE_WIKI_FILES)))
     missing_expected = [relative for relative in expected_files if not (root / relative).exists()]
     payload = {
@@ -89,9 +89,13 @@ def build_llm_wiki_inventory(
     return LlmWikiInventoryResult(output_dir=root, payload=payload)
 
 
-def _page_payload(root: Path, path: Path) -> dict[str, Any]:
+def _page_payload(root: Path, path: Path) -> dict[str, Any] | None:
     relative_path = path.relative_to(root).as_posix()
-    content = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+        stat_result = path.stat()
+    except OSError:
+        return None
     frontmatter = _frontmatter(content)
     return {
         "path": relative_path,
@@ -103,8 +107,8 @@ def _page_payload(root: Path, path: Path) -> dict[str, Any]:
         "authority": str(frontmatter.get("authority") or "supporting_not_authoritative").strip(),
         "freshness": str(frontmatter.get("freshness") or "").strip(),
         "source_class": str(frontmatter.get("source_class") or "").strip(),
-        "modified_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat(),
-        "byte_count": path.stat().st_size,
+        "modified_at": datetime.fromtimestamp(stat_result.st_mtime, timezone.utc).replace(microsecond=0).isoformat(),
+        "byte_count": stat_result.st_size,
     }
 
 
