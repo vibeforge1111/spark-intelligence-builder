@@ -151,7 +151,7 @@ def promote_llm_wiki_improvement(
         raise FileExistsError(f"wiki improvement note already exists: {relative_path}")
 
     warnings: list[str] = []
-    if status == "verified" and len(evidence) == 0:
+    if status == "verified" and not evidence:
         warnings.append("verified_status_without_explicit_evidence_ref")
     if status == "candidate":
         warnings.append("candidate_status_requires_probe_before_runtime_truth")
