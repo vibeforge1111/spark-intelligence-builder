@@ -54,6 +54,7 @@ from spark_intelligence.channel.service import (
     set_channel_status,
     test_configured_telegram_channel,
 )
+from spark_intelligence.cli_approval_ledgers import default_cli_approval_ledger_dir, import_cli_approval_ledgers
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
@@ -2909,6 +2910,17 @@ def build_parser() -> argparse.ArgumentParser:
     harness_tool_ledgers_parser.add_argument("--surface", help="Filter ledgers by producing surface")
     harness_tool_ledgers_parser.add_argument("--limit", type=int, default=20, help="Maximum ledgers to show")
     harness_tool_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_import_cli_ledgers_parser = harness_subparsers.add_parser(
+        "import-cli-ledgers",
+        help="Import Spark CLI approval ledgers into the canonical tool-ledger table",
+    )
+    harness_import_cli_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_import_cli_ledgers_parser.add_argument(
+        "--ledger-dir",
+        default=str(default_cli_approval_ledger_dir()),
+        help="Directory containing Spark CLI approval ledger JSON files",
+    )
+    harness_import_cli_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_self_evolution_parser = harness_subparsers.add_parser(
         "self-evolution-snapshot",
         help="Build an observe-only Harness Core self-evolution run from canonical tool ledgers",
@@ -8478,6 +8490,19 @@ def handle_harness_tool_ledgers(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_import_cli_ledgers(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = import_cli_approval_ledgers(
+        state_db,
+        ledger_dir=Path(str(getattr(args, "ledger_dir", "") or default_cli_approval_ledger_dir())),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.errors and result.imported == 0 else 0
+
+
 def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -10021,6 +10046,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_harness_status(args)
     if args.command == "harness" and args.harness_command == "tool-ledgers":
         return handle_harness_tool_ledgers(args)
+    if args.command == "harness" and args.harness_command == "import-cli-ledgers":
+        return handle_harness_import_cli_ledgers(args)
     if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
         return handle_harness_self_evolution_snapshot(args)
     if args.command == "harness" and args.harness_command == "change-manifest-runner":

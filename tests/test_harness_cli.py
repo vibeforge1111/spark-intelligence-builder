@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger
+from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger, recent_tool_call_ledgers
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
@@ -50,6 +50,53 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["ledgers"][0]["ledger_id"], "ledger:cli-ledger")
         self.assertEqual(payload["ledgers"][0]["surface"], "cli_test")
+
+    def test_harness_import_cli_ledgers_indexes_tool_call_files(self) -> None:
+        ledger_dir = self.home / "approval-ledgers"
+        ledger_dir.mkdir(parents=True)
+        (ledger_dir / "bootstrap.json").write_text(
+            json.dumps({"schema_version": "spark-cli-approval-bootstrap-ledger-v1"}),
+            encoding="utf-8",
+        )
+        (ledger_dir / "ledger.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:cli-import",
+                    "created_at": "2026-06-07T00:00:00Z",
+                    "turn_id": "turn:cli-import",
+                    "action_id": "action:cli-import",
+                    "capability_id": "capability:spark-cli:approval.runtime_state_mutation",
+                    "tool_name": "spark-cli.approval.enforced-command",
+                    "command_digest_ref": "spark-cli-command-digest:test",
+                    "authorization": {
+                        "decision_id": "decision:cli-import",
+                        "verdict": "allow",
+                        "risk_tier": "high",
+                    },
+                    "result": {"status": "success", "summary": "CLI command completed."},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "import-cli-ledgers",
+            "--home",
+            str(self.home),
+            "--ledger-dir",
+            str(ledger_dir),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["imported"], 1)
+        self.assertEqual(payload["skipped"], 1)
+        ledgers = recent_tool_call_ledgers(self.state_db, turn_id="turn:cli-import")
+        self.assertEqual(ledgers[0]["surface"], "spark_cli")
+        self.assertEqual(ledgers[0]["authorization_decision_id"], "decision:cli-import")
 
     def _enable_fake_researcher(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
