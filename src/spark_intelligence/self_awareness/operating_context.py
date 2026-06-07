@@ -869,7 +869,7 @@ def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_messag
     flags: list[dict[str, Any]] = []
     try:
         contradictions = recent_contradictions(state_db, limit=5, status="open")
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as _exc:
         contradictions = []
     for row in contradictions[:3]:
         reason_code = str(row.get("reason_code") or "").strip()
