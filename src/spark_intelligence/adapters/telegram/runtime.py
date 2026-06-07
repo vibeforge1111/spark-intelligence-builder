@@ -1338,7 +1338,10 @@ def _mark_telegram_inbound_voice_runtime_state(
     audio_bytes: int,
     transcribe_hook_ms: int,
 ) -> dict[str, Any]:
-    state = json.loads(json.dumps(runtime_state))
+    try:
+        state = json.loads(json.dumps(runtime_state))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
     source_ledger = state.get("source_ledger") if isinstance(state.get("source_ledger"), list) else []
     for source in ("telegram-inbound-voice-trace", "voice.transcribe"):
         if source not in source_ledger:
