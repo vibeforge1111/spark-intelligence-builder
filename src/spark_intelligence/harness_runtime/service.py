@@ -866,6 +866,7 @@ def _run_voice_hook(
     hook: str,
     payload: dict[str, Any],
     run_id: str,
+    timeout_seconds: float = 30.0,
 ) -> tuple[dict[str, Any], str]:
     authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
     if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
@@ -890,12 +891,7 @@ def _run_voice_hook(
                 payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(
-        config_manager,
-        hook=hook,
-        payload=payload,
-        governor_decision=payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None,
-    )
+    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:
