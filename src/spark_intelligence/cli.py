@@ -206,6 +206,8 @@ from spark_intelligence.harness_runtime import (
 from spark_intelligence.mission_control import build_mission_control_plan, build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
 
+SPARK_INTELLIGENCE_BUILDER_HANDLE_INSTALL_AUTOSTART_TIMEOUT_SECONDS = 60
+
 
 @dataclass
 class SystemStatus:
@@ -3610,6 +3612,8 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             check=True,
             capture_output=True,
             text=True,
+
+        timeout=SPARK_INTELLIGENCE_BUILDER_HANDLE_INSTALL_AUTOSTART_TIMEOUT_SECONDS,
         )
     except FileNotFoundError:
         print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
