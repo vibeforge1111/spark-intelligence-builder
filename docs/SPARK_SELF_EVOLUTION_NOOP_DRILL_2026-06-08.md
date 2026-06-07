@@ -117,10 +117,13 @@ event. No source revert is required.
 
 ## Remaining Work
 
-- Define the mutation executor contract before writing an executor.
+- Implement any mutation executor only from the documented boundary contract.
 - Require exact patch/artifact refs, tests, rollback execution proof, and
   protected component approvals for any real mutation.
 - Add a dry-run apply proof and a rollback execution proof before claiming
   self-evolution can safely modify runtime code.
 - Keep public/release-candidate promotion blocked until governance, benchmark,
   and live-surface gates are proven.
+
+Executor boundary reference:
+`SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`.

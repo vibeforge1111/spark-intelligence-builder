@@ -154,6 +154,8 @@ spark-intelligence harness tool-ledgers --surface builder --limit 5 --json
 ```
 
 Reference evidence: [SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md](./SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md).
+Executor boundary:
+[SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md](./SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md).
 
 Boundary regression checks:
 

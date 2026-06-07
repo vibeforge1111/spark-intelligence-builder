@@ -49,8 +49,8 @@ ledger spine, but Spark is not done.
 - Partially fixed: self-evolution now has Builder evidence plumbing, a guarded
   change-manifest test runner, and a supervised no-op private-promotion drill,
   plus regression proof for required rollback plans and protected-component
-  approval evidence. It still has no automatic code mutation, rollback
-  executor, or production promotion loop.
+  approval evidence. The executor boundary is documented, but Spark still has
+  no automatic code mutation, rollback executor, or production promotion loop.
 - Partially fixed: observability has a canonical governed tool ledger and live
   rows for `builder`, `spark_cli`, and `telegram`. Spawner execution is still
   not represented as a first-class surface, and additional Builder high-agency
@@ -82,7 +82,7 @@ ledger spine, but Spark is not done.
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line at HEAD `878017f`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
-| Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, and commit `7bf79b5` proving rollback-plan/protected-approval boundaries; no automatic mutation executor | Partial |
+| Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
 
@@ -127,6 +127,8 @@ ledger spine, but Spark is not done.
 - Added self-evolution boundary regression tests for missing rollback plans,
   missing protected-component approval evidence, and protected promotion with
   explicit `human_approval_ref`.
+- Added `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md` to define
+  executor inputs, phases, stop rules, and required tests before implementation.
 - Ran the controlled state retention/VACUUM pass documented in
   `SPARK_STATE_DB_RETENTION_RUN_2026-06-08.md`.
 
@@ -245,12 +247,15 @@ until that session completes and the final diff is tested.
     - Next proof must cover dry-run apply and rollback execution before any
       real mutation claim.
 
-11. Define the mutation executor boundary before writing one.
+11. Implement the mutation executor only after the boundary contract is kept.
     - Executor input: accepted manifest, exact patch/artifact refs, required
       tests, rollback path, protected-component approvals.
     - Executor output: applied/reverted status, test results, final ledger row,
       and rollback execution proof.
     - No live runtime mutation without a dry-run and rollback execution proof.
+    - Boundary document exists at
+      `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; implementation
+      remains pending.
 
 ### P1 - Source Of Truth
 
@@ -355,8 +360,9 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
 6. Archive, relabel, or clean the Desktop Builder backlog tree so future stale
    tree audits stop at the source-truth warning instead of re-deriving runtime
    truth from it.
-7. Define the self-evolution executor boundary, then prove dry-run apply and
-   rollback before touching production code.
+7. Implement the self-evolution executor only from
+   `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`, then prove dry-run
+   apply and rollback before touching production code.
 
 ## Current Claim Boundary
 
