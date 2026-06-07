@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         api_mode=_required_env("SPARK_INTELLIGENCE_PROVIDER_API_MODE"),
         base_url=_required_env("SPARK_INTELLIGENCE_PROVIDER_BASE_URL"),
         model=_required_env("SPARK_INTELLIGENCE_PROVIDER_MODEL"),
-        secret_value=_required_env("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
+        secret_value=_required_env_with_secret_validation("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
     )
     payload = execute_direct_provider_prompt(
         provider=provider,
@@ -44,10 +44,54 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+_PLACEHOLDER_PATTERNS: tuple[str, ...] = (
+    "changeme",
+    "replace_me",
+    "your_key_here",
+    "your_secret_here",
+    "your_token_here",
+    "xxx",
+    "aaaa",
+    "sk-placeholder",
+    "placeholder",
+    "todo",
+    "fixme",
+    "example",
+    "test_key",
+    "test_secret",
+    "dummy",
+    "fake",
+    "insert",
+)
+
+
+def _is_placeholder_secret(value: str) -> bool:
+    """Return True if the value matches common placeholder/secret templates."""
+    lowered = value.lower()
+    for pattern in _PLACEHOLDER_PATTERNS:
+        if pattern in lowered:
+            return True
+    # Reject values that are all the same repeated character (e.g. "aaaa", "1111")
+    if len(value) >= 4 and len(set(value)) == 1:
+        return True
+    return False
+
+
 def _required_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise RuntimeError(f"Missing required provider wrapper env var: {name}")
+    return value
+
+
+def _required_env_with_secret_validation(name: str) -> str:
+    """Like _required_env, but rejects placeholder secrets for secret-like env vars."""
+    value = _required_env(name)
+    if "secret" in name.lower() and _is_placeholder_secret(value):
+        raise RuntimeError(
+            f"Env var {name} contains a placeholder or dummy secret value. "
+            "Set it to a real credential before running provider_wrapper."
+        )
     return value
 
 
