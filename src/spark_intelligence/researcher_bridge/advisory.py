@@ -3638,9 +3638,12 @@ def _resolve_active_personality_chip_id() -> str:
             return _ACTIVE_PERSONALITY_CACHE
     except Exception:
         pass
-    # 4. Fallback
-    _ACTIVE_PERSONALITY_CACHE = "founder-operator"
-    return _ACTIVE_PERSONALITY_CACHE
+    # 4. Fallback. Do NOT cache: if chip lab is installed or activated
+    # after the gateway boots, a cached fallback would stick for the rest of
+    # the process lifetime even though a real chip id is now available.
+    # Returning without writing the cache lets the next call retry the chip
+    # lab path so the next request reflects the real active personality.
+    return "founder-operator"
 
 
 def _read_sib_active_personality_id() -> str | None:
