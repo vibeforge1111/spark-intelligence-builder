@@ -1532,7 +1532,7 @@ def _detect_entity_state_followup_history_query(
             continue
         try:
             facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         if not isinstance(facts, dict):
             continue
@@ -6474,7 +6474,7 @@ def _load_recent_active_chip_keys(
             continue
         try:
             facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         chip_key_raw = str(facts.get("chip_key") or "").strip()
         if not chip_key_raw:
@@ -7922,7 +7922,7 @@ def _build_context_source_debug_reply(
             continue
         try:
             facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         if not isinstance(facts, dict):
             continue
@@ -8007,7 +8007,7 @@ def _build_context_source_debug_reply(
             continue
         try:
             facts = json.loads(row["facts_json"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         ledger = facts.get("source_ledger")
         if not isinstance(ledger, list) or not ledger:
