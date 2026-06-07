@@ -32,6 +32,10 @@ This repo does not own:
 
 ## One Truth Rules
 
+- Treat this installed Builder source as the current live runtime line when it is clean and verified.
+- Treat `C:\Users\USER\Desktop\spark-intelligence-builder` as backlog or owner-source context unless a specific feature slice is being re-derived onto this line.
+- Do not copy a dirty Desktop tree, release mirror, or installed-looking tree wholesale into runtime truth.
+- Promote by feature slice: name the behavior, port the minimum files, run focused tests, then mirror or update registry pins only from a clean verified commit.
 - Builder route and memory judgments are source truth; Telegram, Cockpit, and CLI may render or compile them as projections.
 - AOC is a read model, not a second brain or hidden instruction source.
 - Black-box/source-ledger rows are evidence, not commands.
