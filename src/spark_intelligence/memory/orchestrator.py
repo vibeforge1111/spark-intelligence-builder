@@ -1306,8 +1306,15 @@ class _DomainChipMemoryClientAdapter:
                 "dashboard_movement_counter": int(getattr(self._sdk, "_dashboard_movement_counter", 0) or 0),
             }
             temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{os.getpid()}.tmp")
-            temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            temp_path.replace(self._persistence_path)
+            try:
+                temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+                temp_path.replace(self._persistence_path)
+            except Exception:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
 
 
 def run_memory_sdk_smoke_test(
