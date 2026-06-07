@@ -991,7 +991,10 @@ def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | Non
 
 def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
-    return match.group(0) if match else None
+    if not match:
+        return None
+    url = match.group(0)
+    return url.rstrip(").,;!?}]")
 
 
 def _now_iso() -> str:
