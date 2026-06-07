@@ -207,7 +207,7 @@ def swarm_bridge_list_autoloop_sessions(
     if sessions_root.exists():
         session_paths = sorted(
             sessions_root.glob("*/summary.json"),
-            key=lambda path: path.stat().st_mtime,
+            key=_safe_mtime,
             reverse=True,
         )[: max(int(limit or 3), 1)]
         for summary_path in session_paths:
@@ -344,14 +344,21 @@ def _resolve_session_summary_path(sessions_root: Path, *, session_id: str | None
         return summary_path if summary_path.exists() else None
     session_paths = sorted(
         sessions_root.glob("*/summary.json"),
-        key=lambda path: path.stat().st_mtime,
+        key=_safe_mtime,
         reverse=True,
     )
     return session_paths[0] if session_paths else None
 
 
 def _list_session_ids(sessions_root: Path) -> list[str]:
-    return [path.parent.name for path in sorted(sessions_root.glob("*/summary.json"), key=lambda item: item.stat().st_mtime, reverse=True)]
+    return [path.parent.name for path in sorted(sessions_root.glob("*/summary.json"), key=_safe_mtime, reverse=True)]
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _resolve_latest_round_summary_path(session_summary: dict[str, Any]) -> Path | None:
