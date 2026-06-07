@@ -392,7 +392,7 @@ def build_daily_project_summary(
         return build_daily_summary(state_db=state_db, day=scope_key, human_id=human_id, limit=limit)
     if normalized_scope == "project":
         return build_project_summary(state_db=state_db, project_key=scope_key, human_id=human_id, limit=limit)
-    raise ValueError(f"unknown_summary_scope:{scope}")
+    raise ValueError(f"unknown_summary_scope:{scope} (known: daily, project)")
 
 
 def _session_event_rows(*, state_db: StateDB, session_id: str, limit: int) -> list[dict[str, Any]]:

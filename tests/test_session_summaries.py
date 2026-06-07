@@ -12,6 +12,7 @@ from spark_intelligence.memory import (
     write_project_summary_to_memory,
     write_session_summary_to_memory,
 )
+from spark_intelligence.memory.session_summaries import build_daily_project_summary
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 
 from tests.test_support import SparkTestCase
@@ -391,3 +392,15 @@ class SessionSummaryTests(SparkTestCase):
         ]
         self.assertTrue(summary_lifecycle_facts)
         self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in summary_lifecycle_facts))
+
+
+class BuildDailyProjectSummaryScopeErrorTests(SparkTestCase):
+    def test_unknown_scope_message_names_the_known_scopes(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            build_daily_project_summary(
+                state_db=self.state_db, scope="wekly", scope_key="2026-W22"
+            )
+        message = str(ctx.exception)
+        self.assertIn("wekly", message)
+        self.assertIn("daily", message)
+        self.assertIn("project", message)
