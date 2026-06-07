@@ -2673,6 +2673,19 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
 
+    def test_installed_builder_manifest_declares_harness_core_and_agpl_license(self) -> None:
+        import tomllib
+
+        repo_root = Path(__file__).resolve().parents[1]
+        manifest = tomllib.loads((repo_root / "spark.toml").read_text(encoding="utf-8"))
+        pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+        license_text = (repo_root / "LICENSE").read_text(encoding="utf-8")
+
+        self.assertEqual(manifest["module"]["license"], "AGPL-3.0-only")
+        self.assertIn("spark-harness-core", manifest["needs"]["modules"])
+        self.assertEqual(pyproject["project"]["license"], "AGPL-3.0-only")
+        self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", license_text)
+
     def test_doctor_reports_missing_harness_core_dependency(self) -> None:
         with (
             patch("spark_intelligence.harness_contract.HARNESS_CORE_AVAILABLE", False),
