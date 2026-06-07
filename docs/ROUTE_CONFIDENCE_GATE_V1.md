@@ -30,7 +30,7 @@ Builder should answer only from current compiled evidence about the latest Spawn
 For this question, use this order:
 
 1. current user message and explicit status intent
-2. Telegram route firewall / read-only classification
+2. Telegram Harness Core envelope / read-only classification
 3. `LatestSpawnerJobEvidenceV1` from `spark-cli`
 4. Spawner mission-control row for the latest job
 5. Spawner PRD trace row for the same job

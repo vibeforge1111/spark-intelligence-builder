@@ -109,7 +109,7 @@ Builder owns the doctrine and the `act | ask | explain | refuse` evaluator.
 
 Surface adapters:
 
-- may run local route/firewall prechecks for speed and safety,
+- may run local evidence collectors for speed and safety,
 - must not become route-confidence authorities,
 - should call Builder for portable route-confidence verdicts when the answer depends on current system state,
 - should render concise replies, not raw packets.
