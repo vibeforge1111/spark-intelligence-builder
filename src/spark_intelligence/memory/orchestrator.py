@@ -3538,10 +3538,10 @@ def write_structured_evidence_to_memory(
                 turn_id=turn_id,
                 channel_kind=channel_kind,
                 actor_id=f"{actor_id}_belief_consolidator",
-                governor_decision=governor_decision,
             )
-        except Exception:
-            pass
+        except Exception as _e:  # SILENT-CATCH-PATCH
+
+            import logging as _log; _log.getLogger(__name__).warning("Memory orchestration error suppressed: %s", _e, exc_info=True)
     if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
         observation=current_state_observation,
         corroborating_evidence_records=corroborating_evidence_records,
@@ -3560,10 +3560,10 @@ def write_structured_evidence_to_memory(
                     turn_id=turn_id,
                     channel_kind=channel_kind,
                     actor_id=f"{actor_id}_current_state_consolidator",
-                    governor_decision=governor_decision,
                 )
-            except Exception:
-                pass
+            except Exception as _e:  # SILENT-CATCH-PATCH
+
+                import logging as _log; _log.getLogger(__name__).warning("Memory orchestration error suppressed: %s", _e, exc_info=True)
     return result
 
 
