@@ -63,6 +63,61 @@ class EnvironmentSnapshotRecord:
     summary: str
 
 
+@dataclass(frozen=True)
+class ObservabilityPruneResult:
+    cutoff: str
+    deleted_counts: dict[str, int]
+    total_deleted: int
+    vacuumed: bool
+
+
+def _normalize_prune_cutoff(value: str | datetime) -> str:
+    if isinstance(value, datetime):
+        cutoff = value
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        return cutoff.isoformat(timespec="seconds")
+    cutoff = str(value).strip()
+    if not cutoff:
+        raise ValueError("older_than is required")
+    return cutoff
+
+
+def prune_observability_store(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    include_builder_events: bool = False,
+    vacuum: bool = False,
+) -> ObservabilityPruneResult:
+    cutoff = _normalize_prune_cutoff(older_than)
+    delete_specs = [
+        ("event_log", "recorded_at"),
+        ("tool_call_ledger", "created_at"),
+        ("provider_runtime_events", "created_at"),
+    ]
+    if include_builder_events:
+        delete_specs.append(("builder_events", "created_at"))
+
+    deleted_counts: dict[str, int] = {}
+    with state_db.connect() as conn:
+        for table_name, column_name in delete_specs:
+            cursor = conn.execute(
+                f"DELETE FROM {table_name} WHERE {column_name} < ?",
+                (cutoff,),
+            )
+            deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+
+        total_deleted = sum(deleted_counts.values())
+        vacuumed = False
+        if vacuum and total_deleted > 0:
+            conn.execute("VACUUM")
+            vacuumed = True
+
+    return ObservabilityPruneResult(cutoff=cutoff, deleted_counts=deleted_counts, total_deleted=total_deleted, vacuumed=vacuumed)
+
+
 def open_run(
     state_db: StateDB,
     *,

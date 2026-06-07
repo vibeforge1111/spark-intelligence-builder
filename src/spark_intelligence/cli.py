@@ -149,6 +149,7 @@ from spark_intelligence.observability.store import (
     close_run,
     latest_events_by_type,
     open_run,
+    prune_observability_store,
     record_event,
     record_observer_handoff_record,
 )
@@ -2826,6 +2827,19 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_observability_parser = jobs_subparsers.add_parser(
+        "prune-observability",
+        help="Prune old observability mirror rows and optionally VACUUM state.db",
+    )
+    jobs_prune_observability_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_observability_parser.add_argument("--older-than", required=True, help="Delete rows older than this ISO-8601 timestamp")
+    jobs_prune_observability_parser.add_argument("--vacuum", action="store_true", help="Run VACUUM if rows were deleted")
+    jobs_prune_observability_parser.add_argument(
+        "--include-builder-events",
+        action="store_true",
+        help="Also prune builder_events; omitted by default because Watchtower reads this table",
+    )
+    jobs_prune_observability_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
     harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
@@ -8103,6 +8117,36 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = prune_observability_store(
+        state_db,
+        older_than=str(getattr(args, "older_than", "") or ""),
+        vacuum=bool(getattr(args, "vacuum", False)),
+        include_builder_events=bool(getattr(args, "include_builder_events", False)),
+    )
+    payload = {
+        "cutoff": result.cutoff,
+        "deleted_counts": result.deleted_counts,
+        "total_deleted": result.total_deleted,
+        "vacuumed": result.vacuumed,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Observability prune complete"]
+        lines.append(f"- cutoff: {result.cutoff}")
+        lines.append(f"- deleted: {result.total_deleted}")
+        for table, count in sorted(result.deleted_counts.items()):
+            lines.append(f"- {table}: {count}")
+        lines.append(f"- vacuumed: {'yes' if result.vacuumed else 'no'}")
+        print("\n".join(lines))
+    return 0
+
+
 def handle_harness_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9661,6 +9705,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "jobs" and args.jobs_command == "prune-observability":
+        return handle_jobs_prune_observability(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
     if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
