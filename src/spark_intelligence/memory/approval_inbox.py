@@ -317,7 +317,10 @@ def _scope_for_role(memory_role: str) -> str:
 def _normalize_decision(decision: str) -> str:
     normalized = str(decision or "").strip().casefold().replace("-", "_").replace(" ", "_")
     if normalized not in REVIEW_ACTIONS:
-        raise ValueError(f"unsupported_memory_approval_decision:{decision}")
+        known = ", ".join(REVIEW_ACTIONS)
+        raise ValueError(
+            f"unsupported_memory_approval_decision:{decision} (known: {known})"
+        )
     return normalized
 
 
