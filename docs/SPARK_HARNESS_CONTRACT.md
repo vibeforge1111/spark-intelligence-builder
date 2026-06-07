@@ -1,31 +1,61 @@
 # Spark Harness Contract
 
-Status: Milestone 0.1 active
+Status: active runtime contract, updated 2026-06-07
 
 ## Role Of This Repo
 
-`spark-intelligence-builder` is a specialist reasoning and advisory executor under the Spark Harness contract.
+`spark-intelligence-builder` is a specialist runtime and advisory executor under the Spark Harness contract. It consumes Harness Core authority records and persists governed execution evidence; it does not define global authority by itself.
 
 Builder should:
 
-- parse inbound `TurnIntentEnvelopeV1`
-- treat memory as evidence
-- treat tool output as untrusted until verified
-- obey no-action, local-only, and no-publish directives
-- propose candidates when delegated
-- run benchmark-led startup improvement only when the envelope selects it
+- consume `TurnIntentEnvelopeVNext`, `AuthorizationDecisionV1`, and `GovernorDecisionV1` records from `spark-harness-core`;
+- treat memory, retrieved context, pending state, and tool output as evidence, not authority;
+- obey no-action, local-only, no-publish, and mutation-boundary directives;
+- verify governed tool decisions before execution;
+- persist bound `tool_call_ledger` rows into `state.db`;
+- expose operator-readable ledger queries by `turn_id` and surface;
+- run self-evolution observation from canonical ledger evidence before any promotion path.
 
 Builder should not:
 
-- override Telegram's fresh turn verdict
-- re-authorize actions from raw text
-- treat memory, skills, or pending state as command authority
-- promote learning artifacts without benchmark evidence
+- override Telegram's fresh turn verdict;
+- re-authorize actions from raw text;
+- treat memory, skills, or pending state as command authority;
+- promote learning artifacts without benchmark and ledger evidence;
+- accept unbound tool-ledger rows missing the authority join fields.
 
 ## Current Implementation
 
-- `src/spark_intelligence/harness_contract.py` parses the first Python contract slice.
-- `tests/test_harness_contract.py` verifies parsing and tool authorization.
+- `src/spark_intelligence/harness_contract.py` imports Harness Core and builds/validates Builder-facing envelopes.
+- `src/spark_intelligence/bridge_authority.py` mints governed Builder tool-call ledgers and persists them through `persist_bound_ledger`.
+- `src/spark_intelligence/observability/store.py` owns the canonical `tool_call_ledger` table, retention pruning, and reader APIs.
+- `src/spark_intelligence/gateway/tool_ledger.py` provides the minimal adapter ingest contract for external surfaces that need to publish governed rows.
+- `src/spark_intelligence/cli_approval_ledgers.py` imports Spark CLI approval ledgers into the same canonical table.
+- `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots and change-manifest runner evidence from canonical ledgers.
+
+Operator commands:
+
+```powershell
+spark-intelligence gateway ingest-tool-ledger <ledger-row.json>
+spark-intelligence gateway serve-stdio
+spark-intelligence harness tool-ledgers --turn-id <turn-id> --json
+spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
+spark-intelligence harness self-evolution-snapshot --json
+```
+
+## Ledger Row Contract
+
+The canonical row must carry:
+
+- `ledger_id`
+- `turn_id`
+- `action_id`
+- `capability_id`
+- `authorization_decision_id`
+- `surface`
+- `ledger_json`
+
+`ledger_json` should be the validated `tool-call-ledger-v1` payload. The flat columns are the query and join surface; the embedded ledger is the provenance payload.
 
 ## Shared Source Of Truth
 
@@ -34,18 +64,10 @@ Spark-wide TurnIntent rules are documented locally in:
 - `docs/TURNINTENT_HARNESS_RULESET.md`
 - `docs/TURNINTENT_AGENTS_ADOPTION.md`
 
-The proposed shared private contract repo is:
-
-`/Users/alchemistab/Documents/Codex/2026-05-30/we-have-been-working-on-achieving/work/spark-harness-contracts`
-
-Remote:
-
-`https://github.com/vibeforge1111/spark-harness-contracts`
-
-Until that repo is promoted, Builder mirrors only the fields it needs to consume safely.
+Harness Core is the schema/runtime source for the authority records. Builder must declare `spark-harness-core` in `spark.toml` and import it from the installed module path rather than vendoring local schema copies.
 
 ## Benchmark-Led Learning Rule
 
-Spark improvement is accepted only through named benchmark evidence.
+Spark improvement is accepted only through named benchmark and ledger evidence.
 
-Memory writes, skill drafts, and advisory agent output are candidates. They become durable behavior only after benchmark proof, before/after answer comparison, and a promotion gate.
+Memory writes, skill drafts, tool ledgers, and advisory output are candidates. They become durable behavior only after benchmark proof, before/after answer comparison, and a promotion gate.

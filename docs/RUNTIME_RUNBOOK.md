@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Runtime Runbook
 
-Last updated: 2026-04-27
+Last updated: 2026-06-07
 
 This runbook is for local operators and future implementation sessions. It captures the safe checks to run before calling Builder healthy.
 
@@ -18,13 +18,14 @@ Use JSON output when wiring automation or CI-like checks:
 ```powershell
 spark-intelligence status --json
 spark-intelligence doctor --json
+spark-intelligence harness tool-ledgers --limit 10 --json
 ```
 
 ## Local Development
 
 ```powershell
 python -m pip install -e .
-python -m pytest tests/test_secret_file_permissions.py tests/test_gateway_discord_webhook.py tests/test_builder_prelaunch_contracts.py -q
+python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_harness_cli.py tests/test_observability_retention.py -q
 uv lock --check
 ```
 
@@ -79,6 +80,24 @@ Then test one live Telegram turn. Restart Telegram only when:
 If only Builder Python prompt/context logic changed, pulling the installed source
 should be enough because the next bridge call starts a fresh Python process.
 
+## Harness Authority And Ledger Checks
+
+After authority or observability changes, verify the canonical ledger path:
+
+```powershell
+spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
+spark-intelligence harness tool-ledgers --surface spark_cli --limit 5 --json
+spark-intelligence jobs prune-observability --older-than 2026-01-01T00:00:00Z --include-gateway-logs --json
+```
+
+For gateway integrations that cannot call Python APIs directly, use the stdio ingest seam:
+
+```json
+{"request_id":"req-ledger","command":"ingest_tool_ledger","row":{"ledger_id":"ledger:...","turn_id":"turn:...","action_id":"action:...","capability_id":"capability:...","authorization_decision_id":"decision:...","surface":"surface-name","ledger_json":{}}}
+```
+
+Rows missing the authority join fields must be rejected. Ingest is audit persistence only; it does not authorize execution.
+
 ## Provider Rotation
 
 Provider keys should be rotation-friendly:
@@ -129,10 +148,11 @@ Before pushing Builder changes that affect production behavior:
 
 1. Run the focused CI slice locally.
 2. Run `uv lock --check` if dependencies changed.
-3. Confirm no `.env`, `.tmp-*`, token, key, JWT, or local-home files are staged.
-4. Push Builder.
-5. Update the Builder commit pin in `spark-cli/registry.json`.
-6. Run `spark verify --registry-pins` and `spark verify --provenance` from `spark-cli`.
+3. Confirm no `.env`, `.tmp-*`, token, key, JWT, local-home files, or private JSONL rivers are staged.
+4. Confirm `spark.toml`, `pyproject.toml`, and `LICENSE` agree on `AGPL-3.0-only`, and `spark.toml` declares `spark-harness-core` in `[needs].modules`.
+5. Push Builder.
+6. Update the Builder commit pin in `spark-cli/registry.json`.
+7. Run `spark verify --registry-pins` and `spark verify --provenance` from `spark-cli`.
 
 ## Common Failure Modes
 
@@ -143,6 +163,8 @@ Before pushing Builder changes that affect production behavior:
 | Unknown user reaches runtime | Inspect pairing/allowlist state and external id typing |
 | Memory answer follows hostile recall text | Check prompt fencing and memory envelope path |
 | Fresh install gets old behavior | Check `spark-cli/registry.json` pins |
+| Governed tool call is not queryable | Run `spark-intelligence harness tool-ledgers --turn-id <turn-id> --json` and check ingest fallback logs |
+| `state.db` grows quickly | Run `jobs prune-observability` and confirm gateway JSONL rotation is enabled |
 
 ## Operational Redlines
 
@@ -150,4 +172,5 @@ Before pushing Builder changes that affect production behavior:
 - No hidden daemon loops.
 - No production floating git dependencies.
 - No chat-owned runtime restart/config mutation.
-- No destructive host action without explicit policy and, later, approval-engine coverage.
+- No destructive host action without explicit policy and approval-engine coverage.
+- No high-agency tool execution without Harness Core authority and a canonical ledger path.
