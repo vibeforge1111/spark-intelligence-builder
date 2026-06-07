@@ -149,7 +149,14 @@ class DirectProviderExecutionTests(SparkTestCase):
             trace_ref="trace:direct-provider-test",
         )
 
-        with patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen):
+        import socket as _socket_mod
+        with (
+            patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen),
+            patch(
+                "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+                return_value=[(_socket_mod.AF_INET, _socket_mod.SOCK_STREAM, 0, "", ("93.184.216.34", 0))],
+            ),
+        ):
             payload = execute_direct_provider_prompt(
                 provider=provider,
                 system_prompt="Reply OK.",
