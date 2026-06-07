@@ -200,14 +200,14 @@ def build_telegram_regression_sample_specs(
     sample_specs: list[dict[str, Any]] = []
     history_by_namespace: dict[str, list[dict[str, Any]]] = {}
     for index, (case, payload) in enumerate(zip(selected_cases, case_payloads), start=1):
-        namespace = str(getattr(case, "case_id", f"case-{index}")) if getattr(case, "isolate_memory", False) else "shared"
+        namespace = str(getattr(case, "case_id", f"case-{index:03d}")) if getattr(case, "isolate_memory", False) else "shared"
         prior_sessions = list(history_by_namespace.get(namespace, []))
         if _is_comparable_case(case=case, payload=payload):
             question_spec = _build_question_spec(case=case, payload=payload, prior_sessions=prior_sessions)
             sample_specs.append(
                 {
                     "benchmark_name": _DEFAULT_BENCHMARK_NAME,
-                    "sample_id": str(getattr(case, "case_id", f"case-{index}")),
+                    "sample_id": str(getattr(case, "case_id", f"case-{index:03d}")),
                     "sessions": prior_sessions,
                     "questions": [question_spec],
                     "metadata": {
@@ -259,7 +259,7 @@ def _build_session_spec(*, case: Any, payload: dict[str, Any], index: int, names
     message = str(getattr(case, "message", "") or "").strip()
     user_timestamp = _iso_timestamp(index * 2)
     assistant_timestamp = _iso_timestamp(index * 2 + 1)
-    case_id = str(getattr(case, "case_id", f"case-{index}"))
+    case_id = str(getattr(case, "case_id", f"case-{index:03d}"))
     return {
         "session_id": f"{namespace}:{case_id}",
         "timestamp": user_timestamp,
