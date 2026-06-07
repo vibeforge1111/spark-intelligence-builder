@@ -2483,7 +2483,10 @@ def hybrid_memory_retrieve(
             )
         )
 
-    max_context_chars = int(config_manager.get_path("spark.memory.hybrid_context.max_chars", default=3600) or 3600)
+    max_context_chars = _coerce_positive_int_setting(
+        config_manager.get_path("spark.memory.hybrid_context.max_chars", default=3600),
+        default=3600,
+    )
     context_packet = _build_hybrid_memory_context_packet(
         query=normalized_query,
         candidates=candidates,
@@ -5424,6 +5427,15 @@ def _coerce_int(value: Any, *, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_positive_int_setting(value: Any, *, default: int) -> int:
+    """Return ``int(value)`` when it is a positive integer; otherwise ``default``."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return coerced if coerced > 0 else default
 
 
 def _human_id_from_subject(subject: str) -> str | None:
