@@ -12,6 +12,9 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
 
 
+_ROUTE_TOKEN_RE = re.compile(r"/[A-Za-z0-9][A-Za-z0-9_/-]*")
+
+
 _QUALITY_QUERY_SIGNALS = (
     "build quality",
     "quality of this build",
@@ -246,7 +249,7 @@ def _collect_route_evidence(repo: Path, *, user_message: str) -> dict[str, Any]:
 
 def _extract_routes(user_message: str) -> list[str]:
     routes: list[str] = []
-    for match in re.findall(r"/[A-Za-z0-9][A-Za-z0-9_/-]*", str(user_message or "")):
+    for match in _ROUTE_TOKEN_RE.findall(str(user_message or "")):
         normalized = "/" + "/".join(part for part in match.split("/") if part)
         if normalized not in routes:
             routes.append(normalized)
