@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -302,10 +304,35 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
     return reports_dir / f"cadence-{timestamp}.json"
 
 
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(payload, indent=2)
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_name = handle.name
+            handle.write(serialized)
+        os.replace(tmp_name, path)
+    except Exception:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
+
+
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_json(report_path, payload)
     latest_path = config_manager.paths.home / "artifacts" / "live-telegram-regression" / "cadence-latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_json(latest_path, payload)
 
 
 def _write_prompt_runbook(*, path: Path, prompts: list[str], commands: dict[str, str]) -> None:
