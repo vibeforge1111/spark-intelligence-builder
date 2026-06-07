@@ -136,7 +136,18 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         surface_detail = ", ".join(
             f"{surface}={count}" for surface, count in ledger_surface_counts.items()
         ) or "none"
-        checks.append(DoctorCheck("tool-call-ledger-adoption", True, f"total={ledger_total} surfaces={surface_detail}"))
+        if ledger_total <= 0:
+            checks.append(
+                DoctorCheck(
+                    "tool-call-ledger-adoption",
+                    False,
+                    "total=0 surfaces=none; no canonical governed tool-call ledgers persisted yet",
+                )
+            )
+        else:
+            checks.append(
+                DoctorCheck("tool-call-ledger-adoption", True, f"total={ledger_total} surfaces={surface_detail}")
+            )
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("tool-call-ledger-adoption", False, str(exc)))
 

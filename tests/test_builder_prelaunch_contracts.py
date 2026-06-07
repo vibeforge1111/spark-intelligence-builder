@@ -2584,6 +2584,15 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("No module named spark_harness_core", checks["harness-core"].detail)
         self.assertIn("needs.modules", checks["harness-core"].detail)
 
+    def test_doctor_flags_empty_tool_call_ledger_adoption(self) -> None:
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("tool-call-ledger-adoption", checks)
+        self.assertFalse(checks["tool-call-ledger-adoption"].ok)
+        self.assertIn("total=0", checks["tool-call-ledger-adoption"].detail)
+        self.assertIn("no canonical governed tool-call ledgers", checks["tool-call-ledger-adoption"].detail)
+
     def test_doctor_reports_tool_call_ledger_adoption_counts(self) -> None:
         persist_bound_ledger(
             self.state_db,
