@@ -7210,7 +7210,8 @@ def _memory_doctor_previous_gateway_record(
         from spark_intelligence.gateway.tracing import read_gateway_traces
 
         traces = read_gateway_traces(config_manager, limit=80)
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return None
     normalized_user_id = str(external_user_id or "").strip()
     normalized_session_id = str(session_id or "").strip()
