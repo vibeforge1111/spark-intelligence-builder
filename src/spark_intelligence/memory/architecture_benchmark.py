@@ -184,7 +184,10 @@ def resolve_memory_architecture_baselines(
         return tuple(default_baselines)
     invalid = [name for name in normalized if name not in allowed]
     if invalid:
-        raise ValueError(f"unsupported_baselines:{','.join(invalid)}")
+        known = ", ".join(sorted(allowed))
+        raise ValueError(
+            f"unsupported_baselines:{','.join(invalid)} (known: {known})"
+        )
     return tuple(normalized)
 
 
