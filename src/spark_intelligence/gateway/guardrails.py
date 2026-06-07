@@ -39,6 +39,14 @@ def is_duplicate_event(
     event_id: int,
     window_size: int,
 ) -> bool:
+    # NOTE: TOCTOU race condition — this function reads the recent event ID
+    # list, checks for membership, then writes back without holding a lock.
+    # Under concurrent delivery of the same event_id, two goroutines/threads
+    # could both read a list that does not yet contain the event, both decide
+    # it is not a duplicate, and both append it.  The practical impact is low
+    # because SQLite serialises writes per-connection and the window is
+    # narrow, but a strict dedup guarantee would require an atomic
+    # INSERT … ON CONFLICT or advisory lock at the database level.
     state_key = f"{channel_id}:recent_event_ids"
     recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
     if event_id in recent_ids:
