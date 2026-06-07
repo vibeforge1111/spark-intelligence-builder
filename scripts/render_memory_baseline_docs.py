@@ -16,7 +16,10 @@ HANDOFF_PATH = ROOT / "docs" / "MEMORY_BENCHMARK_HANDOFF_2026-04-11.md"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return {}  # malformed JSON, return safe default
 
 
 def _fmt_seconds(value: Any) -> str:
