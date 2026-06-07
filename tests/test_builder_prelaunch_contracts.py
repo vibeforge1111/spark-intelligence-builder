@@ -765,6 +765,15 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             deleted_counts={"event_log": 0, "tool_call_ledger": 0, "provider_runtime_events": 0},
             vacuumed=False,
         )
+        fake_gateway_logs = SimpleNamespace(
+            total_deleted=0,
+            to_payload=lambda: {
+                "cutoff": "2026-01-01T00:00:00Z",
+                "deleted_counts": {"gateway_trace": 0, "gateway_outbound": 0},
+                "kept_counts": {"gateway_trace": 0, "gateway_outbound": 0},
+                "total_deleted": 0,
+            },
+        )
 
         with patch(
             "spark_intelligence.jobs.service.run_oauth_refresh_maintenance",
@@ -775,6 +784,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         ), patch(
             "spark_intelligence.jobs.service.prune_observability_store",
             return_value=fake_prune,
+        ), patch(
+            "spark_intelligence.jobs.service.prune_gateway_logs",
+            return_value=fake_gateway_logs,
         ):
             output = jobs_tick(self.config_manager, self.state_db)
 

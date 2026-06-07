@@ -69,7 +69,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_trace_view,
 )
 from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
-from spark_intelligence.gateway.tracing import read_gateway_traces
+from spark_intelligence.gateway.tracing import prune_gateway_logs, read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import (
     build_vnext_action_intent_envelope,
@@ -2886,6 +2886,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-builder-events",
         action="store_true",
         help="Also prune builder_events; omitted by default because Watchtower reads this table",
+    )
+    jobs_prune_observability_parser.add_argument(
+        "--include-gateway-logs",
+        action="store_true",
+        help="Also prune gateway JSONL trace and outbound audit records older than the cutoff",
     )
     jobs_prune_observability_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
@@ -8378,11 +8383,18 @@ def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
         vacuum=bool(getattr(args, "vacuum", False)),
         include_builder_events=bool(getattr(args, "include_builder_events", False)),
     )
+    gateway_logs_result = None
+    if bool(getattr(args, "include_gateway_logs", False)):
+        gateway_logs_result = prune_gateway_logs(
+            config_manager,
+            older_than=str(getattr(args, "older_than", "") or ""),
+        )
     payload = {
         "cutoff": result.cutoff,
         "deleted_counts": result.deleted_counts,
         "total_deleted": result.total_deleted,
         "vacuumed": result.vacuumed,
+        "gateway_logs": gateway_logs_result.to_payload() if gateway_logs_result is not None else None,
     }
     if args.json:
         print(json.dumps(payload, indent=2))
@@ -8392,6 +8404,10 @@ def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
         lines.append(f"- deleted: {result.total_deleted}")
         for table, count in sorted(result.deleted_counts.items()):
             lines.append(f"- {table}: {count}")
+        if gateway_logs_result is not None:
+            lines.append(f"- gateway_logs: {gateway_logs_result.total_deleted}")
+            for log_name, count in sorted(gateway_logs_result.deleted_counts.items()):
+                lines.append(f"- {log_name}: {count}")
         lines.append(f"- vacuumed: {'yes' if result.vacuumed else 'no'}")
         print("\n".join(lines))
     return 0

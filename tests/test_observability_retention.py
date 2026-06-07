@@ -1,6 +1,13 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+from spark_intelligence.gateway.tracing import (
+    outbound_log_path,
+    prune_gateway_logs,
+    read_gateway_traces,
+    rotate_gateway_logs_if_oversized,
+    trace_log_path,
+)
 from spark_intelligence.observability.store import prune_observability_store, record_event
 from spark_intelligence.state.db import StateDB
 from tests.test_support import SparkTestCase
@@ -81,6 +88,62 @@ def test_prune_observability_store_prunes_mirrors_and_ledgers_by_default(tmp_pat
         assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:current'").fetchone()[0] == 1
 
 
+def test_prune_gateway_logs_prunes_old_trace_and_outbound_records(tmp_path) -> None:
+    from spark_intelligence.config.loader import ConfigManager
+
+    home = tmp_path / "home"
+    config_manager = ConfigManager.from_home(str(home))
+    config_manager.bootstrap()
+    trace_path = trace_log_path(config_manager)
+    outbound_path = outbound_log_path(config_manager)
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"recorded_at": "2025-01-01T00:00:00+00:00", "event": "old"}),
+                json.dumps({"recorded_at": "2026-01-03T00:00:00+00:00", "event": "current"}),
+                "not-json",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    outbound_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"recorded_at": "2025-01-01T00:00:00+00:00", "event": "old_outbound"}),
+                json.dumps({"recorded_at": "2026-01-03T00:00:00+00:00", "event": "current_outbound"}),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = prune_gateway_logs(config_manager, older_than="2026-01-02T00:00:00+00:00")
+
+    assert result.deleted_counts == {"gateway_trace": 1, "gateway_outbound": 1}
+    assert result.total_deleted == 2
+    assert [record["event"] for record in read_gateway_traces(config_manager, limit=10)] == ["current"]
+    assert "not-json" in trace_path.read_text(encoding="utf-8")
+
+
+def test_rotate_gateway_logs_if_oversized_keeps_bounded_backups(tmp_path) -> None:
+    from spark_intelligence.config.loader import ConfigManager
+
+    home = tmp_path / "home"
+    config_manager = ConfigManager.from_home(str(home))
+    config_manager.bootstrap()
+    trace_path = trace_log_path(config_manager)
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_text("x" * 20, encoding="utf-8")
+
+    rotated = rotate_gateway_logs_if_oversized(config_manager, max_bytes=10, backups=2)
+
+    assert rotated["gateway_trace"] is True
+    assert (trace_path.with_name(f"{trace_path.name}.1")).read_text(encoding="utf-8") == "x" * 20
+    assert not trace_path.exists()
+
+
 def test_prune_observability_store_can_explicitly_prune_builder_events(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
@@ -111,6 +174,33 @@ def test_prune_observability_store_can_explicitly_prune_builder_events(tmp_path)
 
 
 class ObservabilityRetentionCliTests(SparkTestCase):
+    def test_jobs_prune_observability_cli_can_prune_gateway_logs(self) -> None:
+        old_timestamp = "2025-01-01T00:00:00+00:00"
+        cutoff = "2026-01-01T00:00:00+00:00"
+        trace_path = trace_log_path(self.config_manager)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            json.dumps({"recorded_at": old_timestamp, "event": "old_gateway"}) + "\n",
+            encoding="utf-8",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "prune-observability",
+            "--home",
+            str(self.home),
+            "--older-than",
+            cutoff,
+            "--include-gateway-logs",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["gateway_logs"]["deleted_counts"]["gateway_trace"], 1)
+        self.assertEqual(payload["gateway_logs"]["total_deleted"], 1)
+        self.assertEqual(read_gateway_traces(self.config_manager, limit=10), [])
+
     def test_jobs_prune_observability_cli_prunes_old_rows(self) -> None:
         old_timestamp = "2025-01-01T00:00:00+00:00"
         cutoff = "2026-01-01T00:00:00+00:00"

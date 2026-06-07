@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.tracing import prune_gateway_logs
 from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
 from spark_intelligence.observability.store import close_run, open_run, prune_observability_store, record_environment_snapshot
 from spark_intelligence.state.db import StateDB
@@ -17,6 +18,7 @@ OBSERVABILITY_RETENTION_JOB_ID = "observability:retention"
 HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID = "harness:self-evolution-observe"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
 DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
+DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS = True
 DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT = 20
 
 
@@ -216,12 +218,17 @@ def _run_job(
                 vacuum=True,
                 include_builder_events=False,
             )
+            gateway_log_payload = None
+            if _observability_retention_includes_gateway_logs(config_manager):
+                gateway_log_payload = prune_gateway_logs(config_manager, older_than=cutoff)
+            gateway_log_deleted = gateway_log_payload.total_deleted if gateway_log_payload is not None else 0
             result = (
                 f"retention_days={retention_days} cutoff={payload.cutoff} "
                 f"deleted={payload.total_deleted} "
                 f"event_log={payload.deleted_counts.get('event_log', 0)} "
                 f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
                 f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
+                f"gateway_logs_deleted={gateway_log_deleted} "
                 f"vacuumed={payload.vacuumed}"
             )
             _record_job_result(state_db=state_db, job_id=job_id, result=result)
@@ -238,6 +245,7 @@ def _run_job(
                     "retention_days": retention_days,
                     "cutoff": payload.cutoff,
                     "deleted_counts": payload.deleted_counts,
+                    "gateway_logs": gateway_log_payload.to_payload() if gateway_log_payload is not None else None,
                     "vacuumed": payload.vacuumed,
                 },
             )
@@ -320,6 +328,16 @@ def _observability_retention_days(config_manager: ConfigManager) -> int:
     except (TypeError, ValueError):
         return DEFAULT_OBSERVABILITY_RETENTION_DAYS
     return max(value, 1)
+
+
+def _observability_retention_includes_gateway_logs(config_manager: ConfigManager) -> bool:
+    raw = config_manager.get_path(
+        "observability.retention.include_gateway_logs",
+        default=DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS,
+    )
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(raw)
 
 
 def _harness_self_evolution_limit(config_manager: ConfigManager) -> int:
