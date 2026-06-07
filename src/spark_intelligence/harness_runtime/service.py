@@ -783,6 +783,27 @@ def _execute_voice_io_harness(
             envelope=envelope,
             step="voice_repeat",
         )
+        record_event(
+            state_db,
+            event_type="harness_voice_speech_synthesized",
+            component="harness_runtime",
+            summary="Voice I/O harness synthesized spoken audio through the active voice chip.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_voice_speech_synthesized",
+            facts={
+                "harness_id": envelope.harness_id,
+                "chip_key": artifacts["spoken_audio"]["chip_key"],
+                "provider_id": artifacts["spoken_audio"]["provider_id"],
+                "voice_id": artifacts["spoken_audio"]["voice_id"],
+                "audio_bytes": artifacts["spoken_audio"]["audio_bytes"],
+                "audio_sha256": artifacts["spoken_audio"]["audio_sha256"],
+            },
+        )
         return (
             artifacts,
             "Executed the voice harness and synthesized spoken audio through the active voice chip.",
