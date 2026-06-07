@@ -119,6 +119,9 @@ def build_harness_task_envelope(
     human_id: str | None = None,
     agent_id: str | None = None,
 ) -> HarnessTaskEnvelope:
+    normalized_task = str(task or "").strip()
+    if not normalized_task:
+        raise ValueError("Task cannot be empty or whitespace.")
     from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
     normalized_forced_harness_id = str(forced_harness_id or "").strip()
