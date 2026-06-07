@@ -447,6 +447,33 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["domain_pack"], "telegram_runtime")
         self.assertEqual(payload["evidence_kind"], "telegram_memory_note")
 
+    def test_memory_write_telegram_note_requires_upstream_governor(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "write-telegram-note",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:test",
+            "--text",
+            "raw cli memory write must not be enough authority",
+            "--domain-pack",
+            "telegram_runtime",
+            "--evidence-kind",
+            "telegram_memory_note",
+            "--session-id",
+            "session:telegram:test",
+            "--turn-id",
+            "turn:telegram:test",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "unsupported")
+        self.assertIn("governor_decision_missing", payload["reason"])
+
     def test_memory_export_movement_status_writes_compiler_artifact(self) -> None:
         smoke_exit, _, smoke_stderr = self.run_cli(
             "memory",

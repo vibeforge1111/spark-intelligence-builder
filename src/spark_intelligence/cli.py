@@ -33,7 +33,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
-from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action, build_telegram_memory_turn_intent_payload_vnext
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -7781,14 +7781,94 @@ def _authorize_cli_memory_smoke_write(
     return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
 
 
+def _json_contains_string(payload: object, needle: str) -> bool:
+    if not needle:
+        return True
+    if isinstance(payload, dict):
+        return any(_json_contains_string(key, needle) or _json_contains_string(value, needle) for key, value in payload.items())
+    if isinstance(payload, (list, tuple, set)):
+        return any(_json_contains_string(item, needle) for item in payload)
+    return needle in str(payload)
+
+
+def _load_governor_decision_file(path: str | None) -> dict[str, object] | None:
+    if not path:
+        return None
+    payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    return payload if isinstance(payload, dict) else None
+
+
+def _telegram_memory_upstream_governor_allows(governor_decision: dict[str, object] | None) -> bool:
+    if not isinstance(governor_decision, dict):
+        return False
+    boundary = governor_decision.get("execution_boundary")
+    execution_boundary = boundary if isinstance(boundary, dict) else {}
+    return (
+        governor_decision.get("schema_version") == "governor-decision-v1"
+        and governor_decision.get("outcome") == "execute"
+        and governor_decision.get("authority_state") == "executable"
+        and execution_boundary.get("action_authorized") is True
+        and execution_boundary.get("legacy_authority_demoted") is True
+        and _json_contains_string(governor_decision, "memory.write")
+        and _json_contains_string(governor_decision, "domain-chip-memory")
+    )
+
+
+def _authorize_telegram_memory_note_write(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    text: str,
+    session_id: str | None,
+    turn_id: str | None,
+    upstream_governor_decision: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not _telegram_memory_upstream_governor_allows(upstream_governor_decision):
+        return None
+    request_id = turn_id or f"req:telegram-memory:{uuid4()}"
+    resolved_session_id = session_id or request_id
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id=request_id,
+        channel_kind="telegram",
+        session_id=resolved_session_id,
+        human_id=human_id,
+        user_message=text,
+        source_kind="telegram_memory_direct_adapter",
+    )
+    if not isinstance(payload, dict):
+        return None
+    if turn_id:
+        payload["turn_id"] = turn_id
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=resolved_session_id,
+        human_id=human_id,
+        actor_id="telegram_memory_direct_adapter",
+        component="memory_write_telegram_note",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    governor_decision = None
-    if args.governor_decision_file:
-        governor_decision = json.loads(Path(args.governor_decision_file).read_text(encoding="utf-8"))
+    upstream_governor_decision = _load_governor_decision_file(args.governor_decision_file)
+    governor_decision = _authorize_telegram_memory_note_write(
+        state_db=state_db,
+        human_id=args.human_id,
+        text=args.text,
+        session_id=args.session_id,
+        turn_id=args.turn_id,
+        upstream_governor_decision=upstream_governor_decision,
+    )
     result = write_structured_evidence_to_memory(
         config_manager=config_manager,
         state_db=state_db,
