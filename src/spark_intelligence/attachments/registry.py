@@ -159,16 +159,33 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
 
     autodetected: list[Path] = []
     seen: set[str] = set()
-    candidates = list(desktop.glob("domain-chip-*"))
-    candidates.extend(
-        path
-        for path in desktop.iterdir()
-        if path.is_dir() and (path / "spark-chip.json").exists()
-    )
+    # Path.glob silently returns an empty list on OSError, but
+    # desktop.iterdir() raises PermissionError/OSError when the
+    # Desktop folder exists but is unreadable (sandboxed dev machine,
+    # corp-locked profile, broken Desktop symlink). Guard both the
+    # glob result and the iterdir() fall-back so an unreadable
+    # Desktop does not crash chip autodiscovery — the rest of the
+    # attachment surface (configured roots, /chips list) can still
+    # run.
+    try:
+        candidates = list(desktop.glob("domain-chip-*"))
+    except OSError:
+        candidates = []
+    try:
+        candidates.extend(
+            path
+            for path in desktop.iterdir()
+            if path.is_dir() and (path / "spark-chip.json").exists()
+        )
+    except OSError:
+        pass
     for candidate in sorted(candidates):
         if _is_ignored_root(candidate, ignored_roots):
             continue
-        key = str(candidate.resolve())
+        try:
+            key = str(candidate.resolve())
+        except OSError:
+            continue
         if key not in seen:
             seen.add(key)
             autodetected.append(candidate)
