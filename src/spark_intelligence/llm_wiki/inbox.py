@@ -87,10 +87,10 @@ def build_llm_wiki_candidate_inbox(
 
     markdown_files = sorted(
         (path for path in improvements_dir.glob("*.md") if path.is_file() and path.name != "index.md"),
-        key=lambda path: path.stat().st_mtime,
+        key=_safe_mtime,
         reverse=True,
     ) if improvements_dir.exists() else []
-    all_notes = [_note_payload(root, path) for path in markdown_files]
+    all_notes = [note for note in (_note_payload(root, path) for path in markdown_files) if note is not None]
     filtered_notes = [
         note
         for note in all_notes
@@ -116,9 +116,19 @@ def build_llm_wiki_candidate_inbox(
     return LlmWikiCandidateInboxResult(output_dir=root, payload=payload)
 
 
-def _note_payload(root: Path, path: Path) -> dict[str, Any]:
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _note_payload(root: Path, path: Path) -> dict[str, Any] | None:
     relative_path = path.relative_to(root).as_posix()
-    content = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
     frontmatter = _frontmatter(content)
     promotion_status = _normalize_note_status(frontmatter.get("promotion_status") or frontmatter.get("status"))
     evidence_refs = _list_value(frontmatter.get("evidence_refs"))
@@ -148,7 +158,7 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         source_refs=source_refs,
         probe_refs=probe_refs,
     )
-    modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0)
+    modified_at = datetime.fromtimestamp(_safe_mtime(path), timezone.utc).replace(microsecond=0)
     created_at = str(frontmatter.get("date_created") or "").strip()
     return {
         "path": relative_path,
