@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import re
+import tempfile
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -199,7 +200,7 @@ class ConfigManager:
                 summary=f"Config mutation rejected as semantic no-op for {target_path}.",
             )
             return
-        self.paths.config_yaml.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        self._atomic_write(self.paths.config_yaml, yaml.safe_dump(data, sort_keys=False))
         self._record_config_mutation(
             target_document="config_yaml",
             target_path=target_path,
@@ -355,6 +356,25 @@ class ConfigManager:
             raise ValueError("Config path must not be empty.")
         return parts
 
+    @staticmethod
+    def _atomic_write(target: Path, content: str) -> None:
+        """Write *content* to *target* atomically via temp-file + os.replace."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_path, str(target))
+        except BaseException:
+            # Clean up temp file on any failure (including KeyboardInterrupt)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
     def _write_env_file(
         self,
         content: str,
@@ -367,7 +387,7 @@ class ConfigManager:
         previous_value: str | None = None,
         new_value: str | None = None,
     ) -> None:
-        self.paths.env_file.write_text(content, encoding="utf-8")
+        self._atomic_write(self.paths.env_file, content)
         self.harden_env_file_permissions()
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
