@@ -80,7 +80,16 @@ def _load_builder_event_turns(
                 """,
                 (channel_kind, session_id, max(turn_limit * 4, 12)),
             ).fetchall()
-    except Exception:
+    except Exception as exc:
+        # Surface the miss so operators triaging an empty recent-conversation
+        # section in the context capsule can see the underlying cause (locked
+        # state-db, schema drift, missing column, etc.) instead of treating
+        # the empty list as "no recent turns".
+        import logging
+        logging.getLogger(__name__).warning(
+            "recent_conversation: failed to load builder event turns from state-db: %s",
+            exc,
+        )
         return []
 
     transcript: list[RecentConversationTurn] = []
