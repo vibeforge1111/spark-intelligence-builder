@@ -115,12 +115,14 @@ class BlackBoxEntry:
     changed: list[str]
     memory_candidate: dict[str, Any] | None
     summary: str
+    trace_ref: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "event_type": self.event_type,
             "created_at": self.created_at,
+            "trace_ref": self.trace_ref,
             "perceived_intent": self.perceived_intent,
             "route_chosen": self.route_chosen,
             "sources_used": list(self.sources_used),
@@ -409,6 +411,7 @@ def _black_box_entry_from_row(row: dict[str, Any]) -> BlackBoxEntry:
         changed=_as_text_list(facts.get("changed")),
         memory_candidate=facts.get("memory_candidate") if isinstance(facts.get("memory_candidate"), dict) else None,
         summary=str(row.get("summary") or ""),
+        trace_ref=_as_optional_text(row.get("trace_ref")),
     )
 
 
