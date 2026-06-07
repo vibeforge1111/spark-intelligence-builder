@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -2673,12 +2674,12 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("No module named spark_harness_core", checks["harness-core"].detail)
         self.assertIn("needs.modules", checks["harness-core"].detail)
 
-    def test_doctor_flags_empty_tool_call_ledger_adoption(self) -> None:
+    def test_doctor_reports_empty_tool_call_ledger_adoption_without_failing_fresh_runtime(self) -> None:
         report = run_doctor(self.config_manager, self.state_db)
 
         checks = {check.name: check for check in report.checks}
         self.assertIn("tool-call-ledger-adoption", checks)
-        self.assertFalse(checks["tool-call-ledger-adoption"].ok)
+        self.assertTrue(checks["tool-call-ledger-adoption"].ok)
         self.assertIn("total=0", checks["tool-call-ledger-adoption"].detail)
         self.assertIn("no canonical governed tool-call ledgers", checks["tool-call-ledger-adoption"].detail)
 

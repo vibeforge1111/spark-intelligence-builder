@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import sqlite3
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,7 +157,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             checks.append(
                 DoctorCheck(
                     "tool-call-ledger-adoption",
-                    False,
+                    True,
                     "total=0 surfaces=none; no canonical governed tool-call ledgers persisted yet",
                 )
             )
