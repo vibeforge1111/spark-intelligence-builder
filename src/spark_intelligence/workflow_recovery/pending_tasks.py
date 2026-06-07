@@ -230,7 +230,11 @@ def close_pending_task(
 ) -> PendingTaskRecord:
     existing = get_pending_task(state_db, task_key=task_key)
     if existing is None:
-        raise ValueError(f"unknown_pending_task:{task_key}")
+        open_records = latest_pending_tasks(state_db, open_only=True, limit=5)
+        open_keys = ", ".join(record.task_key for record in open_records) if open_records else "none open"
+        raise ValueError(
+            f"unknown_pending_task:{task_key} (recent open keys: {open_keys})"
+        )
     evidence = dict(existing.evidence)
     evidence["completion_summary"] = completion_summary
     record = upsert_pending_task(
