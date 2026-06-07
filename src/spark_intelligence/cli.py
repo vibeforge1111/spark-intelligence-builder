@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import yaml
@@ -69,6 +70,10 @@ from spark_intelligence.gateway.runtime import (
 from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+from spark_intelligence.harness_evolution import (
+    build_harness_self_evolution_snapshot,
+    run_harness_change_manifest_runner,
+)
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -139,7 +144,6 @@ from spark_intelligence.personality import (
     save_agent_persona_profile,
     write_personality_evolver_state,
 )
-from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     close_run,
@@ -2828,6 +2832,65 @@ def build_parser() -> argparse.ArgumentParser:
     harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
     harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_self_evolution_parser = harness_subparsers.add_parser(
+        "self-evolution-snapshot",
+        help="Build an observe-only Harness Core self-evolution run from canonical tool ledgers",
+    )
+    harness_self_evolution_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_self_evolution_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
+    harness_self_evolution_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_change_runner_parser = harness_subparsers.add_parser(
+        "change-manifest-runner",
+        help="Evaluate Harness Core change manifests against Builder ledger and test evidence",
+    )
+    harness_change_runner_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_change_runner_parser.add_argument(
+        "--manifest",
+        action="append",
+        required=True,
+        help="Path to a change-manifest-v1 JSON file; repeat for multiple manifests",
+    )
+    harness_change_runner_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
+    harness_change_runner_parser.add_argument(
+        "--mode",
+        default="promote",
+        choices=["observe", "propose", "sandbox", "live_qa", "promote", "rollback"],
+        help="Self-evolution mode to feed into Harness Core",
+    )
+    harness_change_runner_parser.add_argument(
+        "--requested-verdict",
+        choices=["promote_private", "promote_release_candidate", "rollback"],
+        help="Promotion or rollback verdict requested from the gated runner",
+    )
+    harness_change_runner_parser.add_argument(
+        "--command",
+        action="append",
+        dest="runner_commands",
+        help="Test command to record or run; repeat to override manifest required_tests",
+    )
+    harness_change_runner_parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Run allowlisted test commands with shell disabled before asking the runner to promote",
+    )
+    harness_change_runner_parser.add_argument(
+        "--allow-private-promotion",
+        action="store_true",
+        help="Allow the adapter to mark local private-promotion readiness when tests and manifests pass",
+    )
+    harness_change_runner_parser.add_argument(
+        "--live-surface-required",
+        action="store_true",
+        help="Keep live-surface proof marked as required, which blocks promotion",
+    )
+    harness_change_runner_parser.add_argument("--cwd", help="Working directory for allowlisted test commands")
+    harness_change_runner_parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=120,
+        help="Per-test-command timeout when --run-tests is used",
+    )
+    harness_change_runner_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
     harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
     harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -4627,7 +4690,7 @@ def handle_self_context(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
-        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_writable=runner_writable,
         runner_label=str(getattr(args, "runner_label", "") or ""),
         execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
         live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
@@ -6585,6 +6648,7 @@ def _run_browser_hook(
         args,
         hook_name=hook_name,
         payload=payload,
+        render_result=render_result,
         action=action,
         target_ref=target_ref,
     )
@@ -6602,6 +6666,7 @@ def _execute_browser_hook(
     *,
     hook_name: str,
     payload: dict[str, object],
+    render_result,
     action: str,
     target_ref: str,
 ) -> tuple[int, dict[str, object] | None, str | None]:
@@ -8061,6 +8126,67 @@ def handle_harness_status(args: argparse.Namespace) -> int:
         lines.append(f"- recent runs: {int(runtime_summary.get('recent_run_count') or 0)}")
         if runtime_summary.get("last_harness_id"):
             lines.append(f"- last harness: {runtime_summary['last_harness_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_harness_self_evolution_snapshot(state_db, limit=args.limit)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        readiness = payload["readiness_score"]["overall"]
+        run = payload["self_evolution_run"]
+        lines = ["Spark harness self-evolution snapshot"]
+        lines.append("- mode: observe")
+        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
+        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
+        lines.append(f"- evolution: {run['evolution_id']}")
+        lines.append("- commands: observe-only; no commands executed")
+        if payload.get("event_id"):
+            lines.append(f"- event: {payload['event_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_change_manifest_runner(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = run_harness_change_manifest_runner(
+        state_db,
+        manifest_paths=args.manifest,
+        mode=args.mode,
+        requested_verdict=args.requested_verdict,
+        commands=args.runner_commands,
+        run_tests=bool(args.run_tests),
+        allow_private_promotion=bool(args.allow_private_promotion),
+        cwd=args.cwd,
+        timeout_seconds=args.timeout_seconds,
+        limit=args.limit,
+        live_surface_required=bool(args.live_surface_required),
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        readiness = payload["readiness_score"]["overall"]
+        run = payload["self_evolution_run"]
+        decision = run["promotion_decision"]
+        lines = ["Spark harness change-manifest runner"]
+        lines.append(f"- mode: {payload['mode']}")
+        lines.append(f"- manifests: {int(payload.get('manifest_count') or 0)}")
+        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
+        lines.append(f"- tests: {'run' if payload.get('run_tests') else 'not run'}")
+        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
+        lines.append(f"- decision: {decision['verdict']}")
+        lines.append(f"- evolution: {run['evolution_id']}")
+        if payload.get("event_id"):
+            lines.append(f"- event: {payload['event_id']}")
         print("\n".join(lines))
     return 0
 
@@ -9537,6 +9663,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_list(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
+        return handle_harness_self_evolution_snapshot(args)
+    if args.command == "harness" and args.harness_command == "change-manifest-runner":
+        return handle_harness_change_manifest_runner(args)
     if args.command == "harness" and args.harness_command == "plan":
         return handle_harness_plan(args)
     if args.command == "harness" and args.harness_command == "execute":
