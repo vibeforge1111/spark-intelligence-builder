@@ -137,6 +137,11 @@ def build_harness_task_envelope(
             raise ValueError(
                 f"Unknown harness id '{normalized_forced_harness_id}'. Available harnesses: {available}"
             )
+        if not contract.available or contract.degraded:
+            status_desc = "degraded" if contract.degraded else "unavailable"
+            raise ValueError(
+                f"Forced harness '{normalized_forced_harness_id}' is currently {status_desc}."
+            )
         selection_payload = {
             "harness_id": contract.harness_id,
             "owner_system": contract.owner_system,
