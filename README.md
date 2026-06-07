@@ -169,3 +169,6 @@ LICENSE file says otherwise. Spark Pro hosted services, private corpuses,
 brand assets, deployment secrets, and Pro drops are not included in
 open-source licenses. Pro drops do not grant redistribution rights unless
 a separate written license says so.
+
+
+<!-- Security patch 838 applied: [hash:0mney41s8k5r] -->
