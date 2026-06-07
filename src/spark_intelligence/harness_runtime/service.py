@@ -222,6 +222,23 @@ def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> d
             confidence=0.95,
         )
 
+    if envelope.harness_id == "browser.grounded":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="browser.navigate",
+            owner_system="spark-browser",
+            mutation_class="external_network",
+            external_network=True,
+            intent_summary="Local operator explicitly requested governed browser navigation through the harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator browser task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
     if envelope.harness_id != "voice.io":
         return None
 
@@ -329,7 +346,9 @@ def execute_harness_task(
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
                 config_manager=config_manager,
+                state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
@@ -531,7 +550,9 @@ def build_harness_runtime_snapshot(
 def _execute_browser_grounded_harness(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
 
@@ -548,15 +569,107 @@ def _execute_browser_grounded_harness(
             "Browser grounded harness needs an explicit URL before it can prepare a navigate payload.",
             "needs_input",
         )
+
+    authority = _authorize_harness_browser_navigate(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="browser.navigate"),
+            },
+            "Browser grounded harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
+    navigate_payload = build_browser_navigate_payload(
+        config_manager=config_manager,
+        url=url,
+        agent_id=envelope.agent_id,
+        request_id=envelope.envelope_id,
+    )
+    if isinstance(authority.governor_decision, dict):
+        navigate_payload["governor_decision"] = authority.governor_decision
+    if isinstance(envelope.turn_intent_payload, dict):
+        navigate_payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
+    _record_harness_browser_navigate_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="partial",
+        summary="Browser grounded harness prepared a governed navigate payload.",
+    )
     return (
         {
-            "browser_navigate_payload": build_browser_navigate_payload(
-                config_manager=config_manager,
-                url=url,
-            )
+            "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="browser.navigate"),
+            "browser_navigate_payload": navigate_payload,
         },
         f"Prepared a governed browser navigate payload for {url}.",
         "prepared",
+    )
+
+
+def _authorize_harness_browser_navigate(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="browser.navigate",
+        owner_system="spark-browser",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_browser_navigate_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        owner_system="spark-browser",
+        mutation_class="external_network",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
     )
 
 

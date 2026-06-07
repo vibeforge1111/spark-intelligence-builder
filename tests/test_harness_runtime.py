@@ -113,6 +113,7 @@ class HarnessRuntimeTests(SparkTestCase):
                 state_db=self.state_db,
                 task="Open https://example.com and inspect it.",
             )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         result = execute_harness_task(
             config_manager=self.config_manager,
@@ -121,9 +122,45 @@ class HarnessRuntimeTests(SparkTestCase):
         )
 
         self.assertEqual(result.status, "prepared")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "browser.navigate")
         payload = result.artifacts.get("browser_navigate_payload") or {}
         self.assertEqual(payload.get("hook_name"), "browser.navigate")
+        self.assertEqual(payload.get("request_id"), envelope.envelope_id)
         self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com")
+        self.assertIsInstance(payload.get("governor_decision"), dict)
+        self.assertIsInstance(payload.get("turn_intent_envelope_vnext"), dict)
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["status"], "partial")
+        self.assertEqual(ledgers[0]["tool_name"], "browser.navigate")
+
+    def test_execute_browser_grounded_harness_without_authority_does_not_prepare_payload(self) -> None:
+        self._enable_fake_researcher()
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Open https://example.com and inspect it.",
+            )
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "browser.navigate")
+        self.assertNotIn("browser_navigate_payload", result.artifacts)
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
 
     def test_execute_browser_grounded_harness_requires_url_for_first_runner(self) -> None:
         self._enable_fake_researcher()
