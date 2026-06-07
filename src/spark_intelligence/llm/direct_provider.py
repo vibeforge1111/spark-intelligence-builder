@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import urlparse
 
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import record_event
@@ -318,7 +320,71 @@ def _extract_anthropic_text(payload: dict[str, object]) -> str:
         raise RuntimeError("Anthropic response contained no text content.")
     return joined
 
+_ALLOWED_PROVIDER_DOMAINS: frozenset[str] = frozenset(
+    [
+        "api.openai.com",
+        "api.anthropic.com",
+        "openrouter.ai",
+        "api.together.xyz",
+        "api.mistral.ai",
+        "api.groq.com",
+        "api.cohere.ai",
+        "api.replicate.com",
+        "generativelanguage.googleapis.com",
+        "api.perplexity.ai",
+        "api.deepseek.com",
+        "api.fireworks.ai",
+    ]
+)
+
+_PRIVATE_IP_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fd00::/8"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
+
+def _validate_base_url(base_url: str) -> None:
+    """Reject base_url values that could enable SSRF attacks."""
+    parsed = urlparse(base_url)
+
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"Provider base_url must use https:// scheme, got: {parsed.scheme!r}"
+        )
+
+    hostname = (parsed.hostname or "").lower().strip(".")
+    if not hostname:
+        raise ValueError("Provider base_url has no hostname.")
+
+    if hostname in ("localhost", "localhost.localdomain"):
+        raise ValueError(f"Provider base_url points to loopback host: {hostname!r}")
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        for network in _PRIVATE_IP_NETWORKS:
+            if addr in network:
+                raise ValueError(
+                    f"Provider base_url {hostname!r} resolves to a private/reserved IP address."
+                )
+    except ValueError as exc:
+        # Re-raise SSRF errors; ignore "not a valid IP address" (it's a hostname)
+        if "private/reserved" in str(exc) or "loopback" in str(exc):
+            raise
+
+    if not any(hostname == d or hostname.endswith("." + d) for d in _ALLOWED_PROVIDER_DOMAINS):
+        raise ValueError(
+            f"Provider base_url domain {hostname!r} is not in the allowlist of expected provider domains."
+        )
+
+
 def _join_url(base_url: str, suffix: str) -> str:
+    _validate_base_url(base_url)
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
 
