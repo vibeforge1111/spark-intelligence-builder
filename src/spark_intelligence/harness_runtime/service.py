@@ -689,8 +689,15 @@ def _execute_voice_io_harness(
                 envelope=envelope,
                 step="voice_speak_retry",
             )
+            import subprocess
+            retry_args = [
+                "python", "-m", "spark_intelligence.cli",
+                "harness", "execute", envelope.task,
+                "--home", str(config_manager.paths.home),
+                "--harness-id", "voice.io"
+            ]
             artifacts["retry_token"] = {
-                "retry_command": f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} --home {config_manager.paths.home} --harness-id voice.io",
+                "retry_command": subprocess.list2cmdline(retry_args),
                 "reason": str(exc),
             }
             return (
@@ -1006,12 +1013,16 @@ def _build_harness_resume_token(
     envelope: HarnessTaskEnvelope,
     step: str,
 ) -> dict[str, Any]:
-    command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
-        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
-    )
+    import subprocess
+    args = [
+        "python", "-m", "spark_intelligence.cli",
+        "harness", "execute", envelope.task,
+        "--home", str(config_manager.paths.home),
+        "--harness-id", envelope.harness_id
+    ]
     if envelope.channel_kind:
-        command += f" --channel-kind {envelope.channel_kind}"
+        args.extend(["--channel-kind", envelope.channel_kind])
+    command = subprocess.list2cmdline(args)
     return {
         "resume_kind": step,
         "resume_command": command,
