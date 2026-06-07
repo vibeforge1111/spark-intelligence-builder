@@ -190,7 +190,10 @@ def _patch_manifest_command_modules(manifest_path: Path, chip_dir: Path) -> None
             parts[2] = f"{mod}.cli"
             changed = True
     if changed:
-        manifest_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        import tempfile, os
+        tmp = manifest_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        os.replace(tmp, manifest_path)
 
 
 def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
