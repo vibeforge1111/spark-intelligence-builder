@@ -4,7 +4,12 @@ import json
 from unittest.mock import patch
 from urllib.error import URLError
 
-from spark_intelligence.adapters.telegram.runtime import poll_telegram_updates_once, read_telegram_runtime_health
+from spark_intelligence.adapters.telegram.runtime import (
+    poll_telegram_updates_once,
+    read_telegram_runtime_health,
+    record_telegram_auth_result,
+    record_telegram_poll_failure,
+)
 from spark_intelligence.gateway.runtime import gateway_outbound_view, gateway_start, gateway_trace_view
 
 from tests.test_support import SparkTestCase, make_telegram_update
@@ -69,6 +74,29 @@ class FakePollingClient:
 
 
 class TelegramFailurePathTests(SparkTestCase):
+    def test_runtime_health_redacts_auth_and_poll_failure_details(self) -> None:
+        record_telegram_auth_result(
+            state_db=self.state_db,
+            status="failed",
+            error="auth failed: BOT_TOKEN=placeholder-token-value-1234567890 at /Users/alice/private/auth.json",
+        )
+        record_telegram_poll_failure(
+            state_db=self.state_db,
+            failure_type="network_error",
+            message="poll failed: api_key=placeholder-api-key-1234567890 at /Users/alice/private/poll.json",
+            backoff_seconds=3,
+        )
+
+        health = read_telegram_runtime_health(self.state_db)
+        details = "\n".join([str(health.auth_error), str(health.last_failure_message)])
+
+        self.assertIn("<local-path>", details)
+        self.assertNotIn("placeholder-token-value-1234567890", details)
+        self.assertNotIn("placeholder-api-key-1234567890", details)
+        self.assertNotIn("/Users/alice", details)
+        self.assertNotIn("auth.json", details)
+        self.assertNotIn("poll.json", details)
+
     def test_gateway_start_persists_auth_failure(self) -> None:
         self.add_telegram_channel(bot_token="bad-token")
 
