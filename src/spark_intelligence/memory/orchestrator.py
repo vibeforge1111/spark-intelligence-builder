@@ -49,6 +49,13 @@ from spark_intelligence.memory.retention_policy import (
 )
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
+
+# Allowlist for modules that may be dynamically imported via config.
+# Only modules whose root name appears here are permitted, preventing
+# arbitrary code execution through a malicious sdk_module config value.
+_ALLOWED_SDK_MODULE_ROOTS: frozenset[str] = frozenset({
+    "domain_chip_memory",
+})
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
@@ -1553,7 +1560,22 @@ def _local_domain_chip_memory_src() -> Path:
     return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
 
 
+def _validate_sdk_module_name(module_name: str) -> str:
+    """Validate that *module_name* is on the allowlist before dynamic import.
+
+    Returns the validated name on success and raises ValueError otherwise.
+    """
+    root = module_name.split(".", 1)[0]
+    if root not in _ALLOWED_SDK_MODULE_ROOTS:
+        raise ValueError(
+            f"sdk_module '{module_name}' is not in the allowlist; "
+            f"allowed roots: {sorted(_ALLOWED_SDK_MODULE_ROOTS)}"
+        )
+    return module_name
+
+
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    _validate_sdk_module_name(module_name)
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
