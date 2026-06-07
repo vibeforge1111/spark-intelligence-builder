@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import time
 from typing import Any
 
@@ -39,13 +40,48 @@ def is_duplicate_event(
     event_id: int,
     window_size: int,
 ) -> bool:
+    """Detect duplicate events using an atomic read-modify-write transaction.
+
+    The previous implementation used separate connections for the read and
+    write phases, creating a TOCTOU race window where two concurrent
+    requests with the same event_id could both pass the deduplication
+    check.  This version wraps the entire check-and-record sequence in a
+    single ``BEGIN IMMEDIATE`` transaction so the read, comparison, and
+    write are serialised at the SQLite level.
+    """
     state_key = f"{channel_id}:recent_event_ids"
-    recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
-    if event_id in recent_ids:
-        return True
-    trimmed = (recent_ids + [event_id])[-max(window_size, 1) :]
-    set_runtime_state_value(state_db=state_db, state_key=state_key, value=json.dumps(trimmed))
-    return False
+    conn = sqlite3.connect(str(state_db.path), timeout=10, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (state_key,),
+        ).fetchone()
+        recent_ids: list[int] = []
+        if row and row["value"] is not None:
+            try:
+                payload = json.loads(str(row["value"]))
+                if isinstance(payload, list):
+                    recent_ids = [int(item) for item in payload if isinstance(item, (int, float))]
+            except (json.JSONDecodeError, ValueError):
+                pass
+        if event_id in recent_ids:
+            conn.execute("ROLLBACK")
+            return True
+        trimmed = (recent_ids + [event_id])[-max(window_size, 1):]
+        conn.execute(
+            "INSERT INTO runtime_state (state_key, value)"
+            " VALUES (?, ?)"
+            " ON CONFLICT(state_key) DO UPDATE SET"
+            " value = excluded.value,"
+            " updated_at = CURRENT_TIMESTAMP",
+            (state_key, json.dumps(trimmed)),
+        )
+        conn.commit()
+        return False
+    finally:
+        conn.close()
 
 
 def apply_inbound_rate_limit(
@@ -56,34 +92,68 @@ def apply_inbound_rate_limit(
     limit_per_minute: int,
     notice_cooldown_seconds: int,
 ) -> dict[str, Any]:
+    """Enforce per-user inbound rate limits using an atomic transaction.
+
+    The previous implementation performed a separate read and write on
+    different connections, allowing concurrent requests to bypass the rate
+    limit through a TOCTOU race.  This version performs the entire
+    read-filter-append-write cycle inside a single ``BEGIN IMMEDIATE``
+    transaction, ensuring that concurrent callers serialise at the SQLite
+    level.
+    """
     state_key = f"{channel_id}:rate_limit:{external_user_id}"
-    raw = _load_json_object(state_db=state_db, state_key=state_key)
     now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
-    timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
-    if len(timestamps) >= max(limit_per_minute, 1):
-        retry_after_seconds = max(1, 60 - (now - timestamps[0]))
-        notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
-        if notice_allowed:
-            last_notice_at = now
-        set_runtime_state_value(
-            state_db=state_db,
-            state_key=state_key,
-            value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
+    conn = sqlite3.connect(str(state_db.path), timeout=10, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (state_key,),
+        ).fetchone()
+        raw: dict[str, Any] = {}
+        if row and row["value"] is not None:
+            try:
+                payload = json.loads(str(row["value"]))
+                if isinstance(payload, dict):
+                    raw = payload
+            except (json.JSONDecodeError, ValueError):
+                pass
+        timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
+        timestamps = [item for item in timestamps if item > now - 60]
+        last_notice_at = int(raw.get("last_notice_at", 0) or 0)
+        if len(timestamps) >= max(limit_per_minute, 1):
+            retry_after_seconds = max(1, 60 - (now - timestamps[0]))
+            notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
+            if notice_allowed:
+                last_notice_at = now
+            conn.execute(
+                "INSERT INTO runtime_state (state_key, value)"
+                " VALUES (?, ?)"
+                " ON CONFLICT(state_key) DO UPDATE SET"
+                " value = excluded.value,"
+                " updated_at = CURRENT_TIMESTAMP",
+                (state_key, json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True)),
+            )
+            conn.commit()
+            return {
+                "allowed": False,
+                "retry_after_seconds": retry_after_seconds,
+                "notice_allowed": notice_allowed,
+            }
+        timestamps.append(now)
+        conn.execute(
+            "INSERT INTO runtime_state (state_key, value)"
+            " VALUES (?, ?)"
+            " ON CONFLICT(state_key) DO UPDATE SET"
+            " value = excluded.value,"
+            " updated_at = CURRENT_TIMESTAMP",
+            (state_key, json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True)),
         )
-        return {
-            "allowed": False,
-            "retry_after_seconds": retry_after_seconds,
-            "notice_allowed": notice_allowed,
-        }
-    timestamps.append(now)
-    set_runtime_state_value(
-        state_db=state_db,
-        state_key=state_key,
-        value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
-    )
-    return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
+        conn.commit()
+        return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
+    finally:
+        conn.close()
 
 
 def prepare_outbound_text(
@@ -207,7 +277,7 @@ _SCORE_LABEL_PATTERN = re.compile(
     r"confidence|"
     r"score"
     r")"
-    r"(?P<sep>\s*(?:=|:)\s*\(?\s*)"
+    r"(?P<sep>\s*(?:=|:)\s*\(\s*)"
     r"(?P<value>(?:0|1)?\.\d{1,3}|1\.0+)"
     r"(?P<trail>\s*\)?)",
     flags=re.IGNORECASE,
@@ -273,7 +343,7 @@ def _split_text_for_delivery(text: str, *, chunk_size: int, max_chunks: int) -> 
         chunks.append(remaining[:cut].rstrip())
         remaining = remaining[cut:].lstrip()
     if remaining:
-        suffix_note = f"\n\n[content trimmed — chat capped at {max_chunks} parts; ask for the rest or request file delivery]"
+        suffix_note = f"\n\n[content trimmed \u2014 chat capped at {max_chunks} parts; ask for the rest or request file delivery]"
         last = chunks[-1]
         keep = chunk_size - len(suffix_note)
         if keep < 0:
@@ -293,6 +363,8 @@ def _find_split_point(text: str, chunk_size: int) -> int:
         if idx >= chunk_size // 2:
             return idx + len(boundary)
     return chunk_size
+
+
 def set_runtime_state_value(
     *,
     state_db: StateDB,
