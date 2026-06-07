@@ -1479,7 +1479,9 @@ def simulate_telegram_update(
 ) -> TelegramSimulationResult:
     normalized = normalize_telegram_update(update_payload, channel_id="telegram")
     request_prefix = "sim" if simulation else "telegram"
-    request_id = f"{request_prefix}:{normalized.update_id}"
+    incoming_vnext = extract_turn_intent_envelope_vnext(update_payload)
+    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if isinstance(incoming_vnext, dict) else ""
+    request_id = incoming_turn_id or f"{request_prefix}:{normalized.update_id}"
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
     if not normalized.is_dm:
         return TelegramSimulationResult(
