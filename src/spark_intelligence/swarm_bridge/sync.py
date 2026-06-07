@@ -2344,7 +2344,18 @@ def _count_swarm_failures(state_db: StateDB) -> int:
     return len(failures)
 
 
+ALLOWED_RESEARCHER_MODULES = frozenset({
+    "spark_researcher.paths",
+    "spark_researcher.config",
+    "spark_researcher.payload",
+})
+
+
 def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):
+    if module_name not in ALLOWED_RESEARCHER_MODULES:
+        raise ValueError(
+            f"Module '{module_name}' is not in the allowed researcher module list."
+        )
     src_root = runtime_root / "src"
     if str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
