@@ -3753,7 +3753,8 @@ def _apply_telegram_voice_effect_from_env(payload: dict[str, Any]) -> dict[str, 
                 "audio_effect": "parrot",
                 "audio_effect_version": TELEGRAM_PARROT_EFFECT_VERSION,
             }
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return payload
 
 
