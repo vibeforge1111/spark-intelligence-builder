@@ -131,31 +131,30 @@ def render_docs(*, latest_run_path: Path) -> None:
     run_summary = _load_json(Path(str(latest_pointer["run_summary"])))
     regression_payload, soak_payload = _load_regression_and_soak(run_summary)
 
-    readme = README_PATH.read_text(encoding="utf-8")
+    # Build all replacement blocks before writing any file so a missing marker
+    # in any one doc fails the whole render instead of leaving partial-write
+    # state across README, LIVE_RESULTS, and HANDOFF.
     readme = _replace_marked_block(
-        readme,
+        README_PATH.read_text(encoding="utf-8"),
         "<!-- AUTO_MEMORY_BASELINE_README_START -->",
         "<!-- AUTO_MEMORY_BASELINE_README_END -->",
         _build_readme_block(run_summary, latest_run_path),
     )
-    README_PATH.write_text(readme, encoding="utf-8")
-
-    live_results = LIVE_RESULTS_PATH.read_text(encoding="utf-8")
     live_results = _replace_marked_block(
-        live_results,
+        LIVE_RESULTS_PATH.read_text(encoding="utf-8"),
         "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_START -->",
         "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_END -->",
         _build_live_results_block(run_summary, regression_payload, soak_payload),
     )
-    LIVE_RESULTS_PATH.write_text(live_results, encoding="utf-8")
-
-    handoff = HANDOFF_PATH.read_text(encoding="utf-8")
     handoff = _replace_marked_block(
-        handoff,
+        HANDOFF_PATH.read_text(encoding="utf-8"),
         "<!-- AUTO_MEMORY_BASELINE_HANDOFF_START -->",
         "<!-- AUTO_MEMORY_BASELINE_HANDOFF_END -->",
         _build_handoff_block(run_summary, soak_payload),
     )
+
+    README_PATH.write_text(readme, encoding="utf-8")
+    LIVE_RESULTS_PATH.write_text(live_results, encoding="utf-8")
     HANDOFF_PATH.write_text(handoff, encoding="utf-8")
 
 
