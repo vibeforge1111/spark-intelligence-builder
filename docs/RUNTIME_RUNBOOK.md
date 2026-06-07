@@ -121,6 +121,13 @@ spark-intelligence harness change-manifest-runner `
   --json
 ```
 
+The change-manifest runner writes a canonical `surface=builder`
+`tool_call_ledger` row for the runner execution. After a drill, verify it:
+
+```powershell
+spark-intelligence harness tool-ledgers --surface builder --limit 5 --json
+```
+
 Reference evidence: [SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md](./SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md).
 
 Do not claim autonomous self-evolution until a real manifest has exact artifact

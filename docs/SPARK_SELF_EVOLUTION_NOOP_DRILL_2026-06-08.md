@@ -34,13 +34,18 @@ python -m spark_intelligence.cli harness change-manifest-runner `
 
 ## Result
 
-The supervised runner completed successfully and recorded this Builder event:
+The supervised runner was first proven with event `evt-de49f89186f4`. After the
+Builder runner learned to persist its own canonical `surface=builder` tool
+ledger, the same no-op manifest was rerun and recorded this latest evidence:
 
 | Field | Value |
 | --- | --- |
-| Event id | `evt-de49f89186f4` |
-| Evolution id | `evolution:df9c9fe749684715a50864af` |
+| Event id | `evt-458006fab354` |
+| Evolution id | `evolution:7cc02d442f09462baf1e889f` |
 | Change id | `change:15d3119965dc4e619f52a0a5` |
+| Builder ledger id | `ledger:fd24aee5b4fb46e08bc36925` |
+| Builder ledger event id | `evt-a2d92abb6e76` |
+| Builder result event id | `evt-d813156677ca` |
 | Mode | `promote` |
 | Requested verdict | `promote_private` |
 | Promotion verdict | `promote_private` |
@@ -73,6 +78,8 @@ This drill proves:
 - a schema-valid `change-manifest-v1` can be consumed by Builder;
 - canonical ledger evidence can be harvested for the Harness self-evolution
   runner;
+- the Builder runner itself now writes a canonical `surface=builder`
+  `tool_call_ledger` row;
 - allowlisted tests can run through the guarded adapter;
 - private promotion requires explicit `--allow-private-promotion`;
 - a no-op manifest can reach `promote_private` without production mutation.

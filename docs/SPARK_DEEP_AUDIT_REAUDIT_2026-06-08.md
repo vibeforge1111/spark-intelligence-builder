@@ -50,9 +50,10 @@ ledger spine, but Spark is not done.
   change-manifest test runner, and a supervised no-op private-promotion drill,
   but no automatic code mutation, rollback executor, or production promotion
   loop.
-- Partially fixed: observability has a canonical governed tool ledger, but the
-  live ledger currently contains only `spark_cli` and `telegram` rows. Builder
-  and Spawner execution are not yet fully represented as first-class surfaces.
+- Partially fixed: observability has a canonical governed tool ledger and live
+  rows for `builder`, `spark_cli`, and `telegram`. Spawner execution is still
+  not represented as a first-class surface, and additional Builder high-agency
+  paths should adopt the same ledger seam as they execute.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
   to about 225 MB while preserving canonical tool ledgers.
@@ -75,11 +76,11 @@ ledger spine, but Spark is not done.
 | CLI approval holes | tests cover `bash -c`, `sh -c`, `python -c`, PowerShell wrappers, fail-closed unknowns | Closed in CLI |
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
-| Live ledger adoption | live doctor reports `total=82 surfaces=spark_cli=69, telegram=13` | Partial |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; after drill/check events the DB is 224,911,360 bytes with `builder_events=15,350`, `event_log=15,350`, and `tool_call_ledger=82` | Closed for this pass |
+| Live ledger adoption | live doctor reports `total=83 surfaces=builder=1, spark_cli=69, telegram=13` | Partial; Spawner missing |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; after drill/check events the DB is 225,177,600 bytes with `builder_events=15,362`, `event_log=15,362`, and `tool_call_ledger=83` | Closed for this pass |
 | Orphaned root rivers | root `.spark` now has only `outcomes.jsonl` and `predictions.jsonl` from March 2026 | Mostly closed, verify archive policy |
 | Builder source truth | installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty | Partial |
-| Self-evolution | Builder has observe snapshot, change-manifest runner, and supervised no-op drill `evt-de49f89186f4`; no automatic mutation executor | Partial |
+| Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, and Builder ledger `ledger:fd24aee5b4fb46e08bc36925`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
 
@@ -110,6 +111,8 @@ ledger spine, but Spark is not done.
   expectations.
 - Added Builder self-evolution observation and change-manifest runner surfaces
   that consume canonical ledger evidence and can run guarded test commands.
+- Made the Builder change-manifest runner persist its own canonical
+  `surface=builder` tool ledger before recording the final runner result.
 - Ran the supervised no-op change-manifest drill documented in
   `SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`.
 - Ran the controlled state retention/VACUUM pass documented in
@@ -158,7 +161,11 @@ until that session completes and the final diff is tested.
    - Every governed tool-call path should produce one canonical
      `tool_call_ledger` row with `turn_id`, `action_id`, `capability_id`, and
      `authorization_decision_id`.
-   - Current live adoption lacks first-class `builder` and `spawner` surfaces.
+   - Current live adoption has first-class `builder`, `spark_cli`, and
+     `telegram` rows.
+   - Spawner execution remains the missing first-class surface.
+   - Broaden Builder coverage beyond the change-manifest runner as new
+     high-agency Builder tool paths execute.
    - Add doctor warnings for expected surfaces with zero rows after configured
      runtime activity.
 
@@ -207,7 +214,9 @@ until that session completes and the final diff is tested.
      protected components.
 
 10. Preserve the no-op mutation drill as the private-promotion baseline.
-    - Completed on 2026-06-08 with event `evt-de49f89186f4`.
+    - Completed on 2026-06-08 with latest event `evt-458006fab354`.
+    - Builder canonical ledger row:
+      `ledger:fd24aee5b4fb46e08bc36925`.
     - Required test passed through the Builder change-manifest runner.
     - The result reached `promote_private` only with explicit
       `--allow-private-promotion`.
@@ -308,8 +317,8 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    tests.
 3. Add canonical ledger emission for Spawner and verify live adoption includes
    `spawner`.
-4. Add Builder self-persist coverage for the busiest governed Builder tool paths
-   and verify live adoption includes `builder`.
+4. Broaden Builder self-persist coverage for governed Builder tool paths beyond
+   the change-manifest runner.
 5. Add the scheduled state-size/large-table retention report so future cleanup
    is evidence-first.
 6. Resolve the Desktop Builder source-of-truth decision and update operator

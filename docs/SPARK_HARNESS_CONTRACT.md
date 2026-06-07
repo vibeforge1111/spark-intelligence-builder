@@ -31,7 +31,7 @@ Builder should not:
 - `src/spark_intelligence/observability/store.py` owns the canonical `tool_call_ledger` table, retention pruning, and reader APIs.
 - `src/spark_intelligence/gateway/tool_ledger.py` provides the minimal adapter ingest contract for external surfaces that need to publish governed rows.
 - `src/spark_intelligence/cli_approval_ledgers.py` imports Spark CLI approval ledgers into the same canonical table.
-- `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots and change-manifest runner evidence from canonical ledgers.
+- `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots, change-manifest runner evidence, and Builder-surface runner ledgers from canonical ledgers.
 
 Operator commands:
 
@@ -48,6 +48,7 @@ The 2026-06-08 supervised no-op drill is recorded in
 `docs/SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`. It proves private,
 explicitly flagged no-op promotion through the guarded runner; it does not prove
 autonomous mutation, protected-component approval handling, or rollback.
+The runner itself is persisted as a canonical `surface=builder` tool ledger.
 
 ## Ledger Row Contract
 
