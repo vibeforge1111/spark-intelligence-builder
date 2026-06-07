@@ -5,10 +5,11 @@ from pathlib import Path
 import json
 import os
 import shlex
-import subprocess
+from subprocess import TimeoutExpired
 import time
 from typing import Any
 
+from spark_intelligence.execution.governed import run_governed_command
 from spark_intelligence.harness_contract import _ensure_harness_core_importable
 from spark_intelligence.observability.store import recent_tool_call_ledgers, record_event
 from spark_intelligence.state.db import StateDB
@@ -407,16 +408,12 @@ def _run_single_test_command(command: str, *, cwd: Path | None, timeout_seconds:
             "stderr_tail": "",
         }
     try:
-        completed = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=max(1, int(timeout_seconds)),
+        completed = run_governed_command(
+            command=argv,
+            cwd=cwd or Path.cwd(),
+            timeout_seconds=max(1, int(timeout_seconds)),
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutExpired as exc:
         return {
             "command": command,
             "argv": argv,
@@ -430,8 +427,8 @@ def _run_single_test_command(command: str, *, cwd: Path | None, timeout_seconds:
     return {
         "command": command,
         "argv": argv,
-        "status": "passed" if completed.returncode == 0 else "failed",
-        "exit_code": completed.returncode,
+        "status": "passed" if completed.exit_code == 0 else "failed",
+        "exit_code": completed.exit_code,
         "duration_ms": int((time.monotonic() - started) * 1000),
         "reason": "",
         "stdout_tail": _tail(completed.stdout),
