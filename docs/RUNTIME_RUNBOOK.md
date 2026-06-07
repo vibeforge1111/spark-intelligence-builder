@@ -111,7 +111,9 @@ Run `jobs observability-report` before any future prune/VACUUM pass. It reports
 gateway JSONL sizes without deleting anything.
 With `--include-unowned-jsonl`, it also lists loose `.jsonl` files under the
 Spark root by size and ownership class without opening, moving, or deleting
-them.
+them. Follow
+[SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md](./SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md)
+before archiving, quarantining, or deleting any loose JSONL river.
 
 For gateway integrations that cannot call Python APIs directly, use the stdio ingest seam:
 

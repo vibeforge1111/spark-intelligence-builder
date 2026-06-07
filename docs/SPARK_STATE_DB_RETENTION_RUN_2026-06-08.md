@@ -110,3 +110,5 @@ pass, canonical ledgers were preserved, and doctor has no follow-up surfaces.
   --include-gateway-logs --include-unowned-jsonl --json` before pruning to
   capture `state.db` bytes, table counts, prunable row counts, gateway JSONL
   sizes, and loose JSONL residue without deleting anything.
+- Follow `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` before moving loose JSONL
+  files; the state DB retention procedure does not authorize JSONL deletion.
