@@ -331,7 +331,7 @@ def execute_harness_task(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="closed",
+            status=status,
             close_reason="harness_execution_completed",
             summary=summary,
             facts={
@@ -440,10 +440,13 @@ def execute_harness_chain(
             chain_status = "blocked"
             break
 
+    top_status = primary_result.status
+    if chain_status in {"blocked", "needs_input"}:
+        top_status = chain_status
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
-        status=primary_result.status,
+        status=top_status,
         summary=primary_result.summary,
         artifacts=primary_result.artifacts,
         next_actions=primary_result.next_actions,
@@ -538,11 +541,18 @@ def _execute_researcher_advisory_harness(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
-    result = _run_researcher_bridge_reply(
-        config_manager=config_manager,
-        state_db=state_db,
-        envelope=envelope,
-    )
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _run_researcher_bridge_reply,
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
+        try:
+            result = future.result(timeout=120.0)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError("Researcher advisory harness execution timed out after 120 seconds.")
     artifacts = {
         "reply_text": _bridge_result_reply_text(result),
         "evidence_summary": result.evidence_summary,
