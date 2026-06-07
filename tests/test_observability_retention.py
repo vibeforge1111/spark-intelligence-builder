@@ -8,7 +8,7 @@ from spark_intelligence.gateway.tracing import (
     rotate_gateway_logs_if_oversized,
     trace_log_path,
 )
-from spark_intelligence.observability.store import prune_observability_store, record_event
+from spark_intelligence.observability.store import build_observability_store_report, prune_observability_store, record_event
 from spark_intelligence.state.db import StateDB
 from tests.test_support import SparkTestCase
 
@@ -86,6 +86,64 @@ def test_prune_observability_store_prunes_mirrors_and_ledgers_by_default(tmp_pat
         assert conn.execute("SELECT COUNT(*) FROM event_log WHERE event_id = ?", (current_event_id,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:old'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:current'").fetchone()[0] == 1
+
+
+def test_observability_store_report_counts_prunable_rows_without_deleting(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    old_timestamp = "2025-01-01T00:00:00+00:00"
+    current_timestamp = "2026-01-03T00:00:00+00:00"
+    cutoff = "2026-01-02T00:00:00+00:00"
+
+    old_event_id = record_event(
+        state_db,
+        event_type="retention_report_probe",
+        component="test",
+        summary="Old report probe.",
+    )
+    current_event_id = record_event(
+        state_db,
+        event_type="retention_report_probe",
+        component="test",
+        summary="Current report probe.",
+    )
+    with state_db.connect() as conn:
+        conn.execute("UPDATE builder_events SET created_at = ? WHERE event_id = ?", (old_timestamp, old_event_id))
+        conn.execute("UPDATE event_log SET recorded_at = ? WHERE event_id = ?", (old_timestamp, old_event_id))
+        conn.execute("UPDATE builder_events SET created_at = ? WHERE event_id = ?", (current_timestamp, current_event_id))
+        conn.execute("UPDATE event_log SET recorded_at = ? WHERE event_id = ?", (current_timestamp, current_event_id))
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+            VALUES ('ledger:report-old', 'turn:report-old', 'success', '{}', ?, ?)
+            """,
+            (old_timestamp, old_timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+            VALUES ('ledger:report-current', 'turn:report-current', 'success', '{}', ?, ?)
+            """,
+            (current_timestamp, current_timestamp),
+        )
+        conn.commit()
+
+    report = build_observability_store_report(state_db, older_than=cutoff)
+
+    assert report.cutoff == cutoff
+    assert report.state_db_bytes > 0
+    assert report.table_counts["event_log"] == 2
+    assert report.table_counts["builder_events"] == 2
+    assert report.table_counts["tool_call_ledger"] == 2
+    assert report.prunable_counts == {
+        "event_log": 1,
+        "tool_call_ledger": 1,
+        "provider_runtime_events": 0,
+    }
+    assert report.total_prunable == 2
+    with state_db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM event_log").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger").fetchone()[0] == 2
 
 
 def test_prune_gateway_logs_prunes_old_trace_and_outbound_records(tmp_path) -> None:
@@ -174,6 +232,68 @@ def test_prune_observability_store_can_explicitly_prune_builder_events(tmp_path)
 
 
 class ObservabilityRetentionCliTests(SparkTestCase):
+    def test_jobs_observability_report_cli_reports_counts_without_pruning(self) -> None:
+        old_timestamp = "2025-01-01T00:00:00+00:00"
+        current_timestamp = "2026-01-03T00:00:00+00:00"
+        cutoff = "2026-01-02T00:00:00+00:00"
+        old_event_id = record_event(
+            self.state_db,
+            event_type="retention_report_cli_probe",
+            component="test",
+            summary="Old CLI report probe.",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute("UPDATE event_log SET recorded_at = ? WHERE event_id = ?", (old_timestamp, old_event_id))
+            conn.execute("UPDATE builder_events SET created_at = ? WHERE event_id = ?", (old_timestamp, old_event_id))
+            conn.execute(
+                """
+                INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+                VALUES ('ledger:retention-report-cli-old', 'turn:retention-report-cli-old', 'success', '{}', ?, ?)
+                """,
+                (old_timestamp, old_timestamp),
+            )
+            conn.commit()
+        trace_path = trace_log_path(self.config_manager)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"recorded_at": old_timestamp, "event": "old_gateway"}),
+                    json.dumps({"recorded_at": current_timestamp, "event": "current_gateway"}),
+                    "not-json",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "observability-report",
+            "--home",
+            str(self.home),
+            "--older-than",
+            cutoff,
+            "--include-gateway-logs",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["state_db"]["cutoff"], cutoff)
+        self.assertEqual(payload["state_db"]["prunable_counts"]["event_log"], 1)
+        self.assertEqual(payload["state_db"]["prunable_counts"]["tool_call_ledger"], 1)
+        self.assertEqual(payload["gateway_logs"]["logs"]["gateway_trace"]["records"], 2)
+        self.assertEqual(payload["gateway_logs"]["logs"]["gateway_trace"]["old_records"], 1)
+        self.assertEqual(payload["gateway_logs"]["logs"]["gateway_trace"]["invalid_records"], 1)
+        self.assertEqual(len(read_gateway_traces(self.config_manager, limit=10)), 2)
+        with self.state_db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM event_log WHERE event_id = ?", (old_event_id,)).fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:retention-report-cli-old'").fetchone()[0],
+                1,
+            )
+
     def test_jobs_prune_observability_cli_can_prune_gateway_logs(self) -> None:
         old_timestamp = "2025-01-01T00:00:00+00:00"
         cutoff = "2026-01-01T00:00:00+00:00"

@@ -71,6 +71,35 @@ class ObservabilityPruneResult:
     vacuumed: bool
 
 
+@dataclass(frozen=True)
+class ObservabilityStoreReport:
+    state_db_path: str
+    state_db_bytes: int
+    page_count: int
+    freelist_count: int
+    page_size: int
+    table_counts: dict[str, int]
+    cutoff: str | None
+    prunable_counts: dict[str, int]
+
+    @property
+    def total_prunable(self) -> int:
+        return sum(self.prunable_counts.values())
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "state_db_path": self.state_db_path,
+            "state_db_bytes": self.state_db_bytes,
+            "page_count": self.page_count,
+            "freelist_count": self.freelist_count,
+            "page_size": self.page_size,
+            "table_counts": self.table_counts,
+            "cutoff": self.cutoff,
+            "prunable_counts": self.prunable_counts,
+            "total_prunable": self.total_prunable,
+        }
+
+
 def _normalize_prune_cutoff(value: str | datetime) -> str:
     if isinstance(value, datetime):
         cutoff = value
@@ -81,6 +110,65 @@ def _normalize_prune_cutoff(value: str | datetime) -> str:
     if not cutoff:
         raise ValueError("older_than is required")
     return cutoff
+
+
+def build_observability_store_report(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime | None = None,
+    include_builder_events: bool = False,
+) -> ObservabilityStoreReport:
+    cutoff = _normalize_prune_cutoff(older_than) if older_than is not None else None
+    table_specs = [
+        ("event_log", "recorded_at"),
+        ("builder_events", "created_at"),
+        ("tool_call_ledger", "created_at"),
+        ("provider_runtime_events", "created_at"),
+    ]
+    prunable_specs = [
+        ("event_log", "recorded_at"),
+        ("tool_call_ledger", "created_at"),
+        ("provider_runtime_events", "created_at"),
+    ]
+    if include_builder_events:
+        prunable_specs.append(("builder_events", "created_at"))
+
+    with state_db.connect() as conn:
+        table_counts = {
+            table_name: int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] or 0)
+            for table_name, _column_name in table_specs
+        }
+        prunable_counts: dict[str, int] = {}
+        if cutoff is not None:
+            prunable_counts = {
+                table_name: int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
+                        (cutoff,),
+                    ).fetchone()[0]
+                    or 0
+                )
+                for table_name, column_name in prunable_specs
+            }
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+        freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
+
+    try:
+        state_db_bytes = int(state_db.path.stat().st_size)
+    except OSError:
+        state_db_bytes = 0
+
+    return ObservabilityStoreReport(
+        state_db_path=str(state_db.path),
+        state_db_bytes=state_db_bytes,
+        page_count=page_count,
+        freelist_count=freelist_count,
+        page_size=page_size,
+        table_counts=table_counts,
+        cutoff=cutoff,
+        prunable_counts=prunable_counts,
+    )
 
 
 def prune_observability_store(

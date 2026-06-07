@@ -70,7 +70,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_trace_view,
 )
 from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
-from spark_intelligence.gateway.tracing import prune_gateway_logs, read_gateway_traces
+from spark_intelligence.gateway.tracing import gateway_log_report, prune_gateway_logs, read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import (
     build_vnext_action_intent_envelope,
@@ -153,6 +153,7 @@ from spark_intelligence.personality import (
     write_personality_evolver_state,
 )
 from spark_intelligence.observability.store import (
+    build_observability_store_report,
     build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
@@ -2895,6 +2896,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also prune gateway JSONL trace and outbound audit records older than the cutoff",
     )
     jobs_prune_observability_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    jobs_observability_report_parser = jobs_subparsers.add_parser(
+        "observability-report",
+        help="Report state.db and gateway observability size/counts without pruning",
+    )
+    jobs_observability_report_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_observability_report_parser.add_argument(
+        "--older-than",
+        help="Include counts that would be pruned by this ISO-8601 cutoff",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--include-builder-events",
+        action="store_true",
+        help="Include builder_events in prunable counts; omitted by default because Watchtower reads this table",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--include-gateway-logs",
+        action="store_true",
+        help="Also report gateway JSONL trace and outbound audit sizes/counts",
+    )
+    jobs_observability_report_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
     harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
@@ -8435,6 +8456,47 @@ def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_jobs_observability_report(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    older_than = str(getattr(args, "older_than", "") or "").strip() or None
+    state_report = build_observability_store_report(
+        state_db,
+        older_than=older_than,
+        include_builder_events=bool(getattr(args, "include_builder_events", False)),
+    )
+    gateway_report = None
+    if bool(getattr(args, "include_gateway_logs", False)):
+        gateway_report = gateway_log_report(config_manager, older_than=older_than)
+    payload = {
+        "state_db": state_report.to_payload(),
+        "gateway_logs": gateway_report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Observability report"]
+        lines.append(f"- state_db: {state_report.state_db_path}")
+        lines.append(f"- state_db_bytes: {state_report.state_db_bytes}")
+        lines.append(f"- page_count: {state_report.page_count}")
+        lines.append(f"- freelist_count: {state_report.freelist_count}")
+        for table, count in sorted(state_report.table_counts.items()):
+            lines.append(f"- {table}: {count}")
+        if state_report.cutoff is not None:
+            lines.append(f"- cutoff: {state_report.cutoff}")
+            lines.append(f"- total_prunable: {state_report.total_prunable}")
+            for table, count in sorted(state_report.prunable_counts.items()):
+                lines.append(f"- prunable {table}: {count}")
+        if gateway_report is not None:
+            lines.append(f"- gateway_log_bytes: {gateway_report['total_bytes']}")
+            lines.append(f"- gateway_log_records: {gateway_report['total_records']}")
+            lines.append(f"- gateway_log_old_records: {gateway_report['total_old_records']}")
+        print("\n".join(lines))
+    return 0
+
+
 def handle_harness_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -10042,6 +10104,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_list(args)
     if args.command == "jobs" and args.jobs_command == "prune-observability":
         return handle_jobs_prune_observability(args)
+    if args.command == "jobs" and args.jobs_command == "observability-report":
+        return handle_jobs_observability_report(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
     if args.command == "harness" and args.harness_command == "tool-ledgers":

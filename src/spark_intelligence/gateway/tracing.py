@@ -113,6 +113,25 @@ def prune_gateway_logs(config_manager: ConfigManager, *, older_than: str | datet
     )
 
 
+def gateway_log_report(config_manager: ConfigManager, *, older_than: str | datetime | None = None) -> dict[str, Any]:
+    cutoff = _normalize_cutoff_datetime(older_than) if older_than is not None else None
+    logs = {
+        label: _jsonl_path_report(path, cutoff)
+        for label, path in (
+            ("gateway_trace", trace_log_path(config_manager)),
+            ("gateway_outbound", outbound_log_path(config_manager)),
+        )
+    }
+    return {
+        "cutoff": cutoff.isoformat(timespec="seconds") if cutoff is not None else None,
+        "logs": logs,
+        "total_bytes": sum(int(item["bytes"]) for item in logs.values()),
+        "total_records": sum(int(item["records"]) for item in logs.values()),
+        "total_old_records": sum(int(item["old_records"]) for item in logs.values()),
+        "total_invalid_records": sum(int(item["invalid_records"]) for item in logs.values()),
+    }
+
+
 def rotate_gateway_logs_if_oversized(
     config_manager: ConfigManager,
     *,
@@ -175,6 +194,43 @@ def _parse_recorded_at(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _jsonl_path_report(path: Path, cutoff: datetime | None) -> dict[str, Any]:
+    exists = path.exists()
+    size_bytes = 0
+    records = 0
+    old_records = 0
+    invalid_records = 0
+    if exists:
+        try:
+            size_bytes = int(path.stat().st_size)
+        except OSError:
+            size_bytes = 0
+        with path.open("r", encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    invalid_records += 1
+                    continue
+                if not isinstance(payload, dict):
+                    invalid_records += 1
+                    continue
+                records += 1
+                recorded_at = _parse_recorded_at(payload.get("recorded_at"))
+                if cutoff is not None and recorded_at is not None and recorded_at < cutoff:
+                    old_records += 1
+    return {
+        "path": str(path),
+        "exists": exists,
+        "bytes": size_bytes,
+        "records": records,
+        "old_records": old_records,
+        "invalid_records": invalid_records,
+    }
 
 
 def _prune_jsonl_path(path: Path, cutoff: datetime) -> tuple[int, int]:

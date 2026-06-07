@@ -85,6 +85,9 @@ Ledger surface counts after cleanup:
 | `spark_cli` | 69 |
 | `telegram` | 13 |
 
+After the later Builder self-evolution no-op drill and Telegram test activity,
+live adoption became `builder=1`, `spark_cli=69`, and `telegram=17`.
+
 Post-run integrity check: `ok`.
 
 ## Post-Run Verification
@@ -99,9 +102,11 @@ pass, canonical ledgers were preserved, and doctor has no follow-up surfaces.
 
 ## Remaining Work
 
-- Add first-class `builder` and `spawner` rows to `tool_call_ledger`; current
-  live adoption is still only `spark_cli` and `telegram`.
+- Add first-class `spawner` rows to `tool_call_ledger`; current live adoption
+  has `builder`, `spark_cli`, and `telegram`.
 - Re-run this retention procedure only with a fresh backup and before/after
   counts.
-- Consider adding a scheduled retention report that logs large table counts and
-  DB file size before pruning.
+- Use `spark-intelligence jobs observability-report --older-than <cutoff>
+  --include-gateway-logs --json` before pruning to capture `state.db` bytes,
+  table counts, prunable row counts, and gateway JSONL sizes without deleting
+  anything.

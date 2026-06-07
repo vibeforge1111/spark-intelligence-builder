@@ -56,7 +56,8 @@ ledger spine, but Spark is not done.
   paths should adopt the same ledger seam as they execute.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
-  to about 225 MB while preserving canonical tool ledgers.
+  to about 225 MB and is now about 228 MB after later live activity while
+  preserving canonical tool ledgers.
 - Closed for the live Builder runtime: installed Builder is the canonical
   source-truth line and now has `docs/SOURCE_TRUTH.md`. Desktop Builder remains
   dirty backlog/historical evidence until curated.
@@ -76,8 +77,8 @@ ledger spine, but Spark is not done.
 | CLI approval holes | tests cover `bash -c`, `sh -c`, `python -c`, PowerShell wrappers, fail-closed unknowns | Closed in CLI |
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
-| Live ledger adoption | live doctor reports `total=83 surfaces=builder=1, spark_cli=69, telegram=13` | Partial; Spawner missing |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; after drill/check events the DB is 225,177,600 bytes with `builder_events=15,362`, `event_log=15,362`, and `tool_call_ledger=83` | Closed for this pass |
+| Live ledger adoption | live doctor reports `total=87 surfaces=builder=1, spark_cli=69, telegram=17` | Partial; Spawner missing |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
 | Orphaned root rivers | root `.spark` now has only `outcomes.jsonl` and `predictions.jsonl` from March 2026 | Mostly closed, verify archive policy |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, and Builder ledger `ledger:fd24aee5b4fb46e08bc36925`; no automatic mutation executor | Partial |
@@ -184,8 +185,9 @@ until that session completes and the final diff is tested.
    - Completed on 2026-06-08 with backup, explicit cutoff, before/after
      counts, `--include-gateway-logs`, `VACUUM`, and doctor verification.
    - Re-run only with a fresh backup and a new before/after evidence record.
-   - Add a scheduled safe report for large table counts and DB file size before
-     future pruning.
+   - Added `jobs observability-report` so operators can capture `state.db`
+     bytes, table counts, prunable row counts, and optional gateway JSONL sizes
+     before future pruning without deleting anything.
 
 6. Backfill or map the cross-surface join key.
    - `turn_id` is now canonical for tool ledgers, but SIB still has many older
@@ -324,8 +326,8 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    `spawner`.
 4. Broaden Builder self-persist coverage for governed Builder tool paths beyond
    the change-manifest runner.
-5. Add the scheduled state-size/large-table retention report so future cleanup
-   is evidence-first.
+5. Run `jobs observability-report` before the next retention pass so future
+   cleanup remains evidence-first.
 6. Archive, relabel, or clean the Desktop Builder backlog tree so future stale
    tree audits stop at the source-truth warning instead of re-deriving runtime
    truth from it.
