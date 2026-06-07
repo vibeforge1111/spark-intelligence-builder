@@ -300,7 +300,7 @@ _PENDING_TTL_SECONDS = 300
 
 
 def _pending_store_path() -> _Path:
-    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
+    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME") or os.environ.get("SPARK_BUILDER_HOME")
     base = _Path(home_env) if home_env else _Path.home() / ".spark-intelligence"
     base.mkdir(parents=True, exist_ok=True)
     return base / "pending_confirmations.json"
