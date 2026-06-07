@@ -1043,6 +1043,17 @@ def _derive_follow_up_task(
             base.append(f"Upstream summary: {current_result.summary}")
         return "\n".join(base)
     if normalized_target == "researcher.advisory":
+        if current_result.envelope.harness_id == "browser.grounded":
+            url = None
+            nav = current_result.artifacts.get("browser_navigate_payload")
+            if isinstance(nav, dict):
+                url = nav.get("url")
+            if not url:
+                status = current_result.artifacts.get("browser_status_payload")
+                if isinstance(status, dict):
+                    url = status.get("url") or status.get("current_url")
+            if url:
+                return f"Analyze the page content at: {url}\nContext: {current_result.envelope.task}"
         reply_text = _extract_reply_text_from_result(current_result)
         return reply_text or current_result.envelope.task
     if normalized_target == "builder.direct":
