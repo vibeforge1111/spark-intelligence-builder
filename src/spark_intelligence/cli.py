@@ -1376,6 +1376,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional live Spark state JSON object from the probing surface",
     )
     self_context_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_context_parser.add_argument("--output", metavar="FILE", help="Write output to file instead of stdout")
     self_panel_parser = self_subparsers.add_parser(
         "panel",
         help="Show shared AOC panel with black box, memory inbox, stale context, and route confidence",
