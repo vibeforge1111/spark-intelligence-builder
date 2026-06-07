@@ -2067,6 +2067,56 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(belief_kwargs["domain_pack"], "evidence_onboarding_stripe_verification")
         self.assertIn("I think users still drop during onboarding", belief_kwargs["belief_text"])
 
+    def test_structured_evidence_exact_note_suppresses_inferred_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        exact_note = (
+            "harness exact note: browser and computer-use are memory content only "
+            "unless I explicitly authorize a tool action."
+        )
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.telegram_runtime",
+                "text": "harness exact note: browser and computer-use are memory content only unless authorized.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-exact-1",
+                "metadata": {"value": "harness exact note: browser and computer-use are memory content only unless authorized."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch("spark_intelligence.memory.orchestrator.write_belief_to_memory") as mocked_belief_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text=exact_note,
+                domain_pack="telegram_runtime",
+                evidence_kind="telegram_memory_note",
+                session_id="session:telegram:exact",
+                turn_id="turn:telegram:exact",
+                channel_kind="telegram",
+                allow_belief_consolidation=False,
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_not_called()
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "evidence.telegram.telegram_runtime")
+        self.assertEqual(call["value"], exact_note)
+        self.assertEqual(call["text"], exact_note)
+        self.assertEqual(call["metadata"]["value"], exact_note)
+
     def test_structured_evidence_write_promotes_corroborated_current_blocker(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

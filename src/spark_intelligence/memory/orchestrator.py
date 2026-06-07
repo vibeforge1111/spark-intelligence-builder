@@ -3230,6 +3230,7 @@ def write_structured_evidence_to_memory(
     actor_id: str = "structured_evidence_loader",
     salience_decision: MemorySalienceDecision | None = None,
     governor_decision: dict[str, Any] | None = None,
+    allow_belief_consolidation: bool = True,
 ) -> MemoryWriteResult:
     def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
         return _optional_string(record.get("observation_id")) or _optional_string(
@@ -3572,7 +3573,7 @@ def write_structured_evidence_to_memory(
         actor_id=actor_id,
     )
     current_state_observation = _derive_current_state_observation_from_evidence(normalized_text)
-    if result.accepted_count > 0 and corroborating_evidence_records:
+    if result.accepted_count > 0 and allow_belief_consolidation and corroborating_evidence_records:
         try:
             write_belief_to_memory(
                 config_manager=config_manager,

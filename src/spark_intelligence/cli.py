@@ -7881,6 +7881,7 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
         channel_kind="telegram",
         actor_id=args.actor_id,
         governor_decision=governor_decision,
+        allow_belief_consolidation=False,
     )
     payload = {
         "status": result.status,
