@@ -382,7 +382,12 @@ def _load_round_history(repo_root: Path, path_key: str) -> dict[str, Any] | None
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Cannot read JSON file {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"Expected a JSON object in {path}")
     return payload
