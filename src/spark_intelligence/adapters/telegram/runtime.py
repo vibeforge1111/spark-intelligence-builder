@@ -674,7 +674,7 @@ def _maybe_save_reply_as_draft(
 
     try:
         from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
+        _dbg = _P.home() / ".spark" / "logs" / "draft_capture_probe.log"
         _dbg.parent.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with _dbg.open("a", encoding="utf-8") as _fh:
@@ -682,8 +682,9 @@ def _maybe_save_reply_as_draft(
                 f"{timestamp}Z user={user} iter={is_iteration} "
                 f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
             )
-    except Exception:
-        pass
+    except (OSError, IOError) as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).debug("draft_capture_probe write failed: %s", exc)
 
     if is_iteration:
         source_draft = None
