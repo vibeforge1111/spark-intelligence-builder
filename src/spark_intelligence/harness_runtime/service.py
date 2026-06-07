@@ -289,6 +289,8 @@ def execute_harness_task(
                     "owner_system": envelope.owner_system,
                     "prompt_strategy": envelope.prompt_strategy,
                     "required_capabilities": envelope.required_capabilities,
+                    "limitations": list(envelope.limitations),
+                    "artifacts_expected": list(envelope.artifacts_expected),
                 }
             }
             status = "prepared"
@@ -325,6 +327,8 @@ def execute_harness_task(
                     "backend_kind": envelope.backend_kind,
                     "session_scope": envelope.session_scope,
                     "required_capabilities": envelope.required_capabilities,
+                    "limitations": list(envelope.limitations),
+                    "artifacts_expected": list(envelope.artifacts_expected),
                 }
             }
             status = "planned"
