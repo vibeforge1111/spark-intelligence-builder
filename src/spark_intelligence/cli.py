@@ -9130,7 +9130,7 @@ def handle_identity_link(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(
-            f"Linked {payload['alias']} Ã¢â€ â€™ {payload['primary']}\n"
+            f"Linked {payload['alias']} -> {payload['primary']}\n"
             f"  human_id: {alias.primary_human_id}\n"
             f"  agent_id: {alias.primary_agent_id}"
         )
@@ -9200,7 +9200,7 @@ def handle_identity_list(args: argparse.Namespace) -> int:
             for a in aliases:
                 print(
                     f"  {a.alias_channel}:{a.alias_external_user}"
-                    f"  Ã¢â€ â€™  {a.primary_channel}:{a.primary_external_user}"
+                    f"  ->  {a.primary_channel}:{a.primary_external_user}"
                 )
                 print(f"      human_id: {a.primary_human_id}")
                 print(f"      agent_id: {a.primary_agent_id}")
