@@ -804,10 +804,11 @@ def _run_voice_hook(
     hook: str,
     payload: dict[str, Any],
     run_id: str,
+    timeout_seconds: float = 30.0,
 ) -> tuple[dict[str, Any], str]:
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:
