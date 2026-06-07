@@ -311,9 +311,19 @@ def _load_pending() -> dict[str, Any]:
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        payload = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
+    # Shape guard: pending_confirmations.json must be a JSON object keyed by
+    # external_user_id. A torn write, hand-edit, or upgrade-time payload
+    # mismatch can leave the file as a list, string, or null. Without this
+    # guard, peek_pending_delete and _save_pending blow up with
+    # AttributeError on store.items()/rec.get(...), permanently breaking
+    # the schedule-delete confirmation flow for every user until the file
+    # is wiped by hand.
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
 
 def _save_pending(store: dict[str, Any]) -> None:
@@ -321,7 +331,13 @@ def _save_pending(store: dict[str, Any]) -> None:
     p = _pending_store_path()
     tmp = p.with_suffix(".json.tmp")
     now = _time.time()
-    pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
+    # Skip non-dict entries so a hand-edited or partial-write artifact for
+    # one user cannot break the prune step for every other user.
+    pruned = {
+        k: v
+        for k, v in store.items()
+        if isinstance(v, dict) and v.get("expires_at", 0) > now
+    }
     tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
     tmp.replace(p)
 
