@@ -7830,7 +7830,11 @@ def handle_config_unset(args: argparse.Namespace) -> int:
     if removed:
         print(f"Removed {args.path}")
         return 0
-    print(f"Config path not found: {args.path}", file=sys.stderr)
+    print(
+        f"Config path not found: {args.path}. "
+        f"Run `spark-intelligence config show` (or `config show {args.path.rsplit('.', 1)[0] if '.' in args.path else args.path}`) to see existing keys.",
+        file=sys.stderr,
+    )
     return 1
 
 
