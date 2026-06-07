@@ -189,7 +189,7 @@ Rules:
 
 Required proof:
 
-- route firewall tests
+- Harness Core action authority tests
 - Telegram action authority tests
 - 350-message matrix
 - full `npm test`
