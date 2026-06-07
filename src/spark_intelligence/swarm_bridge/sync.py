@@ -1433,7 +1433,7 @@ def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | 
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root)
         return (path, "configured")
-    autodetect = Path.home() / "Desktop" / "spark-swarm"
+    autodetect = Path.home() / ".spark" / "spark-swarm"
     if autodetect.exists():
         return autodetect, "autodiscovered"
     return None, "missing"
