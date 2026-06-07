@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.observability.store import persist_bound_ledger
+from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 

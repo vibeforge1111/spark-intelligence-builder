@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -28,6 +30,19 @@ from spark_intelligence.observability.store import (
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
+
+
+def harness_core_runtime_status() -> dict[str, object]:
+    from spark_intelligence import harness_contract
+
+    if harness_contract.HARNESS_CORE_AVAILABLE:
+        return {"ok": True, "detail": "spark_harness_core importable", "repair_hint": ""}
+    detail = harness_contract.HARNESS_CORE_IMPORT_ERROR or "spark_harness_core unavailable"
+    return {
+        "ok": False,
+        "detail": detail,
+        "repair_hint": "declare spark-harness-core in needs.modules and ensure its source path is importable",
+    }
 
 
 @dataclass
