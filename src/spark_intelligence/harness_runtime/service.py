@@ -538,11 +538,18 @@ def _execute_researcher_advisory_harness(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
-    result = _run_researcher_bridge_reply(
-        config_manager=config_manager,
-        state_db=state_db,
-        envelope=envelope,
-    )
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _run_researcher_bridge_reply,
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
+        try:
+            result = future.result(timeout=120.0)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError("Researcher advisory harness execution timed out after 120 seconds.")
     artifacts = {
         "reply_text": _bridge_result_reply_text(result),
         "evidence_summary": result.evidence_summary,
