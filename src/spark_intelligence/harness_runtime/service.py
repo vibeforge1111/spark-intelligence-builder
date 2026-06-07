@@ -797,6 +797,7 @@ def _execute_swarm_escalation_harness(
             "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
             "needs_input",
         )
+    from spark_intelligence.security.redaction import redact_text
     sync_result = _run_swarm_sync_dry_run(
         config_manager=config_manager,
         state_db=state_db,
@@ -811,7 +812,7 @@ def _execute_swarm_escalation_harness(
         "api_url": sync_result.api_url,
         "workspace_id": sync_result.workspace_id,
         "accepted": sync_result.accepted,
-        "response_body": sync_result.response_body,
+        "response_body": redact_text(sync_result.response_body),
     }
     artifacts["resume_token"] = {
         "resume_kind": "swarm_dispatch",
