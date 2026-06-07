@@ -2571,6 +2571,158 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
 
+    def test_doctor_reports_missing_harness_core_dependency(self) -> None:
+        with (
+            patch("spark_intelligence.harness_contract.HARNESS_CORE_AVAILABLE", False),
+            patch("spark_intelligence.harness_contract.HARNESS_CORE_IMPORT_ERROR", "No module named spark_harness_core"),
+        ):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("harness-core", checks)
+        self.assertFalse(checks["harness-core"].ok)
+        self.assertIn("No module named spark_harness_core", checks["harness-core"].detail)
+        self.assertIn("needs.modules", checks["harness-core"].detail)
+
+    def test_doctor_reports_tool_call_ledger_adoption_counts(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "turn_id": "turn:doctor-ledger-adoption",
+                "action_id": "action:doctor-ledger-adoption",
+                "capability_id": "capability:spark-intelligence-builder:chip.evaluate",
+                "authorization_decision_id": "decision:doctor-ledger-adoption",
+                "ledger_id": "ledger:doctor-ledger-adoption",
+                "tool_name": "chip.evaluate",
+                "owner_system": "spark-intelligence-builder",
+                "mutation_class": "writes_files",
+                "outcome": "execute",
+                "status": "success",
+                "surface": "telegram",
+                "request_id": "req:doctor-ledger-adoption",
+                "trace_ref": "trace:doctor-ledger-adoption",
+                "summary": "Doctor adoption count fixture.",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:doctor-ledger-adoption",
+                    "turn_id": "turn:doctor-ledger-adoption",
+                    "result": {"status": "success", "summary": "Doctor adoption count fixture."},
+                },
+            },
+            component="telegram_runtime",
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("tool-call-ledger-adoption", checks)
+        self.assertTrue(checks["tool-call-ledger-adoption"].ok)
+        self.assertIn("total=1", checks["tool-call-ledger-adoption"].detail)
+        self.assertIn("telegram=1", checks["tool-call-ledger-adoption"].detail)
+
+    def test_doctor_reports_builder_source_truth_drift(self) -> None:
+        modules_root = self.home / "modules"
+        live = modules_root / "spark-intelligence-builder" / "source"
+        release = modules_root / "spark-intelligence-builder-release" / "source"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+        self._write_builder_install_fixture(
+            release,
+            commit="b" * 40,
+            license_name="MIT",
+            needs_modules=[],
+            dependencies=["PyNaCl>=1.6.2", "PyYAML>=6.0"],
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertFalse(checks["builder-source-truth"].ok)
+        self.assertIn("commit_drift", checks["builder-source-truth"].detail)
+        self.assertIn("license_mismatch=spark-intelligence-builder-release:MIT", checks["builder-source-truth"].detail)
+        self.assertIn("missing_harness_dep=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
+        self.assertIn("missing_python_deps=spark-intelligence-builder-release:jsonschema+referencing", checks["builder-source-truth"].detail)
+
+    def test_doctor_reports_stale_python_editable_import_source(self) -> None:
+        modules_root = self.home / "modules"
+        live = modules_root / "spark-intelligence-builder" / "source"
+        harness_src = modules_root / "spark-harness-core" / "source" / "src"
+        stale_src = self.home / "stale-builder" / "src"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+        harness_src.mkdir(parents=True, exist_ok=True)
+        stale_src.mkdir(parents=True, exist_ok=True)
+
+        with patch(
+            "spark_intelligence.doctor.checks._imported_package_src_roots",
+            return_value={
+                "spark_intelligence": stale_src,
+                "spark_harness_core": harness_src,
+            },
+        ):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("python-import-source", checks)
+        self.assertFalse(checks["python-import-source"].ok)
+        self.assertIn("spark_intelligence=", checks["python-import-source"].detail)
+        self.assertIn("expected=", checks["python-import-source"].detail)
+
+    def _write_builder_install_fixture(
+        self,
+        root: object,
+        *,
+        commit: str,
+        license_name: str,
+        needs_modules: list[str],
+        dependencies: list[str],
+    ) -> None:
+        source_root = Path(root)
+        source_root.mkdir(parents=True, exist_ok=True)
+        needs_modules_text = ", ".join(f'"{module}"' for module in needs_modules)
+        dependencies_text = "\n".join(f'  "{dependency}",' for dependency in dependencies)
+        (source_root / "spark.toml").write_text(
+            "\n".join(
+                [
+                    "[module]",
+                    'name = "spark-intelligence-builder"',
+                    f'license = "{license_name}"',
+                    "",
+                    "[needs]",
+                    f"modules = [{needs_modules_text}]",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (source_root / "pyproject.toml").write_text(
+            "\n".join(
+                [
+                    "[project]",
+                    'name = "spark-intelligence"',
+                    "dependencies = [",
+                    dependencies_text,
+                    "]",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        git_root = source_root / ".git"
+        git_root.mkdir(exist_ok=True)
+        (git_root / "HEAD").write_text(commit, encoding="utf-8")
+
     def test_doctor_treats_background_freshness_degraded_as_advisory(self) -> None:
         watchtower_snapshot = {
             "health_dimensions": {
