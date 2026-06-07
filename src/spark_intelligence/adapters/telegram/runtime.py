@@ -4599,7 +4599,13 @@ def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, 
         for entry in entries.values()
         if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
     ]
-    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    review_entries.sort(
+        key=lambda item: (
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("capability_ledger_key") or ""),
+        ),
+        reverse=True,
+    )
     command_args = str(requested_command or "").strip().split(maxsplit=1)
     read_only_note = ""
     if len(command_args) > 1:
