@@ -4,11 +4,20 @@ import base64
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+def _safe_summary_json(raw: object) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        return json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+
 from typing import Any
 from uuid import uuid4
 
+from spark_intelligence.auth.runtime import build_runtime_provider_reference_payload
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
@@ -39,6 +48,7 @@ class HarnessTaskEnvelope:
     session_id: str | None
     human_id: str | None
     agent_id: str | None
+    turn_intent_payload: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -58,7 +68,11 @@ class HarnessTaskEnvelope:
             "session_id": self.session_id,
             "human_id": self.human_id,
             "agent_id": self.agent_id,
+            "turn_intent_payload": self.turn_intent_payload,
         }
+
+    def with_turn_intent_payload(self, payload: dict[str, Any] | None) -> "HarnessTaskEnvelope":
+        return replace(self, turn_intent_payload=payload)
 
 
 @dataclass(frozen=True)
@@ -117,6 +131,7 @@ def build_harness_task_envelope(
     session_id: str | None = None,
     human_id: str | None = None,
     agent_id: str | None = None,
+    turn_intent_payload: dict[str, Any] | None = None,
 ) -> HarnessTaskEnvelope:
     from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
@@ -177,7 +192,63 @@ def build_harness_task_envelope(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        turn_intent_payload=turn_intent_payload,
     )
+
+
+def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
+    if envelope.harness_id != "voice.io":
+        return None
+
+    from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+    task_mode, _ = _classify_voice_task(envelope.task)
+    actions: list[dict[str, Any]] = [
+        {
+            "tool_name": "voice.status",
+            "owner_system": "spark-voice-comms",
+            "mutation_class": "read_only",
+            "summary": "Local operator requested voice status before any voice I/O action.",
+        }
+    ]
+    if task_mode == "speak":
+        actions.append(
+            {
+                "tool_name": "voice.speak",
+                "owner_system": "spark-voice-comms",
+                "mutation_class": "external_network",
+                "external_network": True,
+                "summary": "Local operator explicitly requested speech synthesis through voice I/O.",
+            }
+        )
+    elif task_mode == "transcribe":
+        actions.append(
+            {
+                "tool_name": "voice.transcribe",
+                "owner_system": "spark-voice-comms",
+                "mutation_class": "external_network",
+                "external_network": True,
+                "summary": "Local operator explicitly requested transcription through voice I/O.",
+            }
+        )
+
+    return build_vnext_action_intent_envelope(
+        surface=envelope.channel_kind or "cli",
+        actor_id_ref=envelope.human_id or "human:local-operator",
+        request_id=envelope.envelope_id,
+        source_kind="local_operator_harness_execute",
+        intent_summary="Local operator explicitly requested governed voice I/O through the Builder harness runtime.",
+        raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+        actions=actions,
+        confidence=0.95,
+    )
+
+
+def with_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> HarnessTaskEnvelope:
+    payload = build_harness_local_operator_turn_intent(envelope)
+    if payload is None:
+        return envelope
+    return envelope.with_turn_intent_payload(payload)
 
 
 def execute_harness_task(
@@ -366,6 +437,7 @@ def execute_harness_chain(
             human_id=envelope.human_id,
             agent_id=envelope.agent_id,
         )
+        next_envelope = with_harness_local_operator_turn_intent(next_envelope)
         current_result = execute_harness_task(
             config_manager=config_manager,
             state_db=state_db,
@@ -419,7 +491,7 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                "summary_json": _safe_summary_json(row.get("summary_json")),
             }
         )
     summary = {
@@ -519,6 +591,8 @@ def _run_researcher_bridge_reply(
         session_id=envelope.session_id or f"session:{envelope.envelope_id}",
         channel_kind=envelope.channel_kind or "cli",
         user_message=envelope.task,
+        turn_intent_payload=envelope.turn_intent_payload,
+        allow_memory_adapter_envelope=False,
     )
 
 
@@ -535,7 +609,7 @@ def _execute_voice_io_harness(
             state_db=state_db,
             envelope=envelope,
             hook="voice.status",
-            payload=_build_voice_hook_payload(config_manager=config_manager, envelope=envelope),
+            payload=_build_voice_hook_payload(config_manager=config_manager, state_db=state_db, envelope=envelope),
             run_id=run_id,
         )
     except Exception as exc:
@@ -587,6 +661,7 @@ def _execute_voice_io_harness(
                 hook="voice.speak",
                 payload=_build_voice_hook_payload(
                     config_manager=config_manager,
+                    state_db=state_db,
                     envelope=envelope,
                     text=task_payload,
                 ),
@@ -742,15 +817,21 @@ def _execute_swarm_escalation_harness(
 def _build_voice_hook_payload(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
     text: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": envelope.channel_kind or "cli",
-        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
         "human_id": envelope.human_id,
         "agent_id": envelope.agent_id,
     }
+    try:
+        payload["provider"] = build_runtime_provider_reference_payload(config_manager=config_manager, state_db=state_db)
+    except Exception as exc:
+        payload["provider_error"] = str(exc)
+    if isinstance(envelope.turn_intent_payload, dict):
+        payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
     if text is not None:
         payload["text"] = text
     return payload
@@ -765,9 +846,35 @@ def _run_voice_hook(
     payload: dict[str, Any],
     run_id: str,
 ) -> tuple[dict[str, Any], str]:
+    authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
+    if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
+        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, build_governor_decision_from_bridge_authority
+
+        governor_decision = build_governor_decision_from_bridge_authority(
+            BridgeAuthorityVerdict(
+                allowed=True,
+                reason_codes=authorization.reason_codes,
+                envelope=None,
+                harness_core_envelope=authorization.turn_intent_envelope_vnext,
+                proposed_action=authorization.proposed_action,
+                authorization_decision=authorization.authorization_decision,
+                tool_call_ledger=authorization.tool_call_ledger,
+            ),
+            reply_instruction=f"Execute authorized Harness Runtime voice hook {hook}.",
+        )
+        if isinstance(governor_decision, dict):
+            payload = dict(payload)
+            payload["governor_decision"] = governor_decision
+            if isinstance(authorization.turn_intent_envelope_vnext, dict):
+                payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook=hook,
+        payload=payload,
+        governor_decision=payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None,
+    )
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:
@@ -789,6 +896,49 @@ def _run_voice_hook(
     )
     output = execution.output if isinstance(execution.output, dict) else {}
     return output, execution.chip_key
+
+
+def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -> Any | None:
+    from spark_intelligence.harness_contract import (
+        authorize_tool_call,
+        authorize_vnext_tool_call,
+        parse_turn_intent_envelope,
+    )
+
+    payload = envelope.turn_intent_payload
+    mutation_class = "external_network" if hook in {"voice.speak", "voice.transcribe"} else "read_only"
+    external_network = hook in {"voice.speak", "voice.transcribe"}
+    if isinstance(payload, dict) and payload.get("schema_version") == "turn-intent-envelope-vnext":
+        authorization = authorize_vnext_tool_call(
+            payload,
+            tool_name=hook,
+            owner_system="spark-voice-comms",
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        if authorization.verdict == "allowed":
+            return authorization
+        reason_text = ", ".join(authorization.reason_codes) if authorization.reason_codes else "turn_not_authorized"
+        raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+
+    if isinstance(payload, dict):
+        try:
+            parsed_envelope = parse_turn_intent_envelope(payload)
+        except ValueError:
+            parsed_envelope = None
+    else:
+        parsed_envelope = None
+    verdict, reasons = authorize_tool_call(
+        parsed_envelope,
+        tool_name=hook,
+        owner_system="spark-voice-comms",
+        mutation_class=mutation_class,
+        external_network=external_network,
+    )
+    if verdict != "allowed":
+        reason_text = ", ".join(reasons) if reasons else "turn_not_authorized"
+        raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+    return None
 
 
 def _load_swarm_status(*, config_manager: ConfigManager, state_db: StateDB):
