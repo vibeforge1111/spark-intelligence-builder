@@ -122,7 +122,9 @@ def promote_llm_wiki_user_note(
         or "Invalidate or downgrade if governed current-state memory, explicit user correction, or newer evidence contradicts it.",
         warnings=warnings,
     )
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
     payload = {
         "output_dir": str(root),
         "relative_path": relative_path,
