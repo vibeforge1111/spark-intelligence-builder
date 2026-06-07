@@ -24,6 +24,7 @@ from spark_intelligence.observability.store import (
     close_run,
     latest_events_by_type,
     open_run,
+    persist_bound_ledger,
     recent_contradictions,
     recent_memory_lane_records,
     recent_runs,

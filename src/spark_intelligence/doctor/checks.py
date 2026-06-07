@@ -19,6 +19,7 @@ from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     record_environment_snapshot,
+    tool_call_ledger_surface_counts,
     repair_foreground_browser_hook_failures,
     repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,

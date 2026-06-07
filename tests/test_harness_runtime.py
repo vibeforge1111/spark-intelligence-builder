@@ -10,6 +10,7 @@ from spark_intelligence.harness_runtime import (
     execute_harness_task,
     with_harness_local_operator_turn_intent,
 )
+from spark_intelligence.observability.store import recent_tool_call_ledgers
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
@@ -56,6 +57,7 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="What chips are active right now?",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         result = execute_harness_task(
             config_manager=self.config_manager,
@@ -65,11 +67,40 @@ class HarnessRuntimeTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.envelope.harness_id, "builder.direct")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "builder.direct")
         self.assertIn("execution_contract", result.artifacts)
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["status"], "success")
+        self.assertEqual(ledgers[0]["tool_name"], "builder.direct")
 
         snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
         self.assertEqual(snapshot.summary["recent_run_count"], 1)
         self.assertEqual(snapshot.summary["last_harness_id"], "builder.direct")
+
+    def test_execute_builder_direct_without_authority_does_not_prepare(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What chips are active right now?",
+            forced_harness_id="builder.direct",
+        )
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "builder.direct")
+        self.assertNotIn("execution_contract", result.artifacts)
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
 
     def test_execute_browser_grounded_harness_prepares_navigate_payload_for_url(self) -> None:
         self._enable_fake_researcher()

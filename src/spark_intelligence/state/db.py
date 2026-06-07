@@ -297,6 +297,27 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS tool_call_ledger (
+        ledger_id TEXT PRIMARY KEY,
+        turn_id TEXT,
+        action_id TEXT,
+        capability_id TEXT,
+        authorization_decision_id TEXT,
+        tool_name TEXT,
+        owner_system TEXT,
+        mutation_class TEXT,
+        outcome TEXT,
+        status TEXT,
+        surface TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        summary TEXT,
+        ledger_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS run_registry (
         run_id TEXT PRIMARY KEY,
         run_kind TEXT NOT NULL,
@@ -782,6 +803,9 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_event_log_trace_ref ON event_log(trace_ref, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_turn_id ON tool_call_ledger(turn_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_surface ON tool_call_ledger(surface, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_status ON tool_call_ledger(status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_run_registry_status ON run_registry(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_status_attempted_at ON delivery_registry(status, attempted_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_run_id ON delivery_registry(run_id, attempted_at)",

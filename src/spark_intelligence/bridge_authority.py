@@ -800,6 +800,46 @@ def build_telegram_memory_diagnostic_turn_intent_payload_vnext(
     )
 
 
+def _bridge_bound_ledger_row(
+    *,
+    verdict: BridgeAuthorityVerdict,
+    ledger: dict[str, Any],
+    owner_system: str | None,
+    mutation_class: str | None,
+    component: str,
+    request_id: str | None,
+    trace_ref: str | None,
+    channel_id: str | None,
+) -> dict[str, Any]:
+    authorization = ledger.get("authorization") if isinstance(ledger.get("authorization"), dict) else {}
+    result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
+    trace = ledger.get("trace") if isinstance(ledger.get("trace"), dict) else {}
+    authorization_decision = (
+        verdict.authorization_decision if isinstance(verdict.authorization_decision, dict) else {}
+    )
+    surface = None
+    if verdict.envelope is not None:
+        surface = verdict.envelope.surface
+    surface = surface or channel_id or component
+    return {
+        "turn_id": ledger.get("turn_id"),
+        "action_id": ledger.get("action_id"),
+        "capability_id": ledger.get("capability_id"),
+        "authorization_decision_id": authorization_decision.get("decision_id") or authorization.get("decision_id"),
+        "ledger_id": ledger.get("ledger_id"),
+        "tool_name": ledger.get("tool_name"),
+        "owner_system": owner_system,
+        "mutation_class": mutation_class,
+        "outcome": authorization.get("outcome") or ("execute" if verdict.allowed else "deny"),
+        "status": result.get("status"),
+        "surface": surface,
+        "request_id": request_id,
+        "trace_ref": trace_ref or trace.get("id"),
+        "summary": result.get("summary") or trace.get("summary"),
+        "ledger_json": ledger,
+    }
+
+
 def record_bridge_tool_call_ledger(
     state_db: Any,
     verdict: BridgeAuthorityVerdict,
@@ -817,7 +857,7 @@ def record_bridge_tool_call_ledger(
     if not isinstance(ledger, dict):
         return None
 
-    from spark_intelligence.observability.store import record_event
+    from spark_intelligence.observability.store import persist_bound_ledger, record_event
 
     envelope = verdict.envelope
     resolved_session_id = session_id
@@ -872,6 +912,20 @@ def record_bridge_tool_call_ledger(
             "tool_call_ledger": ledger,
         },
     )
+    persist_bound_ledger(
+        state_db,
+        row=_bridge_bound_ledger_row(
+            verdict=verdict,
+            ledger=ledger,
+            owner_system=None,
+            mutation_class=None,
+            component=component,
+            request_id=request_id,
+            trace_ref=str(trace.get("id") or ledger.get("turn_id") or ""),
+            channel_id=channel_id,
+        ),
+        component=component,
+    )
     _remember_context_ledger_event(
         state_db=state_db,
         event_id=event_id,
@@ -911,7 +965,7 @@ def record_bridge_tool_call_result_ledger(
     if not verdict.allowed or not isinstance(ledger, dict):
         return None
 
-    from spark_intelligence.observability.store import record_event
+    from spark_intelligence.observability.store import persist_bound_ledger, record_event
 
     envelope = verdict.envelope
     resolved_session_id = session_id
@@ -938,7 +992,7 @@ def record_bridge_tool_call_result_ledger(
     )
     trace = final_ledger.get("trace") if isinstance(final_ledger.get("trace"), dict) else {}
     result = final_ledger.get("result") if isinstance(final_ledger.get("result"), dict) else {}
-    return record_event(
+    event_id = record_event(
         state_db,
         event_type="tool_call_ledger_result_recorded",
         component=component,
@@ -975,6 +1029,21 @@ def record_bridge_tool_call_result_ledger(
             "tool_call_ledger": final_ledger,
         },
     )
+    persist_bound_ledger(
+        state_db,
+        row=_bridge_bound_ledger_row(
+            verdict=verdict,
+            ledger=final_ledger,
+            owner_system=None,
+            mutation_class=None,
+            component=component,
+            request_id=request_id,
+            trace_ref=str(trace.get("id") or final_ledger.get("turn_id") or ""),
+            channel_id=channel_id,
+        ),
+        component=component,
+    )
+    return event_id
 
 
 def record_scoped_bridge_tool_call_results(

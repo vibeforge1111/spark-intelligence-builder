@@ -189,6 +189,39 @@ def build_harness_task_envelope(
 
 
 def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
+    if envelope.harness_id == "builder.direct":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="builder.direct",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            intent_summary="Local operator explicitly requested governed Builder direct execution through the harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
+    if envelope.harness_id == "researcher.advisory":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="researcher.advisory",
+            owner_system="spark-researcher",
+            mutation_class="external_network",
+            external_network=True,
+            intent_summary="Local operator explicitly requested governed researcher advisory execution through the Builder harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
     if envelope.harness_id != "voice.io":
         return None
 
@@ -282,16 +315,11 @@ def execute_harness_task(
     )
     try:
         if envelope.harness_id == "builder.direct":
-            summary = "Task retained in Builder direct harness."
-            artifacts = {
-                "execution_contract": {
-                    "reply_mode": "builder_local_runtime",
-                    "owner_system": envelope.owner_system,
-                    "prompt_strategy": envelope.prompt_strategy,
-                    "required_capabilities": envelope.required_capabilities,
-                }
-            }
-            status = "prepared"
+            artifacts, summary, status = _execute_builder_direct_harness(
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run.run_id,
+            )
         elif envelope.harness_id == "researcher.advisory":
             artifacts, summary, status = _execute_researcher_advisory_harness(
                 config_manager=config_manager,
@@ -532,6 +560,109 @@ def _execute_browser_grounded_harness(
     )
 
 
+def _execute_builder_direct_harness(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    authority = _authorize_harness_builder_direct(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="builder.direct"),
+            },
+            "Builder direct harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
+    _record_harness_builder_direct_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="success",
+        summary="Builder direct harness prepared.",
+    )
+    return (
+        {
+            "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="builder.direct"),
+            "execution_contract": {
+                "reply_mode": "builder_local_runtime",
+                "owner_system": envelope.owner_system,
+                "prompt_strategy": envelope.prompt_strategy,
+                "required_capabilities": envelope.required_capabilities,
+            },
+        },
+        "Task retained in Builder direct harness.",
+        "prepared",
+    )
+
+
+def _authorize_harness_builder_direct(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="builder.direct",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_builder_direct_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
 def _execute_researcher_advisory_harness(
     *,
     config_manager: ConfigManager,
@@ -559,6 +690,81 @@ def _execute_researcher_advisory_harness(
         "Executed the researcher advisory harness and captured the reply/result trace.",
         "completed",
     )
+
+
+def _authorize_harness_researcher_advisory(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="researcher.advisory",
+        owner_system="spark-researcher",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_researcher_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        owner_system="spark-researcher",
+        mutation_class="external_network",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
+def _harness_authority_artifact(verdict: Any, *, fallback_tool_name: str = "researcher.advisory") -> dict[str, Any]:
+    ledger = verdict.tool_call_ledger if isinstance(getattr(verdict, "tool_call_ledger", None), dict) else {}
+    governor = verdict.governor_decision if isinstance(getattr(verdict, "governor_decision", None), dict) else {}
+    return {
+        "allowed": bool(getattr(verdict, "allowed", False)),
+        "reason_codes": list(getattr(verdict, "reason_codes", ()) or ()),
+        "decision_id": governor.get("decision_id"),
+        "turn_id": ledger.get("turn_id") or governor.get("turn_id"),
+        "ledger_id": ledger.get("ledger_id"),
+        "tool_name": ledger.get("tool_name") or fallback_tool_name,
+        "ledger_event_id": getattr(verdict, "ledger_event_id", None),
+    }
 
 
 def _bridge_result_reply_text(result: Any) -> str:
