@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -246,13 +249,31 @@ def _read_jsonl_tail(path: Path, *, limit: int) -> list[dict[str, Any]]:
         return []
     selected = lines[-limit:] if limit > 0 else lines
     records: list[dict[str, Any]] = []
+    skipped = 0
+    first_error: str | None = None
     for line in selected:
         if not line.strip():
             continue
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            # Corrupted lines in the recent-conversation JSONL tail are
+            # silently dropped today, so a partial-coverage capsule looks
+            # identical to a healthy one. Aggregate the count + first
+            # parse error so operators triaging a thin context window can
+            # see the file actually has bad lines.
+            skipped += 1
+            if first_error is None:
+                first_error = f"line {len(records) + skipped}: {exc}"
             continue
         if isinstance(payload, dict):
             records.append(payload)
+    if skipped:
+        logger.warning(
+            "recent_conversation: dropped %d malformed JSONL line(s) from %s (first error %s); "
+            "capsule recent-turn window is partial",
+            skipped,
+            path,
+            first_error,
+        )
     return records
