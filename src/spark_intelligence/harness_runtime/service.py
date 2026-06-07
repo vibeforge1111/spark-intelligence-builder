@@ -301,7 +301,9 @@ def execute_harness_task(
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
                 config_manager=config_manager,
+                state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
@@ -503,12 +505,28 @@ def build_harness_runtime_snapshot(
 def _execute_browser_grounded_harness(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
 
     url = _extract_first_url(envelope.task)
     if not url:
+        record_event(
+            state_db,
+            event_type="harness_browser_navigate_blocked",
+            component="harness_runtime",
+            summary="Browser grounded harness blocked because no URL was supplied in the task.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_browser_navigate_blocked",
+            facts={"harness_id": envelope.harness_id, "task_excerpt": str(envelope.task or "")[:120]},
+        )
         return (
             {
                 "browser_status_payload": build_browser_status_payload(config_manager=config_manager),
@@ -520,13 +538,23 @@ def _execute_browser_grounded_harness(
             "Browser grounded harness needs an explicit URL before it can prepare a navigate payload.",
             "needs_input",
         )
+    navigate_payload = build_browser_navigate_payload(config_manager=config_manager, url=url)
+    record_event(
+        state_db,
+        event_type="harness_browser_navigate_prepared",
+        component="harness_runtime",
+        summary=f"Browser grounded harness prepared a governed navigate payload for {url}.",
+        run_id=run_id,
+        request_id=envelope.envelope_id,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        reason_code="harness_browser_navigate_prepared",
+        facts={"harness_id": envelope.harness_id, "url": url},
+    )
     return (
-        {
-            "browser_navigate_payload": build_browser_navigate_payload(
-                config_manager=config_manager,
-                url=url,
-            )
-        },
+        {"browser_navigate_payload": navigate_payload},
         f"Prepared a governed browser navigate payload for {url}.",
         "prepared",
     )
