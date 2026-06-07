@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import re
 import urllib.parse
 import urllib.request
 import urllib.error
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
@@ -306,6 +309,24 @@ def _pending_store_path() -> _Path:
     return base / "pending_confirmations.json"
 
 
+@contextmanager
+def _pending_lock():
+    """Acquire an exclusive file lock around the pending-confirmations JSON.
+
+    Prevents TOCTOU races when concurrent handlers arm/peek/clear the
+    same pending confirmation record.  The lock is held on a .lock file
+    adjacent to the JSON store so multiple processes block on the same fd.
+    """
+    lock_path = _pending_store_path().with_suffix(".json.lock")
+    lock_fd = lock_path.open("w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
 def _load_pending() -> dict[str, Any]:
     p = _pending_store_path()
     if not p.exists():
@@ -328,36 +349,39 @@ def _save_pending(store: dict[str, Any]) -> None:
 
 def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
     import time as _time
-    store = _load_pending()
-    store[str(user_id)] = {
-        "schedule_id": schedule.get("id"),
-        "cron": schedule.get("cron"),
-        "payload": schedule.get("payload"),
-        "action": schedule.get("action"),
-        "authority": schedule.get("authority"),
-        "expires_at": _time.time() + _PENDING_TTL_SECONDS,
-    }
-    _save_pending(store)
+    with _pending_lock():
+        store = _load_pending()
+        store[str(user_id)] = {
+            "schedule_id": schedule.get("id"),
+            "cron": schedule.get("cron"),
+            "payload": schedule.get("payload"),
+            "action": schedule.get("action"),
+            "authority": schedule.get("authority"),
+            "expires_at": _time.time() + _PENDING_TTL_SECONDS,
+        }
+        _save_pending(store)
 
 
 def peek_pending_delete(user_id: str) -> dict[str, Any] | None:
     import time as _time
-    store = _load_pending()
-    rec = store.get(str(user_id))
-    if not rec:
-        return None
-    if rec.get("expires_at", 0) < _time.time():
-        store.pop(str(user_id), None)
-        _save_pending(store)
-        return None
-    return rec
+    with _pending_lock():
+        store = _load_pending()
+        rec = store.get(str(user_id))
+        if not rec:
+            return None
+        if rec.get("expires_at", 0) < _time.time():
+            store.pop(str(user_id), None)
+            _save_pending(store)
+            return None
+        return rec
 
 
 def clear_pending_delete(user_id: str) -> None:
-    store = _load_pending()
-    if str(user_id) in store:
-        store.pop(str(user_id), None)
-        _save_pending(store)
+    with _pending_lock():
+        store = _load_pending()
+        if str(user_id) in store:
+            store.pop(str(user_id), None)
+            _save_pending(store)
 
 
 def is_confirmation_yes(message: str) -> bool:
