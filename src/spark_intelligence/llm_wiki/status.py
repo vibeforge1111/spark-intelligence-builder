@@ -11,6 +11,7 @@ import yaml
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.bootstrap import bootstrap_llm_wiki
 from spark_intelligence.llm_wiki.compile_system import compile_system_wiki
+from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.memory import hybrid_memory_retrieve, inspect_wiki_packet_metadata
 from spark_intelligence.state.db import StateDB
 
@@ -91,7 +92,7 @@ def build_llm_wiki_status(
     output_dir: str | Path | None = None,
     refresh: bool = False,
 ) -> LlmWikiStatusResult:
-    root = (Path(output_dir) if output_dir else config_manager.paths.home / "wiki").resolve(strict=False)
+    root = wiki_root(config_manager, output_dir)
     refreshed_files: tuple[str, ...] = ()
     if refresh:
         bootstrap_llm_wiki(config_manager=config_manager, output_dir=root)
@@ -168,7 +169,8 @@ def _wiki_retrieval_probe(*, config_manager: ConfigManager, state_db: StateDB) -
             source_surface="wiki_status_probe",
             record_activity=False,
         )
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return "error", 0, False, {}
     wiki_lane = next(
         (
