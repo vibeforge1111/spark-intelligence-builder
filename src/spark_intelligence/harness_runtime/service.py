@@ -604,7 +604,7 @@ def _execute_voice_io_harness(
             payload=_build_voice_hook_payload(config_manager=config_manager, state_db=state_db, envelope=envelope),
             run_id=run_id,
         )
-    except Exception as exc:
+    except RuntimeError as exc:
         return (
             {
                 "voice_status": {
@@ -659,7 +659,7 @@ def _execute_voice_io_harness(
                 ),
                 run_id=run_id,
             )
-        except Exception as exc:
+        except RuntimeError as exc:
             artifacts["resume_token"] = _build_harness_resume_token(
                 config_manager=config_manager,
                 envelope=envelope,
