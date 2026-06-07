@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,9 @@ from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayR
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
+
+
+_logger = logging.getLogger(__name__)
 
 
 DISCORD_WEBHOOK_PATH = "/webhooks/discord"
@@ -127,6 +131,7 @@ def handle_discord_webhook(
             run_id=run.run_id,
         )
     except ValueError as exc:
+        _logger.exception("Discord webhook processing error: %s", exc)
         close_run(
             state_db,
             run_id=run.run_id,
@@ -135,7 +140,7 @@ def handle_discord_webhook(
             summary="Discord webhook run closed with invalid payload.",
             facts={"error": str(exc)},
         )
-        return _json_error_response(400, str(exc))
+        return _json_error_response(400, "Discord webhook processing error.")
     append_gateway_trace(
         config_manager,
         {
