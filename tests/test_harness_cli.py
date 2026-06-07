@@ -10,6 +10,47 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake
 
 
 class HarnessCliTests(SparkTestCase):
+    def test_harness_tool_ledgers_filters_by_turn_id(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "ledger_id": "ledger:cli-ledger",
+                "turn_id": "turn:cli-ledger",
+                "action_id": "action:cli-ledger",
+                "capability_id": "capability:cli-ledger",
+                "authorization_decision_id": "decision:cli-ledger",
+                "tool_name": "test.tool",
+                "surface": "cli_test",
+                "status": "success",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:cli-ledger",
+                    "turn_id": "turn:cli-ledger",
+                    "action_id": "action:cli-ledger",
+                    "capability_id": "capability:cli-ledger",
+                    "tool_name": "test.tool",
+                    "authorization": {"decision_id": "decision:cli-ledger"},
+                    "result": {"status": "success", "summary": "Recorded for CLI visibility."},
+                },
+            },
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "tool-ledgers",
+            "--home",
+            str(self.home),
+            "--turn-id",
+            "turn:cli-ledger",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["ledgers"][0]["ledger_id"], "ledger:cli-ledger")
+        self.assertEqual(payload["ledgers"][0]["surface"], "cli_test")
+
     def _enable_fake_researcher(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
         self.config_manager.set_path("spark.researcher.enabled", True)

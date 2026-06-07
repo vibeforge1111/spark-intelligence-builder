@@ -157,6 +157,7 @@ from spark_intelligence.observability.store import (
     latest_events_by_type,
     open_run,
     prune_observability_store,
+    recent_tool_call_ledgers,
     record_event,
     record_observer_handoff_record,
 )
@@ -2899,6 +2900,15 @@ def build_parser() -> argparse.ArgumentParser:
     harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
     harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_tool_ledgers_parser = harness_subparsers.add_parser(
+        "tool-ledgers",
+        help="Show canonical governed tool ledgers from state.db",
+    )
+    harness_tool_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_tool_ledgers_parser.add_argument("--turn-id", help="Filter ledgers by turn id")
+    harness_tool_ledgers_parser.add_argument("--surface", help="Filter ledgers by producing surface")
+    harness_tool_ledgers_parser.add_argument("--limit", type=int, default=20, help="Maximum ledgers to show")
+    harness_tool_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_self_evolution_parser = harness_subparsers.add_parser(
         "self-evolution-snapshot",
         help="Build an observe-only Harness Core self-evolution run from canonical tool ledgers",
@@ -8440,6 +8450,34 @@ def handle_harness_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_tool_ledgers(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    ledgers = recent_tool_call_ledgers(
+        state_db,
+        turn_id=getattr(args, "turn_id", None),
+        surface=getattr(args, "surface", None),
+        limit=int(getattr(args, "limit", 20) or 20),
+    )
+    if args.json:
+        print(json.dumps({"count": len(ledgers), "ledgers": ledgers}, indent=2))
+    else:
+        lines = ["Spark harness tool ledgers"]
+        lines.append(f"- count: {len(ledgers)}")
+        for row in ledgers:
+            lines.append(
+                f"- {row.get('ledger_id') or 'unknown'} "
+                f"turn={row.get('turn_id') or 'unknown'} "
+                f"surface={row.get('surface') or 'unknown'} "
+                f"tool={row.get('tool_name') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        print("\n".join(lines))
+    return 0
+
+
 def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9981,6 +10019,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_prune_observability(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "tool-ledgers":
+        return handle_harness_tool_ledgers(args)
     if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
         return handle_harness_self_evolution_snapshot(args)
     if args.command == "harness" and args.harness_command == "change-manifest-runner":
