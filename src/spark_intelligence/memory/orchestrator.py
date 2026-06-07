@@ -1553,11 +1553,25 @@ def _local_domain_chip_memory_src() -> Path:
     return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
 
 
+_ALLOWED_MEMORY_SDK_PREFIXES = ("domain_chip_memory", "spark_memory_sdk")
+
+
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    """Import a memory SDK module, restricted to known-safe prefixes.
+
+    Arbitrary module names could achieve code execution via
+    importlib.import_module().  We validate against an allowlist of
+    known-safe top-level prefixes before importing.
+    """
+    root_name = module_name.split(".", 1)[0]
+    if root_name not in _ALLOWED_MEMORY_SDK_PREFIXES:
+        raise ImportError(
+            f"Blocked import of disallowed memory SDK module: {module_name!r} "
+            f"(allowed prefixes: {', '.join(_ALLOWED_MEMORY_SDK_PREFIXES)})"
+        )
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
-        root_name = module_name.split(".", 1)[0]
         local_src = _local_domain_chip_memory_src()
         if exc.name != root_name or root_name != "domain_chip_memory" or not local_src.exists():
             raise
