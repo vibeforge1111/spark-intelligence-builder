@@ -23,6 +23,16 @@ spark-intelligence harness tool-ledgers --limit 10 --json
 
 ## Local Development
 
+The current live Builder source-truth line is:
+
+```text
+C:\Users\USER\.spark\modules\spark-intelligence-builder\source
+```
+
+The Desktop checkout is backlog/historical evidence until curated. See
+[SOURCE_TRUTH.md](./SOURCE_TRUTH.md) before porting behavior between Builder
+trees.
+
 ```powershell
 python -m pip install -e .
 python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_harness_cli.py tests/test_observability_retention.py -q

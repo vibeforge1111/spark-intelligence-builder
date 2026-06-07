@@ -130,6 +130,7 @@ Do not merge changes that:
 
 ## Canonical Follow-Up Docs
 
+- Source-truth rule: [SOURCE_TRUTH.md](./SOURCE_TRUTH.md)
 - Runtime operations: [RUNTIME_RUNBOOK.md](./RUNTIME_RUNBOOK.md)
 - Telegram split contract: [TELEGRAM_BRIDGE.md](./TELEGRAM_BRIDGE.md)
 - Memory/chip contract: [MEMORY_CONTRACT.md](./MEMORY_CONTRACT.md)

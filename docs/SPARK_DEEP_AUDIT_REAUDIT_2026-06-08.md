@@ -57,9 +57,9 @@ ledger spine, but Spark is not done.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
   to about 225 MB while preserving canonical tool ledgers.
-- Still open: source-of-truth is not globally solved. The installed Builder is
-  fixed, but `C:\Users\USER\Desktop\spark-intelligence-builder` remains dirty
-  and divergent.
+- Closed for the live Builder runtime: installed Builder is the canonical
+  source-truth line and now has `docs/SOURCE_TRUTH.md`. Desktop Builder remains
+  dirty backlog/historical evidence until curated.
 - Still open or in-flight: Spawner loopback API-key hardening and Governor
   signature verification must be rechecked after the parallel Spawner/Telegram
   session settles.
@@ -79,7 +79,7 @@ ledger spine, but Spark is not done.
 | Live ledger adoption | live doctor reports `total=83 surfaces=builder=1, spark_cli=69, telegram=13` | Partial; Spawner missing |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; after drill/check events the DB is 225,177,600 bytes with `builder_events=15,362`, `event_log=15,362`, and `tool_call_ledger=83` | Closed for this pass |
 | Orphaned root rivers | root `.spark` now has only `outcomes.jsonl` and `predictions.jsonl` from March 2026 | Mostly closed, verify archive policy |
-| Builder source truth | installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty | Partial |
+| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, and Builder ledger `ledger:fd24aee5b4fb46e08bc36925`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
@@ -107,6 +107,9 @@ ledger spine, but Spark is not done.
 - Added live doctor visibility for ledger adoption by surface.
 - Restored installed Builder AGPL-3.0-only provenance and declared
   `spark-harness-core` in `needs.modules`.
+- Added installed `docs/SOURCE_TRUTH.md` so future audits treat
+  `C:\Users\USER\.spark\modules\spark-intelligence-builder\source` as the live
+  Builder runtime line and treat the Desktop checkout as backlog until curated.
 - Added docs for authority contracts, runtime operations, and source-truth
   expectations.
 - Added Builder self-evolution observation and change-manifest runner surfaces
@@ -232,11 +235,13 @@ until that session completes and the final diff is tested.
 
 ### P1 - Source Of Truth
 
-12. Resolve the Desktop Builder divergence.
-    - The installed Builder is the live runtime and is now AGPL-aligned.
-    - The Desktop Builder tree remains dirty and divergent.
-    - Choose one canonical source tree, archive or relabel the stale one, and
-      update operator memory/docs so future audits do not read the wrong tree.
+12. Enforce the Builder source-truth rule.
+    - The installed Builder is the live runtime, is AGPL-aligned, declares
+      `spark-harness-core`, and now carries `docs/SOURCE_TRUTH.md`.
+    - The Desktop Builder tree remains dirty, divergent, and backlog-only until
+      curated.
+    - Remaining housekeeping: archive, relabel, or clean the Desktop tree so it
+      cannot be mistaken for live runtime truth in future sessions.
 
 13. Recheck release mirrors and vendored Harness Core copies.
     - Ensure release mirrors carry correct AGPL/MIT boundaries.
@@ -267,8 +272,8 @@ until that session completes and the final diff is tested.
 - No governed execution path may claim full authority unless it writes or
   ingests a canonical `tool_call_ledger` row.
 - No source-truth claim may cite the Desktop Builder tree while live runtime is
-  installed Builder, unless the document explicitly says it is inspecting the
-  stale tree.
+  installed Builder, unless the document explicitly says it is inspecting
+  backlog/historical evidence rather than live runtime truth.
 - No self-evolution claim may say "improves itself" unless a manifest was
   applied, tested, and either promoted or rolled back with evidence.
 - No DB cleanup may run without a backup, before/after counts, and doctor green
@@ -321,8 +326,9 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    the change-manifest runner.
 5. Add the scheduled state-size/large-table retention report so future cleanup
    is evidence-first.
-6. Resolve the Desktop Builder source-of-truth decision and update operator
-   docs/memory to stop future stale-tree audits.
+6. Archive, relabel, or clean the Desktop Builder backlog tree so future stale
+   tree audits stop at the source-truth warning instead of re-deriving runtime
+   truth from it.
 7. Define the self-evolution executor boundary, then prove dry-run apply and
    rollback before touching production code.
 
