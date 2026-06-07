@@ -639,7 +639,12 @@ def _execute_voice_io_harness(
             )
         speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
         audio_base64 = str(speak_result.get("audio_base64") or "")
-        audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
+        audio_bytes = b""
+        if audio_base64:
+            try:
+                audio_bytes = base64.b64decode(audio_base64.encode("ascii"), validate=True)
+            except Exception:
+                audio_bytes = b""
         artifacts["spoken_audio"] = {
             "chip_key": speak_chip_key,
             "provider_id": str(speak_result.get("provider_id") or ""),
