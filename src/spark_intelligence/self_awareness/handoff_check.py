@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -150,21 +151,23 @@ def _warnings(
 
 
 def _git_changed_paths(repo_root: Path) -> list[str]:
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
     try:
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        untracked_result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        # Two independent read-only git queries — run them concurrently so the
+        # preflight latency tracks the slower call instead of the sum.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            diff_future = executor.submit(_run, ["git", "diff", "--name-only", "HEAD"])
+            untracked_future = executor.submit(_run, ["git", "ls-files", "--others", "--exclude-standard"])
+            diff_result = diff_future.result()
+            untracked_result = untracked_future.result()
     except OSError:
         return []
     if diff_result.returncode != 0 or untracked_result.returncode != 0:
