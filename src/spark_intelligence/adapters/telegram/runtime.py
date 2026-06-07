@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import hashlib
 import json
 import os
@@ -292,6 +293,8 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
+_logger = logging.getLogger(__name__)
+
 def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
     text = str(user_message or "").strip()
     if not text:
@@ -300,34 +303,34 @@ def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | No
         if _detect_current_plan_transition_command(text) is not None:
             return "telegram_runtime_current_plan_transition"
     except Exception:
-        pass
+        _logger.warning("intelligence hook _detect_current_plan_transition_command failed", exc_info=True)
     try:
         if _detect_current_focus_transition_command(text) is not None:
             return "telegram_runtime_current_focus_transition"
     except Exception:
-        pass
+        _logger.warning("intelligence hook _detect_current_focus_transition_command failed", exc_info=True)
     try:
         if _detect_explicit_decision_statement(text) is not None:
             return "telegram_runtime_explicit_decision"
     except Exception:
-        pass
+        _logger.warning("intelligence hook _detect_explicit_decision_statement failed", exc_info=True)
     try:
         if detect_profile_fact_observation(text) is not None:
             return "telegram_runtime_profile_fact_observation"
     except Exception:
-        pass
+        _logger.warning("intelligence hook detect_profile_fact_observation failed", exc_info=True)
     try:
         if detect_telegram_memory_event_observation(text) is not None:
             return "telegram_runtime_event_observation"
     except Exception:
-        pass
+        _logger.warning("intelligence hook detect_telegram_memory_event_observation failed", exc_info=True)
     try:
         candidate = classify_telegram_generic_memory_candidate(text)
         if candidate is not None:
             operation = str(getattr(candidate, "operation", "") or "candidate")
             return f"telegram_runtime_generic_memory_{operation}"
     except Exception:
-        pass
+        _logger.warning("intelligence hook classify_telegram_generic_memory_candidate failed", exc_info=True)
     return None
 
 
