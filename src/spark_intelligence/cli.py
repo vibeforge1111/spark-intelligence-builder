@@ -34,7 +34,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
-from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -70,7 +70,11 @@ from spark_intelligence.gateway.runtime import (
 )
 from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
-from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+from spark_intelligence.harness_contract import (
+    build_vnext_action_intent_envelope,
+    build_vnext_tool_intent_envelope,
+    verify_governor_tool_authority,
+)
 from spark_intelligence.harness_evolution import (
     build_harness_self_evolution_snapshot,
     run_harness_change_manifest_runner,
@@ -7518,6 +7522,81 @@ def _load_governor_decision_file(path_value: str) -> dict:
     return parsed
 
 
+def _trace_id_from_governor_decision(governor_decision: dict[str, Any] | None) -> str | None:
+    if not isinstance(governor_decision, dict):
+        return None
+    trace = governor_decision.get("trace") if isinstance(governor_decision.get("trace"), dict) else {}
+    return (
+        str(governor_decision.get("traceId") or "").strip()
+        or str(governor_decision.get("trace_id") or "").strip()
+        or str(trace.get("id") or "").strip()
+        or None
+    )
+
+
+def _derive_telegram_memory_materialization_governor(
+    *,
+    upstream_governor_decision: dict[str, Any],
+    state_db: StateDB,
+    human_id: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> dict[str, Any]:
+    upstream_verification = verify_governor_tool_authority(
+        upstream_governor_decision,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        require_pre_execution_ledger=True,
+    )
+    if not upstream_verification.get("allowed"):
+        reasons = upstream_verification.get("reason_codes")
+        reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "upstream_governor_not_allowed"
+        raise ValueError(f"upstream Telegram memory authority is invalid: {reason_text}")
+
+    upstream_trace = _trace_id_from_governor_decision(upstream_governor_decision)
+    request_id = str(turn_id or upstream_governor_decision.get("turn_id") or session_id or human_id).strip()
+    envelope = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=human_id,
+        request_id=request_id,
+        source_kind="telegram_memory_direct_adapter",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary="Fresh Telegram Harness Core authority selected this exact Builder/domain-chip memory materialization.",
+        raw_turn_summary=(
+            "Upstream Telegram Governor authorized a scoped memory.write; "
+            f"source turn={turn_id or 'unknown'} session={session_id or 'unknown'} "
+            f"upstream_trace={upstream_trace or 'unknown'}. Raw note text remains in the memory write payload."
+        ),
+        args_path=f"builder://telegram-memory/{request_id}/domain-chip-memory-write",
+    )
+    if not isinstance(envelope, dict):
+        raise ValueError("could not build downstream memory materialization envelope")
+
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        actor_id=actor_id,
+        component="telegram_memory_write_cli",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+
+    reasons = tuple(authority.reason_codes or ("downstream_memory_materialization_not_authorized",))
+    reason_text = ", ".join(str(reason) for reason in reasons if str(reason))
+    raise ValueError(f"downstream memory materialization authority is invalid: {reason_text}")
+
+
 def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -7526,7 +7605,15 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
     if args.sdk_module:
         config_manager.set_path("spark.memory.sdk_module", args.sdk_module)
     try:
-        governor_decision = _load_governor_decision_file(args.governor_decision_file)
+        upstream_governor_decision = _load_governor_decision_file(args.governor_decision_file)
+        governor_decision = _derive_telegram_memory_materialization_governor(
+            upstream_governor_decision=upstream_governor_decision,
+            state_db=state_db,
+            human_id=args.human_id,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            actor_id=args.actor_id,
+        )
         result = write_structured_evidence_to_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -7559,7 +7646,7 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
         return 1
 
     result_payload = asdict(result)
-    governor_trace = governor_decision.get("traceId") or governor_decision.get("trace_id")
+    governor_trace = _trace_id_from_governor_decision(governor_decision)
     governor_outcome = governor_decision.get("outcome") or governor_decision.get("decision")
     payload = {
         "schema_version": "spark.telegram_memory_write.v1",
