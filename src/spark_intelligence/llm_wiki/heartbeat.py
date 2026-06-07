@@ -272,9 +272,13 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
 
 
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp = report_path.with_suffix(report_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(report_path)
     latest_path = config_manager.paths.home / "artifacts" / "wiki-heartbeat" / "latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp2 = latest_path.with_suffix(latest_path.suffix + ".tmp")
+    tmp2.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp2.replace(latest_path)
 
 
 def _utc_timestamp() -> str:
