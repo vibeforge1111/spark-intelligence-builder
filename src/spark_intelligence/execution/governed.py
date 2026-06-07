@@ -43,10 +43,25 @@ def run_governed_command(
         run_kwargs["encoding"] = encoding
     if errors:
         run_kwargs["errors"] = errors
-    completed = subprocess.run(
-        command,
-        **run_kwargs,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            **run_kwargs,
+        )
+    except subprocess.TimeoutExpired as exc:
+        timeout_msg = (
+            f"Command timed out after {timeout_seconds}s: {command}"
+        )
+        stdout_val = exc.stdout or ""
+        if isinstance(stdout_val, bytes):
+            stdout_val = stdout_val.decode("utf-8", errors="replace")
+        return GovernedCommandExecution(
+            command=list(command),
+            cwd=str(cwd),
+            exit_code=124,
+            stdout=stdout_val,
+            stderr=timeout_msg,
+        )
     return GovernedCommandExecution(
         command=list(command),
         cwd=str(cwd),
