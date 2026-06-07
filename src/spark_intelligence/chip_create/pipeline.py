@@ -279,6 +279,20 @@ def create_chip_from_prompt(
     chip_labs_root = chip_labs_root or _default_chip_labs_root()
     output_dir = output_dir or _default_output_dir()
 
+    if not isinstance(prompt, str) or not prompt.strip():
+        # Guard against an empty or whitespace-only prompt before any paid
+        # LLM dispatch. _parse_brief_via_llm would otherwise forward the
+        # full _BRIEF_SYSTEM directive plus an empty user_prompt template to
+        # the configured provider, burning tokens on a request that cannot
+        # produce a valid brief (the LLM has nothing to parse). The brief
+        # validator would then reject the result anyway, so the call is
+        # guaranteed-redundant. Closing this gap eliminates the wasted
+        # provider round-trip on empty input.
+        return ChipCreateResult(
+            ok=False,
+            error="empty prompt: chip-create requires a non-empty natural-language description",
+        )
+
     try:
         governor_verification = _verify_chip_create_governor_authority(governor_decision)
     except ChipCreateAuthorityError as exc:
