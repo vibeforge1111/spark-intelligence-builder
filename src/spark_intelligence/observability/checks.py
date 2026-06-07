@@ -33,6 +33,8 @@ from spark_intelligence.observability.store import (
 )
 from spark_intelligence.state.db import StateDB
 
+SPARK_INTELLIGENCE_BUILDER__EXTERNAL_EXECUTION_GOVERNANCE_ISSUE_TIMEOUT_SECONDS = 60
+
 
 ALLOWED_AUTOSTART_PLATFORMS = {
     None,
@@ -1007,7 +1009,9 @@ def _external_execution_governance_issue() -> StopShipIssue:
         "src/spark_intelligence/llm/provider_wrapper.py",
         "src/spark_intelligence/researcher_bridge/advisory.py",
     }
-    unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
+    unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths
+    timeout=SPARK_INTELLIGENCE_BUILDER__EXTERNAL_EXECUTION_GOVERNANCE_ISSUE_TIMEOUT_SECONDS,
+    )
     unexpected_provider = _find_source_pattern_paths(
         "execute_direct_provider_prompt(",
         allowed_paths=allowed_direct_provider_paths,
