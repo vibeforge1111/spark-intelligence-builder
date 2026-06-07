@@ -306,6 +306,37 @@ def test_creator_mission_status_consumer_requires_all_surface_adapters():
     assert {issue.path for issue in issues} == {"surface_adapters.telegram"}
 
 
+def test_creator_mission_status_consumer_accepts_flat_canonical_shape():
+    # The real spark-domain-chip-labs producer
+    # (chip_labs.creator_mission_adapter._build_mission, line 86-104) emits
+    # canonical.automation_blocked + canonical.recommended_next_command at the
+    # top of canonical, not nested under canonical.automation. The validator
+    # must accept this flat shape so the labs adapter does not crash through
+    # summarize_creator_mission_status on every real packet.
+    packet = {
+        "schema_version": "adaptive_creator_loop.creator_mission_status.v1",
+        "mission_id": "creator-mission-flat-canonical",
+        "canonical": {
+            "verdict": "ready_for_swarm_packet",
+            "evidence_tier": "transfer_supported",
+            "automation_blocked": False,
+            "recommended_next_command": "review Startup YC operator validation gates",
+        },
+        "publication": {
+            "publish_mode": "swarm_shared",
+            "swarm_shared_allowed": False,
+            "network_absorbable": False,
+        },
+        "surface_adapters": {"builder": {}, "telegram": {}, "spawner": {}, "canvas": {}, "kanban": {}},
+    }
+
+    summary = summarize_creator_mission_status(packet)
+
+    assert validate_creator_mission_status(packet) == []
+    assert summary.blocked is False
+    assert summary.recommended_next_command == "review Startup YC operator validation gates"
+
+
 def _creator_mission_status_packet():
     return {
         "schema_version": "adaptive_creator_loop.creator_mission_status.v1",
