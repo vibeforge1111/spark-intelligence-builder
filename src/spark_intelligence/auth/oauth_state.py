@@ -90,47 +90,65 @@ def consume_oauth_callback_state(
 ) -> OAuthCallbackStateRecord:
     now = datetime.now(UTC)
     with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM oauth_callback_states WHERE oauth_state = ? LIMIT 1",
-            (oauth_state,),
-        ).fetchone()
-        if not row:
-            raise ValueError("OAuth callback state was not found.")
-        record = _row_to_record(row)
-        if record.provider_id != provider_id:
-            raise ValueError("OAuth callback state provider mismatch.")
-        if record.status != "pending" or record.consumed_at:
-            raise ValueError("OAuth callback state was already consumed.")
-        if redirect_uri and record.redirect_uri and redirect_uri != record.redirect_uri:
-            raise ValueError("OAuth callback redirect URI mismatch.")
-        if expected_issuer and record.expected_issuer and expected_issuer != record.expected_issuer:
-            raise ValueError("OAuth callback issuer mismatch.")
-        if _parse_timestamp(record.expires_at) <= now:
+        # BEGIN IMMEDIATE acquires a reserved lock immediately, blocking
+        # concurrent writers.  This closes the TOCTOU window where two
+        # callbacks could both read status='pending' before either UPDATE
+        # commits.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM oauth_callback_states WHERE oauth_state = ? LIMIT 1",
+                (oauth_state,),
+            ).fetchone()
+            if not row:
+                raise ValueError("OAuth callback state was not found.")
+            record = _row_to_record(row)
+            if record.provider_id != provider_id:
+                raise ValueError("OAuth callback state provider mismatch.")
+            if record.status != "pending" or record.consumed_at:
+                raise ValueError("OAuth callback state was already consumed.")
+            if redirect_uri and record.redirect_uri and redirect_uri != record.redirect_uri:
+                raise ValueError("OAuth callback redirect URI mismatch.")
+            if expected_issuer and record.expected_issuer and expected_issuer != record.expected_issuer:
+                raise ValueError("OAuth callback issuer mismatch.")
+            if _parse_timestamp(record.expires_at) <= now:
+                conn.execute(
+                    """
+                    UPDATE oauth_callback_states
+                    SET status = 'expired'
+                    WHERE callback_id = ?
+                    """,
+                    (record.callback_id,),
+                )
+                conn.commit()
+                raise ValueError("OAuth callback state expired.")
+            consumed_at = _format_timestamp(now)
             conn.execute(
                 """
                 UPDATE oauth_callback_states
-                SET status = 'expired'
+                SET status = 'consumed', consumed_at = ?
                 WHERE callback_id = ?
                 """,
-                (record.callback_id,),
+                (consumed_at, record.callback_id),
             )
+            updated = conn.execute(
+                "SELECT * FROM oauth_callback_states WHERE callback_id = ? LIMIT 1",
+                (record.callback_id,),
+            ).fetchone()
             conn.commit()
-            raise ValueError("OAuth callback state expired.")
-        consumed_at = _format_timestamp(now)
-        conn.execute(
-            """
-            UPDATE oauth_callback_states
-            SET status = 'consumed', consumed_at = ?
-            WHERE callback_id = ?
-            """,
-            (consumed_at, record.callback_id),
-        )
-        updated = conn.execute(
-            "SELECT * FROM oauth_callback_states WHERE callback_id = ? LIMIT 1",
-            (record.callback_id,),
-        ).fetchone()
-        conn.commit()
-    return _row_to_record(updated)
+            return _row_to_record(updated)
+        except ValueError:
+            # Business-logic error: roll back only if the transaction is
+            # still open (i.e. we haven't already committed for the
+            # expired-status path).
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def get_oauth_callback_state(
