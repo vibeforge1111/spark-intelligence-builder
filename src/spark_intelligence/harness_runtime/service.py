@@ -341,13 +341,39 @@ def execute_harness_chain(
     envelope: HarnessTaskEnvelope,
     follow_up_harness_ids: list[str] | None = None,
 ) -> HarnessExecutionResult:
+    normalized_follow_ups = [str(item or "").strip() for item in (follow_up_harness_ids or []) if str(item or "").strip()]
+    chain_id = f"hchain:{uuid4().hex[:12]}"
+    record_event(
+        state_db,
+        event_type="harness_chain_started",
+        component="harness_runtime",
+        summary=f"Harness chain started for {envelope.harness_id} with {len(normalized_follow_ups)} planned follow-up(s).",
+        request_id=envelope.envelope_id,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        reason_code="harness_chain_started",
+        facts={
+            "chain_id": chain_id,
+            "primary_harness_id": envelope.harness_id,
+            "planned_follow_ups": list(normalized_follow_ups),
+        },
+    )
     primary_result = execute_harness_task(
         config_manager=config_manager,
         state_db=state_db,
         envelope=envelope,
     )
-    normalized_follow_ups = [str(item or "").strip() for item in (follow_up_harness_ids or []) if str(item or "").strip()]
     if not normalized_follow_ups:
+        _emit_chain_terminal_event(
+            state_db=state_db,
+            envelope=envelope,
+            chain_id=chain_id,
+            chain_status="completed",
+            primary_status=primary_result.status,
+            follow_up_count=0,
+        )
         return primary_result
 
     chained_results: list[HarnessExecutionResult] = []
@@ -381,6 +407,14 @@ def execute_harness_chain(
             chain_status = "blocked"
             break
 
+    _emit_chain_terminal_event(
+        state_db=state_db,
+        envelope=envelope,
+        chain_id=chain_id,
+        chain_status=chain_status,
+        primary_status=primary_result.status,
+        follow_up_count=len(chained_results),
+    )
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
@@ -390,6 +424,37 @@ def execute_harness_chain(
         next_actions=primary_result.next_actions,
         chain_status=chain_status,
         chained_results=chained_results,
+    )
+
+
+def _emit_chain_terminal_event(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    chain_id: str,
+    chain_status: str,
+    primary_status: str,
+    follow_up_count: int,
+) -> None:
+    event_type = "harness_chain_blocked" if chain_status == "blocked" else "harness_chain_completed"
+    record_event(
+        state_db,
+        event_type=event_type,
+        component="harness_runtime",
+        summary=f"Harness chain {chain_status} for {envelope.harness_id} after {follow_up_count} follow-up(s).",
+        request_id=envelope.envelope_id,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        reason_code=event_type,
+        facts={
+            "chain_id": chain_id,
+            "primary_harness_id": envelope.harness_id,
+            "primary_status": primary_status,
+            "executed_follow_ups": follow_up_count,
+            "chain_status": chain_status,
+        },
     )
 
 
