@@ -148,8 +148,11 @@ def benchmark_memory_architectures(
             "summary_markdown": str(resolved_summary_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_summary_path.write_text(
+    resolved_write_tmp_path = resolved_write_path.with_suffix(resolved_write_path.suffix + ".tmp")
+    resolved_write_tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    resolved_write_tmp_path.replace(resolved_write_path)
+    resolved_summary_tmp_path = resolved_summary_path.with_suffix(resolved_summary_path.suffix + ".tmp")
+    resolved_summary_tmp_path.write_text(
         _build_summary_markdown(
             summary=summary,
             runtime=runtime,
@@ -158,6 +161,7 @@ def benchmark_memory_architectures(
         ),
         encoding="utf-8",
     )
+    resolved_summary_tmp_path.replace(resolved_summary_path)
     return MemoryArchitectureBenchmarkResult(output_dir=resolved_output_dir, payload=payload)
 
 
