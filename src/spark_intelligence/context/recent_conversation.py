@@ -80,7 +80,7 @@ def _load_builder_event_turns(
                 """,
                 (channel_kind, session_id, max(turn_limit * 4, 12)),
             ).fetchall()
-    except Exception:
+    except (OSError, RuntimeError):
         return []
 
     transcript: list[RecentConversationTurn] = []

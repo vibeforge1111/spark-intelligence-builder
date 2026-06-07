@@ -409,6 +409,7 @@ class ConfigManager:
             check=True,
             capture_output=True,
             text=True,
+            timeout=60,
         )
 
     def _windows_env_permission_status(self) -> tuple[bool, str]:

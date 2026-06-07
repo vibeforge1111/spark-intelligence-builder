@@ -3610,6 +3610,7 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             check=True,
             capture_output=True,
             text=True,
+            timeout=120,
         )
     except FileNotFoundError:
         print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
@@ -3648,17 +3649,18 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
             wrapper_path.unlink()
     else:
         try:
-            subprocess.run(
-                [
-                    "schtasks",
-                    "/Delete",
-                    "/TN",
-                    task_name,
-                    "/F",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
+        subprocess.run(
+            [
+                "schtasks",
+                "/Delete",
+                "/TN",
+                task_name,
+                "/F",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
             )
         except FileNotFoundError:
             print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
