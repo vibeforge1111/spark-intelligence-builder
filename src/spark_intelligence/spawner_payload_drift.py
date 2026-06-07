@@ -262,7 +262,13 @@ def _match_project_reference(reference: str, project_records: list[Any]) -> dict
             try:
                 if reference_path == Path(record_path).expanduser().resolve():
                     return record
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
+                # OSError: stat() failed on the candidate path (permission denied,
+                # ELOOP, ENAMETOOLONG). RuntimeError: Path.resolve() detected an
+                # infinite symlink loop. ValueError: ~ expansion failed for a path
+                # like "~unknownuser/...". Any other exception type is a bug and
+                # should propagate so it can be diagnosed instead of silently
+                # skipping a candidate project record.
                 continue
     return None
 
