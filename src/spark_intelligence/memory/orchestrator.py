@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from contextlib import contextmanager
@@ -1305,7 +1306,7 @@ class _DomainChipMemoryClientAdapter:
                 "dashboard_movement_events": merged_movement_events,
                 "dashboard_movement_counter": int(getattr(self._sdk, "_dashboard_movement_counter", 0) or 0),
             }
-            temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{os.getpid()}.tmp")
+            temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{secrets.token_hex(8)}.tmp")
             temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             temp_path.replace(self._persistence_path)
 
