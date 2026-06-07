@@ -163,15 +163,13 @@ class ConfigManager:
             drive = wsl_match.group(1).upper()
             remainder = wsl_match.group(2).replace("/", "\\")
             translated = Path(f"{drive}:\\{remainder}")
-            if translated.exists():
-                return translated
+            return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
         if windows_match and os.name != "nt":
             drive = windows_match.group(1).lower()
             remainder = windows_match.group(2).replace("\\", "/")
             translated = Path("/mnt") / drive / remainder
-            if translated.exists():
-                return translated
+            return translated
         return path
 
     def save(
@@ -334,6 +332,9 @@ class ConfigManager:
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
             mapping[key] = value
         return mapping
 
@@ -499,7 +500,7 @@ class ConfigManager:
                 error_message=error_message,
                 summary=summary,
             )
-        except Exception:
+        except Exception as _e:
             return
 
     @staticmethod
