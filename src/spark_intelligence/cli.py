@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -133,6 +133,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
     write_memory_movement_status_export,
+    write_structured_evidence_to_memory,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
@@ -2597,6 +2598,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not write a memory-read event for this inspection",
     )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_write_telegram_note_parser = memory_subparsers.add_parser(
+        "write-telegram-note",
+        help="Write one explicit Telegram memory note through the governed memory kernel",
+    )
+    memory_write_telegram_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_write_telegram_note_parser.add_argument("--sdk-module", help="Override the SDK module for this write")
+    memory_write_telegram_note_parser.add_argument("--human-id", required=True, help="Builder human id to write under")
+    memory_write_telegram_note_parser.add_argument("--text", required=True, help="Exact Telegram note text to preserve")
+    memory_write_telegram_note_parser.add_argument("--domain-pack", required=True, help="Memory domain pack label")
+    memory_write_telegram_note_parser.add_argument("--evidence-kind", required=True, help="Evidence kind label")
+    memory_write_telegram_note_parser.add_argument("--session-id", help="Source session id")
+    memory_write_telegram_note_parser.add_argument("--turn-id", help="Source turn id")
+    memory_write_telegram_note_parser.add_argument(
+        "--actor-id",
+        default="telegram_memory_direct_adapter",
+        help="Actor id to record for the write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--governor-decision-file",
+        required=True,
+        help="JSON file containing the Harness Core Governor decision authorizing this memory write",
+    )
+    memory_write_telegram_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -7486,6 +7510,92 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_governor_decision_file(path_value: str) -> dict:
+    path = Path(path_value)
+    parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(parsed, dict):
+        raise ValueError("--governor-decision-file must decode to a JSON object")
+    return parsed
+
+
+def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    if args.sdk_module:
+        config_manager.set_path("spark.memory.sdk_module", args.sdk_module)
+    try:
+        governor_decision = _load_governor_decision_file(args.governor_decision_file)
+        result = write_structured_evidence_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=args.human_id,
+            evidence_text=args.text,
+            domain_pack=args.domain_pack,
+            evidence_kind=args.evidence_kind,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            channel_kind="telegram",
+            actor_id=args.actor_id,
+            governor_decision=governor_decision,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "schema_version": "spark.telegram_memory_write.v1",
+            "status": "failed",
+            "accepted_count": 0,
+            "rejected_count": 1,
+            "skipped_count": 0,
+            "abstained": False,
+            "reason": str(exc),
+            "human_id": args.human_id,
+            "domain_pack": args.domain_pack,
+            "evidence_kind": args.evidence_kind,
+            "session_id": args.session_id,
+            "turn_id": args.turn_id,
+        }
+        print(json.dumps(payload, indent=2) if args.json else f"Telegram memory write blocked: {exc}")
+        return 1
+
+    result_payload = asdict(result)
+    governor_trace = governor_decision.get("traceId") or governor_decision.get("trace_id")
+    governor_outcome = governor_decision.get("outcome") or governor_decision.get("decision")
+    payload = {
+        "schema_version": "spark.telegram_memory_write.v1",
+        "status": result.status,
+        "accepted_count": result.accepted_count,
+        "rejected_count": result.rejected_count,
+        "skipped_count": result.skipped_count,
+        "abstained": result.abstained,
+        "reason": result.reason,
+        "operation": result.operation,
+        "method": result.method,
+        "memory_role": result.memory_role,
+        "human_id": args.human_id,
+        "domain_pack": args.domain_pack,
+        "evidence_kind": args.evidence_kind,
+        "session_id": args.session_id,
+        "turn_id": args.turn_id,
+        "authority": {
+            "source": "governor_decision_file",
+            "trace_id": governor_trace,
+            "outcome": governor_outcome,
+        },
+        "retrieval_trace": result_payload.get("retrieval_trace"),
+        "provenance": result_payload.get("provenance") or [],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "Telegram memory write "
+            f"{result.status}: accepted={result.accepted_count} "
+            f"rejected={result.rejected_count} skipped={result.skipped_count}"
+        )
+    return 0 if result.accepted_count > 0 and not result.abstained else 1
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9690,6 +9800,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "inspect-capsule":
         return handle_memory_inspect_capsule(args)
+    if args.command == "memory" and args.memory_command == "write-telegram-note":
+        return handle_memory_write_telegram_note(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":

@@ -19,6 +19,7 @@ from spark_intelligence.identity.service import (
     read_canonical_agent_state,
     rename_agent_identity,
 )
+from spark_intelligence.memory import MemoryWriteResult
 from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -668,6 +669,64 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["promotion_gates"]["status"], "pass")
         self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
+
+    def test_memory_write_telegram_note_passes_governor_to_structured_evidence(self) -> None:
+        governor_path = self.home / "governor-decision.json"
+        governor_path.write_text(
+            json.dumps({"traceId": "trace:telegram-memory:test", "decision": "allowed"}),
+            encoding="utf-8",
+        )
+        fake_result = MemoryWriteResult(
+            status="succeeded",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace={"authority_binding_refs": ["trace:telegram-memory:test"]},
+            provenance=[{"source": "fake_memory_sdk"}],
+        )
+
+        with patch("spark_intelligence.cli.write_structured_evidence_to_memory", return_value=fake_result) as writer:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "write-telegram-note",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:telegram:123",
+                "--text",
+                "harness-cua-kb-test: save this exact governed note",
+                "--domain-pack",
+                "telegram_runtime",
+                "--evidence-kind",
+                "telegram_memory_note",
+                "--session-id",
+                "telegram:123",
+                "--turn-id",
+                "telegram-update:1",
+                "--actor-id",
+                "telegram_memory_direct_adapter",
+                "--governor-decision-file",
+                str(governor_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["schema_version"], "spark.telegram_memory_write.v1")
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["accepted_count"], 1)
+        self.assertEqual(payload["authority"]["trace_id"], "trace:telegram-memory:test")
+        writer.assert_called_once()
+        kwargs = writer.call_args.kwargs
+        self.assertEqual(kwargs["human_id"], "human:telegram:123")
+        self.assertEqual(kwargs["evidence_text"], "harness-cua-kb-test: save this exact governed note")
+        self.assertEqual(kwargs["domain_pack"], "telegram_runtime")
+        self.assertEqual(kwargs["evidence_kind"], "telegram_memory_note")
+        self.assertEqual(kwargs["governor_decision"]["traceId"], "trace:telegram-memory:test")
 
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
