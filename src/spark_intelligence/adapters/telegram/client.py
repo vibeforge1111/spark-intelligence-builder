@@ -203,7 +203,10 @@ class TelegramBotApiClient:
             raise RuntimeError(f"Telegram API request failed: {message}") from exc
 
     def _decode_response(self, method: str, body: str) -> dict[str, Any]:
-        data = json.loads(body)
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Telegram API {method} returned invalid JSON: {exc}") from exc
         if not data.get("ok"):
             description = redact_text(str(data.get("description", "unknown Telegram API error")))
             raise RuntimeError(f"Telegram API {method} failed: {description}")
