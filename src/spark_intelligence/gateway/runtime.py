@@ -440,7 +440,12 @@ def gateway_simulate_telegram_update(
     as_json: bool = False,
     simulation: bool = True,
 ) -> str:
-    payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
+   try:
+        payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
+    except (OSError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Cannot read update file {update_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in update file {update_path}: {exc}") from exc
     result = simulate_telegram_update(
         config_manager=config_manager,
         state_db=state_db,
@@ -533,7 +538,12 @@ def gateway_simulate_discord_message(
     *,
     as_json: bool = False,
 ) -> str:
-    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+ try:
+        payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    except (OSError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Cannot read payload file {payload_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in payload file {payload_path}: {exc}") from exc
     result = simulate_discord_message(
         config_manager=config_manager,
         state_db=state_db,
@@ -549,7 +559,12 @@ def gateway_simulate_whatsapp_message(
     *,
     as_json: bool = False,
 ) -> str:
-    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+   try:
+        payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    except (OSError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Cannot read payload file {payload_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in payload file {payload_path}: {exc}") from exc
     result = simulate_whatsapp_message(
         config_manager=config_manager,
         state_db=state_db,
