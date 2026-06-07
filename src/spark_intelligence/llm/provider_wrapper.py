@@ -21,8 +21,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    system_prompt = Path(args[0]).read_text(encoding="utf-8")
-    user_prompt = Path(args[1]).read_text(encoding="utf-8")
+   try:
+        system_prompt = Path(args[0]).read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError) as exc:
+        print(f"provider_wrapper: cannot read system prompt at {args[0]}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        user_prompt = Path(args[1]).read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError) as exc:
+        print(f"provider_wrapper: cannot read user prompt at {args[1]}: {exc}", file=sys.stderr)
+        return 2
     response_path = Path(args[2])
 
     provider = DirectProviderRequest(
