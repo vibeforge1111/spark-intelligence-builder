@@ -118,6 +118,7 @@ from spark_intelligence.memory import (
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
+    write_memory_movement_status_export,
     LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
@@ -7510,8 +7511,6 @@ def _json_object_from_text(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"status": "unknown"}
     return payload if isinstance(payload, dict) else {"result": payload}
-
-
 def _telegram_kb_has_errors(payload: dict[str, Any]) -> bool:
     if payload.get("errors"):
         return True
