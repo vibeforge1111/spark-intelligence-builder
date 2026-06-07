@@ -1,0 +1,9 @@
+fix: set default timeout for run_governed_command
+
+run_governed_command() had timeout_seconds defaulting to None, meaning
+subprocesses could hang indefinitely. Callers that don't explicitly pass
+a timeout (e.g., execute_chip_hook_record in hooks.py) would block
+forever if the child process hangs.
+
+Set a reasonable default of 120 seconds. Callers can still override with
+a longer timeout if needed.
