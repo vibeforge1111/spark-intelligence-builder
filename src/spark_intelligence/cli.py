@@ -126,6 +126,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_acceptance,
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
+    write_structured_evidence_to_memory,
     write_memory_movement_status_export,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
@@ -2754,6 +2755,20 @@ def build_parser() -> argparse.ArgumentParser:
     memory_direct_smoke_parser.add_argument("--value", default="ok", help="Structured memory value to write and read")
     memory_direct_smoke_parser.add_argument("--no-cleanup", action="store_true", help="Leave the smoke key in memory instead of deleting it after the read")
     memory_direct_smoke_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_write_telegram_note_parser = memory_subparsers.add_parser(
+        "write-telegram-note",
+        help="Write an explicit governed Telegram memory note through Builder/domain-chip memory",
+    )
+    memory_write_telegram_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_write_telegram_note_parser.add_argument("--human-id", required=True, help="Builder human id for the Telegram user")
+    memory_write_telegram_note_parser.add_argument("--text", required=True, help="Exact memory note text to write")
+    memory_write_telegram_note_parser.add_argument("--domain-pack", default="telegram_runtime", help="Structured evidence domain pack label")
+    memory_write_telegram_note_parser.add_argument("--evidence-kind", default="telegram_memory_note", help="Structured evidence kind")
+    memory_write_telegram_note_parser.add_argument("--session-id", help="Session id to bind to the write event")
+    memory_write_telegram_note_parser.add_argument("--turn-id", help="Turn id to bind to the write event")
+    memory_write_telegram_note_parser.add_argument("--actor-id", default="telegram_memory_direct_adapter", help="Actor id for the write event")
+    memory_write_telegram_note_parser.add_argument("--governor-decision-file", help="Optional JSON file containing the Governor decision")
+    memory_write_telegram_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -7688,6 +7703,22 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    write_governor = _authorize_cli_memory_smoke_write(
+        state_db=state_db,
+        request_id=f"memory-direct-smoke:{uuid4().hex}:write",
+        subject=args.subject,
+        predicate=args.predicate,
+        value=args.value,
+        operation="write",
+    )
+    cleanup_governor = _authorize_cli_memory_smoke_write(
+        state_db=state_db,
+        request_id=f"memory-direct-smoke:{uuid4().hex}:cleanup",
+        subject=args.subject,
+        predicate=args.predicate,
+        value=args.value,
+        operation="cleanup",
+    ) if not bool(args.no_cleanup) else None
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -7696,6 +7727,8 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         predicate=args.predicate,
         value=args.value,
         cleanup=not bool(args.no_cleanup),
+        governor_decision=write_governor,
+        cleanup_governor_decision=cleanup_governor,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
@@ -7705,6 +7738,94 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     if result.cleanup_result is not None and result.cleanup_result.accepted_count <= 0:
         return 1
     return 0
+
+
+def _authorize_cli_memory_smoke_write(
+    *,
+    state_db: StateDB,
+    request_id: str,
+    subject: str,
+    predicate: str,
+    value: str,
+    operation: str,
+) -> dict[str, object] | None:
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref="memory_cli",
+        request_id=request_id,
+        source_kind="memory_direct_smoke",
+        intent_summary=f"CLI memory direct smoke {operation} requires governed memory.write authority.",
+        raw_turn_summary=f"Memory smoke {operation}: subject={subject} predicate={predicate} value={value}",
+        actions=[
+            {
+                "tool_name": "memory.write",
+                "owner_system": "domain-chip-memory",
+                "mutation_class": "writes_memory",
+                "args_path": f"builder://memory/direct-smoke/{operation}/{request_id}",
+            }
+        ],
+    )
+    if not isinstance(envelope, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        actor_id="memory_cli",
+        component="memory_direct_smoke",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
+def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    governor_decision = None
+    if args.governor_decision_file:
+        governor_decision = json.loads(Path(args.governor_decision_file).read_text(encoding="utf-8"))
+    result = write_structured_evidence_to_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=args.human_id,
+        evidence_text=args.text,
+        domain_pack=args.domain_pack,
+        evidence_kind=args.evidence_kind,
+        session_id=args.session_id,
+        turn_id=args.turn_id,
+        channel_kind="telegram",
+        actor_id=args.actor_id,
+        governor_decision=governor_decision,
+    )
+    payload = {
+        "status": result.status,
+        "operation": result.operation,
+        "method": result.method,
+        "memory_role": result.memory_role,
+        "accepted_count": result.accepted_count,
+        "rejected_count": result.rejected_count,
+        "skipped_count": result.skipped_count,
+        "abstained": result.abstained,
+        "reason": result.reason,
+        "human_id": args.human_id,
+        "domain_pack": args.domain_pack,
+        "evidence_kind": args.evidence_kind,
+        "session_id": args.session_id,
+        "turn_id": args.turn_id,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            f"memory write {payload['status']}: accepted={payload['accepted_count']} "
+            f"rejected={payload['rejected_count']} skipped={payload['skipped_count']}"
+        )
+    return 0 if result.accepted_count > 0 else 1
 
 
 def _memory_report_failed(report: dict[str, object] | None) -> bool:
@@ -9515,6 +9636,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_soak_architectures(args)
     if args.command == "memory" and args.memory_command == "direct-smoke":
         return handle_memory_direct_smoke(args)
+    if args.command == "memory" and args.memory_command == "write-telegram-note":
+        return handle_memory_write_telegram_note(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":

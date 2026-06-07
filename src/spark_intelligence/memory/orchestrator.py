@@ -1549,15 +1549,62 @@ def _prepend_sys_path(path: Path):
                 pass
 
 
+def _domain_chip_memory_src_candidates() -> tuple[Path, ...]:
+    env_repo = Path(os.environ["SPARK_DOMAIN_CHIP_MEMORY_REPO"]).expanduser() if os.environ.get("SPARK_DOMAIN_CHIP_MEMORY_REPO") else None
+    repo_workspace = Path(__file__).resolve().parents[4] / "domain-chip-memory"
+    candidates = [
+        env_repo / "src" if env_repo else None,
+        repo_workspace / "src",
+        Path.home() / ".spark" / "modules" / "domain-chip-memory" / "source" / "src",
+        DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src",
+    ]
+    seen: set[str] = set()
+    resolved: list[Path] = []
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        key = str(candidate).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(candidate)
+    return tuple(resolved)
+
+
 def _local_domain_chip_memory_src() -> Path:
+    for candidate in _domain_chip_memory_src_candidates():
+        if candidate.exists():
+            return candidate
     return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
 
 
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    root_name = module_name.split(".", 1)[0]
+    if root_name == "domain_chip_memory":
+        for local_src in _domain_chip_memory_src_candidates():
+            if not local_src.exists():
+                continue
+            existing = sys.modules.get(module_name)
+            if existing is not None:
+                existing_file = Path(str(getattr(existing, "__file__", ""))).resolve()
+                try:
+                    if existing_file.is_relative_to(local_src.resolve()):
+                        return existing
+                except ValueError:
+                    pass
+                for loaded_name in [name for name in sys.modules if name == root_name or name.startswith(f"{root_name}.")]:
+                    sys.modules.pop(loaded_name, None)
+            with _prepend_sys_path(local_src):
+                module = importlib.import_module(module_name)
+            module_file = Path(str(getattr(module, "__file__", ""))).resolve()
+            try:
+                if module_file.is_relative_to(local_src.resolve()):
+                    return module
+            except ValueError:
+                pass
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
-        root_name = module_name.split(".", 1)[0]
         local_src = _local_domain_chip_memory_src()
         if exc.name != root_name or root_name != "domain_chip_memory" or not local_src.exists():
             raise
@@ -6061,12 +6108,18 @@ def _memory_shadow_mode(config_manager: ConfigManager) -> bool:
     return bool(config_manager.get_path("spark.memory.shadow_mode", default=True))
 
 
-def _disabled_write_result(*, operation: str, reason: str = "memory_disabled") -> MemoryWriteResult:
+def _disabled_write_result(
+    *,
+    operation: str,
+    method: str = "write_observation",
+    default_role: str = "current_state",
+    reason: str = "memory_disabled",
+) -> MemoryWriteResult:
     return MemoryWriteResult(
         status="disabled",
         operation=operation,
-        method="write_observation",
-        memory_role="current_state",
+        method=method,
+        memory_role=default_role,
         accepted_count=0,
         rejected_count=0,
         skipped_count=0,

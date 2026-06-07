@@ -10,6 +10,10 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
@@ -379,6 +383,69 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.smoke")
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
         self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
+
+    def test_memory_write_telegram_note_uses_domain_chip_bridge(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        request_id = "req:telegram-memory-cli-smoke"
+        session_id = "session:telegram:test"
+        turn_id = "turn:telegram:test"
+        human_id = "human:telegram:test"
+        note_text = "harness test note: governed Telegram memory writes use Builder/domain-chip memory"
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=note_text,
+            source_kind="cli_smoke_test",
+        )
+        self.assertIsNotNone(payload)
+        payload["turn_id"] = turn_id
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="cli_smoke_test",
+            component="cli_smoke_test",
+        )
+        self.assertTrue(authority.allowed)
+        self.assertIsInstance(authority.governor_decision, dict)
+        governor_path = self.home / "telegram-memory-governor.json"
+        governor_path.write_text(json.dumps(authority.governor_decision), encoding="utf-8")
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "write-telegram-note",
+            "--home",
+            str(self.home),
+            "--human-id",
+            human_id,
+            "--text",
+            note_text,
+            "--domain-pack",
+            "telegram_runtime",
+            "--evidence-kind",
+            "telegram_memory_note",
+            "--session-id",
+            session_id,
+            "--turn-id",
+            turn_id,
+            "--governor-decision-file",
+            str(governor_path),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["memory_role"], "structured_evidence")
+        self.assertGreaterEqual(payload["accepted_count"], 1)
+        self.assertEqual(payload["human_id"], "human:telegram:test")
+        self.assertEqual(payload["domain_pack"], "telegram_runtime")
+        self.assertEqual(payload["evidence_kind"], "telegram_memory_note")
 
     def test_memory_export_movement_status_writes_compiler_artifact(self) -> None:
         smoke_exit, _, smoke_stderr = self.run_cli(
