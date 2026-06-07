@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -650,8 +651,14 @@ def exchange_oauth_authorization_code(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"OAuth token exchange for '{provider}' failed with HTTP {exc.code}: {error_body}"
+        ) from exc
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
     return payload
@@ -678,8 +685,14 @@ def exchange_oauth_refresh_token(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"OAuth refresh for '{provider}' failed with HTTP {exc.code}: {error_body}"
+        ) from exc
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
