@@ -9146,6 +9146,7 @@ def _telegram_voice_bot_update_probe(config_manager: ConfigManager) -> dict[str,
     try:
         payload = client._call("getWebhookInfo", {})
     except Exception as exc:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return {"ready": False, "status": f"Bot API check failed: {_safe_voice_error_message(exc)}"}
     info = payload.get("result") if isinstance(payload, dict) else {}
     if not isinstance(info, dict):
