@@ -3337,7 +3337,9 @@ def _configure_bootstrap_fallback_provider(
         config_manager.set_path("providers.fallback_provider", None)
         return None, None
     if provider_id == primary_provider_id:
-        raise ValueError("Fallback provider must differ from the primary provider.")
+        raise ValueError(
+            f"Fallback provider must differ from the primary provider; both are set to {provider_id!r}."
+        )
     if api_key_env:
         _sync_secret_from_env_if_present(config_manager, api_key_env)
     if provider_id == "custom" and not base_url:
