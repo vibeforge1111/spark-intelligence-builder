@@ -971,10 +971,8 @@ class AttachmentHookTests(SparkTestCase):
 
         self.assertIn("Source: https://www.coingecko.com/en/coins/bitcoin", result.reply_text)
         self.assertRegex(str(captured["system_prompt"]), r"Do not (?:say|claim) you cannot browse")
-        self.assertIn("[Browser search evidence]", str(captured["user_prompt"]))
-        self.assertIn("search_query=current BTC price in USD", str(captured["user_prompt"]))
-        self.assertIn("source_url=https://www.coingecko.com/en/coins/bitcoin", str(captured["user_prompt"]))
-        self.assertIn("Bitcoin price today is $84,321.18 USD", str(captured["user_prompt"]))
+        self.assertNotIn("[Browser search evidence]", str(captured["user_prompt"]))
+        self.assertIn("spark-browser mode=available router_invokable=no", str(captured["user_prompt"]))
 
     def test_researcher_bridge_returns_explicit_browser_permission_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
