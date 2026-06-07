@@ -4194,7 +4194,9 @@ def export_observer_packet_bundle(
     if write_path is not None:
         destination = Path(write_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        destination_tmp = destination.with_suffix(destination.suffix + ".tmp")
+        destination_tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        destination_tmp.replace(destination)
         payload["write_path"] = str(destination)
     return payload
 
