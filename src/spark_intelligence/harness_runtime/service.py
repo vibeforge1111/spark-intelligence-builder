@@ -464,8 +464,37 @@ def _execute_browser_grounded_harness(
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
+    from urllib.parse import urlparse
 
     url = _extract_first_url(envelope.task)
+    if url:
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError(f"Browser URL '{url}' has an invalid or unsafe scheme.")
+        hostname = (parsed.hostname or "").lower().strip()
+        if not hostname:
+            raise ValueError(f"Browser URL '{url}' has no valid hostname.")
+        
+        allowed_domains_val = config_manager.get_path("browser.allowed_domains")
+        allowed_domains_config = []
+        if isinstance(allowed_domains_val, list):
+            allowed_domains_config = allowed_domains_val
+        elif isinstance(allowed_domains_val, str) and allowed_domains_val.strip():
+            allowed_domains_config = [d.strip() for d in allowed_domains_val.split(",") if d.strip()]
+            
+        if allowed_domains_config:
+            is_allowed = False
+            for domain in allowed_domains_config:
+                d = domain.lower().strip()
+                if hostname == d or hostname.endswith(f".{d}"):
+                    is_allowed = True
+                    break
+            if not is_allowed:
+                raise ValueError(f"Domain '{hostname}' is not in the browser allowed domains list.")
+        else:
+            local_patterns = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
+            if hostname in local_patterns or hostname.endswith(".local") or hostname.endswith(".internal"):
+                raise ValueError(f"Browser URL '{url}' targets a local or private address, which is forbidden.")
     if not url:
         return (
             {
