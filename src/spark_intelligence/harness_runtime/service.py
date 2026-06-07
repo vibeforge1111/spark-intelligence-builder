@@ -621,6 +621,20 @@ def _execute_voice_io_harness(
             run_id=run_id,
         )
     except Exception as exc:
+        record_event(
+            state_db,
+            event_type="harness_execution_blocked",
+            component="harness_runtime",
+            summary="Voice I/O harness is blocked because no healthy voice status hook is available.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="voice_status_hook_failed",
+            facts={"error": str(exc)},
+        )
         return (
             {
                 "voice_status": {
@@ -676,6 +690,20 @@ def _execute_voice_io_harness(
                 run_id=run_id,
             )
         except Exception as exc:
+            record_event(
+                state_db,
+                event_type="harness_execution_blocked",
+                component="harness_runtime",
+                summary="Voice I/O harness could not synthesize speech with the current provider/hook state.",
+                run_id=run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code="voice_speak_hook_failed",
+                facts={"error": str(exc)},
+            )
             artifacts["resume_token"] = _build_harness_resume_token(
                 config_manager=config_manager,
                 envelope=envelope,
