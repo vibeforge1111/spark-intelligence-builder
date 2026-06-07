@@ -196,59 +196,12 @@ def build_harness_task_envelope(
     )
 
 
-def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
-    if envelope.harness_id != "voice.io":
-        return None
-
-    from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
-
-    task_mode, _ = _classify_voice_task(envelope.task)
-    actions: list[dict[str, Any]] = [
-        {
-            "tool_name": "voice.status",
-            "owner_system": "spark-voice-comms",
-            "mutation_class": "read_only",
-            "summary": "Local operator requested voice status before any voice I/O action.",
-        }
-    ]
-    if task_mode == "speak":
-        actions.append(
-            {
-                "tool_name": "voice.speak",
-                "owner_system": "spark-voice-comms",
-                "mutation_class": "external_network",
-                "external_network": True,
-                "summary": "Local operator explicitly requested speech synthesis through voice I/O.",
-            }
-        )
-    elif task_mode == "transcribe":
-        actions.append(
-            {
-                "tool_name": "voice.transcribe",
-                "owner_system": "spark-voice-comms",
-                "mutation_class": "external_network",
-                "external_network": True,
-                "summary": "Local operator explicitly requested transcription through voice I/O.",
-            }
-        )
-
-    return build_vnext_action_intent_envelope(
-        surface=envelope.channel_kind or "cli",
-        actor_id_ref=envelope.human_id or "human:local-operator",
-        request_id=envelope.envelope_id,
-        source_kind="local_operator_harness_execute",
-        intent_summary="Local operator explicitly requested governed voice I/O through the Builder harness runtime.",
-        raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
-        actions=actions,
-        confidence=0.95,
-    )
-
-
-def with_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> HarnessTaskEnvelope:
-    payload = build_harness_local_operator_turn_intent(envelope)
-    if payload is None:
-        return envelope
-    return envelope.with_turn_intent_payload(payload)
+def _terminal_event_type_for_status(status: str) -> str | None:
+    if status == "blocked":
+        return "harness_execution_blocked"
+    if status == "needs_input":
+        return "harness_execution_needs_input"
+    return None
 
 
 def execute_harness_task(
@@ -372,6 +325,26 @@ def execute_harness_task(
                 "artifact_keys": sorted(artifacts.keys()),
             },
         )
+        terminal_event_type = _terminal_event_type_for_status(status)
+        if terminal_event_type:
+            record_event(
+                state_db,
+                event_type=terminal_event_type,
+                component="harness_runtime",
+                summary=summary,
+                run_id=run.run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code=terminal_event_type,
+                facts={
+                    "harness_id": envelope.harness_id,
+                    "execution_status": status,
+                    "artifact_keys": sorted(artifacts.keys()),
+                },
+            )
         return HarnessExecutionResult(
             envelope=envelope,
             run_id=run.run_id,
