@@ -2553,9 +2553,7 @@ def _token_is_expired(token: str | None, *, skew_seconds: int = 60) -> bool:
     if not isinstance(exp, (int, float)):
         return False
     expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
-    return expires_at <= datetime.now(timezone.utc).replace(microsecond=0) if skew_seconds <= 0 else (
-        expires_at.timestamp() - skew_seconds <= datetime.now(timezone.utc).timestamp()
-    )
+    return expires_at.timestamp() - skew_seconds <= datetime.now(timezone.utc).timestamp()
 
 
 def _http_error_requires_auth(body: dict[str, Any] | None) -> bool:
