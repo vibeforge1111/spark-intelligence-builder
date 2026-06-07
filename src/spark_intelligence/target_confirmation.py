@@ -8,6 +8,10 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9]*")
+_TOKEN_STOPWORDS = frozenset({"a", "an", "and", "for", "in", "it", "of", "on", "the", "to", "with"})
+
+
 _WRITE_TARGET_SIGNALS = {
     "add",
     "build",
@@ -275,8 +279,8 @@ def _tokens(text: str) -> set[str]:
     normalized = str(text or "").casefold().replace("-", " ").replace("_", " ")
     return {
         token
-        for token in re.findall(r"[a-z0-9][a-z0-9]*", normalized)
-        if token not in {"a", "an", "and", "for", "in", "it", "of", "on", "the", "to", "with"}
+        for token in _TOKEN_RE.findall(normalized)
+        if token not in _TOKEN_STOPWORDS
     }
 
 
