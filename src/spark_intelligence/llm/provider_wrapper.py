@@ -10,6 +10,7 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
+from spark_intelligence.observability.policy import looks_secret_like
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         model=_required_env("SPARK_INTELLIGENCE_PROVIDER_MODEL"),
         secret_value=_required_env("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
     )
+    if looks_secret_like(system_prompt) or looks_secret_like(user_prompt):
+        raise RuntimeError(
+            "Provider wrapper refused: model-visible prompt contained secret-like material. "
+            "Configure SPARK_INTELLIGENCE_STATE_DB_PATH to record a quarantine entry, or remove the material before retrying."
+        )
     payload = execute_direct_provider_prompt(
         provider=provider,
         system_prompt=system_prompt,
