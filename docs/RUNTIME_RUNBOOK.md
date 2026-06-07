@@ -153,9 +153,21 @@ spark-intelligence harness tool-ledgers --surface builder --limit 5 --json
 
 Reference evidence: [SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md](./SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md).
 
+Boundary regression checks:
+
+```powershell
+python -m pytest `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_manifest_without_rollback_plan `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_protected_manifest_without_approval `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_promotes_protected_manifest_with_approval `
+  -q
+```
+
 Do not claim autonomous self-evolution until a real manifest has exact artifact
 refs, protected-component approvals where needed, dry-run apply proof, test
-proof, and rollback proof.
+proof, and rollback execution proof. The current boundary proof rejects missing
+rollback plans and missing protected approvals, but it does not apply or revert
+patches.
 
 ## Provider Rotation
 

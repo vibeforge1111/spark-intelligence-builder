@@ -76,20 +76,36 @@ Observed result: `1 passed`.
 This drill proves:
 
 - a schema-valid `change-manifest-v1` can be consumed by Builder;
+- manifests without `rollback_plan` are rejected before runner evaluation;
 - canonical ledger evidence can be harvested for the Harness self-evolution
   runner;
 - the Builder runner itself now writes a canonical `surface=builder`
   `tool_call_ledger` row;
 - allowlisted tests can run through the guarded adapter;
 - private promotion requires explicit `--allow-private-promotion`;
+- protected components require `human_approval_ref` evidence before they can
+  be represented as valid change manifests;
 - a no-op manifest can reach `promote_private` without production mutation.
+
+Additional boundary regression proof is pinned by commit `7bf79b5`
+(`Prove self-evolution boundary gates`):
+
+```powershell
+python -m pytest `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_manifest_without_rollback_plan `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_protected_manifest_without_approval `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_promotes_protected_manifest_with_approval `
+  -q
+```
+
+Observed result: `3 passed`.
 
 This drill does not prove:
 
 - autonomous code mutation;
-- protected-component approval handling;
 - a sandboxed patch apply step;
 - a rollback executor;
+- rollback execution proof beyond requiring a rollback plan in the manifest;
 - public or release-candidate promotion;
 - live-runtime self-improvement.
 
@@ -102,9 +118,9 @@ event. No source revert is required.
 ## Remaining Work
 
 - Define the mutation executor contract before writing an executor.
-- Require exact patch/artifact refs, tests, rollback proof, and protected
-  component approvals for any real mutation.
-- Add a dry-run apply proof and a rollback proof before claiming self-evolution
-  can safely modify runtime code.
+- Require exact patch/artifact refs, tests, rollback execution proof, and
+  protected component approvals for any real mutation.
+- Add a dry-run apply proof and a rollback execution proof before claiming
+  self-evolution can safely modify runtime code.
 - Keep public/release-candidate promotion blocked until governance, benchmark,
   and live-surface gates are proven.

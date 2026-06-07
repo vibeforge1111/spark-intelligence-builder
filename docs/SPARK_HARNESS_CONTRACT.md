@@ -47,9 +47,13 @@ spark-intelligence harness change-manifest-runner --manifest <change-manifest-v1
 
 The 2026-06-08 supervised no-op drill is recorded in
 `docs/SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`. It proves private,
-explicitly flagged no-op promotion through the guarded runner; it does not prove
-autonomous mutation, protected-component approval handling, or rollback.
-The runner itself is persisted as a canonical `surface=builder` tool ledger.
+explicitly flagged no-op promotion through the guarded runner. Follow-up
+regression tests prove that `rollback_plan` is required and that protected
+components such as `authority_policy` require `human_approval_ref` evidence
+before a protected manifest can promote. It still does not prove autonomous
+mutation, dry-run patch application, rollback execution, or release-candidate
+promotion. The runner itself is persisted as a canonical `surface=builder` tool
+ledger.
 
 ## Ledger Row Contract
 

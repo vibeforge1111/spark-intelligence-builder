@@ -48,8 +48,9 @@ ledger spine, but Spark is not done.
   declares `spark-harness-core`.
 - Partially fixed: self-evolution now has Builder evidence plumbing, a guarded
   change-manifest test runner, and a supervised no-op private-promotion drill,
-  but no automatic code mutation, rollback executor, or production promotion
-  loop.
+  plus regression proof for required rollback plans and protected-component
+  approval evidence. It still has no automatic code mutation, rollback
+  executor, or production promotion loop.
 - Partially fixed: observability has a canonical governed tool ledger and live
   rows for `builder`, `spark_cli`, and `telegram`. Spawner execution is still
   not represented as a first-class surface, and additional Builder high-agency
@@ -81,7 +82,7 @@ ledger spine, but Spark is not done.
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 189,956,105 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor` | Reportable; archive/quarantine policy pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live runtime line; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog | Closed for live Builder; archive/relabel pending |
-| Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, and Builder ledger `ledger:fd24aee5b4fb46e08bc36925`; no automatic mutation executor | Partial |
+| Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, and commit `7bf79b5` proving rollback-plan/protected-approval boundaries; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
 
@@ -121,6 +122,9 @@ ledger spine, but Spark is not done.
   `surface=builder` tool ledger before recording the final runner result.
 - Ran the supervised no-op change-manifest drill documented in
   `SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`.
+- Added self-evolution boundary regression tests for missing rollback plans,
+  missing protected-component approval evidence, and protected promotion with
+  explicit `human_approval_ref`.
 - Ran the controlled state retention/VACUUM pass documented in
   `SPARK_STATE_DB_RETENTION_RUN_2026-06-08.md`.
 
@@ -222,9 +226,11 @@ until that session completes and the final diff is tested.
 9. Keep self-evolution in supervised mode until mutation is real.
    - Current Builder runner can observe ledgers and evaluate manifests with
      guarded tests.
+   - Rollback-plan and protected-component approval boundaries are now covered
+     by focused regression tests.
    - It must not claim autonomous self-improvement until it has a sandboxed
-     apply step, rollback step, manifest provenance, and maintainer approval for
-     protected components.
+     apply step, rollback execution proof, exact mutation provenance, and
+     maintainer approval for protected components.
 
 10. Preserve the no-op mutation drill as the private-promotion baseline.
     - Completed on 2026-06-08 with latest event `evt-458006fab354`.
@@ -233,15 +239,15 @@ until that session completes and the final diff is tested.
     - Required test passed through the Builder change-manifest runner.
     - The result reached `promote_private` only with explicit
       `--allow-private-promotion`.
-    - Next proof must cover protected-component approval rejection, dry-run
-      apply, and rollback before any real mutation claim.
+    - Next proof must cover dry-run apply and rollback execution before any
+      real mutation claim.
 
 11. Define the mutation executor boundary before writing one.
     - Executor input: accepted manifest, exact patch/artifact refs, required
       tests, rollback path, protected-component approvals.
     - Executor output: applied/reverted status, test results, final ledger row,
-      and rollback proof.
-    - No live runtime mutation without a dry-run and rollback proof.
+      and rollback execution proof.
+    - No live runtime mutation without a dry-run and rollback execution proof.
 
 ### P1 - Source Of Truth
 
