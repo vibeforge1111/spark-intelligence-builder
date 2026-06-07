@@ -1238,6 +1238,7 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
     try:
         audio_bytes = base64.b64decode(encoded, validate=True)
     except Exception as exc:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         raise RuntimeError("Telegram runner provided invalid embedded audio bytes.") from exc
     if not audio_bytes:
         raise RuntimeError("Telegram runner provided empty embedded audio bytes.")
