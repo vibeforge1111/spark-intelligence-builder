@@ -1646,6 +1646,7 @@ def simulate_telegram_update(
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
+                    import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
                         "I answered in text because the voice audio step is not ready yet.\n\n"
