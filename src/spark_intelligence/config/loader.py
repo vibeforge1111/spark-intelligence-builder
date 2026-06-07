@@ -146,6 +146,8 @@ class ConfigManager:
         if not self.paths.config_yaml.exists():
             return self.default_config()
         data = yaml.safe_load(self.paths.config_yaml.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return self.default_config()
         return data
 
     @staticmethod
