@@ -116,7 +116,7 @@ def run_chip_hook(
     governor_decision: dict[str, Any] | None = None,
 ) -> ChipHookExecution:
     record = resolve_chip_record(config_manager, chip_key=chip_key)
-    return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
+    return execute_chip_hook_record(record, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
 
 
 def run_first_active_chip_hook(
@@ -128,7 +128,7 @@ def run_first_active_chip_hook(
 ) -> ChipHookExecution | None:
     for record in list_active_chip_records(config_manager):
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     return None
 
 
@@ -137,18 +137,18 @@ def run_first_chip_hook_supporting(
     *,
     hook: str,
     payload: dict[str, Any],
-    governor_decision: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
 ) -> ChipHookExecution | None:
     active_records = list_active_chip_records(config_manager)
     active_roots = {record.repo_root for record in active_records}
     for record in active_records:
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     for record in list_chip_records(config_manager):
         if record.repo_root in active_roots:
             continue
         if hook in record.commands:
-            return execute_chip_hook_record(record, hook=hook, payload=payload, governor_decision=governor_decision)
+            return execute_chip_hook_record(record, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     return None
 
 
@@ -157,7 +157,7 @@ def execute_chip_hook_record(
     *,
     hook: str,
     payload: dict[str, Any],
-    governor_decision: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
 ) -> ChipHookExecution:
     if record.kind != "chip":
         raise ValueError(f"Attachment '{record.key}' is not a chip.")
@@ -198,6 +198,7 @@ def execute_chip_hook_record(
             command=command,
             cwd=repo_root,
             env=env,
+            timeout_seconds=timeout_seconds,
         )
         output = _load_json_file(output_path)
     return ChipHookExecution(
