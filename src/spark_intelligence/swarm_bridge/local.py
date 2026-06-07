@@ -310,7 +310,7 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
         candidate = config_manager.normalize_runtime_path(configured)
         if candidate is not None:
             return candidate
-    candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
+    candidate = (Path.home() / ".spark" / "spark-swarm").resolve()
     if candidate.exists():
         return candidate
     raise RuntimeError("Spark Swarm runtime root is not configured.")
