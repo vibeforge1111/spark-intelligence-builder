@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    tmp_path.replace(path)
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import approve_pairing, consume_pairing_welcome, rename_agent_identity
@@ -1743,7 +1750,7 @@ def run_telegram_memory_regression(
                 "regression_cases_json": str(regression_cases_json_path),
             },
         }
-        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
         return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
     _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
@@ -1813,7 +1820,7 @@ def run_telegram_memory_regression(
                     "regression_cases_json": str(regression_cases_json_path),
                 },
             }
-            resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            _atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
             return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
         case_payloads.append(case_result)
         if not case_result.get("matched_expectations", True):
@@ -1872,7 +1879,8 @@ def run_telegram_memory_regression(
             if isinstance(architecture_live_comparison_payload, dict)
             else None
         )
-    regression_summary_markdown_path.write_text(
+    _atomic_write_text(
+        regression_summary_markdown_path,
         _build_regression_summary_markdown(
             selected_user_id=selected_user_id,
             selected_chat_id=selected_chat_id,
@@ -1882,9 +1890,9 @@ def run_telegram_memory_regression(
             architecture_benchmark_payload=architecture_benchmark_payload,
             architecture_live_comparison_payload=architecture_live_comparison_payload,
         ),
-        encoding="utf-8",
     )
-    regression_cases_json_path.write_text(
+    _atomic_write_text(
+        regression_cases_json_path,
         json.dumps(
             {
                 "selected_user_id": selected_user_id,
@@ -1899,7 +1907,6 @@ def run_telegram_memory_regression(
             },
             indent=2,
         ),
-        encoding="utf-8",
     )
     repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
     if architecture_summary_path:
@@ -2034,7 +2041,7 @@ def run_telegram_memory_regression(
             ),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
     return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
 
