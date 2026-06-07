@@ -5,8 +5,11 @@ import os
 from unittest.mock import patch
 
 from spark_intelligence.llm.direct_provider import (
+    ALLOWED_PROVIDER_HOSTS,
     DirectProviderGovernance,
     DirectProviderRequest,
+    _join_url,
+    _validate_provider_base_url,
     execute_direct_provider_prompt,
 )
 from spark_intelligence.llm.provider_wrapper import main as provider_wrapper_main
@@ -132,7 +135,7 @@ class DirectProviderExecutionTests(SparkTestCase):
             provider_kind="custom",
             auth_method="api_key_env",
             api_mode="chat_completions",
-            base_url="https://api.example.com/v1",
+            base_url="https://api.openai.com/v1",
             model="glm-5.1",
             secret_value="provider-secret",
         )
@@ -275,3 +278,41 @@ class DirectProviderExecutionTests(SparkTestCase):
         with self.state_db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM quarantine_records").fetchone()
         self.assertGreaterEqual(int(row["count"]), 1)
+
+    def test_join_url_rejects_hosts_not_in_allowlist(self) -> None:
+        """SSRF: internal and attacker-controlled hosts must be rejected."""
+        malicious_urls = [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://internal-service:8080/",
+            "https://evil.attacker.com/v1",
+            "http://metadata.google.internal/v1",
+            "http://10.0.0.1:8080/v1",
+        ]
+        for url in malicious_urls:
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(RuntimeError, "not allowed"):
+                    _validate_provider_base_url(url)
+
+    def test_join_url_accepts_allowed_hosts(self) -> None:
+        """Allowed production and local hosts must pass validation."""
+        allowed_urls = [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com",
+            "https://api.minimax.io/v1",
+        ]
+        for url in allowed_urls:
+            with self.subTest(url=url):
+                result = _validate_provider_base_url(url)
+                self.assertEqual(result, url)
+
+    def test_join_url_rejects_empty_or_missing_host(self) -> None:
+        """URLs with no host must be rejected."""
+        with self.assertRaisesRegex(RuntimeError, "not allowed"):
+            _validate_provider_base_url("")
+        with self.assertRaisesRegex(RuntimeError, "not allowed"):
+            _validate_provider_base_url("not-a-url")
+
+    def test_allowed_provider_hosts_is_frozen(self) -> None:
+        """ALLOWED_PROVIDER_HOSTS must be immutable to prevent runtime mutation."""
+        self.assertIsInstance(ALLOWED_PROVIDER_HOSTS, frozenset)
+        self.assertIn("api.openai.com", ALLOWED_PROVIDER_HOSTS)
