@@ -127,7 +127,7 @@ def build_llm_wiki_query(
                 "refreshed_files": list(refreshed_files),
                 "refreshed_file_count": len(refreshed_files),
                 "authority": "supporting_not_authoritative",
-                "warnings": [f"wiki_query_failed:{exc.__class__.__name__}"],
+                "warnings": [f"wiki_query_failed:{exc.__class__.__name__}:{exc}"],
             },
         )
 
