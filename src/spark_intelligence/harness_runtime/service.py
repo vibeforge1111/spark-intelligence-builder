@@ -125,6 +125,9 @@ def build_harness_task_envelope(
     agent_id: str | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
 ) -> HarnessTaskEnvelope:
+    normalized_task = str(task or "").strip()
+    if not normalized_task:
+        raise ValueError("Task cannot be empty or whitespace.")
     from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
     normalized_forced_harness_id = str(forced_harness_id or "").strip()
@@ -136,6 +139,11 @@ def build_harness_task_envelope(
             available = ", ".join(sorted(contracts))
             raise ValueError(
                 f"Unknown harness id '{normalized_forced_harness_id}'. Available harnesses: {available}"
+            )
+        if not contract.available or contract.degraded:
+            status_desc = "degraded" if contract.degraded else "unavailable"
+            raise ValueError(
+                f"Forced harness '{normalized_forced_harness_id}' is currently {status_desc}."
             )
         selection_payload = {
             "harness_id": contract.harness_id,
@@ -188,59 +196,12 @@ def build_harness_task_envelope(
     )
 
 
-def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
-    if envelope.harness_id != "voice.io":
-        return None
-
-    from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
-
-    task_mode, _ = _classify_voice_task(envelope.task)
-    actions: list[dict[str, Any]] = [
-        {
-            "tool_name": "voice.status",
-            "owner_system": "spark-voice-comms",
-            "mutation_class": "read_only",
-            "summary": "Local operator requested voice status before any voice I/O action.",
-        }
-    ]
-    if task_mode == "speak":
-        actions.append(
-            {
-                "tool_name": "voice.speak",
-                "owner_system": "spark-voice-comms",
-                "mutation_class": "external_network",
-                "external_network": True,
-                "summary": "Local operator explicitly requested speech synthesis through voice I/O.",
-            }
-        )
-    elif task_mode == "transcribe":
-        actions.append(
-            {
-                "tool_name": "voice.transcribe",
-                "owner_system": "spark-voice-comms",
-                "mutation_class": "external_network",
-                "external_network": True,
-                "summary": "Local operator explicitly requested transcription through voice I/O.",
-            }
-        )
-
-    return build_vnext_action_intent_envelope(
-        surface=envelope.channel_kind or "cli",
-        actor_id_ref=envelope.human_id or "human:local-operator",
-        request_id=envelope.envelope_id,
-        source_kind="local_operator_harness_execute",
-        intent_summary="Local operator explicitly requested governed voice I/O through the Builder harness runtime.",
-        raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
-        actions=actions,
-        confidence=0.95,
-    )
-
-
-def with_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> HarnessTaskEnvelope:
-    payload = build_harness_local_operator_turn_intent(envelope)
-    if payload is None:
-        return envelope
-    return envelope.with_turn_intent_payload(payload)
+def _terminal_event_type_for_status(status: str) -> str | None:
+    if status == "blocked":
+        return "harness_execution_blocked"
+    if status == "needs_input":
+        return "harness_execution_needs_input"
+    return None
 
 
 def execute_harness_task(
@@ -249,6 +210,12 @@ def execute_harness_task(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> HarnessExecutionResult:
+    from spark_intelligence.harness_registry import build_harness_registry
+    registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
+    known_harness_ids = {contract.harness_id for contract in registry.contracts}
+    if envelope.harness_id not in known_harness_ids:
+        raise ValueError(f"Unknown harness id '{envelope.harness_id}' in runtime.")
+
     run = open_run(
         state_db,
         run_kind=f"harness:{envelope.harness_id}",
@@ -331,7 +298,7 @@ def execute_harness_task(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="closed",
+            status=status,
             close_reason="harness_execution_completed",
             summary=summary,
             facts={
@@ -358,6 +325,26 @@ def execute_harness_task(
                 "artifact_keys": sorted(artifacts.keys()),
             },
         )
+        terminal_event_type = _terminal_event_type_for_status(status)
+        if terminal_event_type:
+            record_event(
+                state_db,
+                event_type=terminal_event_type,
+                component="harness_runtime",
+                summary=summary,
+                run_id=run.run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code=terminal_event_type,
+                facts={
+                    "harness_id": envelope.harness_id,
+                    "execution_status": status,
+                    "artifact_keys": sorted(artifacts.keys()),
+                },
+            )
         return HarnessExecutionResult(
             envelope=envelope,
             run_id=run.run_id,
@@ -366,6 +353,30 @@ def execute_harness_task(
             artifacts=artifacts,
             next_actions=list(envelope.next_actions),
         )
+    except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="harness_validation_failed",
+            summary=str(exc),
+            facts={"error": str(exc), "harness_id": envelope.harness_id, "error_type": "ValueError"},
+        )
+        record_event(
+            state_db,
+            event_type="harness_validation_failed",
+            component="harness_runtime",
+            summary=str(exc),
+            run_id=run.run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_validation_failed",
+            facts={"error": str(exc), "harness_id": envelope.harness_id},
+        )
+        raise
     except Exception as exc:
         close_run(
             state_db,
@@ -413,7 +424,7 @@ def execute_harness_chain(
     current_result = primary_result
     for harness_id in normalized_follow_ups:
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
         derived_task = _derive_follow_up_task(
             current_result=current_result,
@@ -437,13 +448,16 @@ def execute_harness_chain(
         )
         chained_results.append(current_result)
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
 
+    top_status = primary_result.status
+    if chain_status in {"blocked", "needs_input"}:
+        top_status = chain_status
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
-        status=primary_result.status,
+        status=top_status,
         summary=primary_result.summary,
         artifacts=primary_result.artifacts,
         next_actions=primary_result.next_actions,
@@ -506,8 +520,37 @@ def _execute_browser_grounded_harness(
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
+    from urllib.parse import urlparse
 
     url = _extract_first_url(envelope.task)
+    if url:
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError(f"Browser URL '{url}' has an invalid or unsafe scheme.")
+        hostname = (parsed.hostname or "").lower().strip()
+        if not hostname:
+            raise ValueError(f"Browser URL '{url}' has no valid hostname.")
+        
+        allowed_domains_val = config_manager.get_path("browser.allowed_domains")
+        allowed_domains_config = []
+        if isinstance(allowed_domains_val, list):
+            allowed_domains_config = allowed_domains_val
+        elif isinstance(allowed_domains_val, str) and allowed_domains_val.strip():
+            allowed_domains_config = [d.strip() for d in allowed_domains_val.split(",") if d.strip()]
+            
+        if allowed_domains_config:
+            is_allowed = False
+            for domain in allowed_domains_config:
+                d = domain.lower().strip()
+                if hostname == d or hostname.endswith(f".{d}"):
+                    is_allowed = True
+                    break
+            if not is_allowed:
+                raise ValueError(f"Domain '{hostname}' is not in the browser allowed domains list.")
+        else:
+            local_patterns = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
+            if hostname in local_patterns or hostname.endswith(".local") or hostname.endswith(".internal"):
+                raise ValueError(f"Browser URL '{url}' targets a local or private address, which is forbidden.")
     if not url:
         return (
             {
@@ -538,11 +581,18 @@ def _execute_researcher_advisory_harness(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> tuple[dict[str, Any], str, str]:
-    result = _run_researcher_bridge_reply(
-        config_manager=config_manager,
-        state_db=state_db,
-        envelope=envelope,
-    )
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _run_researcher_bridge_reply,
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
+        try:
+            result = future.result(timeout=120.0)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError("Researcher advisory harness execution timed out after 120 seconds.")
     artifacts = {
         "reply_text": _bridge_result_reply_text(result),
         "evidence_summary": result.evidence_summary,
@@ -605,6 +655,20 @@ def _execute_voice_io_harness(
             run_id=run_id,
         )
     except Exception as exc:
+        record_event(
+            state_db,
+            event_type="harness_execution_blocked",
+            component="harness_runtime",
+            summary="Voice I/O harness is blocked because no healthy voice status hook is available.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="voice_status_hook_failed",
+            facts={"error": str(exc)},
+        )
         return (
             {
                 "voice_status": {
@@ -660,13 +724,34 @@ def _execute_voice_io_harness(
                 run_id=run_id,
             )
         except Exception as exc:
+            record_event(
+                state_db,
+                event_type="harness_execution_blocked",
+                component="harness_runtime",
+                summary="Voice I/O harness could not synthesize speech with the current provider/hook state.",
+                run_id=run_id,
+                request_id=envelope.envelope_id,
+                session_id=envelope.session_id,
+                human_id=envelope.human_id,
+                agent_id=envelope.agent_id,
+                actor_id="harness_runtime",
+                reason_code="voice_speak_hook_failed",
+                facts={"error": str(exc)},
+            )
             artifacts["resume_token"] = _build_harness_resume_token(
                 config_manager=config_manager,
                 envelope=envelope,
                 step="voice_speak_retry",
             )
+            import subprocess
+            retry_args = [
+                "python", "-m", "spark_intelligence.cli",
+                "harness", "execute", envelope.task,
+                "--home", str(config_manager.paths.home),
+                "--harness-id", "voice.io"
+            ]
             artifacts["retry_token"] = {
-                "retry_command": f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} --home {config_manager.paths.home} --harness-id voice.io",
+                "retry_command": subprocess.list2cmdline(retry_args),
                 "reason": str(exc),
             }
             return (
@@ -676,7 +761,12 @@ def _execute_voice_io_harness(
             )
         speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
         audio_base64 = str(speak_result.get("audio_base64") or "")
-        audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
+        audio_bytes = b""
+        if audio_base64:
+            try:
+                audio_bytes = base64.b64decode(audio_base64.encode("ascii"), validate=True)
+            except Exception:
+                audio_bytes = b""
         artifacts["spoken_audio"] = {
             "chip_key": speak_chip_key,
             "provider_id": str(speak_result.get("provider_id") or ""),
@@ -692,6 +782,27 @@ def _execute_voice_io_harness(
             config_manager=config_manager,
             envelope=envelope,
             step="voice_repeat",
+        )
+        record_event(
+            state_db,
+            event_type="harness_voice_speech_synthesized",
+            component="harness_runtime",
+            summary="Voice I/O harness synthesized spoken audio through the active voice chip.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_voice_speech_synthesized",
+            facts={
+                "harness_id": envelope.harness_id,
+                "chip_key": artifacts["spoken_audio"]["chip_key"],
+                "provider_id": artifacts["spoken_audio"]["provider_id"],
+                "voice_id": artifacts["spoken_audio"]["voice_id"],
+                "audio_bytes": artifacts["spoken_audio"]["audio_bytes"],
+                "audio_sha256": artifacts["spoken_audio"]["audio_sha256"],
+            },
         )
         return (
             artifacts,
@@ -768,6 +879,7 @@ def _execute_swarm_escalation_harness(
             "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
             "needs_input",
         )
+    from spark_intelligence.security.redaction import redact_text
     sync_result = _run_swarm_sync_dry_run(
         config_manager=config_manager,
         state_db=state_db,
@@ -782,7 +894,7 @@ def _execute_swarm_escalation_harness(
         "api_url": sync_result.api_url,
         "workspace_id": sync_result.workspace_id,
         "accepted": sync_result.accepted,
-        "response_body": sync_result.response_body,
+        "response_body": redact_text(sync_result.response_body),
     }
     artifacts["resume_token"] = {
         "resume_kind": "swarm_dispatch",
@@ -794,6 +906,26 @@ def _execute_swarm_escalation_harness(
         "reason": "Rebuild the latest collective payload before retrying if the Swarm state changes.",
     }
     if sync_result.ok:
+        record_event(
+            state_db,
+            event_type="harness_swarm_payload_prepared",
+            component="harness_runtime",
+            summary="Swarm escalation harness prepared a collective payload via dry-run sync.",
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_swarm_payload_prepared",
+            facts={
+                "harness_id": envelope.harness_id,
+                "workspace_id": artifacts["swarm_sync_result"]["workspace_id"],
+                "payload_path": artifacts["swarm_sync_result"]["payload_path"],
+                "api_url": artifacts["swarm_sync_result"]["api_url"],
+                "mode": artifacts["swarm_sync_result"]["mode"],
+            },
+        )
         return (
             artifacts,
             "Executed the Swarm harness by building the latest collective payload in dry-run mode.",
@@ -837,6 +969,7 @@ def _run_voice_hook(
     hook: str,
     payload: dict[str, Any],
     run_id: str,
+    timeout_seconds: float = 30.0,
 ) -> tuple[dict[str, Any], str]:
     authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
     if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
@@ -861,12 +994,7 @@ def _run_voice_hook(
                 payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(
-        config_manager,
-        hook=hook,
-        payload=payload,
-        governor_decision=payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None,
-    )
+    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload, timeout_seconds=timeout_seconds)
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:
@@ -980,12 +1108,16 @@ def _build_harness_resume_token(
     envelope: HarnessTaskEnvelope,
     step: str,
 ) -> dict[str, Any]:
-    command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
-        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
-    )
+    import subprocess
+    args = [
+        "python", "-m", "spark_intelligence.cli",
+        "harness", "execute", envelope.task,
+        "--home", str(config_manager.paths.home),
+        "--harness-id", envelope.harness_id
+    ]
     if envelope.channel_kind:
-        command += f" --channel-kind {envelope.channel_kind}"
+        args.extend(["--channel-kind", envelope.channel_kind])
+    command = subprocess.list2cmdline(args)
     return {
         "resume_kind": step,
         "resume_command": command,
@@ -1018,6 +1150,17 @@ def _derive_follow_up_task(
             base.append(f"Upstream summary: {current_result.summary}")
         return "\n".join(base)
     if normalized_target == "researcher.advisory":
+        if current_result.envelope.harness_id == "browser.grounded":
+            url = None
+            nav = current_result.artifacts.get("browser_navigate_payload")
+            if isinstance(nav, dict):
+                url = nav.get("url")
+            if not url:
+                status = current_result.artifacts.get("browser_status_payload")
+                if isinstance(status, dict):
+                    url = status.get("url") or status.get("current_url")
+            if url:
+                return f"Analyze the page content at: {url}\nContext: {current_result.envelope.task}"
         reply_text = _extract_reply_text_from_result(current_result)
         return reply_text or current_result.envelope.task
     if normalized_target == "builder.direct":
@@ -1040,7 +1183,10 @@ def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | Non
 
 def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
-    return match.group(0) if match else None
+    if not match:
+        return None
+    url = match.group(0)
+    return url.rstrip(").,;!?}]")
 
 
 def _now_iso() -> str:
