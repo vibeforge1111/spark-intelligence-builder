@@ -28,7 +28,7 @@ def run_governed_command(
     command: list[str],
     cwd: str | Path,
     env: dict[str, str] | None = None,
-    timeout_seconds: float | None = None,
+    timeout_seconds: float | None = 120,
     encoding: str | None = None,
     errors: str | None = None,
 ) -> GovernedCommandExecution:
