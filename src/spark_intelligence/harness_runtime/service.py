@@ -6,6 +6,14 @@ import json
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+def _safe_summary_json(raw: object) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        return json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+
 from typing import Any
 from uuid import uuid4
 
@@ -483,7 +491,7 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                "summary_json": _safe_summary_json(row.get("summary_json")),
             }
         )
     summary = {
