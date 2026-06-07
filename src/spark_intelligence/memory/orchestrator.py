@@ -1283,7 +1283,7 @@ class _DomainChipMemoryClientAdapter:
             if callable(build_snapshot):
                 try:
                     current_snapshot = list(build_snapshot(merged_observations) or [])
-                except Exception:
+                except (OSError, ValueError, TypeError):
                     current_snapshot = []
             elif observation_cls:
                 current_snapshot = _hydrate_domain_entries(
@@ -3540,7 +3540,7 @@ def write_structured_evidence_to_memory(
                 actor_id=f"{actor_id}_belief_consolidator",
                 governor_decision=governor_decision,
             )
-        except Exception:
+        except (OSError, ValueError, TypeError):
             pass
     if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
         observation=current_state_observation,
@@ -3562,7 +3562,7 @@ def write_structured_evidence_to_memory(
                     actor_id=f"{actor_id}_current_state_consolidator",
                     governor_decision=governor_decision,
                 )
-            except Exception:
+            except (OSError, ValueError, TypeError):
                 pass
     return result
 
@@ -5169,13 +5169,13 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
         return _SDK_CLIENT_CACHE[cache_key]
     try:
         module = _import_memory_sdk_module(module_name)
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return None
     if hasattr(module, "SparkMemorySDK"):
         sdk_factory = getattr(module, "SparkMemorySDK")
         try:
             client = sdk_factory()
-        except Exception:
+        except (OSError, ValueError, TypeError):
             return None
         if _supports_domain_chip_memory_adapter(module):
             persistence_path = _domain_chip_memory_persistence_path(home_path)
@@ -5282,7 +5282,7 @@ def _load_domain_chip_memory_payload(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -5357,7 +5357,7 @@ def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persiste
         return
     try:
         payload = json.loads(persistence_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return
     if not isinstance(payload, dict):
         return
@@ -5389,7 +5389,7 @@ def _hydrate_domain_entries(raw_entries: Any, entry_cls: Any) -> list[Any]:
             continue
         try:
             hydrated.append(entry_cls(**raw))
-        except Exception:
+        except (OSError, ValueError, TypeError):
             continue
     return hydrated
 
@@ -6750,7 +6750,7 @@ def _json_object(raw: Any) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(str(raw))
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return {}
     return dict(payload) if isinstance(payload, dict) else {}
 
