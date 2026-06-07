@@ -162,6 +162,7 @@ from spark_intelligence.observability.store import (
     recent_tool_call_ledgers,
     record_event,
     record_observer_handoff_record,
+    trace_turn,
 )
 from spark_intelligence.ops import (
     build_observer_handoff_payload,
@@ -2931,6 +2932,14 @@ def build_parser() -> argparse.ArgumentParser:
     harness_tool_ledgers_parser.add_argument("--surface", help="Filter ledgers by producing surface")
     harness_tool_ledgers_parser.add_argument("--limit", type=int, default=20, help="Maximum ledgers to show")
     harness_tool_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_trace_turn_parser = harness_subparsers.add_parser(
+        "trace-turn",
+        help="Show canonical ledgers and event mirror rows for one turn id",
+    )
+    harness_trace_turn_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_trace_turn_parser.add_argument("--turn-id", required=True, help="Turn id to trace")
+    harness_trace_turn_parser.add_argument("--limit", type=int, default=100, help="Maximum rows per section")
+    harness_trace_turn_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_import_cli_ledgers_parser = harness_subparsers.add_parser(
         "import-cli-ledgers",
         help="Import Spark CLI approval ledgers into the canonical tool-ledger table",
@@ -8552,6 +8561,43 @@ def handle_harness_tool_ledgers(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_trace_turn(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = trace_turn(
+        state_db,
+        turn_id=str(getattr(args, "turn_id", "") or ""),
+        limit=int(getattr(args, "limit", 100) or 100),
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        counts = payload["counts"]
+        lines = ["Spark harness turn trace"]
+        lines.append(f"- turn_id: {payload['turn_id']}")
+        lines.append(f"- tool_call_ledgers: {counts['tool_call_ledgers']}")
+        lines.append(f"- builder_events: {counts['builder_events']}")
+        lines.append(f"- event_log: {counts['event_log']}")
+        for row in payload["tool_call_ledgers"]:
+            lines.append(
+                f"- ledger {row.get('ledger_id') or 'unknown'} "
+                f"surface={row.get('surface') or 'unknown'} "
+                f"tool={row.get('tool_name') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        for row in payload["builder_events"]:
+            lines.append(
+                f"- event {row.get('event_id') or 'unknown'} "
+                f"type={row.get('event_type') or 'unknown'} "
+                f"component={row.get('component') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        print("\n".join(lines))
+    return 0
+
+
 def handle_harness_import_cli_ledgers(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -10110,6 +10156,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_harness_status(args)
     if args.command == "harness" and args.harness_command == "tool-ledgers":
         return handle_harness_tool_ledgers(args)
+    if args.command == "harness" and args.harness_command == "trace-turn":
+        return handle_harness_trace_turn(args)
     if args.command == "harness" and args.harness_command == "import-cli-ledgers":
         return handle_harness_import_cli_ledgers(args)
     if args.command == "harness" and args.harness_command == "self-evolution-snapshot":

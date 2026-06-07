@@ -358,6 +358,113 @@ def recent_tool_call_ledgers(
     return [_tool_call_ledger_row_to_dict(row) for row in rows]
 
 
+def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str, Any]:
+    normalized_turn_id = str(turn_id or "").strip()
+    if not normalized_turn_id:
+        raise ValueError("turn_id is required")
+    bounded_limit = max(1, min(int(limit), 500))
+    quoted_turn_id = json.dumps(normalized_turn_id, ensure_ascii=True)
+    quoted_like = f"%{quoted_turn_id}%"
+    with state_db.connect() as conn:
+        ledger_rows = conn.execute(
+            """
+            SELECT *
+            FROM tool_call_ledger
+            WHERE turn_id = ?
+            ORDER BY created_at ASC, updated_at ASC, ledger_id ASC
+            LIMIT ?
+            """,
+            (normalized_turn_id, bounded_limit),
+        ).fetchall()
+        builder_event_rows = conn.execute(
+            """
+            SELECT *
+            FROM builder_events
+            WHERE
+              correlation_id = ?
+              OR request_id = ?
+              OR trace_ref = ?
+              OR (
+                facts_json IS NOT NULL
+                AND (
+                  facts_json LIKE ?
+                  OR (
+                    json_valid(facts_json)
+                    AND (
+                      json_extract(facts_json, '$.turn_id') = ?
+                      OR json_extract(facts_json, '$.tool_call_ledger.turn_id') = ?
+                    )
+                  )
+                )
+              )
+            ORDER BY created_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                quoted_like,
+                normalized_turn_id,
+                normalized_turn_id,
+                bounded_limit,
+            ),
+        ).fetchall()
+        event_log_rows = conn.execute(
+            """
+            SELECT *
+            FROM event_log
+            WHERE
+              request_id = ?
+              OR trace_ref = ?
+              OR (
+                payload_json IS NOT NULL
+                AND (
+                  payload_json LIKE ?
+                  OR (
+                    json_valid(payload_json)
+                    AND (
+                      json_extract(payload_json, '$.turn_id') = ?
+                      OR json_extract(payload_json, '$.facts.turn_id') = ?
+                      OR json_extract(payload_json, '$.facts.tool_call_ledger.turn_id') = ?
+                    )
+                  )
+                )
+              )
+            ORDER BY recorded_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (
+                normalized_turn_id,
+                normalized_turn_id,
+                quoted_like,
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                bounded_limit,
+            ),
+        ).fetchall()
+    ledgers = [_tool_call_ledger_row_to_dict(row) for row in ledger_rows]
+    builder_events = [_row_to_dict(row) for row in builder_event_rows]
+    event_log = [_row_to_dict(row) for row in event_log_rows]
+    return {
+        "turn_id": normalized_turn_id,
+        "counts": {
+            "tool_call_ledgers": len(ledgers),
+            "builder_events": len(builder_events),
+            "event_log": len(event_log),
+        },
+        "tool_call_ledgers": ledgers,
+        "builder_events": builder_events,
+        "event_log": event_log,
+        "coverage_note": (
+            "Includes canonical ledgers with exact turn_id plus Builder/event mirror rows "
+            "that carry the turn id in indexed columns or JSON payloads. Older rows without "
+            "turn_id remain outside this query."
+        ),
+    }
+
+
 def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
     with state_db.connect() as conn:
         rows = conn.execute(

@@ -39,6 +39,7 @@ Operator commands:
 spark-intelligence gateway ingest-tool-ledger <ledger-row.json>
 spark-intelligence gateway serve-stdio
 spark-intelligence harness tool-ledgers --turn-id <turn-id> --json
+spark-intelligence harness trace-turn --turn-id <turn-id> --json
 spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
 spark-intelligence harness self-evolution-snapshot --json
 spark-intelligence harness change-manifest-runner --manifest <change-manifest-v1.json> --run-tests --json

@@ -111,6 +111,7 @@ The current minimal-adapter authority path is intentionally not a daemon. Builde
 - `spark-intelligence gateway ingest-tool-ledger <file>` persists one row from JSON.
 - `spark-intelligence gateway serve-stdio` accepts `ingest_tool_ledger` newline-delimited requests.
 - `spark-intelligence harness tool-ledgers` queries recent rows by `turn_id` or surface.
+- `spark-intelligence harness trace-turn` shows canonical ledgers plus Builder/event mirror rows for one `turn_id`.
 - `spark-intelligence harness import-cli-ledgers` indexes Spark CLI approval ledger JSON files into the same table.
 
 The row is accepted only when it carries the authority join fields: `ledger_id`, `turn_id`, `action_id`, `capability_id`, `authorization_decision_id`, and `surface`.

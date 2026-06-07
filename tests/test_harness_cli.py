@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger, recent_tool_call_ledgers
+from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger, recent_tool_call_ledgers, record_event
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
@@ -50,6 +50,65 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["ledgers"][0]["ledger_id"], "ledger:cli-ledger")
         self.assertEqual(payload["ledgers"][0]["surface"], "cli_test")
+
+    def test_harness_trace_turn_collects_ledgers_and_event_mirrors(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "ledger_id": "ledger:trace-turn",
+                "turn_id": "turn:trace-turn",
+                "action_id": "action:trace-turn",
+                "capability_id": "capability:trace-turn",
+                "authorization_decision_id": "decision:trace-turn",
+                "tool_name": "test.trace",
+                "surface": "cli_test",
+                "status": "success",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:trace-turn",
+                    "turn_id": "turn:trace-turn",
+                    "action_id": "action:trace-turn",
+                    "capability_id": "capability:trace-turn",
+                    "tool_name": "test.trace",
+                    "authorization": {"decision_id": "decision:trace-turn"},
+                    "result": {"status": "success", "summary": "Recorded for turn trace."},
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="trace_turn_probe",
+            component="test",
+            summary="Trace turn probe.",
+            facts={"turn_id": "turn:trace-turn"},
+        )
+        record_event(
+            self.state_db,
+            event_type="trace_turn_other",
+            component="test",
+            summary="Other turn probe.",
+            facts={"turn_id": "turn:other"},
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "trace-turn",
+            "--home",
+            str(self.home),
+            "--turn-id",
+            "turn:trace-turn",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["turn_id"], "turn:trace-turn")
+        self.assertEqual(payload["counts"]["tool_call_ledgers"], 1)
+        self.assertEqual(payload["counts"]["builder_events"], 1)
+        self.assertEqual(payload["counts"]["event_log"], 1)
+        self.assertEqual(payload["tool_call_ledgers"][0]["ledger_id"], "ledger:trace-turn")
+        self.assertEqual(payload["builder_events"][0]["event_type"], "trace_turn_probe")
+        self.assertEqual(payload["event_log"][0]["event_type"], "trace_turn_probe")
 
     def test_harness_import_cli_ledgers_indexes_tool_call_files(self) -> None:
         ledger_dir = self.home / "approval-ledgers"

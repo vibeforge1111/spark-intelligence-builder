@@ -194,7 +194,10 @@ until that session completes and the final diff is tested.
      event rows keyed by `request_id`, `trace_ref`, and `correlation_id`.
    - Add explicit `turn_id` mapping to new bridge/gateway events where the
      Governor decision is present.
-   - Add a trace query that can answer: "show everything for this turn id."
+   - Added `harness trace-turn --turn-id <turn-id>` for canonical ledgers plus
+     Builder/event mirror rows that already carry the turn id.
+   - Remaining work: broaden new event producers so more rows carry `turn_id`
+     directly instead of relying on legacy request/trace fields.
 
 7. Finish canonical ingestion for Telegram JSONL and Spawner execution.
    - Telegram still has local JSONL fallback behavior; canonical ingestion must

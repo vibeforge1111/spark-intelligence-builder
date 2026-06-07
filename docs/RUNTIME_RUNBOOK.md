@@ -97,8 +97,14 @@ After authority or observability changes, verify the canonical ledger path:
 ```powershell
 spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
 spark-intelligence harness tool-ledgers --surface spark_cli --limit 5 --json
+spark-intelligence harness trace-turn --turn-id <turn-id> --json
 spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --json
 ```
+
+Use `harness trace-turn` when debugging one governed turn. It returns exact
+canonical ledger rows plus Builder/event mirror rows that carry the turn id in
+indexed columns or JSON payloads. Older rows without a turn id are still outside
+the join and should not be claimed as fully traceable.
 
 Run `jobs observability-report` before any future prune/VACUUM pass. It reports
 `state.db` size, table counts, prunable row counts for the cutoff, and optional
