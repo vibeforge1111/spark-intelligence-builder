@@ -169,6 +169,22 @@ def _stable_absolute_path(path: Path) -> Path:
 
 def _prepare_output_dir(output_dir: Path) -> None:
     if output_dir.exists():
+        # Safety check: prevent accidental deletion of critical directories
+        resolved = output_dir.resolve()
+        critical_dirs = {
+            Path.home(),
+            Path.home() / ".spark",
+            Path.home() / ".cache",
+            Path("/"),
+            Path("/etc"),
+            Path("/var"),
+            Path("/usr"),
+        }
+        if resolved in critical_dirs or not resolved.is_relative_to(Path.home()):
+            raise ValueError(
+                f"Refusing to recursively delete '{resolved}': "
+                f"too close to a critical directory. Set a more specific output_dir."
+            )
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
