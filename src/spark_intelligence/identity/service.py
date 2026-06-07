@@ -1855,6 +1855,7 @@ def review_pairings(
         limit_clause = "LIMIT ?"
         params.append(limit)
     with state_db.connect() as conn:
+        # NOTE: f-string SQL with table/column interpolation. The identifiers come from hardcoded whitelists in this module; do not pass user input here.
         rows = conn.execute(
             f"""
             SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
