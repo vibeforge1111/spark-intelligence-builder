@@ -208,7 +208,7 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except Exception as _e:
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
@@ -448,6 +448,9 @@ def _build_procedural_lesson_lines(*, state_db: StateDB, user_message: str, limi
             f"- kind={lesson.lesson_kind} | trigger={_compact(lesson.trigger_pattern, 160)} "
             f"| do={_compact(lesson.corrective_action, 200)}"
         )
+        line += f" | reuse={_compact(lesson.reuse_condition, 120)}"
+        line += f" | revalidate={_compact(lesson.revalidation_condition, 120)}"
+        line += f" | approval={lesson.approval_state}"
         if lesson.applies_to_component:
             line += f" | applies_to={lesson.applies_to_component}"
         if lesson.confidence:
