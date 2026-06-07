@@ -1396,6 +1396,7 @@ def _prepare_telegram_media_input(
                 governor_decision=governor_decision,
             )
     except Exception as exc:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return {
             "effective_text": None,
             "transcript_text": None,
