@@ -125,8 +125,14 @@ def detect_spawner_payload_drift(
                     payload_preview=preview,
                 )
             )
+    if drift_records:
+        status = "drift_detected"
+    elif payloads:
+        status = "ok"
+    else:
+        status = "no_payloads_checked"
     return SpawnerPayloadDriftReport(
-        status="drift_detected" if drift_records else "ok",
+        status=status,
         drift_count=len(drift_records),
         checked_payload_count=len(payloads),
         records=drift_records[:10],
