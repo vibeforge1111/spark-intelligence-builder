@@ -358,6 +358,29 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_execute_harness_chain_marks_blocked_when_primary_needs_input(self) -> None:
+        self._enable_fake_researcher()
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Search the web for Spark architecture.",
+            )
+
+        result = execute_harness_chain(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+            follow_up_harness_ids=["voice.io"],
+        )
+
+        self.assertEqual(result.status, "needs_input")
+        self.assertEqual(result.chain_status, "blocked")
+        self.assertEqual(result.chained_results or [], [])
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
