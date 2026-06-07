@@ -328,10 +328,25 @@ def _expand_repo_roots(roots: Iterable[Path], *, manifest_name: str) -> list[Pat
         candidates: list[Path]
         if (expanded_root / manifest_name).exists():
             candidates = [expanded_root]
+        elif expanded_root.exists():
+            # iterdir() can raise PermissionError, NotADirectoryError, or
+            # FileNotFoundError if the attachment root is unreadable, was
+            # racily deleted, or points at a broken symlink. Treat those
+            # as "no candidates here" so a single unreadable root does not
+            # crash the entire chip/path attachment scan and downstream
+            # capability_router / mission_control surfaces.
+            try:
+                children = list(expanded_root.iterdir())
+            except OSError:
+                children = []
+            candidates = [path for path in children if path.is_dir() and (path / manifest_name).exists()]
         else:
-            candidates = [path for path in expanded_root.iterdir() if path.is_dir() and (path / manifest_name).exists()] if expanded_root.exists() else []
+            candidates = []
         for candidate in candidates:
-            key = str(candidate.resolve())
+            try:
+                key = str(candidate.resolve())
+            except OSError:
+                continue
             if key not in seen:
                 seen.add(key)
                 discovered.append(candidate)
