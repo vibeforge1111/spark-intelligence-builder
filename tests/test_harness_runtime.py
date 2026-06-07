@@ -358,6 +358,28 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_extract_first_url_handles_single_first_none_and_wrapped(self) -> None:
+        from spark_intelligence.harness_runtime.service import _extract_first_url
+
+        self.assertEqual(
+            _extract_first_url("Open https://example.com and inspect it."),
+            "https://example.com",
+        )
+        self.assertEqual(
+            _extract_first_url("First https://one.example then https://two.example."),
+            "https://one.example",
+        )
+        self.assertEqual(
+            _extract_first_url("Plain http URL http://insecure.example/path?x=1 here"),
+            "http://insecure.example/path?x=1",
+        )
+        self.assertEqual(
+            _extract_first_url("See (https://wrapped.example) here"),
+            "https://wrapped.example",
+        )
+        self.assertIsNone(_extract_first_url("No url in this line at all."))
+        self.assertIsNone(_extract_first_url(""))
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
