@@ -3644,8 +3644,7 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
     platform = config_manager.get_path("runtime.autostart.platform")
     if platform == "windows_startup_folder":
         wrapper_path = _windows_startup_wrapper_path(config_manager, task_name)
-        if wrapper_path.exists():
-            wrapper_path.unlink()
+        wrapper_path.unlink(missing_ok=True)
     else:
         try:
             subprocess.run(
