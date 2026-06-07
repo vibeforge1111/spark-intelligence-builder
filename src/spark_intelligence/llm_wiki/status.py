@@ -169,7 +169,8 @@ def _wiki_retrieval_probe(*, config_manager: ConfigManager, state_db: StateDB) -
             source_surface="wiki_status_probe",
             record_activity=False,
         )
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return "error", 0, False, {}
     wiki_lane = next(
         (
