@@ -53,6 +53,9 @@ Builder does not own:
 
 Dirty Builder worktrees are feature backlog, not release truth.
 
+Current Desktop evidence is captured in
+[DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md](./DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md).
+
 Allowed path:
 
 ```text
@@ -84,16 +87,18 @@ git -C C:\Users\USER\Desktop\spark-intelligence-builder status --short --branch
 git -C C:\Users\USER\Desktop\spark-intelligence-builder rev-parse HEAD
 ```
 
-Current 2026-06-08 evidence, refreshed after the Builder indexed turn-id
-traceability remediation commit. The code-bearing remediation line is:
+Current 2026-06-08 evidence, refreshed after the Builder turn-id index
+migration remediation commit. The code-bearing remediation line is:
 
-- installed Builder code-bearing HEAD: `125e0ce36b4a076ff9d5e3039a2f8abbb4c1055a`
+- installed Builder code-bearing HEAD: `b34549e8d6327b8d3faf6b92536d90df66230152`
 - later docs-only commits may sit on top of this without changing runtime
   behavior
 - Desktop Builder HEAD: `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a`
 - installed Builder status: clean detached checkout
 - Desktop Builder status: dirty `codex/browser-use-receipts` branch whose
   remote ref is gone
+- Desktop Builder backlog manifest:
+  `docs/DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md`
 - installed Builder manifest: AGPL-3.0-only and `needs.modules =
   ["spark-harness-core"]`
 - Desktop Builder manifest: AGPL metadata is visible only in the dirty working
