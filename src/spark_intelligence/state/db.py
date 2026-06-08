@@ -14,6 +14,11 @@ def _quote_sqlite_identifier(identifier: str) -> str:
     return f'"{identifier}"'
 
 
+def _is_index_statement(statement: str) -> bool:
+    normalized = statement.lstrip().upper()
+    return normalized.startswith("CREATE INDEX") or normalized.startswith("CREATE UNIQUE INDEX")
+
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS schema_info (
@@ -899,6 +904,8 @@ class StateDB:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    continue
                 conn.execute(statement)
             self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
@@ -906,6 +913,10 @@ class StateDB:
             self._ensure_column(conn, "humans", "user_address", "TEXT")
             self._ensure_column(conn, "builder_events", "turn_id", "TEXT")
             self._ensure_column(conn, "event_log", "turn_id", "TEXT")
+            self._ensure_column(conn, "tool_call_ledger", "turn_id", "TEXT")
+            for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    conn.execute(statement)
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """

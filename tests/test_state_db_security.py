@@ -33,6 +33,59 @@ def test_ensure_column_adds_allowed_identifier() -> None:
     assert "new_column" in columns
 
 
+def test_initialize_adds_turn_id_before_turn_indexes_on_existing_tables(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.db")
+    with sqlite3.connect(state_db.path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE builder_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT,
+                run_id TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE event_log (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT,
+                recorded_at TEXT,
+                trace_ref TEXT,
+                request_id TEXT,
+                run_id TEXT,
+                session_id TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE tool_call_ledger (
+                ledger_id TEXT PRIMARY KEY,
+                surface TEXT,
+                status TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+    state_db.initialize()
+
+    with state_db.connect() as conn:
+        builder_columns = {str(row["name"]) for row in conn.execute('PRAGMA table_info("builder_events")')}
+        event_columns = {str(row["name"]) for row in conn.execute('PRAGMA table_info("event_log")')}
+        ledger_columns = {str(row["name"]) for row in conn.execute('PRAGMA table_info("tool_call_ledger")')}
+        indexes = {str(row["name"]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+
+    assert "turn_id" in builder_columns
+    assert "turn_id" in event_columns
+    assert "turn_id" in ledger_columns
+    assert "idx_builder_events_turn_id" in indexes
+    assert "idx_event_log_turn_id" in indexes
+    assert "idx_tool_call_ledger_turn_id" in indexes
+
+
 class TelegramAllowlistSecurityTests(SparkTestCase):
     def test_resolve_inbound_dm_rejects_non_decimal_telegram_user_id(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
