@@ -14,6 +14,7 @@ python -m spark_intelligence.cli jobs observability-report `
   --home C:\Users\USER\.spark\state\spark-intelligence `
   --include-unowned-jsonl `
   --jsonl-min-bytes 1000000 `
+  --jsonl-reference-scan `
   --jsonl-limit 20 `
   --json
 ```
@@ -22,15 +23,16 @@ Observed on 2026-06-08:
 
 | Metric | Value |
 | --- | ---: |
-| `state.db` bytes | 251,809,792 |
-| `event_log` rows | 17,302 |
-| `builder_events` rows | 17,302 |
+| `state.db` bytes | 253,222,912 |
+| `event_log` rows | 17,319 |
+| `builder_events` rows | 17,319 |
 | `tool_call_ledger` rows | 117 |
 | Loose JSONL files | 251 |
-| Loose JSONL bytes | 190,235,594 |
-| Loose JSONL candidates at `--jsonl-min-bytes 1000000` | 23 |
-| Loose JSONL below min-byte threshold | 228 |
-| Candidate manifest actions | `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=2` |
+| Loose JSONL bytes | 190,329,716 |
+| Loose JSONL candidates at `--jsonl-min-bytes 1000000` | 24 |
+| Loose JSONL below min-byte threshold | 227 |
+| Candidate manifest actions | `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=3` |
+| Candidate reference-scan statuses | `matches_found=5`, `no_matches=18`, `not_required=1` |
 
 Largest residue classes:
 
@@ -41,11 +43,14 @@ Largest residue classes:
 | `root_unowned_jsonl` | `outcomes.jsonl`, `predictions.jsonl` | Freeze until a reference scan proves they are not active runtime input. |
 | canonical store | `state\spark-intelligence\state.db` | Governed store. Use retention/VACUUM procedure, not JSONL quarantine. |
 
-The report is intentionally metadata-only: size, path, modification time,
+The report is intentionally safe-by-default: size, path, modification time,
 total/candidate/below-threshold counts, candidate classification/action/blocker
 counts, classification, manifest action, movement blocker, reference-scan and
-owner-signoff flags, `delete_allowed=false`, and recommendation. It does not
-open or summarize file contents.
+owner-signoff flags, `delete_allowed=false`, and recommendation. By default it
+does not open file contents. With `--jsonl-reference-scan`, it opens only
+non-JSONL code/config text under the configured reference roots and records
+whether those files mention each candidate path. It still does not open,
+summarize, move, or delete candidate JSONL files.
 
 Manifest action meanings:
 
@@ -67,7 +72,9 @@ Manifest action meanings:
    For each candidate, search the installed Spark trees and `.spark` config for
    the relative path or filename. Root files such as `outcomes.jsonl` and
    `predictions.jsonl` are blocked from movement until this scan is clean or an
-   owner explicitly signs off.
+   owner explicitly signs off. Use `--jsonl-reference-scan` and, when needed,
+   repeat `--jsonl-reference-root <path>` to pin the exact code/config roots
+   used for the scan.
 
 3. Back up before archive or quarantine.
    Archive/quarantine passes must create a dated manifest containing original
@@ -113,7 +120,7 @@ Minimum verification after any movement:
 
 ```powershell
 python -m spark_intelligence.cli doctor --home C:\Users\USER\.spark\state\spark-intelligence --json
-python -m spark_intelligence.cli jobs observability-report --home C:\Users\USER\.spark\state\spark-intelligence --include-unowned-jsonl --json
+python -m spark_intelligence.cli jobs observability-report --home C:\Users\USER\.spark\state\spark-intelligence --include-unowned-jsonl --jsonl-reference-scan --json
 ```
 
 ## Current Decision
@@ -126,7 +133,7 @@ No loose JSONL files were moved or deleted in this pass. The current state is:
 - the report now emits machine-readable `manifest_action`,
   `movement_blocker`, reference-scan, owner-signoff, archive-before-quarantine,
   and delete-allowed fields for each reported file;
-- root `outcomes.jsonl` and `predictions.jsonl` remain frozen until active
-  reader checks are complete;
+- root `outcomes.jsonl` and `predictions.jsonl` remain frozen until the
+  `--jsonl-reference-scan` evidence is clean or an owner signs off;
 - large `recursion`, `logs`, `queue`, and `advisor` rivers are archive
   candidates, not deletion candidates.

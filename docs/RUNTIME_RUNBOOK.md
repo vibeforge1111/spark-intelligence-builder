@@ -105,7 +105,7 @@ After authority or observability changes, verify the canonical ledger path:
 spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
 spark-intelligence harness tool-ledgers --surface spark_cli --limit 5 --json
 spark-intelligence harness trace-turn --turn-id <turn-id> --json
-spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --include-unowned-jsonl --json
+spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --include-unowned-jsonl --jsonl-reference-scan --json
 ```
 
 Use `harness trace-turn` when debugging one governed turn. It returns exact
@@ -122,12 +122,15 @@ Run `jobs observability-report` before any future prune/VACUUM pass. It reports
 gateway JSONL sizes without deleting anything.
 With `--include-unowned-jsonl`, it also lists loose `.jsonl` files under the
 Spark root by size and ownership class without opening, moving, or deleting
-them. Each reported file includes `manifest_action`, `movement_blocker`,
+candidate JSONL files. Each reported file includes `manifest_action`, `movement_blocker`,
 reference-scan and owner-signoff flags, `archive_before_quarantine`, and
 `delete_allowed=false` so a future archive/quarantine pass has a checked
 restore manifest instead of relying on prose. The report also separates
 `total_files`, `candidate_files`, `below_min_bytes_files`, and candidate
 classification/action/blocker counts, so limited reports are visibly partial.
+Use `--jsonl-reference-scan` before any archive/quarantine movement; repeat
+`--jsonl-reference-root <path>` when the default installed source/config/modules/tools
+roots are not the intended scan boundary.
 Follow
 [SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md](./SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md)
 before archiving, quarantining, or deleting any loose JSONL river.

@@ -2928,6 +2928,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     jobs_observability_report_parser.add_argument("--jsonl-limit", type=int, default=40, help="Maximum loose JSONL files to list")
     jobs_observability_report_parser.add_argument("--jsonl-min-bytes", type=int, default=0, help="Minimum loose JSONL size to list")
+    jobs_observability_report_parser.add_argument(
+        "--jsonl-reference-scan",
+        action="store_true",
+        help="Scan non-JSONL code/config text for references to reported loose JSONL paths",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--jsonl-reference-root",
+        action="append",
+        default=[],
+        help="Reference root to scan; repeatable. Defaults to installed source/config/modules/tools with nested roots deduped",
+    )
     jobs_observability_report_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
@@ -8498,6 +8509,8 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             root=getattr(args, "spark_root", None),
             limit=int(getattr(args, "jsonl_limit", 40) or 40),
             min_bytes=int(getattr(args, "jsonl_min_bytes", 0) or 0),
+            reference_scan=bool(getattr(args, "jsonl_reference_scan", False)),
+            reference_roots=list(getattr(args, "jsonl_reference_root", []) or []),
         ).to_payload()
     payload = {
         "state_db": state_report.to_payload(),
@@ -8531,12 +8544,23 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             lines.append(f"- unowned_jsonl_below_min_bytes: {jsonl_report['below_min_bytes_files']}")
             for action, count in sorted(jsonl_report["candidate_manifest_action_counts"].items()):
                 lines.append(f"- unowned_jsonl_action {action}: {count}")
+            if jsonl_report.get("reference_scan_enabled"):
+                for status, count in sorted(jsonl_report["candidate_reference_scan_status_counts"].items()):
+                    lines.append(f"- unowned_jsonl_reference_scan {status}: {count}")
             for item in jsonl_report["reported_files"][:10]:
+                reference_scan = item.get("reference_scan") or {}
+                reference_detail = ""
+                if reference_scan:
+                    reference_detail = (
+                        f" ref_scan={reference_scan.get('status', 'unknown')}"
+                        f" matches={int(reference_scan.get('match_count') or 0)}"
+                    )
                 lines.append(
                     f"- jsonl {item['relative_path']} "
                     f"bytes={item['bytes']} class={item['classification']} "
                     f"action={item['manifest_action']} "
                     f"blocked_by={item['movement_blocker'] or 'none'}"
+                    f"{reference_detail}"
                 )
         print("\n".join(lines))
     return 0

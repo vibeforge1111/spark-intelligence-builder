@@ -395,6 +395,54 @@ class ObservabilityRetentionCliTests(SparkTestCase):
         self.assertEqual(filtered_report["below_min_bytes_files"], 2)
         self.assertEqual(filtered_report["candidate_manifest_action_counts"], {"archive_candidate": 1})
 
+    def test_jobs_observability_report_cli_reference_scans_non_jsonl_text(self) -> None:
+        spark_root = self.home / "fake-spark-root"
+        reference_root = self.home / "reference-root"
+        (spark_root / "recursion").mkdir(parents=True)
+        (reference_root / "src").mkdir(parents=True)
+        (reference_root / "config").mkdir(parents=True)
+        (spark_root / "outcomes.jsonl").write_text("jsonl-content\n", encoding="utf-8")
+        (spark_root / "recursion" / "mutations.jsonl").write_text("legacy-content\n", encoding="utf-8")
+        (reference_root / "src" / "reader.py").write_text(
+            'open("outcomes.jsonl", encoding="utf-8")\n',
+            encoding="utf-8",
+        )
+        (reference_root / "config" / "runtime.toml").write_text(
+            'legacy = "recursion/mutations.jsonl"\n',
+            encoding="utf-8",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "observability-report",
+            "--home",
+            str(spark_root / "state" / "spark-intelligence"),
+            "--include-unowned-jsonl",
+            "--spark-root",
+            str(spark_root),
+            "--jsonl-reference-scan",
+            "--jsonl-reference-root",
+            str(reference_root),
+            "--jsonl-reference-root",
+            str(reference_root / "src"),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        report = json.loads(stdout)["unowned_jsonl"]
+        by_relative_path = {item["relative_path"]: item for item in report["reported_files"]}
+        self.assertTrue(report["reference_scan_enabled"])
+        self.assertEqual(report["reference_scan_roots"], [str(reference_root)])
+        self.assertEqual(report["candidate_reference_scan_status_counts"], {"matches_found": 2})
+        self.assertEqual(by_relative_path["outcomes.jsonl"]["reference_scan"]["status"], "matches_found")
+        self.assertEqual(by_relative_path["outcomes.jsonl"]["reference_scan"]["match_count"], 1)
+        self.assertIn("outcomes.jsonl", by_relative_path["outcomes.jsonl"]["reference_scan"]["patterns"])
+        legacy_path = str(Path("recursion") / "mutations.jsonl")
+        self.assertEqual(by_relative_path[legacy_path]["reference_scan"]["status"], "matches_found")
+        self.assertEqual(by_relative_path[legacy_path]["reference_scan"]["match_count"], 1)
+        self.assertEqual((spark_root / "outcomes.jsonl").read_text(encoding="utf-8"), "jsonl-content\n")
+        self.assertEqual((spark_root / "recursion" / "mutations.jsonl").read_text(encoding="utf-8"), "legacy-content\n")
+
     def test_jobs_prune_observability_cli_can_prune_gateway_logs(self) -> None:
         old_timestamp = "2025-01-01T00:00:00+00:00"
         cutoff = "2026-01-01T00:00:00+00:00"
