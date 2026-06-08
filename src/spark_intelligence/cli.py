@@ -7507,8 +7507,8 @@ def handle_memory_run_sdk_maintenance(args: argparse.Namespace) -> int:
 def _json_object_from_text(text: str) -> dict[str, Any]:
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError:
-        return {"status": "unknown"}
+    except json.JSONDecodeError as exc:
+        return {"status": "unknown", "parse_error": str(exc), "raw_text": str(text)[:200]}
     return payload if isinstance(payload, dict) else {"result": payload}
 
 
