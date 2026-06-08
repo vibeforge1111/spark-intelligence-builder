@@ -22,12 +22,12 @@ Observed on 2026-06-08:
 
 | Metric | Value |
 | --- | ---: |
-| `state.db` bytes | 235,540,480 |
-| `event_log` rows | 16,064 |
-| `builder_events` rows | 16,064 |
-| `tool_call_ledger` rows | 97 |
+| `state.db` bytes | 251,772,928 |
+| `event_log` rows | 17,299 |
+| `builder_events` rows | 17,299 |
+| `tool_call_ledger` rows | 117 |
 | Loose JSONL files | 251 |
-| Loose JSONL bytes | 190,025,951 |
+| Loose JSONL bytes | 190,235,594 |
 
 Largest residue classes:
 
@@ -39,8 +39,19 @@ Largest residue classes:
 | canonical store | `state\spark-intelligence\state.db` | Governed store. Use retention/VACUUM procedure, not JSONL quarantine. |
 
 The report is intentionally metadata-only: size, path, modification time,
-classification, and recommendation. It does not open or summarize file
-contents.
+classification, manifest action, movement blocker, reference-scan and
+owner-signoff flags, `delete_allowed=false`, and recommendation. It does not
+open or summarize file contents.
+
+Manifest action meanings:
+
+| `manifest_action` | Meaning |
+| --- | --- |
+| `canonical_retention_path` | The file is already owned by a canonical retention/reporting path. Do not move it in a loose-JSONL pass. |
+| `freeze_pending_reference_scan` | Root runtime input is unknown. Movement is blocked until reference scan or explicit owner signoff. |
+| `archive_candidate` | Legacy evidence may be archived after reference scan; archive before any quarantine or retention deletion. |
+| `owner_required` | A Builder/surface/module owner must sign off before movement. |
+| `inspect_owner_first` | Ownership is unknown. Treat as blocked until classified. |
 
 ## Handling Rules
 
@@ -108,6 +119,9 @@ No loose JSONL files were moved or deleted in this pass. The current state is:
 - canonical `state.db` retention is handled separately by
   `SPARK_STATE_DB_RETENTION_RUN_2026-06-08.md`;
 - loose JSONL residue is reportable and governed by this policy;
+- the report now emits machine-readable `manifest_action`,
+  `movement_blocker`, reference-scan, owner-signoff, archive-before-quarantine,
+  and delete-allowed fields for each reported file;
 - root `outcomes.jsonl` and `predictions.jsonl` remain frozen until active
   reader checks are complete;
 - large `recursion`, `logs`, `queue`, and `advisor` rivers are archive

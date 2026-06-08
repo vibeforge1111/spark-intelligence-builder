@@ -66,7 +66,7 @@ ledger spine, but Spark is not done.
   Spawner/Telegram decisions still depend on the HMAC signature checks below.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
-  to about 225 MB and is now about 250 MB after later live activity while
+  to about 225 MB and is now about 252 MB after later live activity while
   preserving canonical tool ledgers.
 - Closed for the live Builder runtime: installed Builder is the canonical
   source-truth line and now has `docs/SOURCE_TRUTH.md`. Doctor now discovers
@@ -91,9 +91,9 @@ ledger spine, but Spark is not done.
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Builder Governor binding | `bridge_authority.py` packages canonical issuer/provenance/runtime binding evidence; Researcher memory writes reject schema-valid Governor decisions missing that evidence; focused bridge-authority tests cover tampered/missing binding | Closed for Builder-local bridge consumers; not a substitute for cross-process HMAC trust |
-| Live ledger adoption | live doctor reports `total=115 surfaces=builder=1, spark_cli=69, telegram=45; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 250,163,200 bytes with `builder_events=17,181`, `event_log=17,181`, and `tool_call_ledger=115` | Closed for this pass |
-| Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
+| Live ledger adoption | live doctor reports `total=117 surfaces=builder=1, spark_cli=69, telegram=47; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 251,772,928 bytes with `builder_events=17,299`, `event_log=17,299`, and `tool_call_ledger=117` | Closed for this pass |
+| Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,235,594 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; reported files now include `manifest_action`, `movement_blocker`, reference-scan, owner-signoff, archive-before-quarantine, and `delete_allowed=false` fields; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Manifest policy added; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `69276c5` plus possible docs-only commits; doctor now reports `installs=spark-intelligence-builder ...; desktop_backlog_unmarked=spark-intelligence-builder ... commit_drift missing_harness_dep`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
@@ -144,7 +144,8 @@ ledger spine, but Spark is not done.
   ledger activity reports expected surfaces still at zero rows, while a fresh
   runtime with no ledgers remains advisory instead of failing.
 - Added read-only loose JSONL residue reporting to `jobs observability-report`
-  so large legacy rivers can be classified before any archive/quarantine pass.
+  so large legacy rivers can be classified and assigned explicit
+  manifest-action/blocker fields before any archive/quarantine pass.
 - Added `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` so loose JSONL handling is
   report-first, archive-before-quarantine, and never deletion-by-size.
 - Restored installed Builder AGPL-3.0-only provenance and declared
@@ -268,6 +269,10 @@ until that session completes and the final diff is tested.
    - Added `jobs observability-report --include-unowned-jsonl` to list loose
      `.jsonl` files by size and ownership class without opening, moving, or
      deleting them.
+   - Reported files now include `manifest_action`, `movement_blocker`,
+     reference-scan, owner-signoff, archive-before-quarantine, and
+     `delete_allowed=false` fields, so the next pass can produce a restore map
+     instead of inferring cleanup policy from prose.
    - Added `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md`.
    - Remaining work: run a backed-up archive/quarantine pass only after
      reference scans prove root `outcomes.jsonl` and `predictions.jsonl` are not

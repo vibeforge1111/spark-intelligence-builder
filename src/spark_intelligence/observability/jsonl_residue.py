@@ -16,6 +16,12 @@ class JsonlResidueFile:
     bytes: int
     modified_at: str | None
     classification: str
+    manifest_action: str
+    movement_blocker: str | None
+    requires_reference_scan: bool
+    requires_owner_signoff: bool
+    archive_before_quarantine: bool
+    delete_allowed: bool
     recommendation: str
 
 
@@ -87,7 +93,7 @@ def build_jsonl_residue_report(
                     relative_path=_relative_path(path, spark_root),
                     bytes=size,
                     modified_at=_timestamp(stat.st_mtime),
-                    classification=_classify_jsonl_path(path, spark_root, config_manager),
+                    **_manifest_policy(path, spark_root, config_manager),
                     recommendation=_recommendation(path, spark_root, config_manager),
                 )
             )
@@ -142,10 +148,75 @@ def _recommendation(path: Path, root: Path, config_manager: ConfigManager) -> st
     classification = _classify_jsonl_path(path, root, config_manager)
     if classification == "builder_gateway_log":
         return "Covered by gateway JSONL report/prune; do not quarantine separately."
+    if classification == "builder_local_log":
+        return "Builder-owned local log; coordinate with Builder retention before moving."
     if classification == "root_unowned_jsonl":
-        return "Archive or quarantine after confirming it is not active runtime input."
+        return "Freeze until reference scan or owner signoff proves it is not active runtime input."
     if classification in {"legacy_runtime_river", "root_log_river"}:
-        return "Treat as legacy evidence; archive by dated bundle before deleting."
+        return "Treat as legacy evidence; archive by dated bundle before quarantine or retention deletion."
     if classification in {"surface_state_jsonl", "module_local_jsonl"}:
         return "Coordinate with the owning surface before moving; prefer canonical ingestion first."
     return "Inspect ownership before moving or deleting."
+
+
+def _manifest_policy(path: Path, root: Path, config_manager: ConfigManager) -> dict[str, Any]:
+    classification = _classify_jsonl_path(path, root, config_manager)
+    if classification == "builder_gateway_log":
+        return {
+            "classification": classification,
+            "manifest_action": "canonical_retention_path",
+            "movement_blocker": "owned_by_gateway_retention",
+            "requires_reference_scan": False,
+            "requires_owner_signoff": False,
+            "archive_before_quarantine": False,
+            "delete_allowed": False,
+        }
+    if classification == "builder_local_log":
+        return {
+            "classification": classification,
+            "manifest_action": "owner_required",
+            "movement_blocker": "builder_retention_owner_required",
+            "requires_reference_scan": True,
+            "requires_owner_signoff": True,
+            "archive_before_quarantine": True,
+            "delete_allowed": False,
+        }
+    if classification == "root_unowned_jsonl":
+        return {
+            "classification": classification,
+            "manifest_action": "freeze_pending_reference_scan",
+            "movement_blocker": "reference_scan_or_owner_signoff_required",
+            "requires_reference_scan": True,
+            "requires_owner_signoff": True,
+            "archive_before_quarantine": True,
+            "delete_allowed": False,
+        }
+    if classification in {"legacy_runtime_river", "root_log_river"}:
+        return {
+            "classification": classification,
+            "manifest_action": "archive_candidate",
+            "movement_blocker": None,
+            "requires_reference_scan": True,
+            "requires_owner_signoff": False,
+            "archive_before_quarantine": True,
+            "delete_allowed": False,
+        }
+    if classification in {"surface_state_jsonl", "module_local_jsonl"}:
+        return {
+            "classification": classification,
+            "manifest_action": "owner_required",
+            "movement_blocker": "owning_surface_signoff_required",
+            "requires_reference_scan": True,
+            "requires_owner_signoff": True,
+            "archive_before_quarantine": True,
+            "delete_allowed": False,
+        }
+    return {
+        "classification": classification,
+        "manifest_action": "inspect_owner_first",
+        "movement_blocker": "unclassified_owner_unknown",
+        "requires_reference_scan": True,
+        "requires_owner_signoff": True,
+        "archive_before_quarantine": True,
+        "delete_allowed": False,
+    }

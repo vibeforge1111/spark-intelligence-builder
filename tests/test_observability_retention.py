@@ -324,10 +324,36 @@ class ObservabilityRetentionCliTests(SparkTestCase):
         self.assertEqual(report["total_files"], 3)
         self.assertIn("outcomes.jsonl", by_relative_path)
         self.assertEqual(by_relative_path["outcomes.jsonl"]["classification"], "root_unowned_jsonl")
+        self.assertEqual(by_relative_path["outcomes.jsonl"]["manifest_action"], "freeze_pending_reference_scan")
+        self.assertEqual(
+            by_relative_path["outcomes.jsonl"]["movement_blocker"],
+            "reference_scan_or_owner_signoff_required",
+        )
+        self.assertTrue(by_relative_path["outcomes.jsonl"]["requires_reference_scan"])
+        self.assertFalse(by_relative_path["outcomes.jsonl"]["delete_allowed"])
         self.assertEqual(by_relative_path[str(Path("recursion") / "mutations.jsonl")]["classification"], "legacy_runtime_river")
+        self.assertEqual(
+            by_relative_path[str(Path("recursion") / "mutations.jsonl")]["manifest_action"],
+            "archive_candidate",
+        )
+        self.assertTrue(
+            by_relative_path[str(Path("recursion") / "mutations.jsonl")]["archive_before_quarantine"]
+        )
         self.assertEqual(
             by_relative_path[str(Path("state") / "spark-intelligence" / "logs" / "gateway-trace.jsonl")]["classification"],
             "builder_gateway_log",
+        )
+        self.assertEqual(
+            by_relative_path[str(Path("state") / "spark-intelligence" / "logs" / "gateway-trace.jsonl")][
+                "manifest_action"
+            ],
+            "canonical_retention_path",
+        )
+        self.assertEqual(
+            by_relative_path[str(Path("state") / "spark-intelligence" / "logs" / "gateway-trace.jsonl")][
+                "movement_blocker"
+            ],
+            "owned_by_gateway_retention",
         )
         self.assertEqual(gateway_log.read_text(encoding="utf-8"), "owned\n")
 

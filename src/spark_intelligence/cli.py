@@ -8530,7 +8530,9 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             for item in jsonl_report["reported_files"][:10]:
                 lines.append(
                     f"- jsonl {item['relative_path']} "
-                    f"bytes={item['bytes']} class={item['classification']}"
+                    f"bytes={item['bytes']} class={item['classification']} "
+                    f"action={item['manifest_action']} "
+                    f"blocked_by={item['movement_blocker'] or 'none'}"
                 )
         print("\n".join(lines))
     return 0

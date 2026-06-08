@@ -116,7 +116,10 @@ Run `jobs observability-report` before any future prune/VACUUM pass. It reports
 gateway JSONL sizes without deleting anything.
 With `--include-unowned-jsonl`, it also lists loose `.jsonl` files under the
 Spark root by size and ownership class without opening, moving, or deleting
-them. Follow
+them. Each reported file includes `manifest_action`, `movement_blocker`,
+reference-scan and owner-signoff flags, `archive_before_quarantine`, and
+`delete_allowed=false` so a future archive/quarantine pass has a checked
+restore manifest instead of relying on prose. Follow
 [SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md](./SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md)
 before archiving, quarantining, or deleting any loose JSONL river.
 
