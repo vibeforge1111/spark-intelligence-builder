@@ -84,10 +84,10 @@ git -C C:\Users\USER\Desktop\spark-intelligence-builder status --short --branch
 git -C C:\Users\USER\Desktop\spark-intelligence-builder rev-parse HEAD
 ```
 
-Current 2026-06-08 evidence, refreshed after the Builder JSONL manifest-policy
-remediation commit. The code-bearing remediation line is:
+Current 2026-06-08 evidence, refreshed after the Builder JSONL manifest
+candidate-summary remediation commit. The code-bearing remediation line is:
 
-- installed Builder code-bearing HEAD: `198aa31fc3d48a517ee01a85eb425b4c2b5cc7ec`
+- installed Builder code-bearing HEAD: `27a85788ddee8495c78d7c9e6638cba52e0e701d`
 - later docs-only commits may sit on top of this without changing runtime
   behavior
 - Desktop Builder HEAD: `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a`
