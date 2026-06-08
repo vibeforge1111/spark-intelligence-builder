@@ -2864,6 +2864,63 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["builder-source-truth"].ok)
         self.assertIn("installs=spark-intelligence-builder", checks["builder-source-truth"].detail)
 
+    def test_doctor_discovers_spark_ancestor_module_registry_by_default(self) -> None:
+        from spark_intelligence.config.loader import ConfigManager
+        from spark_intelligence.state.db import StateDB
+
+        runtime_home = self.home / ".spark" / "state" / "spark-intelligence"
+        config_manager = ConfigManager.from_home(str(runtime_home))
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        live = self.home / ".spark" / "modules" / "spark-intelligence-builder" / "source"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+
+        report = run_doctor(config_manager, state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertTrue(checks["builder-source-truth"].ok)
+        self.assertIn("installs=spark-intelligence-builder", checks["builder-source-truth"].detail)
+        self.assertNotIn("module registry not configured", checks["builder-source-truth"].detail)
+
+    def test_doctor_warns_about_unmarked_desktop_builder_backlog(self) -> None:
+        modules_root = self.home / "modules"
+        live = modules_root / "spark-intelligence-builder" / "source"
+        desktop = self.home / "Desktop" / "spark-intelligence-builder"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+        self._write_builder_install_fixture(
+            desktop,
+            commit="b" * 40,
+            license_name="MIT",
+            needs_modules=[],
+            dependencies=[],
+        )
+
+        with patch("spark_intelligence.doctor.checks.Path.home", return_value=self.home):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertTrue(checks["builder-source-truth"].ok)
+        self.assertIn("installs=spark-intelligence-builder", checks["builder-source-truth"].detail)
+        self.assertIn("desktop_backlog_unmarked=spark-intelligence-builder", checks["builder-source-truth"].detail)
+        self.assertIn("commit_drift", checks["builder-source-truth"].detail)
+        self.assertIn("license=MIT", checks["builder-source-truth"].detail)
+        self.assertIn("missing_harness_dep", checks["builder-source-truth"].detail)
+
     def test_doctor_reports_stale_python_editable_import_source(self) -> None:
         modules_root = self.home / "modules"
         live = modules_root / "spark-intelligence-builder" / "source"

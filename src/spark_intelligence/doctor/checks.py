@@ -339,9 +339,14 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
         return DoctorCheck("builder-source-truth", True, "module registry not configured")
 
     records = _builder_install_records(roots)
+    backlog_records = _builder_desktop_backlog_records(config_manager, records)
+    backlog_summary = _builder_desktop_backlog_summary(backlog_records, records)
     if not records:
         root_detail = ", ".join(str(root) for root in roots)
-        return DoctorCheck("builder-source-truth", True, f"no Builder installs under {root_detail}")
+        detail = f"no Builder installs under {root_detail}"
+        if backlog_summary:
+            detail = f"{detail}; {backlog_summary}"
+        return DoctorCheck("builder-source-truth", True, detail)
 
     install_records = [record for record in records if record.get("canonical") is not False]
     mirror_records = [record for record in records if record.get("canonical") is False]
@@ -388,6 +393,8 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
     detail_suffix = f"installs={summary}"
     if mirror_summary:
         detail_suffix = f"{detail_suffix}; mirrors={mirror_summary}"
+    if backlog_summary:
+        detail_suffix = f"{detail_suffix}; {backlog_summary}"
     if issues:
         return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; {detail_suffix}")
     return DoctorCheck("builder-source-truth", True, detail_suffix)
@@ -477,6 +484,10 @@ def _module_registry_roots(config_manager: ConfigManager) -> list[Path]:
     _append_existing_root(roots, home / "modules")
     _append_existing_root(roots, home.parent / "modules")
     _append_existing_root(roots, home.parent / ".spark" / "modules")
+    for parent in home.parents:
+        if parent.name == ".spark":
+            _append_existing_root(roots, parent / "modules")
+            break
 
     spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
     if spark_home:
@@ -499,28 +510,30 @@ def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for root in roots:
         for manifest in sorted(root.glob("spark-intelligence-builder*/source/spark.toml")):
-            source_root = manifest.parent
-            manifest_payload = _read_toml(manifest)
-            module = manifest_payload.get("module") if isinstance(manifest_payload.get("module"), dict) else {}
-            needs = manifest_payload.get("needs") if isinstance(manifest_payload.get("needs"), dict) else {}
-            source_truth = (
-                manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
-            )
-            pyproject = _read_toml(source_root / "pyproject.toml")
-            project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
-            records.append(
-                {
-                    "name": source_root.parent.name,
-                    "path": source_root,
-                    "commit": _git_head_short(source_root),
-                    "license": str(module.get("license") or ""),
-                    "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
-                    "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
-                    "canonical": source_truth.get("canonical") is not False,
-                    "mirror_of": str(source_truth.get("mirror_of") or ""),
-                }
-            )
+            records.append(_builder_source_record(manifest.parent, name=manifest.parent.parent.name))
     return records
+
+
+def _builder_source_record(source_root: Path, *, name: str) -> dict[str, object]:
+    manifest_payload = _read_toml(source_root / "spark.toml")
+    module = manifest_payload.get("module") if isinstance(manifest_payload.get("module"), dict) else {}
+    needs = manifest_payload.get("needs") if isinstance(manifest_payload.get("needs"), dict) else {}
+    source_truth = (
+        manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
+    )
+    pyproject = _read_toml(source_root / "pyproject.toml")
+    project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
+    return {
+        "name": name,
+        "path": source_root,
+        "commit": _git_head_short(source_root),
+        "license": str(module.get("license") or ""),
+        "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
+        "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
+        "canonical": source_truth.get("canonical") is not False,
+        "source_truth_marked": "canonical" in source_truth,
+        "mirror_of": str(source_truth.get("mirror_of") or ""),
+    }
 
 
 def _builder_install_summary(records: list[dict[str, object]]) -> str:
@@ -528,6 +541,62 @@ def _builder_install_summary(records: list[dict[str, object]]) -> str:
         f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
         for record in records
     )
+
+
+def _builder_desktop_backlog_records(
+    config_manager: ConfigManager,
+    install_records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    candidates: list[Path] = []
+    configured = config_manager.get_path("spark.diagnostics.builder_backlog_roots", default=[])
+    if isinstance(configured, str):
+        configured = [configured]
+    if isinstance(configured, list):
+        for raw in configured:
+            _append_existing_builder_source(candidates, Path(str(raw)).expanduser())
+    _append_existing_builder_source(candidates, Path.home() / "Desktop" / "spark-intelligence-builder")
+
+    install_paths = [record["path"] for record in install_records if isinstance(record.get("path"), Path)]
+    backlog_records: list[dict[str, object]] = []
+    for source_root in candidates:
+        if _path_matches_any(source_root, install_paths):
+            continue
+        backlog_records.append(_builder_source_record(source_root, name=source_root.name))
+    return backlog_records
+
+
+def _append_existing_builder_source(candidates: list[Path], path: Path) -> None:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return
+    if not resolved.is_dir() or not (resolved / "spark.toml").exists():
+        return
+    if resolved not in candidates:
+        candidates.append(resolved)
+
+
+def _builder_desktop_backlog_summary(
+    backlog_records: list[dict[str, object]],
+    install_records: list[dict[str, object]],
+) -> str:
+    if not backlog_records:
+        return ""
+    install_commits = {str(record.get("commit") or "") for record in install_records if record.get("commit") != "unknown"}
+    parts: list[str] = []
+    for record in backlog_records:
+        flags: list[str] = []
+        commit = str(record.get("commit") or "unknown")
+        if install_commits and commit not in install_commits:
+            flags.append("commit_drift")
+        if record.get("license") != "AGPL-3.0-only":
+            flags.append(f"license={record.get('license') or 'missing'}")
+        if "spark-harness-core" not in record.get("needs_modules", ()):
+            flags.append("missing_harness_dep")
+        label = "desktop_backlog" if record.get("source_truth_marked") and record.get("canonical") is False else "desktop_backlog_unmarked"
+        suffix = " ".join(flags) if flags else "backlog_only"
+        parts.append(f"{label}={record['name']} commit={commit} {suffix}")
+    return ", ".join(parts)
 
 
 def _read_toml(path: Path) -> dict[str, object]:

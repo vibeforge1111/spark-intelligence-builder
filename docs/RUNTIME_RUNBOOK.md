@@ -33,6 +33,11 @@ The Desktop checkout is backlog/historical evidence until curated. See
 [SOURCE_TRUTH.md](./SOURCE_TRUTH.md) before porting behavior between Builder
 trees.
 
+`spark-intelligence doctor --json` should report `builder-source-truth` with
+`installs=spark-intelligence-builder`. If an uncurated Desktop checkout exists,
+the same check reports it as `desktop_backlog_unmarked`; that is backlog
+evidence, not live runtime truth.
+
 ```powershell
 python -m pip install -e .
 python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_harness_cli.py tests/test_observability_retention.py -q

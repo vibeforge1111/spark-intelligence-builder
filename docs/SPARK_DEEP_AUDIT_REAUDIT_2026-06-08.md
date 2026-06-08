@@ -66,11 +66,14 @@ ledger spine, but Spark is not done.
   Spawner/Telegram decisions still depend on the HMAC signature checks below.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
-  to about 225 MB and is now about 247 MB after later live activity while
+  to about 225 MB and is now about 250 MB after later live activity while
   preserving canonical tool ledgers.
 - Closed for the live Builder runtime: installed Builder is the canonical
-  source-truth line and now has `docs/SOURCE_TRUTH.md`. Desktop Builder remains
-  dirty backlog/historical evidence until curated.
+  source-truth line and now has `docs/SOURCE_TRUTH.md`. Doctor now discovers
+  the live `~/.spark/modules` install from a `~/.spark/state/...` Builder home
+  and labels the stale Desktop checkout as `desktop_backlog_unmarked` instead
+  of treating it as runtime truth. Desktop Builder remains dirty backlog until
+  curated.
 - Still open or in-flight: Spawner loopback API-key hardening and Governor
   signature verification must be rechecked after the parallel Spawner/Telegram
   session settles.
@@ -88,10 +91,10 @@ ledger spine, but Spark is not done.
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Builder Governor binding | `bridge_authority.py` packages canonical issuer/provenance/runtime binding evidence; Researcher memory writes reject schema-valid Governor decisions missing that evidence; focused bridge-authority tests cover tampered/missing binding | Closed for Builder-local bridge consumers; not a substitute for cross-process HMAC trust |
-| Live ledger adoption | live doctor reports `total=111 surfaces=builder=1, spark_cli=69, telegram=41; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 247,472,128 bytes with `builder_events=16,970`, `event_log=16,970`, and `tool_call_ledger=111` | Closed for this pass |
+| Live ledger adoption | live doctor reports `total=115 surfaces=builder=1, spark_cli=69, telegram=45; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 250,163,200 bytes with `builder_events=17,181`, `event_log=17,181`, and `tool_call_ledger=115` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
-| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `212aeb0` plus possible docs-only commits; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
+| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `212aeb0` plus possible docs-only commits; doctor now reports `installs=spark-intelligence-builder ...; desktop_backlog_unmarked=spark-intelligence-builder ... commit_drift missing_harness_dep`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
@@ -146,6 +149,10 @@ ledger spine, but Spark is not done.
 - Added installed `docs/SOURCE_TRUTH.md` so future audits treat
   `C:\Users\USER\.spark\modules\spark-intelligence-builder\source` as the live
   Builder runtime line and treat the Desktop checkout as backlog until curated.
+- Tightened the `builder-source-truth` doctor check so a live
+  `~/.spark/state/...` Builder home discovers the installed
+  `~/.spark/modules` runtime and reports an unmarked Desktop checkout as
+  `desktop_backlog_unmarked` advisory evidence.
 - Added docs for authority contracts, runtime operations, and source-truth
   expectations.
 - Added Builder self-evolution observation and change-manifest runner surfaces
@@ -296,9 +303,13 @@ until that session completes and the final diff is tested.
 
 12. Enforce the Builder source-truth rule.
     - The installed Builder is the live runtime, is AGPL-aligned, declares
-      `spark-harness-core`, and now carries `docs/SOURCE_TRUTH.md`.
+      `spark-harness-core`, now carries `docs/SOURCE_TRUTH.md`, and is visible
+      to `spark-intelligence doctor` as `installs=spark-intelligence-builder`.
     - The Desktop Builder tree remains dirty, divergent, and backlog-only until
       curated.
+    - Doctor labels the uncurated Desktop checkout as
+      `desktop_backlog_unmarked` so future stale-tree audits stop at the
+      source-truth warning before deriving runtime truth from it.
     - Latest read-only Desktop check: branch `codex/browser-use-receipts` has a
       gone remote, many dirty files, untracked `LICENSE`, and no
       `spark-harness-core` entry in `needs.modules`.
