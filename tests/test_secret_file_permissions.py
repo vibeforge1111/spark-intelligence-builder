@@ -26,6 +26,16 @@ class SecretFilePermissionTests(SparkTestCase):
         else:
             self.assertFalse(mock_run.called)
 
+    @patch("spark_intelligence.config.loader.os.name", "nt")
+    @patch.object(ConfigManager, "_harden_windows_env_file_permissions")
+    def test_bootstrap_soft_fails_windows_env_acl_hardening(self, mock_harden) -> None:
+        mock_harden.side_effect = OSError("acl unavailable")
+        config_manager = ConfigManager.from_home(str(self.home / "windows-acl-unavailable"))
+
+        config_manager.bootstrap()
+
+        self.assertTrue(config_manager.paths.env_file.exists())
+
     @patch("spark_intelligence.config.loader.subprocess.run")
     def test_upsert_env_secret_reapplies_windows_acl(self, mock_run) -> None:
         self.config_manager.upsert_env_secret("TELEGRAM_BOT_TOKEN", "secret")
@@ -37,6 +47,14 @@ class SecretFilePermissionTests(SparkTestCase):
             self.assertEqual(Path(command[1]), self.config_manager.paths.env_file)
         else:
             self.assertFalse(mock_run.called)
+
+    @patch("spark_intelligence.config.loader.os.name", "nt")
+    @patch.object(ConfigManager, "_harden_windows_env_file_permissions")
+    def test_upsert_env_secret_keeps_windows_acl_hardening_strict(self, mock_harden) -> None:
+        mock_harden.side_effect = OSError("acl unavailable")
+
+        with self.assertRaises(OSError):
+            self.config_manager.upsert_env_secret("TELEGRAM_BOT_TOKEN", "secret")
 
     @patch("spark_intelligence.config.loader.subprocess.run")
     def test_env_file_permission_status_reports_owner_only_windows_acl(self, mock_run) -> None:

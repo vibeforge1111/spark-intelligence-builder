@@ -200,6 +200,15 @@ Provider keys should be rotation-friendly:
 
 Long-lived workers should resolve secrets per request or at clearly documented refresh points. Avoid caching secrets at import time.
 
+## Env File Permissions
+
+Bootstrap may continue if platform ACL hardening is temporarily unavailable, so
+first-run setup does not strand the operator before `doctor` can explain the
+problem. Secret writes remain strict: `upsert_env_secret` still raises if the
+`.env` ACL cannot be hardened. Always verify the final state with
+`spark-intelligence doctor`; the `.env-permissions` check is the source of
+truth.
+
 ## Pairing And Identity Checks
 
 Before enabling a new channel/user path:
