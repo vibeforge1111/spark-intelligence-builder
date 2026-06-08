@@ -335,6 +335,60 @@ class HarnessCliTests(SparkTestCase):
         )
         self.assertEqual(seen_hooks, ["voice.status", "voice.speak"])
 
+    def test_harness_execute_swarm_escalation_records_dry_run_ledger(self) -> None:
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._load_swarm_status",
+                return_value=SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    researcher_ready=True,
+                    payload_ready=True,
+                    api_ready=True,
+                    auth_state="configured",
+                    workspace_id="workspace-1",
+                    api_url="https://swarm.example",
+                    last_decision={"mode": "manual_recommended"},
+                    last_failure=None,
+                ),
+            ),
+            patch(
+                "spark_intelligence.harness_runtime.service._run_swarm_sync_dry_run",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    mode="dry_run",
+                    message="Built payload",
+                    payload_path="C:/tmp/swarm-payload.json",
+                    api_url="https://swarm.example",
+                    workspace_id="workspace-1",
+                    accepted=None,
+                    response_body={"payload_keys": ["collective"]},
+                ),
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "Coordinate this through Swarm.",
+                "--home",
+                str(self.home),
+                "--harness-id",
+                "swarm.escalation",
+                "--channel-kind",
+                "builder",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "prepared")
+        self.assertEqual(payload["artifacts"]["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(payload["artifacts"]["swarm_sync_result"]["mode"], "dry_run")
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(ledgers[0]["status"], "partial")
+
     def test_harness_status_returns_registry_and_runtime_payload(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "harness",

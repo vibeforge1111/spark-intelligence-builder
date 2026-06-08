@@ -406,7 +406,9 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="Coordinate this through Swarm.",
             forced_harness_id="swarm.escalation",
+            channel_kind="builder",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         with (
             patch(
@@ -446,7 +448,55 @@ class HarnessRuntimeTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.artifacts["swarm_sync_result"]["mode"], "dry_run")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["surface"], "builder")
+        self.assertEqual(ledgers[0]["status"], "partial")
+        self.assertEqual(ledgers[0]["tool_name"], "swarm.sync.dry_run")
         self.assertIn("swarm sync", result.artifacts["resume_token"]["resume_command"])
+
+    def test_execute_swarm_escalation_without_authority_does_not_build_payload(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Coordinate this through Swarm.",
+            forced_harness_id="swarm.escalation",
+        )
+
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._load_swarm_status",
+                return_value=SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    researcher_ready=True,
+                    payload_ready=True,
+                    api_ready=True,
+                    auth_state="configured",
+                    workspace_id="workspace-1",
+                    api_url="https://swarm.example",
+                    last_decision={"mode": "manual_recommended"},
+                    last_failure=None,
+                ),
+            ),
+            patch("spark_intelligence.harness_runtime.service._run_swarm_sync_dry_run") as sync_mock,
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
+        sync_mock.assert_not_called()
 
     def test_execute_swarm_escalation_harness_requests_payload_repair_when_not_ready(self) -> None:
         envelope = build_harness_task_envelope(

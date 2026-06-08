@@ -239,6 +239,22 @@ def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> d
             confidence=0.95,
         )
 
+    if envelope.harness_id == "swarm.escalation":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="swarm.sync.dry_run",
+            owner_system="spark-swarm",
+            mutation_class="writes_files",
+            intent_summary="Local operator explicitly requested governed Swarm dry-run payload preparation through the Builder harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator Swarm task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
     if envelope.harness_id != "voice.io":
         return None
 
@@ -1106,6 +1122,21 @@ def _execute_swarm_escalation_harness(
             "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
             "needs_input",
         )
+    authority = _authorize_harness_swarm_sync_dry_run(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        artifacts["harness_authority"] = _harness_authority_artifact(
+            authority,
+            fallback_tool_name="swarm.sync.dry_run",
+        )
+        return (
+            artifacts,
+            "Swarm escalation harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
     sync_result = _run_swarm_sync_dry_run(
         config_manager=config_manager,
         state_db=state_db,
@@ -1122,6 +1153,22 @@ def _execute_swarm_escalation_harness(
         "accepted": sync_result.accepted,
         "response_body": sync_result.response_body,
     }
+    artifacts["harness_authority"] = _harness_authority_artifact(
+        authority,
+        fallback_tool_name="swarm.sync.dry_run",
+    )
+    _record_harness_swarm_sync_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="partial" if sync_result.ok else "failure",
+        summary=(
+            "Swarm escalation dry-run prepared a collective payload."
+            if sync_result.ok
+            else "Swarm escalation dry-run could not prepare a collective payload."
+        ),
+    )
     artifacts["resume_token"] = {
         "resume_kind": "swarm_dispatch",
         "resume_command": f"python -m spark_intelligence.cli swarm sync --home {config_manager.paths.home}",
@@ -1141,6 +1188,64 @@ def _execute_swarm_escalation_harness(
         artifacts,
         "Swarm escalation runner could not prepare a collective payload yet.",
         "needs_input",
+    )
+
+
+def _authorize_harness_swarm_sync_dry_run(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="swarm.sync.dry_run",
+        owner_system="spark-swarm",
+        mutation_class="writes_files",
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_swarm_sync_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
     )
 
 
