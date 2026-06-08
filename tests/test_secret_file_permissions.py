@@ -39,6 +39,41 @@ class SecretFilePermissionTests(SparkTestCase):
             self.assertFalse(mock_run.called)
 
     @patch("spark_intelligence.config.loader.subprocess.run")
+    def test_bootstrap_does_not_fail_when_existing_windows_env_acl_hardening_is_denied(self, mock_run) -> None:
+        if os.name != "nt":
+            return
+        config_manager = ConfigManager.from_home(str(self.home / "windows-acl-denied"))
+        config_manager.paths.home.mkdir(parents=True, exist_ok=True)
+        config_manager.paths.config_yaml.write_text("workspace: {}\n", encoding="utf-8")
+        config_manager.paths.env_file.write_text("# existing env\n", encoding="utf-8")
+
+        def fake_run(command, *args, **kwargs):
+            if command[0] == "whoami":
+                return SimpleNamespace(stdout="desktop-smvb6c0\\user\n")
+            raise subprocess.CalledProcessError(5, command, stderr="Access is denied.")
+
+        mock_run.side_effect = fake_run
+
+        created = config_manager.bootstrap()
+
+        self.assertFalse(created)
+
+    @patch("spark_intelligence.config.loader.subprocess.run")
+    def test_upsert_env_secret_keeps_windows_acl_hardening_strict(self, mock_run) -> None:
+        if os.name != "nt":
+            return
+
+        def fake_run(command, *args, **kwargs):
+            if command[0] == "whoami":
+                return SimpleNamespace(stdout="desktop-smvb6c0\\user\n")
+            raise subprocess.CalledProcessError(5, command, stderr="Access is denied.")
+
+        mock_run.side_effect = fake_run
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.config_manager.upsert_env_secret("TELEGRAM_BOT_TOKEN", "secret")
+
+    @patch("spark_intelligence.config.loader.subprocess.run")
     def test_env_file_permission_status_reports_owner_only_windows_acl(self, mock_run) -> None:
         self.config_manager.bootstrap()
         principal = self.config_manager._windows_current_principal()
