@@ -651,7 +651,10 @@ def exchange_oauth_authorization_code(
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        try:
+            payload = json.loads(response.read().decode("utf-8"))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(f"OAuth token exchange for '{provider}' returned invalid JSON: {exc}") from exc
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
     return payload
@@ -679,7 +682,10 @@ def exchange_oauth_refresh_token(
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        try:
+            payload = json.loads(response.read().decode("utf-8"))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(f"OAuth refresh for '{provider}' returned invalid JSON: {exc}") from exc
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
