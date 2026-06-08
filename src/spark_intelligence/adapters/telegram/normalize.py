@@ -25,6 +25,18 @@ class NormalizedTelegramUpdate:
     is_dm: bool
 
 
+def _safe_int(value: Any, field_name: str) -> int:
+    """Convert *value* to ``int`` safely.
+
+    Returns ``0`` when *value* cannot be converted rather than letting a
+    ``ValueError`` propagate up and crash the entire normalisation.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "telegram") -> NormalizedTelegramUpdate:
     message = update.get("message")
     if not isinstance(message, dict):
@@ -70,7 +82,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     return NormalizedTelegramUpdate(
         update_id=int(update_id),
         channel_id=channel_id,
-        message_id=int(message_id),
+        message_id=_safe_int(message_id, "message_id"),
         telegram_user_id=str(telegram_user_id),
         telegram_username=sender.get("username"),
         chat_id=str(chat_id),
