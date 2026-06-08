@@ -674,8 +674,7 @@ def _maybe_save_reply_as_draft(
 
     try:
         from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
-        _dbg.parent.mkdir(parents=True, exist_ok=True)
+
         timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         with _dbg.open("a", encoding="utf-8") as _fh:
             _fh.write(
@@ -4138,7 +4137,7 @@ def _send_telegram_reply(
                 telegram_result=telegram_delivery_result,
             )
         else:
-            for _chunk in (guarded.get("chunks") or [guarded["text"]]):
+            for _chunk in (guarded.get("chunks") or [guarded["text"]])[:10]:
                 client.send_message(chat_id=chat_id, text=_chunk)
     except (RuntimeError, HTTPError, URLError) as exc:
         if voice_payload is not None:
@@ -4155,7 +4154,7 @@ def _send_telegram_reply(
             guarded["actions"] = ["voice_delivery_fallback_to_text", *list(guarded["actions"])]
             delivery_medium = "text"
             try:
-                for _chunk in (guarded.get("chunks") or [guarded["text"]]):
+                for _chunk in (guarded.get("chunks") or [guarded["text"]])[:10]:
                     client.send_message(chat_id=chat_id, text=_chunk)
             except (RuntimeError, HTTPError, URLError) as fallback_exc:
                 ok = False
@@ -12718,7 +12717,9 @@ def _normalize_swarm_label(value: str) -> str:
 
 
 def _think_state_key(*, external_user_id: str) -> str:
-    return f"telegram:think_visibility:{external_user_id}"
+    import re
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", str(external_user_id or "")).strip("_")
+    return f"telegram:think_visibility:{sanitized}"
 
 
 def _voice_reply_state_key(*, external_user_id: str) -> str:
