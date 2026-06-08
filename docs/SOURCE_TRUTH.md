@@ -84,10 +84,12 @@ git -C C:\Users\USER\Desktop\spark-intelligence-builder status --short --branch
 git -C C:\Users\USER\Desktop\spark-intelligence-builder rev-parse HEAD
 ```
 
-Current 2026-06-08 evidence, refreshed after the remediation documentation
-commits:
+Current 2026-06-08 evidence, refreshed after the Builder harness-ledger
+remediation commits. The code-bearing remediation line is:
 
-- installed Builder HEAD: `878017fe45cb62074bffcd063a51f5fa7e8844c8`
+- installed Builder code-bearing HEAD: `1bbf1c0b9de2e87842298a588b91f6f0377a7715`
+- later docs-only commits may sit on top of this without changing runtime
+  behavior
 - Desktop Builder HEAD: `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a`
 - installed Builder status: clean detached checkout
 - Desktop Builder status: dirty `codex/browser-use-receipts` branch whose
