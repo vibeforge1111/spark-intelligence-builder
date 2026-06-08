@@ -66,7 +66,7 @@ ledger spine, but Spark is not done.
   Spawner/Telegram decisions still depend on the HMAC signature checks below.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
-  to about 225 MB and is now about 228 MB after later live activity while
+  to about 225 MB and is now about 247 MB after later live activity while
   preserving canonical tool ledgers.
 - Closed for the live Builder runtime: installed Builder is the canonical
   source-truth line and now has `docs/SOURCE_TRUTH.md`. Desktop Builder remains
@@ -89,7 +89,7 @@ ledger spine, but Spark is not done.
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Builder Governor binding | `bridge_authority.py` packages canonical issuer/provenance/runtime binding evidence; Researcher memory writes reject schema-valid Governor decisions missing that evidence; focused bridge-authority tests cover tampered/missing binding | Closed for Builder-local bridge consumers; not a substitute for cross-process HMAC trust |
 | Live ledger adoption | live doctor reports `total=111 surfaces=builder=1, spark_cli=69, telegram=41; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 246,902,784 bytes with `builder_events=16,930`, `event_log=16,930`, and `tool_call_ledger=111` | Closed for this pass |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 247,472,128 bytes with `builder_events=16,970`, `event_log=16,970`, and `tool_call_ledger=111` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `212aeb0` plus possible docs-only commits; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
