@@ -2215,6 +2215,7 @@ def simulate_telegram_update(
             surface="telegram_chat",
         )
         voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
+        # Snapshot voice reply state once to prevent TOCTOU race
         voice_reply_state_enabled = _voice_reply_enabled_for_user(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
