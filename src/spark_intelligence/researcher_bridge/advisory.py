@@ -230,14 +230,16 @@ def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
 
 def _profile_fact_record_value(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    return str(
-        record.get("value")
-        or record.get("normalized_value")
-        or metadata.get("value")
-        or metadata.get("normalized_value")
-        or record.get("answer")
-        or ""
-    ).strip()
+    for candidate in (
+        record.get("value"),
+        record.get("normalized_value"),
+        metadata.get("value"),
+        metadata.get("normalized_value"),
+        record.get("answer"),
+    ):
+        if candidate is not None:
+            return str(candidate).strip()
+    return ""
 
 
 def _select_profile_fact_query_value(
