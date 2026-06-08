@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+def _safe_json_loads(text: str, default=None):
+    """Safely parse JSON, returning default on error."""
+    if not text:
+        return default if default is not None else {}
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default if default is not None else {}
+
+
+
 import base64
 import hashlib
 import json
@@ -483,7 +494,7 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                "summary_json": _safe_json_loads(str(row["summary_json"])) if row["summary_json"] else {},
             }
         )
     summary = {
