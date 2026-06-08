@@ -87,7 +87,7 @@ git -C C:\Users\USER\Desktop\spark-intelligence-builder rev-parse HEAD
 Current 2026-06-08 evidence, refreshed after the Builder harness-ledger
 remediation commits. The code-bearing remediation line is:
 
-- installed Builder code-bearing HEAD: `4bf32a8c2cbaa91e96f6adefbdfe14e44be9775d`
+- installed Builder code-bearing HEAD: `69276c51e7e657095631a299ff97589dae1f50f2`
 - later docs-only commits may sit on top of this without changing runtime
   behavior
 - Desktop Builder HEAD: `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a`
