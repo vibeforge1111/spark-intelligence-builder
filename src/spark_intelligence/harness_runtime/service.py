@@ -20,6 +20,12 @@ _VOICE_SPEAK_RE = re.compile(
     r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+_VOICE_AUDIO_BASE64_RE = re.compile(
+    r"(?P<prefix>\baudio_base64\s*[:=]\s*)(?P<audio>[^\s]+)",
+    re.IGNORECASE,
+)
+_VOICE_MIME_TYPE_RE = re.compile(r"\bmime_type\s*[:=]\s*(?P<mime>[A-Za-z0-9.+/-]+)", re.IGNORECASE)
+_VOICE_FILENAME_RE = re.compile(r"\bfilename\s*[:=]\s*(?P<filename>[^\s]+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -45,7 +51,7 @@ class HarnessTaskEnvelope:
     def to_payload(self) -> dict[str, Any]:
         return {
             "envelope_id": self.envelope_id,
-            "task": self.task,
+            "task": _redact_harness_task_payload(self.task),
             "harness_id": self.harness_id,
             "owner_system": self.owner_system,
             "backend_kind": self.backend_kind,
@@ -1053,6 +1059,122 @@ def _execute_voice_io_harness(
             "completed",
         )
 
+    if task_mode == "transcribe":
+        if not ready:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_status_repair",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness is not ready to transcribe audio yet.",
+                "blocked",
+            )
+        if not task_payload:
+            artifacts["needs_input"] = {
+                "reason": "Voice transcription requires an explicit audio_base64 payload.",
+                "mode": task_mode,
+                "task": _redact_harness_task_payload(envelope.task),
+            }
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_input_required",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness is ready but needs explicit audio bytes before transcription can continue.",
+                "needs_input",
+            )
+        try:
+            audio_bytes = _decode_voice_audio_base64(task_payload)
+        except ValueError as exc:
+            artifacts["needs_input"] = {
+                "reason": str(exc),
+                "mode": task_mode,
+                "task": _redact_harness_task_payload(envelope.task),
+            }
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_input_required",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness received invalid transcription audio input.",
+                "needs_input",
+            )
+        try:
+            transcribe_output, transcribe_chip_key = _run_voice_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+                hook="voice.transcribe",
+                payload=_build_voice_hook_payload(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    envelope=envelope,
+                    audio_base64=task_payload,
+                    mime_type=_extract_voice_mime_type(envelope.task),
+                    filename=_extract_voice_filename(envelope.task),
+                ),
+                run_id=run_id,
+            )
+        except Exception as exc:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_transcribe_retry",
+            )
+            artifacts["retry_token"] = {
+                "retry_command": (
+                    f"python -m spark_intelligence.cli harness execute "
+                    f"{json.dumps(_redact_harness_task_payload(envelope.task))} "
+                    f"--home {config_manager.paths.home} --harness-id voice.io"
+                ),
+                "reason": str(exc),
+            }
+            return (
+                artifacts,
+                "Voice I/O harness could not transcribe audio with the current provider/hook state.",
+                "blocked",
+            )
+        transcribe_result = transcribe_output.get("result") if isinstance(transcribe_output.get("result"), dict) else {}
+        transcript_text = str(transcribe_result.get("transcript_text") or transcribe_result.get("text") or "").strip()
+        if not transcript_text:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_transcribe_retry",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness completed the transcription hook but received no transcript text.",
+                "blocked",
+            )
+        artifacts["transcription"] = {
+            "chip_key": transcribe_chip_key,
+            "provider_id": str(transcribe_result.get("provider_id") or ""),
+            "model": str(transcribe_result.get("model") or transcribe_result.get("model_id") or ""),
+            "mode": str(transcribe_result.get("mode") or ""),
+            "mime_type": _extract_voice_mime_type(envelope.task),
+            "filename": _extract_voice_filename(envelope.task),
+            "audio_bytes": len(audio_bytes),
+            "audio_sha256": hashlib.sha256(audio_bytes).hexdigest(),
+            "transcript_text": transcript_text,
+        }
+        artifacts["resume_token"] = _build_harness_resume_token(
+            config_manager=config_manager,
+            envelope=envelope,
+            step="voice_transcribe_repeat",
+        )
+        return (
+            artifacts,
+            "Executed the voice harness and transcribed audio through the active voice chip.",
+            "completed",
+        )
+
     artifacts["needs_input"] = {
         "reason": (
             "Voice I/O harness needs explicit speech text for synthesis or real audio bytes for transcription."
@@ -1255,6 +1377,9 @@ def _build_voice_hook_payload(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
     text: str | None = None,
+    audio_base64: str | None = None,
+    mime_type: str | None = None,
+    filename: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": envelope.channel_kind or "cli",
@@ -1269,6 +1394,12 @@ def _build_voice_hook_payload(
         payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
     if text is not None:
         payload["text"] = text
+    if audio_base64 is not None:
+        payload["audio_base64"] = audio_base64
+    if mime_type:
+        payload["mime_type"] = mime_type
+    if filename:
+        payload["filename"] = filename
     return payload
 
 
@@ -1451,8 +1582,46 @@ def _classify_voice_task(task: str) -> tuple[str, str | None]:
         spoken_text = str(match.group("text") or "").strip()
         return ("speak", spoken_text or None)
     if "transcribe" in lowered or "transcription" in lowered:
-        return ("transcribe", None)
+        return ("transcribe", _extract_voice_audio_base64(stripped))
     return ("unspecified", None)
+
+
+def _extract_voice_audio_base64(task: str) -> str | None:
+    match = _VOICE_AUDIO_BASE64_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("audio") or "").strip() or None
+
+
+def _extract_voice_mime_type(task: str) -> str | None:
+    match = _VOICE_MIME_TYPE_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("mime") or "").strip() or None
+
+
+def _extract_voice_filename(task: str) -> str | None:
+    match = _VOICE_FILENAME_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("filename") or "").strip() or None
+
+
+def _decode_voice_audio_base64(audio_base64: str) -> bytes:
+    try:
+        audio_bytes = base64.b64decode(str(audio_base64).encode("ascii"), validate=True)
+    except Exception as exc:
+        raise ValueError("Voice transcription audio_base64 is not valid base64.") from exc
+    if not audio_bytes:
+        raise ValueError("Voice transcription audio_base64 is empty.")
+    return audio_bytes
+
+
+def _redact_harness_task_payload(task: str) -> str:
+    return _VOICE_AUDIO_BASE64_RE.sub(
+        lambda match: f"{match.group('prefix')}<audio_base64:redacted>",
+        str(task or "").strip(),
+    )
 
 
 def _build_harness_resume_token(
@@ -1462,7 +1631,7 @@ def _build_harness_resume_token(
     step: str,
 ) -> dict[str, Any]:
     command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
+        f"python -m spark_intelligence.cli harness execute {json.dumps(_redact_harness_task_payload(envelope.task))} "
         f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
     )
     if envelope.channel_kind:

@@ -335,6 +335,87 @@ class HarnessCliTests(SparkTestCase):
         )
         self.assertEqual(seen_hooks, ["voice.status", "voice.speak"])
 
+    def test_harness_execute_voice_io_transcribes_explicit_audio_payload(self) -> None:
+        seen_hooks: list[str] = []
+
+        def fake_voice_hook(
+            _config_manager,
+            *,
+            hook: str,
+            payload: dict[str, object],
+            governor_decision: dict[str, object] | None = None,
+        ):
+            seen_hooks.append(hook)
+            if hook == "voice.status":
+                self.assertIsNone(governor_decision)
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    hook=hook,
+                    repo_root=str(self.home),
+                    command=["voice.status"],
+                    exit_code=0,
+                    output={"result": {"ready": True, "reason": "ready", "reply_text": "Voice ready."}},
+                    payload=payload,
+                    stderr="",
+                    stdout="",
+                )
+            self.assertEqual(hook, "voice.transcribe")
+            self.assertEqual(payload["audio_base64"], "aGVsbG8=")
+            self.assertEqual(payload["mime_type"], "audio/ogg")
+            governor = payload["governor_decision"]
+            self.assertEqual(governor_decision, governor)
+            self.assertEqual(governor["schema_version"], "governor-decision-v1")
+            self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.transcribe")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                hook=hook,
+                repo_root=str(self.home),
+                command=["voice.transcribe"],
+                exit_code=0,
+                output={
+                    "result": {
+                        "provider_id": "local_faster_whisper",
+                        "model": "tiny",
+                        "mode": "local_faster_whisper",
+                        "transcript_text": "hello",
+                    }
+                },
+                payload=payload,
+                stderr="",
+                stdout="",
+            )
+
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting", side_effect=fake_voice_hook):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "Transcribe audio_base64:aGVsbG8= mime_type:audio/ogg filename:test.ogg",
+                "--home",
+                str(self.home),
+                "--harness-id",
+                "voice.io",
+                "--channel-kind",
+                "builder",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["artifacts"]["transcription"]["transcript_text"], "hello")
+        self.assertNotIn("audio_base64", payload["artifacts"]["transcription"])
+        self.assertNotIn("aGVsbG8=", payload["envelope"]["task"])
+        authority = payload["envelope"]["turn_intent_payload"]
+        self.assertIn(
+            "capability:spark-voice-comms:voice.transcribe",
+            {action["capability_id"] for action in authority["proposed_actions"]},
+        )
+        self.assertEqual(seen_hooks, ["voice.status", "voice.transcribe"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual({ledger["tool_name"] for ledger in ledgers}, {"voice.status", "voice.transcribe"})
+
     def test_harness_execute_swarm_escalation_records_dry_run_ledger(self) -> None:
         with (
             patch(

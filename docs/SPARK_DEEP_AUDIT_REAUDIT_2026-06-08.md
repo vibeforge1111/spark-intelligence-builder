@@ -55,7 +55,7 @@ ledger spine, but Spark is not done.
   rows for `builder`, `spark_cli`, and `telegram`. Builder runtime tests now
   cover governed result ledgers for `builder.direct`, `browser.navigate`,
   `researcher.advisory`, and `voice.io` hooks (`voice.status`,
-  `voice.speak`), plus Swarm dry-run payload preparation
+  `voice.speak`, and explicit-audio `voice.transcribe`), plus Swarm dry-run payload preparation
   (`swarm.sync.dry_run`). Spawner execution is still not represented as a
   first-class surface, and remaining Builder high-agency paths should adopt
   the same ledger contract before they claim governed execution.
@@ -82,7 +82,7 @@ ledger spine, but Spark is not done.
 | CLI approval holes | tests cover `bash -c`, `sh -c`, `python -c`, PowerShell wrappers, fail-closed unknowns | Closed in CLI |
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
-| Live ledger adoption | live doctor reports `total=111 surfaces=builder=1, spark_cli=69, telegram=41; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
+| Live ledger adoption | live doctor reports `total=111 surfaces=builder=1, spark_cli=69, telegram=41; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 246,902,784 bytes with `builder_events=16,930`, `event_log=16,930`, and `tool_call_ledger=111` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `b4f1e86` plus possible docs-only commits; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
@@ -115,10 +115,11 @@ ledger spine, but Spark is not done.
   `researcher.advisory`; focused tests prove it fails closed without TurnIntent
   authority, does not call the Researcher bridge when blocked, and writes a
   canonical `surface=builder` result ledger when authorized.
-- Added Builder voice runtime result-ledger coverage for `voice.status` and
-  `voice.speak`; focused tests prove the chip hook still receives the governed
-  `voice.speak` decision and both authorized voice hooks persist canonical
-  `surface=builder` success rows.
+- Added Builder voice runtime result-ledger coverage for `voice.status`,
+  `voice.speak`, and explicit-audio `voice.transcribe`; focused tests prove the
+  chip hook still receives the governed `voice.speak` / `voice.transcribe`
+  decision, authorized voice hooks persist canonical `surface=builder` success
+  rows, and raw `audio_base64` is redacted from envelope and resume payloads.
 - Added Builder Swarm dry-run authority/result-ledger coverage for
   `swarm.sync.dry_run`; focused runtime and CLI tests prove payload preparation
   fails closed without TurnIntent authority and persists a canonical
@@ -198,11 +199,11 @@ until that session completes and the final diff is tested.
      `telegram` rows.
    - Spawner execution remains the missing first-class surface.
    - Builder runtime coverage now includes `builder.direct`,
-     `browser.navigate`, `researcher.advisory`, `voice.status`, and
-     `voice.speak`, plus Swarm dry-run payload preparation as
-     `swarm.sync.dry_run`; recheck `voice.transcribe`, Swarm upload/resume
-     commands, and future high-agency Builder tool paths before claiming full
-     Builder runtime coverage.
+     `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`,
+     and explicit-audio `voice.transcribe`, plus Swarm dry-run payload
+     preparation as `swarm.sync.dry_run`; recheck Swarm upload/resume commands
+     and future high-agency Builder tool paths before claiming full Builder
+     runtime coverage.
    - Doctor now reports `missing_expected_surfaces` after any governed ledgers
      exist, which should stay visible until Spawner and every active execution
      surface emits or ingests canonical rows.
@@ -376,8 +377,8 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    `spawner`.
 4. Continue Builder self-persist coverage for remaining governed Builder tool
    paths beyond the change-manifest runner, `builder.direct`,
-   `browser.navigate`, `researcher.advisory`, `voice.status`, and
-   `voice.speak`, and `swarm.sync.dry_run`.
+   `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`,
+   explicit-audio `voice.transcribe`, and `swarm.sync.dry_run`.
 5. Run `jobs observability-report` before the next retention pass so future
    cleanup remains evidence-first.
    - Include `--include-unowned-jsonl` when checking loose JSONL residue.

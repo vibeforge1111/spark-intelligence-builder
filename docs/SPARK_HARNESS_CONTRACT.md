@@ -32,7 +32,7 @@ Builder should not:
 - `src/spark_intelligence/gateway/tool_ledger.py` provides the minimal adapter ingest contract for external surfaces that need to publish governed rows.
 - `src/spark_intelligence/cli_approval_ledgers.py` imports Spark CLI approval ledgers into the same canonical table.
 - `src/spark_intelligence/doctor/checks.py` reports ledger adoption by surface and names expected canonical surfaces that still have zero rows after governed ledgers exist.
-- `src/spark_intelligence/harness_runtime/service.py` gates `builder.direct`, `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`, and `swarm.sync.dry_run` before execution and records canonical result ledgers; other runners need explicit ledger evidence before they are claimed covered.
+- `src/spark_intelligence/harness_runtime/service.py` gates `builder.direct`, `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` before execution and records canonical result ledgers; transcription redacts raw `audio_base64` from envelope/resume payloads, and other runners need explicit ledger evidence before they are claimed covered.
 - `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots, change-manifest runner evidence, and Builder-surface runner ledgers from canonical ledgers.
 
 Operator commands:
