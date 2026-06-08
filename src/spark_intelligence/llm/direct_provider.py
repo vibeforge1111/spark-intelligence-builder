@@ -223,10 +223,12 @@ def _execute_anthropic_messages(
         "messages": [
             {
                 "role": "user",
-                "content": _merge_prompts(system_prompt=system_prompt, user_prompt=user_prompt),
+                "content": user_prompt.strip(),
             }
         ],
     }
+    if system_prompt.strip():
+        payload["system"] = system_prompt.strip()
     if tools:
         payload["tools"] = tools
     response = _post_json(
