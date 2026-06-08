@@ -672,19 +672,6 @@ def _maybe_save_reply_as_draft(
         if not authority.allowed:
             return reply_text
 
-    try:
-        from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
-        _dbg.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        with _dbg.open("a", encoding="utf-8") as _fh:
-            _fh.write(
-                f"{timestamp}Z user={user} iter={is_iteration} "
-                f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
-            )
-    except Exception:
-        pass
-
     if is_iteration:
         source_draft = None
         try:
