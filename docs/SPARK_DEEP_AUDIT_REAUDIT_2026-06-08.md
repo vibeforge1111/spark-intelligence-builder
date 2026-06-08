@@ -131,6 +131,10 @@ ledger spine, but Spark is not done.
 - Added `turn_id` facts to Researcher memory read/write policy-gate blocks when
   the block has Governor, vnext envelope, or legacy envelope authority context,
   so `harness trace-turn` can join those blocked events by canonical turn id.
+- Added indexed `builder_events.turn_id` and `event_log.turn_id` columns for
+  new `record_event` rows, with inference from explicit `turn_id`,
+  `facts.turn_id`, `facts.tool_call_ledger.turn_id`, `facts.ledger.turn_id`,
+  and `facts.governor_decision.turn_id`.
 - Added Builder voice runtime result-ledger coverage for `voice.status`,
   `voice.speak`, and explicit-audio `voice.transcribe`; focused tests prove the
   chip hook still receives the governed `voice.speak` / `voice.transcribe`
@@ -254,8 +258,11 @@ until that session completes and the final diff is tested.
      Builder/event mirror rows that already carry the turn id.
    - Researcher memory read/write policy blocks now include `facts.turn_id`
      when authority context is present.
-   - Remaining work: broaden new event producers so more rows carry `turn_id`
-     directly instead of relying on legacy request/trace fields.
+   - New `record_event` rows now persist an indexed `turn_id` column when the
+     turn id is explicit or present in common authority/ledger fact shapes.
+   - Remaining work: broaden producers that still never pass authority/ledger
+     facts, and decide whether older rows deserve a controlled backfill rather
+     than relying on legacy request/trace fields.
 
 7. Finish canonical ingestion for Telegram JSONL and Spawner execution.
    - Telegram still has local JSONL fallback behavior; canonical ingestion must

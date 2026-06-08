@@ -81,7 +81,7 @@ class HarnessCliTests(SparkTestCase):
             event_type="trace_turn_probe",
             component="test",
             summary="Trace turn probe.",
-            facts={"turn_id": "turn:trace-turn"},
+            facts={"tool_call_ledger": {"turn_id": "turn:trace-turn"}},
         )
         record_event(
             self.state_db,
@@ -109,7 +109,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["counts"]["event_log"], 1)
         self.assertEqual(payload["tool_call_ledgers"][0]["ledger_id"], "ledger:trace-turn")
         self.assertEqual(payload["builder_events"][0]["event_type"], "trace_turn_probe")
+        self.assertEqual(payload["builder_events"][0]["turn_id"], "turn:trace-turn")
         self.assertEqual(payload["event_log"][0]["event_type"], "trace_turn_probe")
+        self.assertEqual(payload["event_log"][0]["turn_id"], "turn:trace-turn")
+        self.assertEqual(payload["event_log"][0]["payload_json"]["turn_id"], "turn:trace-turn")
 
     def test_harness_import_cli_ledgers_indexes_tool_call_files(self) -> None:
         ledger_dir = self.home / "approval-ledgers"

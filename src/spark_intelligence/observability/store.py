@@ -381,7 +381,8 @@ def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str
             SELECT *
             FROM builder_events
             WHERE
-              correlation_id = ?
+              turn_id = ?
+              OR correlation_id = ?
               OR request_id = ?
               OR trace_ref = ?
               OR (
@@ -404,6 +405,7 @@ def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str
                 normalized_turn_id,
                 normalized_turn_id,
                 normalized_turn_id,
+                normalized_turn_id,
                 quoted_like,
                 normalized_turn_id,
                 normalized_turn_id,
@@ -415,7 +417,8 @@ def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str
             SELECT *
             FROM event_log
             WHERE
-              request_id = ?
+              turn_id = ?
+              OR request_id = ?
               OR trace_ref = ?
               OR (
                 payload_json IS NOT NULL
@@ -435,6 +438,7 @@ def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str
             LIMIT ?
             """,
             (
+                normalized_turn_id,
                 normalized_turn_id,
                 normalized_turn_id,
                 quoted_like,
@@ -501,6 +505,29 @@ def _tool_call_ledger_row_to_dict(row: Any) -> dict[str, Any]:
 def _ledger_text(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _event_turn_id(
+    explicit_turn_id: Any,
+    facts: dict[str, Any],
+    *,
+    request_id: str | None,
+    trace_ref: str | None,
+) -> str | None:
+    candidates: list[Any] = [explicit_turn_id, facts.get("turn_id")]
+    for key in ("tool_call_ledger", "ledger", "governor_decision"):
+        value = facts.get(key)
+        if isinstance(value, dict):
+            candidates.append(value.get("turn_id"))
+    for candidate in candidates:
+        normalized = _ledger_text(candidate)
+        if normalized:
+            return normalized
+    for candidate in (request_id, trace_ref):
+        normalized = _ledger_text(candidate)
+        if normalized and normalized.startswith("turn:"):
+            return normalized
+    return None
 
 
 def open_run(
@@ -708,6 +735,7 @@ def record_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
     request_id: str | None = None,
+    turn_id: str | None = None,
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
@@ -725,6 +753,7 @@ def record_event(
     recorded_at = utc_now_iso()
     normalized_facts = dict(facts or {})
     normalized_provenance = dict(provenance or {})
+    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -738,6 +767,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                turn_id,
                 trace_ref,
                 channel_id,
                 session_id,
@@ -752,7 +782,7 @@ def record_event(
                 provenance_json,
                 facts_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -764,6 +794,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                normalized_turn_id,
                 trace_ref,
                 channel_id,
                 session_id,
@@ -788,6 +819,7 @@ def record_event(
                 workspace_id,
                 trace_ref,
                 request_id,
+                turn_id,
                 run_id,
                 session_id,
                 surface_kind,
@@ -798,7 +830,7 @@ def record_event(
                 severity,
                 payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -807,6 +839,7 @@ def record_event(
                 None,
                 trace_ref,
                 request_id,
+                normalized_turn_id,
                 run_id,
                 session_id,
                 component,
@@ -821,6 +854,7 @@ def record_event(
                         "truth_kind": truth_kind,
                         "target_surface": target_surface,
                         "component": component,
+                        "turn_id": normalized_turn_id,
                         "evidence_lane": evidence_lane,
                         "reason_code": reason_code,
                         "provenance": normalized_provenance,
