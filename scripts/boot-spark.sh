@@ -14,7 +14,14 @@
 
 set -uo pipefail
 
-DESKTOP="/c/Users/USER/Desktop"
+# Resolve Desktop dynamically instead of hardcoding a literal "USER" placeholder
+if [ -n "${USERPROFILE:-}" ]; then
+  DESKTOP="$USERPROFILE/Desktop"
+elif [ -n "${HOME:-}" ]; then
+  DESKTOP="$HOME/Desktop"
+else
+  DESKTOP="/c/Users/$(id -un)/Desktop"
+fi
 SPAWNER_DIR="$DESKTOP/spawner-ui"
 BOT_DIR="$DESKTOP/spark-telegram-bot"
 BUILDER_DIR="$DESKTOP/spark-intelligence-builder"
