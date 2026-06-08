@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any
+
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
     is_duplicate_event,
@@ -6,7 +8,9 @@ from spark_intelligence.gateway.guardrails import (
     prepare_outbound_text,
     set_runtime_state_value,
 )
-from spark_intelligence.gateway.simulated_dm import SimulatedDmBridgeResult, resolve_simulated_dm
+
+if TYPE_CHECKING:
+    from spark_intelligence.gateway.simulated_dm import SimulatedDmBridgeResult, resolve_simulated_dm
 
 __all__ = [
     "apply_inbound_rate_limit",
@@ -18,3 +22,15 @@ __all__ = [
     "SimulatedDmBridgeResult",
     "set_runtime_state_value",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"resolve_simulated_dm", "SimulatedDmBridgeResult"}:
+        from spark_intelligence.gateway.simulated_dm import SimulatedDmBridgeResult, resolve_simulated_dm
+
+        exports = {
+            "resolve_simulated_dm": resolve_simulated_dm,
+            "SimulatedDmBridgeResult": SimulatedDmBridgeResult,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

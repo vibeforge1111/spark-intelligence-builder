@@ -59,6 +59,11 @@ ledger spine, but Spark is not done.
   (`swarm.sync.dry_run`). Spawner execution is still not represented as a
   first-class surface, and remaining Builder high-agency paths should adopt
   the same ledger contract before they claim governed execution.
+- Fixed for Builder-local bridge consumers: Builder-origin Governor decisions
+  now carry canonical issuer/provenance/runtime binding evidence, and the
+  Researcher memory-write consumer rejects schema-valid Governor decisions
+  missing that binding. This is process-integrity hardening only; cross-process
+  Spawner/Telegram decisions still depend on the HMAC signature checks below.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
   to about 225 MB and is now about 228 MB after later live activity while
@@ -82,6 +87,7 @@ ledger spine, but Spark is not done.
 | CLI approval holes | tests cover `bash -c`, `sh -c`, `python -c`, PowerShell wrappers, fail-closed unknowns | Closed in CLI |
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
+| Builder Governor binding | `bridge_authority.py` packages canonical issuer/provenance/runtime binding evidence; Researcher memory writes reject schema-valid Governor decisions missing that evidence; focused bridge-authority tests cover tampered/missing binding | Closed for Builder-local bridge consumers; not a substitute for cross-process HMAC trust |
 | Live ledger adoption | live doctor reports `total=111 surfaces=builder=1, spark_cli=69, telegram=41; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 246,902,784 bytes with `builder_events=16,930`, `event_log=16,930`, and `tool_call_ledger=111` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
@@ -115,6 +121,10 @@ ledger spine, but Spark is not done.
   `researcher.advisory`; focused tests prove it fails closed without TurnIntent
   authority, does not call the Researcher bridge when blocked, and writes a
   canonical `surface=builder` result ledger when authorized.
+- Added Builder bridge Governor binding evidence and consumer verification:
+  packaged Governor decisions include canonical issuer, authorization
+  provenance, and current ledger binding refs, and Researcher memory writes
+  block schema-valid decisions that omit or tamper with those refs.
 - Added Builder voice runtime result-ledger coverage for `voice.status`,
   `voice.speak`, and explicit-audio `voice.transcribe`; focused tests prove the
   chip hook still receives the governed `voice.speak` / `voice.transcribe`

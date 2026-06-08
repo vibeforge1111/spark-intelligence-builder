@@ -119,6 +119,93 @@ def _ledger_binding_reasons(
     return tuple(reasons)
 
 
+def _bridge_governor_packaging_evidence(
+    *,
+    envelope: dict[str, Any],
+    authorization: dict[str, Any],
+    ledger: dict[str, Any],
+) -> list[dict[str, Any]]:
+    turn_id = str(envelope.get("turn_id") or "unknown")
+    decision_id = str(authorization.get("decision_id") or "unknown")
+    ledger_id = str(ledger.get("ledger_id") or "unknown")
+    action_id = str(authorization.get("action_id") or ledger.get("action_id") or "unknown")
+    return [
+        {
+            "id": f"evidence:bridge-governor-issuer:{turn_id}"[:128],
+            "kind": "policy",
+            "source": "issuer:spark-harness-core/governor",
+            "summary": "Builder bridge packaged Harness Core authorization as GovernorDecision evidence.",
+            "confidence": 1.0,
+        },
+        {
+            "id": f"evidence:bridge-governor-provenance:{decision_id}"[:128],
+            "kind": "authority_binding_ref",
+            "source": "provenance:spark-harness-core/authorization",
+            "summary": f"authorization_decision:{decision_id}",
+            "confidence": 1.0,
+        },
+        {
+            "id": f"evidence:bridge-governor-current:{ledger_id}"[:128],
+            "kind": "runtime_state",
+            "source": "current-binding:builder-bridge",
+            "summary": f"turn:{turn_id};action:{action_id};ledger:{ledger_id}",
+            "confidence": 1.0,
+        },
+    ]
+
+
+def bridge_governor_decision_has_canonical_binding(governor_decision: dict[str, Any] | None) -> bool:
+    if not isinstance(governor_decision, dict):
+        return False
+    evidence = governor_decision.get("evidence") if isinstance(governor_decision.get("evidence"), list) else []
+    evidence_items = [item for item in evidence if isinstance(item, dict)]
+    turn_id = str(governor_decision.get("turn_id") or "").strip()
+    authorizations = governor_decision.get("authorizations") if isinstance(governor_decision.get("authorizations"), list) else []
+    ledgers = governor_decision.get("tool_ledgers") if isinstance(governor_decision.get("tool_ledgers"), list) else []
+    decision_ids = {
+        str(item.get("decision_id") or "").strip()
+        for item in authorizations
+        if isinstance(item, dict) and str(item.get("decision_id") or "").strip()
+    }
+    ledger_bindings = {
+        (
+            str(item.get("action_id") or "").strip(),
+            str(item.get("ledger_id") or "").strip(),
+        )
+        for item in ledgers
+        if isinstance(item, dict)
+        and str(item.get("action_id") or "").strip()
+        and str(item.get("ledger_id") or "").strip()
+    }
+    if not turn_id or not decision_ids or not ledger_bindings:
+        return False
+
+    expected_issuer_id = f"evidence:bridge-governor-issuer:{turn_id}"[:128]
+    expected_authorization_summaries = {f"authorization_decision:{decision_id}" for decision_id in decision_ids}
+    issuer_ok = any(
+        str(item.get("kind") or "") == "policy"
+        and str(item.get("source") or "") == "issuer:spark-harness-core/governor"
+        and str(item.get("id") or "") == expected_issuer_id
+        for item in evidence_items
+    )
+    authorization_ok = any(
+        str(item.get("kind") or "") == "authority_binding_ref"
+        and str(item.get("source") or "") == "provenance:spark-harness-core/authorization"
+        and str(item.get("summary") or "") in expected_authorization_summaries
+        for item in evidence_items
+    )
+    runtime_ok = any(
+        str(item.get("kind") or "") == "runtime_state"
+        and str(item.get("source") or "") == "current-binding:builder-bridge"
+        and any(
+            str(item.get("summary") or "") == f"turn:{turn_id};action:{action_id};ledger:{ledger_id}"
+            for action_id, ledger_id in ledger_bindings
+        )
+        for item in evidence_items
+    )
+    return issuer_ok and authorization_ok and runtime_ok
+
+
 def build_governor_decision_from_bridge_authority(
     verdict: BridgeAuthorityVerdict,
     *,
@@ -172,6 +259,10 @@ def build_governor_decision_from_bridge_authority(
         "reasons": reasons,
     }
     trace = authorization.get("trace") if isinstance(authorization.get("trace"), dict) else {}
+    evidence = [
+        *(envelope.get("evidence") if isinstance(envelope.get("evidence"), list) else []),
+        *_bridge_governor_packaging_evidence(envelope=envelope, authorization=authorization, ledger=ledger),
+    ]
     return {
         "schema_version": "governor-decision-v1",
         "decision_id": f"governor-decision:{authorization.get('decision_id') or envelope.get('turn_id')}",
@@ -192,7 +283,7 @@ def build_governor_decision_from_bridge_authority(
             "inspect_link_allowed": True,
             "should_interrupt": False,
         },
-        "evidence": envelope.get("evidence") or authorization.get("evidence") or [],
+        "evidence": evidence or authorization.get("evidence") or [],
         "trace": {
             "id": trace.get("id") or f"{envelope.get('turn_id')}:governor",
             "summary": "Governor decision packaged from Builder bridge authority.",

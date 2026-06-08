@@ -27,12 +27,13 @@ Builder should not:
 ## Current Implementation
 
 - `src/spark_intelligence/harness_contract.py` imports Harness Core and builds/validates Builder-facing envelopes.
-- `src/spark_intelligence/bridge_authority.py` mints governed Builder tool-call ledgers and persists them through `persist_bound_ledger`.
+- `src/spark_intelligence/bridge_authority.py` mints governed Builder tool-call ledgers, packages Builder bridge Governor decisions with canonical issuer/provenance/runtime binding evidence, and persists ledgers through `persist_bound_ledger`.
 - `src/spark_intelligence/observability/store.py` owns the canonical `tool_call_ledger` table, retention pruning, and reader APIs.
 - `src/spark_intelligence/gateway/tool_ledger.py` provides the minimal adapter ingest contract for external surfaces that need to publish governed rows.
 - `src/spark_intelligence/cli_approval_ledgers.py` imports Spark CLI approval ledgers into the same canonical table.
 - `src/spark_intelligence/doctor/checks.py` reports ledger adoption by surface and names expected canonical surfaces that still have zero rows after governed ledgers exist.
 - `src/spark_intelligence/harness_runtime/service.py` gates `builder.direct`, `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` before execution and records canonical result ledgers; transcription redacts raw `audio_base64` from envelope/resume payloads, and other runners need explicit ledger evidence before they are claimed covered.
+- `src/spark_intelligence/researcher_bridge/advisory.py` accepts Builder-origin Governor decisions only when Harness Core verification passes and the decision carries Builder bridge canonical binding evidence. This is a local integrity check, not a replacement for HMAC verification across process boundaries.
 - `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots, change-manifest runner evidence, and Builder-surface runner ledgers from canonical ledgers.
 
 Operator commands:

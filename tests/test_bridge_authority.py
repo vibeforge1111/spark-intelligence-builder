@@ -10,6 +10,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_diagnostic_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload_vnext,
+    bridge_governor_decision_has_canonical_binding,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
@@ -194,6 +195,52 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
+    evidence_sources = {
+        (item.get("kind"), item.get("source"))
+        for item in verdict.governor_decision["evidence"]
+        if isinstance(item, dict)
+    }
+    assert ("policy", "issuer:spark-harness-core/governor") in evidence_sources
+    assert ("authority_binding_ref", "provenance:spark-harness-core/authorization") in evidence_sources
+    assert ("runtime_state", "current-binding:builder-bridge") in evidence_sources
+
+
+def test_bridge_governor_canonical_binding_rejects_tampered_evidence() -> None:
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-tampered-governor-evidence",
+        channel_kind="telegram",
+        session_id="session-write-tampered-governor-evidence",
+        human_id="human-write-tampered-governor-evidence",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert verdict.governor_decision is not None
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
+
+    missing_evidence = deepcopy(verdict.governor_decision)
+    missing_evidence["evidence"] = []
+    assert bridge_governor_decision_has_canonical_binding(missing_evidence) is False
+
+    copied_authorization_evidence = deepcopy(verdict.governor_decision)
+    copied_decision_id = copied_authorization_evidence["authorizations"][0]["decision_id"]
+    for item in copied_authorization_evidence["evidence"]:
+        if isinstance(item, dict) and item.get("source") == "provenance:spark-harness-core/authorization":
+            item["summary"] = copied_decision_id
+    assert bridge_governor_decision_has_canonical_binding(copied_authorization_evidence) is False
+
+    copied_runtime_evidence = deepcopy(verdict.governor_decision)
+    for item in copied_runtime_evidence["evidence"]:
+        if isinstance(item, dict) and item.get("source") == "current-binding:builder-bridge":
+            item["summary"] = "turn:other;action:other;ledger:other"
+    assert bridge_governor_decision_has_canonical_binding(copied_runtime_evidence) is False
 
 
 def test_bridge_governor_degrades_copied_tool_ledger() -> None:
@@ -480,6 +527,70 @@ def test_researcher_memory_write_authorizes_with_governor_decision(tmp_path) -> 
     assert allowed is True
     blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
     assert blocks == []
+
+
+def test_researcher_memory_write_rejects_governor_without_canonical_binding(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-researcher-write-governor-no-binding",
+        channel_kind="telegram",
+        session_id="session-researcher-write-governor-no-binding",
+        human_id="human-researcher-write-governor-no-binding",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    bridge_verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req-researcher-write-governor-no-binding",
+        channel_id="telegram",
+        session_id="session-researcher-write-governor-no-binding",
+        human_id="human-researcher-write-governor-no-binding",
+        agent_id="agent:test",
+        actor_id="test",
+        component="test",
+    )
+    assert bridge_verdict.allowed is True
+    assert bridge_verdict.governor_decision is not None
+    governor_without_binding = deepcopy(bridge_verdict.governor_decision)
+    governor_without_binding["evidence"] = [
+        item
+        for item in governor_without_binding["evidence"]
+        if isinstance(item, dict)
+        and item.get("source")
+        not in {
+            "issuer:spark-harness-core/governor",
+            "provenance:spark-harness-core/authorization",
+            "current-binding:builder-bridge",
+        }
+    ]
+    assert governor_without_binding["evidence"]
+
+    allowed = _authorize_researcher_memory_write(
+        state_db=state_db,
+        governor_decision=governor_without_binding,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=payload,
+        run_id=None,
+        request_id="req-researcher-write-governor-no-binding",
+        channel_kind="telegram",
+        session_id="session-researcher-write-governor-no-binding",
+        human_id="human-researcher-write-governor-no-binding",
+        agent_id="agent:test",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+        operation="update",
+        allow_adapter_envelope=False,
+    )
+
+    assert allowed is False
+    blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
+    assert blocks
+    assert blocks[0]["facts_json"]["reason_codes"] == ["canonical_governor_binding_missing"]
 
 
 def test_researcher_memory_write_rejects_copied_governor_ledger(tmp_path) -> None:
