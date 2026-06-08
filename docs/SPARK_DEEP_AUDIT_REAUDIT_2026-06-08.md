@@ -82,7 +82,7 @@ ledger spine, but Spark is not done.
 | CLI approval holes | tests cover `bash -c`, `sh -c`, `python -c`, PowerShell wrappers, fail-closed unknowns | Closed in CLI |
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
-| Live ledger adoption | live doctor reports `total=87 surfaces=builder=1, spark_cli=69, telegram=17`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage | Partial; Spawner missing; run a fresh live doctor after runtime activity before updating counts |
+| Live ledger adoption | live doctor reports `total=87 surfaces=builder=1, spark_cli=69, telegram=17`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; run a fresh live doctor after runtime activity before updating counts |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 228,089,856 bytes with `builder_events=15,525`, `event_log=15,525`, and `tool_call_ledger=87` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,025,951 bytes under `.spark`, with root `outcomes.jsonl` plus larger legacy rivers under `recursion`, `logs`, `queue`, and `advisor`; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Policy written; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `1bbf1c0` plus possible docs-only commits; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules` | Closed for live Builder; archive/relabel pending |
@@ -123,6 +123,9 @@ ledger spine, but Spark is not done.
   `swarm.sync.dry_run`; focused runtime and CLI tests prove payload preparation
   fails closed without TurnIntent authority and persists a canonical
   `surface=builder` partial row when authorized.
+- Tightened the doctor ledger-adoption check so a live system with governed
+  ledger activity reports expected surfaces still at zero rows, while a fresh
+  runtime with no ledgers remains advisory instead of failing.
 - Added read-only loose JSONL residue reporting to `jobs observability-report`
   so large legacy rivers can be classified before any archive/quarantine pass.
 - Added `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` so loose JSONL handling is
@@ -200,8 +203,9 @@ until that session completes and the final diff is tested.
      `swarm.sync.dry_run`; recheck `voice.transcribe`, Swarm upload/resume
      commands, and future high-agency Builder tool paths before claiming full
      Builder runtime coverage.
-   - Add doctor warnings for expected surfaces with zero rows after configured
-     runtime activity.
+   - Doctor now reports `missing_expected_surfaces` after any governed ledgers
+     exist, which should stay visible until Spawner and every active execution
+     surface emits or ingests canonical rows.
 
 4. Preserve fail-closed behavior at import/runtime boundaries.
    - Builder already declares `spark-harness-core`; keep the boot-time import

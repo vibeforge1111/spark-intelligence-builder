@@ -33,6 +33,9 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
 
+EXPECTED_TOOL_CALL_LEDGER_SURFACES = ("builder", "spark_cli", "telegram", "spawner")
+
+
 def harness_core_runtime_status() -> dict[str, object]:
     from spark_intelligence import harness_contract
 
@@ -162,8 +165,21 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
                 )
             )
         else:
+            missing_surfaces = [
+                surface for surface in EXPECTED_TOOL_CALL_LEDGER_SURFACES
+                if ledger_surface_counts.get(surface, 0) <= 0
+            ]
+            missing_detail = (
+                f"; missing_expected_surfaces={', '.join(missing_surfaces)}"
+                if missing_surfaces
+                else "; all_expected_surfaces_present"
+            )
             checks.append(
-                DoctorCheck("tool-call-ledger-adoption", True, f"total={ledger_total} surfaces={surface_detail}")
+                DoctorCheck(
+                    "tool-call-ledger-adoption",
+                    True,
+                    f"total={ledger_total} surfaces={surface_detail}{missing_detail}",
+                )
             )
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("tool-call-ledger-adoption", False, str(exc)))

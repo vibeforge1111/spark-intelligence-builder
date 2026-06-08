@@ -2743,6 +2743,44 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["tool-call-ledger-adoption"].ok)
         self.assertIn("total=1", checks["tool-call-ledger-adoption"].detail)
         self.assertIn("telegram=1", checks["tool-call-ledger-adoption"].detail)
+        self.assertIn("missing_expected_surfaces=builder, spark_cli, spawner", checks["tool-call-ledger-adoption"].detail)
+
+    def test_doctor_reports_all_expected_tool_call_ledger_surfaces_present(self) -> None:
+        for surface in ("builder", "spark_cli", "telegram", "spawner"):
+            persist_bound_ledger(
+                self.state_db,
+                row={
+                    "turn_id": f"turn:doctor-ledger-adoption:{surface}",
+                    "action_id": f"action:doctor-ledger-adoption:{surface}",
+                    "capability_id": f"capability:{surface}:doctor-ledger-adoption",
+                    "authorization_decision_id": f"decision:doctor-ledger-adoption:{surface}",
+                    "ledger_id": f"ledger:doctor-ledger-adoption:{surface}",
+                    "tool_name": "doctor.ledger_adoption",
+                    "owner_system": surface,
+                    "mutation_class": "read_only",
+                    "outcome": "execute",
+                    "status": "success",
+                    "surface": surface,
+                    "request_id": f"req:doctor-ledger-adoption:{surface}",
+                    "trace_ref": f"trace:doctor-ledger-adoption:{surface}",
+                    "summary": "Doctor adoption count fixture.",
+                    "ledger_json": {
+                        "schema_version": "tool-call-ledger-v1",
+                        "ledger_id": f"ledger:doctor-ledger-adoption:{surface}",
+                        "turn_id": f"turn:doctor-ledger-adoption:{surface}",
+                        "result": {"status": "success", "summary": "Doctor adoption count fixture."},
+                    },
+                },
+                component=f"{surface}_runtime",
+            )
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("tool-call-ledger-adoption", checks)
+        self.assertTrue(checks["tool-call-ledger-adoption"].ok)
+        self.assertIn("total=4", checks["tool-call-ledger-adoption"].detail)
+        self.assertIn("all_expected_surfaces_present", checks["tool-call-ledger-adoption"].detail)
 
     def test_doctor_reports_builder_source_truth_drift(self) -> None:
         modules_root = self.home / "modules"
