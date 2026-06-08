@@ -1177,19 +1177,39 @@ def _run_voice_hook(
     run_id: str,
 ) -> tuple[dict[str, Any], str]:
     authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
-    if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
-        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, build_governor_decision_from_bridge_authority
+    authority = None
+    if authorization is not None:
+        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, record_bridge_tool_call_ledger
+
+        authority = BridgeAuthorityVerdict(
+            allowed=True,
+            reason_codes=authorization.reason_codes,
+            envelope=None,
+            harness_core_envelope=authorization.turn_intent_envelope_vnext,
+            proposed_action=authorization.proposed_action,
+            authorization_decision=authorization.authorization_decision,
+            tool_call_ledger=authorization.tool_call_ledger,
+        )
+        ledger_event_id = record_bridge_tool_call_ledger(
+            state_db,
+            authority,
+            component="harness_runtime",
+            request_id=envelope.envelope_id,
+            run_id=run_id,
+            channel_id=envelope.channel_kind,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+        )
+        if ledger_event_id is not None:
+            authority = replace(authority, ledger_event_id=ledger_event_id)
+
+    if authority is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
+        from spark_intelligence.bridge_authority import build_governor_decision_from_bridge_authority
 
         governor_decision = build_governor_decision_from_bridge_authority(
-            BridgeAuthorityVerdict(
-                allowed=True,
-                reason_codes=authorization.reason_codes,
-                envelope=None,
-                harness_core_envelope=authorization.turn_intent_envelope_vnext,
-                proposed_action=authorization.proposed_action,
-                authorization_decision=authorization.authorization_decision,
-                tool_call_ledger=authorization.tool_call_ledger,
-            ),
+            authority,
             reply_instruction=f"Execute authorized Harness Runtime voice hook {hook}.",
         )
         if isinstance(governor_decision, dict):
@@ -1224,6 +1244,24 @@ def _run_voice_hook(
         human_id=envelope.human_id,
         agent_id=envelope.agent_id,
     )
+    if authority is not None:
+        from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            authority,
+            status="success",
+            summary=f"Voice hook {hook} completed through chip {execution.chip_key}.",
+            component="harness_runtime",
+            request_id=envelope.envelope_id,
+            run_id=run_id,
+            channel_id=envelope.channel_kind,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            initial_ledger_event_id=getattr(authority, "ledger_event_id", None),
+        )
     output = execution.output if isinstance(execution.output, dict) else {}
     return output, execution.chip_key
 
