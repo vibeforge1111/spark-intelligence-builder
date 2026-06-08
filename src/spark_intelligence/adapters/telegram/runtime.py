@@ -1651,10 +1651,6 @@ def simulate_telegram_update(
                         "I answered in text because the voice audio step is not ready yet.\n\n"
                         f"Reason: {_safe_voice_error_message(exc)}"
                     )
-                    outbound_text = (
-                        "I tried to make that voice reply, but the audio step failed.\n\n"
-                        "Run `/voice onboard local`, then try `/voice speak ...` again."
-                    )
         else:
             # P2-13: enter the v2 onboarding state machine whenever the
             # pairing welcome is still pending (fresh pair, existing
