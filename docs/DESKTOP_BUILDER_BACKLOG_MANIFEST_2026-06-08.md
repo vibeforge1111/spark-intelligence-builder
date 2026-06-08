@@ -12,7 +12,7 @@ It does not promote, merge, archive, move, or delete any Desktop files.
 | Desktop branch | `codex/browser-use-receipts` |
 | Desktop upstream | `origin/codex/browser-use-receipts` is gone |
 | Desktop HEAD | `bc8dfd3e39df6f74a2829e00bef8726b3aa7ed7a` |
-| Runtime code-bearing HEAD | `b34549e8d6327b8d3faf6b92536d90df66230152` |
+| Runtime code-bearing HEAD | `d6caeb944cd4b8ac8452a9d4d472ac56fd3658ce` |
 | Verdict | backlog/historical evidence, not live runtime truth |
 
 ## Dirty Surface Summary
