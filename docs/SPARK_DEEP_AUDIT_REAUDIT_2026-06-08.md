@@ -71,9 +71,9 @@ ledger spine, but Spark is not done.
 - Closed for the live Builder runtime: installed Builder is the canonical
   source-truth line and now has `docs/SOURCE_TRUTH.md`. Doctor now discovers
   the live `~/.spark/modules` install from a `~/.spark/state/...` Builder home
-  and labels the stale Desktop checkout as `desktop_backlog_unmarked` instead
-  of treating it as runtime truth. Desktop Builder remains dirty backlog until
-  curated.
+  and labels the stale Desktop checkout as `desktop_backlog` when the external
+  `.spark-source-truth.toml` marker is present, or `desktop_backlog_unmarked`
+  when it is absent. Desktop Builder remains dirty backlog until curated.
 - Still open or in-flight: Spawner loopback API-key hardening and Governor
   signature verification must be rechecked after the parallel Spawner/Telegram
   session settles.
@@ -94,7 +94,7 @@ ledger spine, but Spark is not done.
 | Live ledger adoption | live doctor reports `total=117 surfaces=builder=1, spark_cli=69, telegram=47; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
 | Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 251,809,792 bytes with `builder_events=17,302`, `event_log=17,302`, and `tool_call_ledger=117` | Closed for this pass |
 | Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000` reports 251 JSONL files / 190,235,594 bytes under `.spark`; the 1 MB candidate set is 23 files with 228 below threshold and action counts `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=2`; reported files include `manifest_action`, `movement_blocker`, reference-scan, owner-signoff, archive-before-quarantine, and `delete_allowed=false` fields; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Manifest policy added; archive/quarantine execution pending |
-| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line at HEAD `d6caeb9` plus possible docs-only commits; doctor now reports `installs=spark-intelligence-builder ...; desktop_backlog_unmarked=spark-intelligence-builder ... commit_drift missing_harness_dep`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules`; `DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md` captures the read-only backlog state | Closed for live Builder; archive/relabel pending |
+| Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line; doctor reports `installs=spark-intelligence-builder ...` and classifies the stale Desktop checkout as `desktop_backlog` when `.spark-source-truth.toml` declares `canonical=false` instead of `desktop_backlog_unmarked`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules`; `DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md` captures the read-only backlog state | Closed for live Builder; archive/cleanup pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
 | Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
 | Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
@@ -159,8 +159,9 @@ ledger spine, but Spark is not done.
   Builder runtime line and treat the Desktop checkout as backlog until curated.
 - Tightened the `builder-source-truth` doctor check so a live
   `~/.spark/state/...` Builder home discovers the installed
-  `~/.spark/modules` runtime and reports an unmarked Desktop checkout as
-  `desktop_backlog_unmarked` advisory evidence.
+  `~/.spark/modules` runtime, reports an unmarked Desktop checkout as
+  `desktop_backlog_unmarked`, and reports a marked noncanonical Desktop
+  checkout as `desktop_backlog` advisory evidence.
 - Added docs for authority contracts, runtime operations, and source-truth
   expectations.
 - Added Builder self-evolution observation and change-manifest runner surfaces
@@ -327,9 +328,10 @@ until that session completes and the final diff is tested.
       to `spark-intelligence doctor` as `installs=spark-intelligence-builder`.
     - The Desktop Builder tree remains dirty, divergent, and backlog-only until
       curated.
-    - Doctor labels the uncurated Desktop checkout as
-      `desktop_backlog_unmarked` so future stale-tree audits stop at the
-      source-truth warning before deriving runtime truth from it.
+    - Doctor labels the uncurated Desktop checkout as `desktop_backlog` when a
+      `.spark-source-truth.toml` marker declares `canonical=false`, and as
+      `desktop_backlog_unmarked` otherwise, so future stale-tree audits stop at
+      the source-truth warning before deriving runtime truth from it.
     - Latest read-only Desktop check: branch `codex/browser-use-receipts` has a
       gone remote, many dirty files, untracked `LICENSE`, and no
       `spark-harness-core` entry in `needs.modules`.
@@ -427,9 +429,9 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
    - Include `--include-unowned-jsonl` when checking loose JSONL residue.
    - Follow `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md`; no JSONL deletion by
      size alone.
-6. Archive, relabel, or clean the Desktop Builder backlog tree so future stale
-   tree audits stop at the source-truth warning instead of re-deriving runtime
-   truth from it.
+6. Archive or clean the Desktop Builder backlog tree after any needed behavior
+   is ported. The external `.spark-source-truth.toml` marker keeps stale-tree
+   audits classified as backlog in the meantime.
 7. Implement the self-evolution executor only from
    `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`, then prove dry-run
    apply and rollback before touching production code.

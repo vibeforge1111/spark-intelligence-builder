@@ -35,8 +35,10 @@ trees.
 
 `spark-intelligence doctor --json` should report `builder-source-truth` with
 `installs=spark-intelligence-builder`. If an uncurated Desktop checkout exists,
-the same check reports it as `desktop_backlog_unmarked`; that is backlog
-evidence, not live runtime truth.
+the same check reports it as `desktop_backlog` when the checkout carries a
+`.spark-source-truth.toml` marker with `canonical = false`. Without that marker
+it reports `desktop_backlog_unmarked`. Both labels are backlog evidence, not
+live runtime truth.
 
 ```powershell
 python -m pip install -e .

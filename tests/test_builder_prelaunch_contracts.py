@@ -2801,7 +2801,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             dependencies=["PyNaCl>=1.6.2", "PyYAML>=6.0"],
         )
 
-        report = run_doctor(self.config_manager, self.state_db)
+        with patch("spark_intelligence.doctor.checks.Path.home", return_value=self.home):
+            report = run_doctor(self.config_manager, self.state_db)
 
         checks = {check.name: check for check in report.checks}
         self.assertIn("builder-source-truth", checks)
@@ -2831,7 +2832,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             source_truth_canonical=False,
         )
 
-        report = run_doctor(self.config_manager, self.state_db)
+        with patch("spark_intelligence.doctor.checks.Path.home", return_value=self.home):
+            report = run_doctor(self.config_manager, self.state_db)
 
         checks = {check.name: check for check in report.checks}
         self.assertIn("builder-source-truth", checks)
@@ -2920,6 +2922,46 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("commit_drift", checks["builder-source-truth"].detail)
         self.assertIn("license=MIT", checks["builder-source-truth"].detail)
         self.assertIn("missing_harness_dep", checks["builder-source-truth"].detail)
+
+    def test_doctor_marks_desktop_builder_backlog_with_external_marker(self) -> None:
+        modules_root = self.home / "modules"
+        live = modules_root / "spark-intelligence-builder" / "source"
+        desktop = self.home / "Desktop" / "spark-intelligence-builder"
+        self._write_builder_install_fixture(
+            live,
+            commit="a" * 40,
+            license_name="AGPL-3.0-only",
+            needs_modules=["spark-harness-core"],
+            dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
+        )
+        self._write_builder_install_fixture(
+            desktop,
+            commit="b" * 40,
+            license_name="MIT",
+            needs_modules=[],
+            dependencies=[],
+        )
+        (desktop / ".spark-source-truth.toml").write_text(
+            "\n".join(
+                [
+                    "[source_truth]",
+                    "canonical = false",
+                    'mirror_of = "spark-intelligence-builder"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        with patch("spark_intelligence.doctor.checks.Path.home", return_value=self.home):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("builder-source-truth", checks)
+        self.assertTrue(checks["builder-source-truth"].ok)
+        self.assertIn("desktop_backlog=spark-intelligence-builder", checks["builder-source-truth"].detail)
+        self.assertNotIn("desktop_backlog_unmarked", checks["builder-source-truth"].detail)
+        self.assertIn("marker=.spark-source-truth.toml", checks["builder-source-truth"].detail)
 
     def test_doctor_reports_stale_python_editable_import_source(self) -> None:
         modules_root = self.home / "modules"

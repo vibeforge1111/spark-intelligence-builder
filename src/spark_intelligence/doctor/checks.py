@@ -34,6 +34,7 @@ from spark_intelligence.swarm_bridge import swarm_status
 
 
 EXPECTED_TOOL_CALL_LEDGER_SURFACES = ("builder", "spark_cli", "telegram", "spawner")
+BUILDER_SOURCE_TRUTH_MARKER = ".spark-source-truth.toml"
 
 
 def harness_core_runtime_status() -> dict[str, object]:
@@ -518,9 +519,16 @@ def _builder_source_record(source_root: Path, *, name: str) -> dict[str, object]
     manifest_payload = _read_toml(source_root / "spark.toml")
     module = manifest_payload.get("module") if isinstance(manifest_payload.get("module"), dict) else {}
     needs = manifest_payload.get("needs") if isinstance(manifest_payload.get("needs"), dict) else {}
-    source_truth = (
-        manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
-    )
+    source_truth = manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
+    source_truth_marker = "spark.toml" if "canonical" in source_truth else ""
+    if "canonical" not in source_truth:
+        marker_payload = _read_toml(source_root / BUILDER_SOURCE_TRUTH_MARKER)
+        marker_source_truth = (
+            marker_payload.get("source_truth") if isinstance(marker_payload.get("source_truth"), dict) else {}
+        )
+        if "canonical" in marker_source_truth:
+            source_truth = marker_source_truth
+            source_truth_marker = BUILDER_SOURCE_TRUTH_MARKER
     pyproject = _read_toml(source_root / "pyproject.toml")
     project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
     return {
@@ -532,6 +540,7 @@ def _builder_source_record(source_root: Path, *, name: str) -> dict[str, object]
         "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
         "canonical": source_truth.get("canonical") is not False,
         "source_truth_marked": "canonical" in source_truth,
+        "source_truth_marker": source_truth_marker,
         "mirror_of": str(source_truth.get("mirror_of") or ""),
     }
 
@@ -593,7 +602,11 @@ def _builder_desktop_backlog_summary(
             flags.append(f"license={record.get('license') or 'missing'}")
         if "spark-harness-core" not in record.get("needs_modules", ()):
             flags.append("missing_harness_dep")
-        label = "desktop_backlog" if record.get("source_truth_marked") and record.get("canonical") is False else "desktop_backlog_unmarked"
+        marked_backlog = record.get("source_truth_marked") and record.get("canonical") is False
+        label = "desktop_backlog" if marked_backlog else "desktop_backlog_unmarked"
+        marker = str(record.get("source_truth_marker") or "")
+        if marked_backlog and marker and marker != "spark.toml":
+            flags.append(f"marker={marker}")
         suffix = " ".join(flags) if flags else "backlog_only"
         parts.append(f"{label}={record['name']} commit={commit} {suffix}")
     return ", ".join(parts)

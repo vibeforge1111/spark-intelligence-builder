@@ -53,6 +53,27 @@ Desktop `LICENSE` is an untracked AGPL-3.0 license file. Because it is
 untracked in the Desktop checkout, it is evidence of intended cleanup only, not
 a committed source-truth fix.
 
+## External Backlog Marker
+
+The Desktop checkout can be classified without editing its dirty tracked files
+by placing this untracked marker beside `spark.toml`:
+
+```toml
+[source_truth]
+canonical = false
+mirror_of = "spark-intelligence-builder"
+```
+
+Marker path:
+
+```text
+C:\Users\USER\Desktop\spark-intelligence-builder\.spark-source-truth.toml
+```
+
+This marker makes doctor report `desktop_backlog`, not
+`desktop_backlog_unmarked`. It does not fix the Desktop tree's dirty metadata or
+authorize wholesale merge.
+
 ## Handling Policy
 
 Do not use this Desktop tree to contradict installed-runtime evidence.

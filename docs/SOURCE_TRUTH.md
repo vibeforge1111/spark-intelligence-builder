@@ -56,6 +56,16 @@ Dirty Builder worktrees are feature backlog, not release truth.
 Current Desktop evidence is captured in
 [DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md](./DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md).
 
+The Desktop checkout may also carry this untracked operator marker:
+
+```text
+C:\Users\USER\Desktop\spark-intelligence-builder\.spark-source-truth.toml
+```
+
+That marker is read by `spark-intelligence doctor` only to classify the checkout
+as `desktop_backlog` instead of `desktop_backlog_unmarked`; it does not promote,
+merge, publish, or fix metadata in the Desktop tree.
+
 Allowed path:
 
 ```text
@@ -99,6 +109,8 @@ recovery remediation commit. The code-bearing remediation line is:
   remote ref is gone
 - Desktop Builder backlog manifest:
   `docs/DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md`
+- Desktop Builder backlog marker:
+  `C:\Users\USER\Desktop\spark-intelligence-builder\.spark-source-truth.toml`
 - installed Builder manifest: AGPL-3.0-only and `needs.modules =
   ["spark-harness-core"]`
 - Desktop Builder manifest: AGPL metadata is visible only in the dirty working
