@@ -322,6 +322,24 @@ class ObservabilityRetentionCliTests(SparkTestCase):
         report = payload["unowned_jsonl"]
         by_relative_path = {item["relative_path"]: item for item in report["reported_files"]}
         self.assertEqual(report["total_files"], 3)
+        self.assertEqual(report["candidate_files"], 3)
+        self.assertEqual(report["below_min_bytes_files"], 0)
+        self.assertEqual(
+            report["candidate_manifest_action_counts"],
+            {
+                "archive_candidate": 1,
+                "canonical_retention_path": 1,
+                "freeze_pending_reference_scan": 1,
+            },
+        )
+        self.assertEqual(
+            report["candidate_movement_blocker_counts"],
+            {
+                "none": 1,
+                "owned_by_gateway_retention": 1,
+                "reference_scan_or_owner_signoff_required": 1,
+            },
+        )
         self.assertIn("outcomes.jsonl", by_relative_path)
         self.assertEqual(by_relative_path["outcomes.jsonl"]["classification"], "root_unowned_jsonl")
         self.assertEqual(by_relative_path["outcomes.jsonl"]["manifest_action"], "freeze_pending_reference_scan")
@@ -356,6 +374,26 @@ class ObservabilityRetentionCliTests(SparkTestCase):
             "owned_by_gateway_retention",
         )
         self.assertEqual(gateway_log.read_text(encoding="utf-8"), "owned\n")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "observability-report",
+            "--home",
+            str(spark_root / "state" / "spark-intelligence"),
+            "--include-unowned-jsonl",
+            "--spark-root",
+            str(spark_root),
+            "--jsonl-min-bytes",
+            "10",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        filtered_report = json.loads(stdout)["unowned_jsonl"]
+        self.assertEqual(filtered_report["total_files"], 3)
+        self.assertEqual(filtered_report["candidate_files"], 1)
+        self.assertEqual(filtered_report["below_min_bytes_files"], 2)
+        self.assertEqual(filtered_report["candidate_manifest_action_counts"], {"archive_candidate": 1})
 
     def test_jobs_prune_observability_cli_can_prune_gateway_logs(self) -> None:
         old_timestamp = "2025-01-01T00:00:00+00:00"

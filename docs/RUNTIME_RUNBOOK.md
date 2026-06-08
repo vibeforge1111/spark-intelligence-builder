@@ -119,7 +119,10 @@ Spark root by size and ownership class without opening, moving, or deleting
 them. Each reported file includes `manifest_action`, `movement_blocker`,
 reference-scan and owner-signoff flags, `archive_before_quarantine`, and
 `delete_allowed=false` so a future archive/quarantine pass has a checked
-restore manifest instead of relying on prose. Follow
+restore manifest instead of relying on prose. The report also separates
+`total_files`, `candidate_files`, `below_min_bytes_files`, and candidate
+classification/action/blocker counts, so limited reports are visibly partial.
+Follow
 [SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md](./SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md)
 before archiving, quarantining, or deleting any loose JSONL river.
 

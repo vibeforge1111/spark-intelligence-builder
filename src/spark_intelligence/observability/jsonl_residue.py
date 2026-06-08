@@ -30,6 +30,11 @@ class JsonlResidueReport:
     root: str
     total_files: int
     total_bytes: int
+    candidate_files: int
+    below_min_bytes_files: int
+    candidate_classification_counts: dict[str, int]
+    candidate_manifest_action_counts: dict[str, int]
+    candidate_movement_blocker_counts: dict[str, int]
     reported_files: list[JsonlResidueFile]
     omitted_files: int
     min_bytes: int
@@ -39,6 +44,11 @@ class JsonlResidueReport:
             "root": self.root,
             "total_files": self.total_files,
             "total_bytes": self.total_bytes,
+            "candidate_files": self.candidate_files,
+            "below_min_bytes_files": self.below_min_bytes_files,
+            "candidate_classification_counts": self.candidate_classification_counts,
+            "candidate_manifest_action_counts": self.candidate_manifest_action_counts,
+            "candidate_movement_blocker_counts": self.candidate_movement_blocker_counts,
             "reported_files": [file.__dict__ for file in self.reported_files],
             "reported_count": len(self.reported_files),
             "omitted_files": self.omitted_files,
@@ -87,13 +97,14 @@ def build_jsonl_residue_report(
             total_bytes += size
             if size < bounded_min_bytes:
                 continue
+            manifest_policy = _manifest_policy(path, spark_root, config_manager)
             files.append(
                 JsonlResidueFile(
                     path=str(path),
                     relative_path=_relative_path(path, spark_root),
                     bytes=size,
                     modified_at=_timestamp(stat.st_mtime),
-                    **_manifest_policy(path, spark_root, config_manager),
+                    **manifest_policy,
                     recommendation=_recommendation(path, spark_root, config_manager),
                 )
             )
@@ -103,6 +114,11 @@ def build_jsonl_residue_report(
         root=str(spark_root),
         total_files=total_files,
         total_bytes=total_bytes,
+        candidate_files=len(files),
+        below_min_bytes_files=max(total_files - len(files), 0),
+        candidate_classification_counts=_count_by(files, "classification"),
+        candidate_manifest_action_counts=_count_by(files, "manifest_action"),
+        candidate_movement_blocker_counts=_count_by(files, "movement_blocker", none_label="none"),
         reported_files=reported,
         omitted_files=max(len(files) - len(reported), 0),
         min_bytes=bounded_min_bytes,
@@ -121,6 +137,19 @@ def _timestamp(value: float) -> str | None:
         return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec="seconds")
     except (OSError, OverflowError, ValueError):
         return None
+
+
+def _count_by(files: list[JsonlResidueFile], attribute: str, *, none_label: str | None = None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for file in files:
+        value = getattr(file, attribute)
+        if value is None:
+            if none_label is None:
+                continue
+            value = none_label
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _classify_jsonl_path(path: Path, root: Path, config_manager: ConfigManager) -> str:

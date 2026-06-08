@@ -8527,6 +8527,10 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             lines.append(f"- unowned_jsonl_root: {jsonl_report['root']}")
             lines.append(f"- unowned_jsonl_files: {jsonl_report['total_files']}")
             lines.append(f"- unowned_jsonl_bytes: {jsonl_report['total_bytes']}")
+            lines.append(f"- unowned_jsonl_candidates: {jsonl_report['candidate_files']}")
+            lines.append(f"- unowned_jsonl_below_min_bytes: {jsonl_report['below_min_bytes_files']}")
+            for action, count in sorted(jsonl_report["candidate_manifest_action_counts"].items()):
+                lines.append(f"- unowned_jsonl_action {action}: {count}")
             for item in jsonl_report["reported_files"][:10]:
                 lines.append(
                     f"- jsonl {item['relative_path']} "

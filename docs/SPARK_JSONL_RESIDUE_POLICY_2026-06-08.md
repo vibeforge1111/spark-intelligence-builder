@@ -22,12 +22,15 @@ Observed on 2026-06-08:
 
 | Metric | Value |
 | --- | ---: |
-| `state.db` bytes | 251,772,928 |
-| `event_log` rows | 17,299 |
-| `builder_events` rows | 17,299 |
+| `state.db` bytes | 251,809,792 |
+| `event_log` rows | 17,302 |
+| `builder_events` rows | 17,302 |
 | `tool_call_ledger` rows | 117 |
 | Loose JSONL files | 251 |
 | Loose JSONL bytes | 190,235,594 |
+| Loose JSONL candidates at `--jsonl-min-bytes 1000000` | 23 |
+| Loose JSONL below min-byte threshold | 228 |
+| Candidate manifest actions | `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=2` |
 
 Largest residue classes:
 
@@ -39,7 +42,8 @@ Largest residue classes:
 | canonical store | `state\spark-intelligence\state.db` | Governed store. Use retention/VACUUM procedure, not JSONL quarantine. |
 
 The report is intentionally metadata-only: size, path, modification time,
-classification, manifest action, movement blocker, reference-scan and
+total/candidate/below-threshold counts, candidate classification/action/blocker
+counts, classification, manifest action, movement blocker, reference-scan and
 owner-signoff flags, `delete_allowed=false`, and recommendation. It does not
 open or summarize file contents.
 
