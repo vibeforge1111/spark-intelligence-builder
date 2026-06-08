@@ -52,13 +52,16 @@ ledger spine, but Spark is not done.
   approval evidence. The executor boundary is documented, but Spark still has
   no automatic code mutation, rollback executor, or production promotion loop.
 - Partially fixed: observability has a canonical governed tool ledger and live
-  rows for `builder`, `spark_cli`, and `telegram`. Builder runtime tests now
+  rows for `builder`, `spark_cli`, `telegram`, and one first Spawner ingestion
+  row. Builder runtime tests now
   cover governed result ledgers for `builder.direct`, `browser.navigate`,
   `researcher.advisory`, and `voice.io` hooks (`voice.status`,
   `voice.speak`, and explicit-audio `voice.transcribe`), plus Swarm dry-run payload preparation
-  (`swarm.sync.dry_run`). Spawner execution is still not represented as a
-  first-class surface, and remaining Builder high-agency paths should adopt
-  the same ledger contract before they claim governed execution.
+  (`swarm.sync.dry_run`). The current Spawner row is a `spawner.dispatch`
+  authorization ledger with `status=not_started`, so end-to-end Spawner
+  runtime completion coverage is still unproven. Remaining Builder
+  high-agency paths should adopt the same ledger contract before they claim
+  governed execution.
 - Fixed for Builder-local bridge consumers: Builder-origin Governor decisions
   now carry canonical issuer/provenance/runtime binding evidence, and the
   Researcher memory-write consumer rejects schema-valid Governor decisions
@@ -66,17 +69,21 @@ ledger spine, but Spark is not done.
   Spawner/Telegram decisions still depend on the HMAC signature checks below.
 - Closed for this pass: `state.db` retention and VACUUM were run with backup,
   before/after counts, and doctor verification. The DB shrank from about 655 MB
-  to about 225 MB and is now about 252 MB after later live activity while
+  to about 225 MB and is now about 253 MB after later live activity while
   preserving canonical tool ledgers.
+- Closed for tracked Spawner/Telegram auth work already committed: Spawner now
+  has HMAC verification/signing paths, opaque command payload blocking,
+  canonical ledger ingestion, and tracked loopback bypass removal; Telegram now
+  verifies signed Governor decisions when the shared key is configured.
 - Closed for the live Builder runtime: installed Builder is the canonical
   source-truth line and now has `docs/SOURCE_TRUTH.md`. Doctor now discovers
   the live `~/.spark/modules` install from a `~/.spark/state/...` Builder home
   and labels the stale Desktop checkout as `desktop_backlog` when the external
   `.spark-source-truth.toml` marker is present, or `desktop_backlog_unmarked`
   when it is absent. Desktop Builder remains dirty backlog until curated.
-- Still open or in-flight: Spawner loopback API-key hardening and Governor
-  signature verification must be rechecked after the parallel Spawner/Telegram
-  session settles.
+- Still open or in-flight: the untracked Spawner watchdog probe route is being
+  handled in the parallel Spawner session, and both Spawner/Telegram worktrees
+  should be rechecked after that session settles before a product-ready claim.
 - Still open: the authority kernel is still mostly a library plus adapters, not
   a long-lived universal governor runtime.
 
@@ -91,13 +98,13 @@ ledger spine, but Spark is not done.
 | CLI keyring cold import | `load_keyring()` lazy import and regression test | Closed in CLI |
 | Builder canonical ledger | `tool_call_ledger` table, indexes, import/query/ingest commands | Closed for store |
 | Builder Governor binding | `bridge_authority.py` packages canonical issuer/provenance/runtime binding evidence; Researcher memory writes reject schema-valid Governor decisions missing that evidence; focused bridge-authority tests cover tampered/missing binding | Closed for Builder-local bridge consumers; not a substitute for cross-process HMAC trust |
-| Live ledger adoption | live doctor reports `total=117 surfaces=builder=1, spark_cli=69, telegram=47; missing_expected_surfaces=spawner`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; doctor now names expected canonical surfaces with zero rows once any governed ledgers exist | Partial; Spawner missing; re-run after Spawner emits canonical rows |
-| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 253,222,912 bytes with `builder_events=17,319`, `event_log=17,319`, and `tool_call_ledger=117` | Closed for this pass |
-| Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000 --jsonl-reference-scan` reports 251 JSONL files / 190,329,716 bytes under `.spark`; the 1 MB candidate set is 24 files with 227 below threshold, action counts `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=3`, and reference-scan status counts `matches_found=5`, `no_matches=18`, `not_required=1`; reported files include `manifest_action`, `movement_blocker`, reference-scan evidence, owner-signoff, archive-before-quarantine, and `delete_allowed=false` fields; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Manifest/reference policy added; archive/quarantine execution pending |
+| Live ledger adoption | live doctor reports `total=118 surfaces=builder=1, spark_cli=69, spawner=1, telegram=47; all_expected_surfaces_present`; code/tests now prove Builder runtime ledger coverage for `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` in addition to existing Builder harness coverage; `harness tool-ledgers --surface spawner` shows the first Spawner row is a pre-execution `spawner.dispatch` authorization ledger with `status=not_started` | Partial; coarse surface adoption is closed, but Spawner runtime completion coverage still needs proof |
+| Live DB size | retention run recorded `state.db` 654,905,344 -> 224,800,768 bytes; latest report shows 253,333,504 bytes with `builder_events=17,330`, `event_log=17,330`, and `tool_call_ledger=118` | Closed for this pass |
+| Loose JSONL residue | `jobs observability-report --include-unowned-jsonl --jsonl-min-bytes 1000000 --jsonl-reference-scan` reports 251 JSONL files / 190,472,313 bytes under `.spark`; the 1 MB candidate set is 24 files with 227 below threshold, action counts `archive_candidate=19`, `canonical_retention_path=1`, `freeze_pending_reference_scan=1`, `owner_required=3`, and reference-scan status counts `matches_found=5`, `no_matches=18`, `not_required=1`; reported files include `manifest_action`, `movement_blocker`, reference-scan evidence, owner-signoff, archive-before-quarantine, and `delete_allowed=false` fields; policy doc `SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md` is written | Manifest/reference policy added; archive/quarantine execution pending |
 | Builder source truth | installed `docs/SOURCE_TRUTH.md` declares the live code-bearing runtime line; doctor reports `installs=spark-intelligence-builder ...` and classifies the stale Desktop checkout as `desktop_backlog` when `.spark-source-truth.toml` declares `canonical=false` instead of `desktop_backlog_unmarked`; installed `spark.toml`, `pyproject.toml`, and `LICENSE` are AGPL-3.0-only; Desktop tree remains dirty backlog on `codex/browser-use-receipts` with gone remote, untracked `LICENSE`, and empty `needs.modules`; `DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md` captures the read-only backlog state | Closed for live Builder; archive/cleanup pending |
 | Self-evolution | Builder has observe snapshot, change-manifest runner, supervised no-op drill `evt-458006fab354`, Builder ledger `ledger:fd24aee5b4fb46e08bc36925`, commit `7bf79b5` proving rollback-plan/protected-approval boundaries, and `SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md`; no automatic mutation executor | Partial |
-| Spawner loopback | current dirty worktree still contains many `allowLoopbackWithoutKey: true` routes | In-flight / open |
-| Telegram signature minting | `SPARK_GOVERNOR_HMAC_KEY` signer and nonce test exist | Present, recheck after dirty worktree settles |
+| Spawner loopback | tracked mutating/control routes were hardened in Spawner commits `128bc2e` and `8d80630`; the untracked `src/routes/api/harness-watchdog/probe/+server.ts` route is delegated to the parallel Spawner session | Mostly closed; verify after other session lands watchdog |
+| Telegram/Spawner signature verification | Telegram commit `93a8d6b` verifies signed Governor decisions; Spawner commit `41ce79a` verifies HMAC-signed decisions when `SPARK_GOVERNOR_HMAC_KEY` is configured | Present; recheck shared-key deployment and dirty worktrees before product-ready claim |
 
 ## Completed Since Original Audit
 
@@ -193,17 +200,29 @@ ledger spine, but Spark is not done.
 
 ### Telegram And Spawner
 
-Previous committed work introduced signed Telegram Governor decisions and
-Spawner-side Harness Core dependencies, but both repos are currently dirty from
-a separate session. Treat current Telegram/Spawner readiness as provisional
-until that session completes and the final diff is tested.
+Committed work now covers the tracked security holes that this session already
+landed:
+
+- Spawner commit `41ce79a` adds HMAC Governor verification/signing paths.
+- Telegram commit `93a8d6b` verifies signed Governor decisions when the shared
+  key is configured.
+- Spawner commit `97fbed2` blocks opaque command payload flags.
+- Spawner commit `9f08b88` emits canonical Builder ledger rows.
+- Spawner commits `128bc2e` and `8d80630` remove tracked loopback auth bypasses
+  from control/mutating routes.
+
+The parallel Spawner session is handling the remaining untracked watchdog probe
+route. Treat current Telegram/Spawner readiness as provisional until that
+session completes and the final dirty worktree state is tested.
 
 ## Remaining Hardening Plan
 
 ### P0 - Finish Security And Authority Closure
 
 1. Recheck and finish Spawner loopback hardening.
-   - Audit every `requireControlAuth(... allowLoopbackWithoutKey: true)` route.
+   - Tracked mutating/control routes were hardened in commits `128bc2e` and
+     `8d80630`; verify the parallel session lands the watchdog probe route too.
+   - Audit every remaining `requireControlAuth(... allowLoopbackWithoutKey: true)` route.
    - Keep `true` only for explicitly read-only, non-mutating local surfaces with
      documented reason codes.
    - Mutation/control routes must require API key or valid hosted session even
@@ -212,6 +231,8 @@ until that session completes and the final diff is tested.
      `allowLoopbackWithoutKey: false`.
 
 2. Recheck Spawner Governor signature verification.
+   - Spawner HMAC verification exists in commit `41ce79a`; verify it in the
+     final settled worktree and deployment configuration.
    - Spawner must reject unsigned Governor decisions when
      `SPARK_GOVERNOR_HMAC_KEY` is configured.
    - Spawner must reject bad signatures, mismatched key ids, stale timestamps if
@@ -224,18 +245,20 @@ until that session completes and the final diff is tested.
    - Every governed tool-call path should produce one canonical
      `tool_call_ledger` row with `turn_id`, `action_id`, `capability_id`, and
      `authorization_decision_id`.
-   - Current live adoption has first-class `builder`, `spark_cli`, and
-     `telegram` rows.
-   - Spawner execution remains the missing first-class surface.
+   - Current live adoption has first-class `builder`, `spark_cli`, `telegram`,
+     and one first `spawner` row.
+   - The Spawner row currently proves canonical ingestion for a pre-execution
+     dispatch authorization; it does not prove mission execution completion.
    - Builder runtime coverage now includes `builder.direct`,
      `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`,
      and explicit-audio `voice.transcribe`, plus Swarm dry-run payload
      preparation as `swarm.sync.dry_run`; recheck Swarm upload/resume commands
      and future high-agency Builder tool paths before claiming full Builder
      runtime coverage.
-   - Doctor now reports `missing_expected_surfaces` after any governed ledgers
-     exist, which should stay visible until Spawner and every active execution
-     surface emits or ingests canonical rows.
+   - Doctor now reports coarse surface adoption and currently says
+     `all_expected_surfaces_present`; use `harness tool-ledgers`,
+     `harness trace-turn`, and route/runtime tests to prove depth beyond the
+     first row per surface.
 
 4. Preserve fail-closed behavior at import/runtime boundaries.
    - Builder already declares `spark-harness-core`; keep the boot-time import
@@ -271,12 +294,15 @@ until that session completes and the final diff is tested.
 7. Finish canonical ingestion for Telegram JSONL and Spawner execution.
    - Telegram still has local JSONL fallback behavior; canonical ingestion must
      be proven in normal runtime, not just imported later.
-   - Spawner must emit canonical ledger rows for mission execution steps or POST
-     them to Builder's gateway.
+   - Spawner now has one canonical Builder-ingested row; the remaining gate is
+     mission execution/result-step coverage, not mere surface presence.
+   - Runtime tests should prove rows transition past `status=not_started`.
 
 8. Keep orphaned rivers quarantined.
-   - Root `.spark` now only shows `outcomes.jsonl` and `predictions.jsonl`,
-     but recursive `.spark` JSONL residue is about 190 MB across 251 files.
+   - The current 1 MB candidate scan names root `outcomes.jsonl` as
+     `freeze_pending_reference_scan`; below-threshold root files remain outside
+     the limited candidate set.
+   - Recursive `.spark` JSONL residue is about 190 MB across 251 files.
    - Added `jobs observability-report --include-unowned-jsonl` to list loose
      `.jsonl` files by size and ownership class without opening, moving, or
      deleting them.
@@ -374,6 +400,8 @@ until that session completes and the final diff is tested.
   signature when a shared key is configured.
 - No governed execution path may claim full authority unless it writes or
   ingests a canonical `tool_call_ledger` row.
+- No surface may claim full runtime coverage from a single pre-execution
+  `not_started` ledger row.
 - No source-truth claim may cite the Desktop Builder tree while live runtime is
   installed Builder, unless the document explicitly says it is inspecting
   backlog/historical evidence rather than live runtime truth.
@@ -400,6 +428,7 @@ python -m spark_intelligence.cli harness tool-ledgers --home C:\Users\USER\.spar
 ```
 
 ```powershell
+python -m spark_intelligence.cli harness tool-ledgers --home C:\Users\USER\.spark\state\spark-intelligence --surface spawner --limit 5 --json
 git -C C:\Users\USER\.spark\modules\spawner-ui\source grep -n "allowLoopbackWithoutKey: true" -- src
 git -C C:\Users\USER\.spark\modules\spawner-ui\source grep -n "SPARK_GOVERNOR_HMAC_KEY\|signature\|nonce" -- src tests spark.toml
 git -C C:\Users\USER\.spark\modules\spark-telegram-bot\source grep -n "SPARK_GOVERNOR_HMAC_KEY\|signature\|nonce" -- src tests spark.toml
@@ -420,11 +449,10 @@ explicit `src` insertion avoids accidentally importing a different CLI package.
 ## Suggested Next Execution Order
 
 1. Wait for the parallel Spawner/Telegram session to finish, then re-run the
-   dirty-repo and route-auth checks above.
-2. Close Spawner loopback and signature verification gaps, with route matrix
-   tests.
-3. Add canonical ledger emission for Spawner and verify live adoption includes
-   `spawner`.
+   dirty-repo, watchdog, route-auth, and signature checks above.
+2. Close any remaining Spawner watchdog/route matrix gaps.
+3. Extend Spawner canonical ledger emission from the first pre-execution row to
+   mission execution/result-step coverage.
 4. Continue Builder self-persist coverage for remaining governed Builder tool
    paths beyond the change-manifest runner, `builder.direct`,
    `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`,

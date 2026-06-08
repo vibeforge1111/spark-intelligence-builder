@@ -85,8 +85,9 @@ Ledger surface counts after cleanup:
 | `spark_cli` | 69 |
 | `telegram` | 13 |
 
-After the later Builder self-evolution no-op drill and Telegram test activity,
-live adoption became `builder=1`, `spark_cli=69`, and `telegram=17`.
+After the later Builder self-evolution no-op drill, Telegram test activity, and
+Spawner canonical ingest test activity, live adoption became `builder=1`,
+`spark_cli=69`, `spawner=1`, and `telegram=47`.
 
 Post-run integrity check: `ok`.
 
@@ -100,10 +101,26 @@ panels now report `state=unknown` until new live ingress/background activity is
 recorded. This is acceptable for the cleanup because stop-ship checks still
 pass, canonical ledgers were preserved, and doctor has no follow-up surfaces.
 
+## Latest Post-Remediation Check
+
+A fresh read-only report on 2026-06-08 showed:
+
+- `state.db` bytes: `253,333,504`
+- `builder_events`: `17,330`
+- `event_log`: `17,330`
+- `tool_call_ledger`: `118`
+- `provider_runtime_events`: `0`
+- doctor: `ok: true`
+- ledger adoption: `total=118 surfaces=builder=1, spark_cli=69, spawner=1, telegram=47; all_expected_surfaces_present`
+
+The single Spawner row is a pre-execution `spawner.dispatch` authorization
+ledger with `status=not_started`, so it proves canonical ingestion only. It
+does not prove mission execution/result-step coverage.
+
 ## Remaining Work
 
-- Add first-class `spawner` rows to `tool_call_ledger`; current live adoption
-  has `builder`, `spark_cli`, and `telegram`.
+- Extend first-class `spawner` rows from ingestion proof to mission
+  execution/result-step coverage.
 - Re-run this retention procedure only with a fresh backup and before/after
   counts.
 - Use `spark-intelligence jobs observability-report --older-than <cutoff>
