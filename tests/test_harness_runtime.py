@@ -201,11 +201,12 @@ class HarnessRuntimeTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             task="Draft a direct answer for this operator question.",
-            channel_kind="telegram",
+            channel_kind="builder",
             session_id="session-r",
             human_id="human-r",
             agent_id="agent-r",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         with patch(
             "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
@@ -220,7 +221,39 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.artifacts["reply_text"], "Here is the answer.")
         self.assertEqual(result.artifacts["trace_ref"], "trace:test")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "researcher.advisory")
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["surface"], "builder")
+        self.assertEqual(ledgers[0]["status"], "success")
+        self.assertEqual(ledgers[0]["tool_name"], "researcher.advisory")
         bridge_mock.assert_called_once()
+
+    def test_execute_researcher_advisory_without_authority_does_not_run_bridge(self) -> None:
+        self._enable_fake_researcher()
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Draft a direct answer for this operator question.",
+            forced_harness_id="researcher.advisory",
+        )
+
+        with patch("spark_intelligence.harness_runtime.service._run_researcher_bridge_reply") as bridge_mock:
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "researcher.advisory")
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
+        bridge_mock.assert_not_called()
 
     def test_build_harness_task_envelope_allows_forced_harness_override(self) -> None:
         self._enable_fake_researcher()

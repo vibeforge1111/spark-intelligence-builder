@@ -342,6 +342,7 @@ def execute_harness_task(
                 config_manager=config_manager,
                 state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
@@ -777,7 +778,22 @@ def _execute_researcher_advisory_harness(
     config_manager: ConfigManager,
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
+    authority = _authorize_harness_researcher_advisory(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="researcher.advisory"),
+            },
+            "Researcher advisory harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
     result = _run_researcher_bridge_reply(
         config_manager=config_manager,
         state_db=state_db,
@@ -793,7 +809,16 @@ def _execute_researcher_advisory_harness(
         "provider_transport": result.provider_execution_transport,
         "routing_decision": result.routing_decision,
         "active_chip_key": result.active_chip_key,
+        "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="researcher.advisory"),
     }
+    _record_harness_researcher_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="success",
+        summary="Researcher advisory harness completed.",
+    )
     return (
         artifacts,
         "Executed the researcher advisory harness and captured the reply/result trace.",
