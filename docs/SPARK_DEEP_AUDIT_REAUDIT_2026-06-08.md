@@ -128,6 +128,9 @@ ledger spine, but Spark is not done.
   packaged Governor decisions include canonical issuer, authorization
   provenance, and current ledger binding refs, and Researcher memory writes
   block schema-valid decisions that omit or tamper with those refs.
+- Added `turn_id` facts to Researcher memory read/write policy-gate blocks when
+  the block has Governor, vnext envelope, or legacy envelope authority context,
+  so `harness trace-turn` can join those blocked events by canonical turn id.
 - Added Builder voice runtime result-ledger coverage for `voice.status`,
   `voice.speak`, and explicit-audio `voice.transcribe`; focused tests prove the
   chip hook still receives the governed `voice.speak` / `voice.transcribe`
@@ -248,6 +251,8 @@ until that session completes and the final diff is tested.
      Governor decision is present.
    - Added `harness trace-turn --turn-id <turn-id>` for canonical ledgers plus
      Builder/event mirror rows that already carry the turn id.
+   - Researcher memory read/write policy blocks now include `facts.turn_id`
+     when authority context is present.
    - Remaining work: broaden new event producers so more rows carry `turn_id`
      directly instead of relying on legacy request/trace fields.
 

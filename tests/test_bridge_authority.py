@@ -591,6 +591,7 @@ def test_researcher_memory_write_rejects_governor_without_canonical_binding(tmp_
     blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
     assert blocks
     assert blocks[0]["facts_json"]["reason_codes"] == ["canonical_governor_binding_missing"]
+    assert blocks[0]["facts_json"]["turn_id"] == bridge_verdict.governor_decision["turn_id"]
 
 
 def test_researcher_memory_write_rejects_copied_governor_ledger(tmp_path) -> None:

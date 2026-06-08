@@ -4762,6 +4762,11 @@ def _authorize_researcher_memory_read(
             },
             facts={
                 "tool_name": "memory.read",
+                "turn_id": _researcher_authority_turn_id(
+                    governor_decision=None,
+                    turn_intent_envelope_vnext=authority_vnext,
+                    turn_intent_envelope=authority_envelope,
+                ),
                 "read_kind": read_kind,
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
@@ -4867,6 +4872,11 @@ def _authorize_researcher_memory_write(
             },
             facts={
                 "tool_name": "memory.write",
+                "turn_id": _researcher_authority_turn_id(
+                    governor_decision=effective_governor_decision,
+                    turn_intent_envelope_vnext=authority_vnext,
+                    turn_intent_envelope=authority_envelope,
+                ),
                 "operation": operation,
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
@@ -4892,6 +4902,27 @@ def _authorize_researcher_memory_write(
     except Exception:
         pass
     return False
+
+
+def _researcher_authority_turn_id(
+    *,
+    governor_decision: dict[str, Any] | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
+    turn_intent_envelope: TurnIntentEnvelope | None,
+) -> str | None:
+    if isinstance(governor_decision, dict):
+        turn_id = str(governor_decision.get("turn_id") or "").strip()
+        if turn_id:
+            return turn_id
+    if isinstance(turn_intent_envelope_vnext, dict):
+        turn_id = str(turn_intent_envelope_vnext.get("turn_id") or "").strip()
+        if turn_id:
+            return turn_id
+    if turn_intent_envelope is not None:
+        turn_id = str(turn_intent_envelope.turn_id or "").strip()
+        if turn_id:
+            return turn_id
+    return None
 
 
 def _researcher_memory_read_side_effects_authorized(
