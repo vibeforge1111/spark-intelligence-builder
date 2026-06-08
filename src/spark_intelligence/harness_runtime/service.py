@@ -452,6 +452,16 @@ def execute_harness_chain(
     )
 
 
+def _safe_load_summary(raw: Any) -> dict[str, Any]:
+    """Safely parse summary_json from a DB row, returning {} on failure."""
+    if not raw:
+        return {}
+    try:
+        return json.loads(str(raw))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 def build_harness_runtime_snapshot(
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -483,7 +493,7 @@ def build_harness_runtime_snapshot(
                 "opened_at": str(row["opened_at"]) if row["opened_at"] else None,
                 "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
                 "close_reason": str(row["close_reason"]) if row["close_reason"] else None,
-                "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
+                "summary_json": _safe_load_summary(row["summary_json"]),
             }
         )
     summary = {
