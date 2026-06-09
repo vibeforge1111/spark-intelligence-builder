@@ -83,7 +83,10 @@ class CreatorIntentPacket:
     network_contribution_policy: str = "workspace_only"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        if not d.get("intent_id"):
+            d["intent_id"] = _intent_id(self.user_goal, self.target_domain)
+        return d
 
     def to_text(self) -> str:
         outputs = [
