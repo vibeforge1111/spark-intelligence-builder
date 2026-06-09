@@ -7200,6 +7200,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
         payload=payload,
+        render_result=render_browser_page_snapshot,
         action="browser_page_snapshot",
         target_ref=args.origin,
     )
@@ -7224,6 +7225,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_NAVIGATE_HOOK,
         payload=navigate_payload,
+        render_result=lambda result: "Browser navigation completed.",
         action="browser_page_snapshot_navigate",
         target_ref=args.origin,
     )
@@ -7260,6 +7262,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_TAB_WAIT_HOOK,
         payload=wait_payload,
+        render_result=lambda result: "Browser tab wait completed.",
         action="browser_page_snapshot_wait",
         target_ref=tab_id,
     )
