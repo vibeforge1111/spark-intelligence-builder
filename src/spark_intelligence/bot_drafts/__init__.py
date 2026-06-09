@@ -1,5 +1,6 @@
 from spark_intelligence.bot_drafts.service import (
     BotDraft,
+    BotDraftAuthorityError,
     DRAFT_HANDLE_PATTERN,
     DRAFT_MIN_LENGTH,
     detect_generative_intent,
@@ -14,6 +15,7 @@ from spark_intelligence.bot_drafts.service import (
 
 __all__ = [
     "BotDraft",
+    "BotDraftAuthorityError",
     "DRAFT_HANDLE_PATTERN",
     "DRAFT_MIN_LENGTH",
     "detect_generative_intent",

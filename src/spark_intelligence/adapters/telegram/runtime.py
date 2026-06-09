@@ -658,11 +658,12 @@ def _maybe_save_reply_as_draft(
 
     is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
     is_generative = bool(user_message) and detect_generative_intent(user_message)
+    governor_decision: dict[str, Any] | None = None
     if is_iteration or is_generative:
         authority = authorize_builder_bridge_action(
             update_payload,
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
+            tool_name="bot_draft.write",
+            owner_system="spark-intelligence-builder",
             mutation_class="writes_memory",
             state_db=state_db,
             channel_id="telegram",
@@ -671,6 +672,7 @@ def _maybe_save_reply_as_draft(
         )
         if not authority.allowed:
             return reply_text
+        governor_decision = authority.governor_decision
 
     try:
         from pathlib import Path as _P
@@ -709,6 +711,7 @@ def _maybe_save_reply_as_draft(
                         draft_id=source_draft.draft_id,
                         content=reply,
                         chip_used=chip_used,
+                        governor_decision=governor_decision,
                     )
                 except Exception:
                     pass
@@ -724,6 +727,7 @@ def _maybe_save_reply_as_draft(
                     content=reply,
                     session_id=session_id,
                     chip_used=chip_used,
+                    governor_decision=governor_decision,
                 )
             except Exception:
                 pass
@@ -736,6 +740,7 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
             pass
@@ -750,6 +755,7 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
             pass
