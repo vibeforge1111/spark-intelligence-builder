@@ -179,7 +179,24 @@ def execute_chip_hook_record(
 
     repo_root = Path(record.repo_root)
     final_command = _normalize_command(command)
-    env = os.environ.copy()
+    # Build a minimal env instead of inheriting the full host environment.
+    # Chip subprocesses run untrusted code; exposing every env var (which may
+    # contain API keys, tokens, or internal URLs) would allow secret
+    # exfiltration through the chip process.
+    _ALLOWED_ENV_KEYS = {
+        "PATH",
+        "PYTHONPATH",
+        "HOME",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SYSTEMROOT",       # Windows: needed for DLL resolution
+        "COMSPEC",           # Windows: needed for subprocess spawning
+        "PATHEXT",           # Windows: needed for executable resolution
+        "USERPROFILE",       # Windows: HOME equivalent
+    }
+    env = {k: v for k, v in os.environ.items() if k in _ALLOWED_ENV_KEYS}
     src_root = repo_root / "src"
     if src_root.exists():
         existing_pythonpath = env.get("PYTHONPATH", "")
