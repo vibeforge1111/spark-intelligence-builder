@@ -63,6 +63,251 @@ class EnvironmentSnapshotRecord:
     summary: str
 
 
+@dataclass(frozen=True)
+class ObservabilityPruneResult:
+    cutoff: str
+    deleted_counts: dict[str, int]
+    total_deleted: int
+    vacuumed: bool
+
+
+def _normalize_prune_cutoff(value: str | datetime) -> str:
+    if isinstance(value, datetime):
+        cutoff = value
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        return cutoff.isoformat(timespec="seconds")
+    cutoff = str(value).strip()
+    if not cutoff:
+        raise ValueError("older_than is required")
+    return cutoff
+
+
+def prune_observability_store(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    include_builder_events: bool = False,
+    vacuum: bool = False,
+) -> ObservabilityPruneResult:
+    cutoff = _normalize_prune_cutoff(older_than)
+    delete_specs = [
+        ("event_log", "recorded_at"),
+        ("tool_call_ledger", "created_at"),
+        ("provider_runtime_events", "created_at"),
+    ]
+    if include_builder_events:
+        delete_specs.append(("builder_events", "created_at"))
+
+    deleted_counts: dict[str, int] = {}
+    with state_db.connect() as conn:
+        for table_name, column_name in delete_specs:
+            cursor = conn.execute(
+                f"DELETE FROM {table_name} WHERE {column_name} < ?",
+                (cutoff,),
+            )
+            deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+
+        total_deleted = sum(deleted_counts.values())
+        vacuumed = False
+        if vacuum and total_deleted > 0:
+            conn.execute("VACUUM")
+            vacuumed = True
+
+    return ObservabilityPruneResult(cutoff=cutoff, deleted_counts=deleted_counts, total_deleted=total_deleted, vacuumed=vacuumed)
+
+
+def persist_bound_ledger(
+    state_db: StateDB,
+    *,
+    row: dict[str, Any],
+    component: str | None = None,
+) -> str:
+    del component
+    ledger_json = row.get("ledger_json") if isinstance(row, dict) else None
+    ledger_payload = dict(ledger_json) if isinstance(ledger_json, dict) else {}
+    if isinstance(ledger_json, str):
+        try:
+            parsed = json.loads(ledger_json)
+            ledger_payload = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            ledger_payload = {}
+    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
+    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
+    ledger_id = _ledger_text(row.get("ledger_id") or ledger_payload.get("ledger_id"))
+    if not ledger_id:
+        raise ValueError("tool_call_ledger row requires ledger_id")
+    now = utc_now_iso()
+    values = {
+        "ledger_id": ledger_id,
+        "turn_id": _ledger_text(row.get("turn_id") or ledger_payload.get("turn_id")),
+        "action_id": _ledger_text(row.get("action_id") or ledger_payload.get("action_id")),
+        "capability_id": _ledger_text(row.get("capability_id") or ledger_payload.get("capability_id")),
+        "authorization_decision_id": _ledger_text(row.get("authorization_decision_id")),
+        "tool_name": _ledger_text(row.get("tool_name") or ledger_payload.get("tool_name")),
+        "owner_system": _ledger_text(row.get("owner_system")),
+        "mutation_class": _ledger_text(row.get("mutation_class")),
+        "outcome": _ledger_text(row.get("outcome")),
+        "status": _ledger_text(row.get("status") or result.get("status")),
+        "surface": _ledger_text(row.get("surface")),
+        "request_id": _ledger_text(row.get("request_id")),
+        "trace_ref": _ledger_text(row.get("trace_ref") or trace.get("id")),
+        "summary": _ledger_text(row.get("summary") or result.get("summary") or trace.get("summary")),
+        "ledger_json": json.dumps(ledger_payload if ledger_payload else ledger_json or {}, sort_keys=True),
+        "created_at": _ledger_text(row.get("created_at")) or now,
+        "updated_at": _ledger_text(row.get("updated_at")) or now,
+    }
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(
+                ledger_id,
+                turn_id,
+                action_id,
+                capability_id,
+                authorization_decision_id,
+                tool_name,
+                owner_system,
+                mutation_class,
+                outcome,
+                status,
+                surface,
+                request_id,
+                trace_ref,
+                summary,
+                ledger_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ledger_id) DO UPDATE SET
+                turn_id = excluded.turn_id,
+                action_id = excluded.action_id,
+                capability_id = excluded.capability_id,
+                authorization_decision_id = excluded.authorization_decision_id,
+                tool_name = excluded.tool_name,
+                owner_system = excluded.owner_system,
+                mutation_class = excluded.mutation_class,
+                outcome = excluded.outcome,
+                status = excluded.status,
+                surface = excluded.surface,
+                request_id = excluded.request_id,
+                trace_ref = excluded.trace_ref,
+                summary = excluded.summary,
+                ledger_json = excluded.ledger_json,
+                updated_at = excluded.updated_at
+            """,
+            tuple(values[column] for column in (
+                "ledger_id",
+                "turn_id",
+                "action_id",
+                "capability_id",
+                "authorization_decision_id",
+                "tool_name",
+                "owner_system",
+                "mutation_class",
+                "outcome",
+                "status",
+                "surface",
+                "request_id",
+                "trace_ref",
+                "summary",
+                "ledger_json",
+                "created_at",
+                "updated_at",
+            )),
+        )
+        conn.commit()
+    return ledger_id
+
+
+def recent_tool_call_ledgers(
+    state_db: StateDB,
+    *,
+    turn_id: str | None = None,
+    surface: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    bounded_limit = max(1, min(int(limit), 500))
+    filters: list[str] = []
+    params: list[Any] = []
+    if turn_id:
+        filters.append("turn_id = ?")
+        params.append(turn_id)
+    if surface:
+        filters.append("surface = ?")
+        params.append(surface)
+    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                ledger_id,
+                turn_id,
+                action_id,
+                capability_id,
+                authorization_decision_id,
+                tool_name,
+                owner_system,
+                mutation_class,
+                outcome,
+                status,
+                surface,
+                request_id,
+                trace_ref,
+                summary,
+                ledger_json,
+                created_at,
+                updated_at
+            FROM tool_call_ledger
+            {where_sql}
+            ORDER BY updated_at DESC, created_at DESC, ledger_id DESC
+            LIMIT ?
+            """,
+            (*params, bounded_limit),
+        ).fetchall()
+    return [_tool_call_ledger_row_to_dict(row) for row in rows]
+
+
+def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(surface, ''), 'unknown') AS surface, COUNT(*) AS count
+            FROM tool_call_ledger
+            GROUP BY COALESCE(NULLIF(surface, ''), 'unknown')
+            ORDER BY surface ASC
+            """
+        ).fetchall()
+    return {str(row["surface"]): int(row["count"] or 0) for row in rows}
+
+
+def _tool_call_ledger_row_to_dict(row: Any) -> dict[str, Any]:
+    payload = {key: row[key] for key in row.keys()}
+    ledger_json = payload.get("ledger_json")
+    if isinstance(ledger_json, str):
+        try:
+            parsed = json.loads(ledger_json)
+            payload["ledger_json"] = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            payload["ledger_json"] = {}
+    ledger_payload = payload["ledger_json"] if isinstance(payload.get("ledger_json"), dict) else {}
+    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
+    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
+    payload["tool_name"] = payload.get("tool_name") or ledger_payload.get("tool_name")
+    payload["turn_id"] = payload.get("turn_id") or ledger_payload.get("turn_id")
+    payload["status"] = payload.get("status") or result.get("status")
+    payload["trace_ref"] = payload.get("trace_ref") or trace.get("id")
+    payload["summary"] = payload.get("summary") or result.get("summary") or trace.get("summary")
+    return payload
+
+
+def _ledger_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
 def open_run(
     state_db: StateDB,
     *,

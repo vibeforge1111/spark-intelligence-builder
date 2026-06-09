@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
+from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
@@ -19,14 +20,52 @@ from spark_intelligence.identity.service import (
     read_canonical_agent_state,
     rename_agent_identity,
 )
+from spark_intelligence.memory import MemoryWriteResult
 from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def _telegram_memory_upstream_governor(
+        self,
+        *,
+        request_id: str = "telegram-update:1",
+        human_id: str = "human:telegram:123",
+        session_id: str = "telegram:123",
+    ) -> dict[str, object]:
+        envelope = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=human_id,
+            request_id=request_id,
+            source_kind="spark-telegram-bot",
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            intent_summary="Fresh Telegram turn explicitly authorized one scoped memory write.",
+            raw_turn_summary=f"Telegram memory authority smoke request={request_id} session={session_id}.",
+        )
+        self.assertIsInstance(envelope, dict)
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="test",
+            component="test",
+        )
+        self.assertTrue(authority.allowed, authority.reason_codes)
+        self.assertIsInstance(authority.governor_decision, dict)
+        return authority.governor_decision
+
     def test_doctor_command_bootstraps_schema_before_attachment_snapshot_sync(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "doctor",
@@ -668,6 +707,110 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["promotion_gates"]["status"], "pass")
         self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
+
+    def test_memory_write_telegram_note_passes_governor_to_structured_evidence(self) -> None:
+        governor_path = self.home / "governor-decision.json"
+        governor_path.write_text(json.dumps(self._telegram_memory_upstream_governor()), encoding="utf-8")
+        fake_result = MemoryWriteResult(
+            status="succeeded",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace={"authority_binding_refs": ["trace:telegram-memory:test"]},
+            provenance=[{"source": "fake_memory_sdk"}],
+        )
+
+        with patch("spark_intelligence.cli.write_structured_evidence_to_memory", return_value=fake_result) as writer:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "write-telegram-note",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:telegram:123",
+                "--text",
+                "harness-cua-kb-test: save this exact governed note",
+                "--domain-pack",
+                "telegram_runtime",
+                "--evidence-kind",
+                "telegram_memory_note",
+                "--session-id",
+                "telegram:123",
+                "--turn-id",
+                "telegram-update:1",
+                "--actor-id",
+                "telegram_memory_direct_adapter",
+                "--governor-decision-file",
+                str(governor_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["schema_version"], "spark.telegram_memory_write.v1")
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["accepted_count"], 1)
+        self.assertEqual(payload["authority"]["outcome"], "execute")
+        writer.assert_called_once()
+        kwargs = writer.call_args.kwargs
+        self.assertEqual(kwargs["human_id"], "human:telegram:123")
+        self.assertEqual(kwargs["evidence_text"], "harness-cua-kb-test: save this exact governed note")
+        self.assertEqual(kwargs["domain_pack"], "telegram_runtime")
+        self.assertEqual(kwargs["evidence_kind"], "telegram_memory_note")
+        downstream_governor = kwargs["governor_decision"]
+        self.assertEqual(downstream_governor["schema_version"], "governor-decision-v1")
+        self.assertEqual(downstream_governor["outcome"], "execute")
+        self.assertEqual(downstream_governor["execution_boundary"]["action_authorized"], True)
+        self.assertEqual(downstream_governor["execution_boundary"]["legacy_authority_demoted"], True)
+        self.assertEqual(downstream_governor["tool_ledgers"][0]["tool_name"], DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME)
+        self.assertEqual(
+            downstream_governor["envelope"]["proposed_actions"][0]["capability_id"],
+            "capability:domain-chip-memory:memory.write",
+        )
+        self.assertEqual(downstream_governor["envelope"]["proposed_actions"][0]["action_type"], "memory.write")
+
+    def test_memory_write_telegram_note_rejects_malformed_upstream_governor(self) -> None:
+        governor_path = self.home / "governor-decision.json"
+        governor_path.write_text(
+            json.dumps({"traceId": "trace:telegram-memory:test", "decision": "allowed"}),
+            encoding="utf-8",
+        )
+
+        with patch("spark_intelligence.cli.write_structured_evidence_to_memory") as writer:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "write-telegram-note",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:telegram:123",
+                "--text",
+                "harness-cua-kb-test: save this exact governed note",
+                "--domain-pack",
+                "telegram_runtime",
+                "--evidence-kind",
+                "telegram_memory_note",
+                "--session-id",
+                "telegram:123",
+                "--turn-id",
+                "telegram-update:1",
+                "--actor-id",
+                "telegram_memory_direct_adapter",
+                "--governor-decision-file",
+                str(governor_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["schema_version"], "spark.telegram_memory_write.v1")
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("upstream Telegram memory authority is invalid", payload["reason"])
+        writer.assert_not_called()
 
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:

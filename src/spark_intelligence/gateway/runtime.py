@@ -4,10 +4,11 @@ import os
 import time
 import json
 import urllib.error
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
-from typing import Any
+from typing import Any, TextIO
 
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary, simulate_discord_message
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
@@ -448,6 +449,74 @@ def gateway_simulate_telegram_update(
         simulation=simulation,
     )
     return result.to_json() if as_json else result.to_text()
+
+
+def gateway_serve_stdio(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    input_stream: TextIO,
+    output_stream: TextIO,
+    error_stream: TextIO | None = None,
+    simulation: bool = True,
+) -> int:
+    def write_response(payload: dict[str, Any]) -> None:
+        output_stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        output_stream.flush()
+
+    write_response({"ok": True, "protocol": "spark.gateway.stdio.v1", "ready": True})
+    for raw_line in input_stream:
+        line = raw_line.strip()
+        if not line:
+            continue
+        request_id = ""
+        try:
+            request = json.loads(line)
+            if not isinstance(request, dict):
+                raise ValueError("stdio request must be a JSON object")
+            request_id = str(request.get("request_id") or "").strip()
+            command = str(request.get("command") or "simulate_telegram_update").strip()
+            if command in {"shutdown", "stop"}:
+                write_response({"ok": True, "request_id": request_id, "status": "shutdown"})
+                break
+            if command not in {"simulate_telegram_update", "telegram_update"}:
+                raise ValueError(f"unsupported stdio command: {command}")
+            update_payload = request.get("update_payload")
+            if not isinstance(update_payload, dict):
+                raise ValueError("stdio request missing update_payload object")
+            request_simulation = bool(request.get("simulation")) if "simulation" in request else simulation
+            if error_stream is None:
+                result = simulate_telegram_update(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    update_payload=update_payload,
+                    simulation=request_simulation,
+                )
+            else:
+                with redirect_stdout(error_stream):
+                    result = simulate_telegram_update(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        update_payload=update_payload,
+                        simulation=request_simulation,
+                    )
+            write_response(
+                {
+                    "ok": result.ok,
+                    "request_id": request_id,
+                    "decision": result.decision,
+                    "detail": result.detail,
+                }
+            )
+        except Exception as exc:
+            write_response(
+                {
+                    "ok": False,
+                    "request_id": request_id,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+    return 0
 
 
 def gateway_ask_telegram(

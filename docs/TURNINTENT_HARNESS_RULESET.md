@@ -2,6 +2,14 @@
 
 Date: 2026-05-31
 
+> Historical predecessor note: this file describes the TurnIntent-era adoption
+> rules that led to Harness Core. Current installer-facing authority is
+> `TurnIntentEnvelopeVNext` plus `GovernorDecisionV1`,
+> `AuthorizationDecisionV1`, matching `ToolCallLedgerV1`, and owner consumer
+> verification from `@spark/harness-core`. Treat old `spark.turn_intent.v1`
+> wording as compatibility/migration context, not sufficient execution
+> authority.
+
 ## Purpose
 
 This is the permanent Spark-wide rule for stopping deterministic route fighting, word hijacks, stale pending-state launches, memory-driven authority drift, and accidental tool calls.
@@ -189,7 +197,7 @@ Rules:
 
 Required proof:
 
-- route firewall tests
+- Harness Core action authority tests
 - Telegram action authority tests
 - 350-message matrix
 - full `npm test`

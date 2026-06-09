@@ -7,13 +7,17 @@ from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
-from spark_intelligence.observability.store import close_run, open_run, record_environment_snapshot
+from spark_intelligence.observability.store import close_run, open_run, prune_observability_store, record_environment_snapshot
 from spark_intelligence.state.db import StateDB
 
 
 OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
 MEMORY_MAINTENANCE_JOB_ID = "memory:sdk-maintenance"
+OBSERVABILITY_RETENTION_JOB_ID = "observability:retention"
+HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID = "harness:self-evolution-observe"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
+DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
+DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,72 @@ def _run_job(
                 },
             )
             return result
+        if job_kind == "observability_retention":
+            retention_days = _observability_retention_days(config_manager)
+            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+            payload = prune_observability_store(
+                state_db,
+                older_than=cutoff,
+                vacuum=True,
+                include_builder_events=False,
+            )
+            result = (
+                f"retention_days={retention_days} cutoff={payload.cutoff} "
+                f"deleted={payload.total_deleted} "
+                f"event_log={payload.deleted_counts.get('event_log', 0)} "
+                f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
+                f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
+                f"vacuumed={payload.vacuumed}"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="job_completed",
+                summary=f"Job {job_id} completed.",
+                facts={
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "result": result,
+                    "retention_days": retention_days,
+                    "cutoff": payload.cutoff,
+                    "deleted_counts": payload.deleted_counts,
+                    "vacuumed": payload.vacuumed,
+                },
+            )
+            return result
+        if job_kind == "harness_self_evolution_observe":
+            from spark_intelligence.harness_evolution import build_harness_self_evolution_snapshot
+
+            limit = _harness_self_evolution_limit(config_manager)
+            payload = build_harness_self_evolution_snapshot(state_db, limit=limit)
+            readiness = payload["readiness_score"]["overall"]
+            result = (
+                f"mode=observe ledgers={payload['ledger_count']} "
+                f"readiness={readiness['status']} score={readiness['score']} "
+                f"event_id={payload.get('event_id') or 'none'}"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="job_completed",
+                summary=f"Job {job_id} completed.",
+                facts={
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "result": result,
+                    "limit": limit,
+                    "ledger_count": payload["ledger_count"],
+                    "readiness_status": readiness["status"],
+                    "readiness_score": readiness["score"],
+                    "self_evolution_run_id": payload["self_evolution_run"]["evolution_id"],
+                    "self_evolution_event_id": payload.get("event_id"),
+                },
+            )
+            return result
         result = "unsupported_job_kind"
         _record_job_result(state_db=state_db, job_id=job_id, result=result)
         close_run(
@@ -241,6 +311,24 @@ def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _observability_retention_days(config_manager: ConfigManager) -> int:
+    raw = config_manager.get_path("observability.retention.days", default=DEFAULT_OBSERVABILITY_RETENTION_DAYS)
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_OBSERVABILITY_RETENTION_DAYS
+    return max(value, 1)
+
+
+def _harness_self_evolution_limit(config_manager: ConfigManager) -> int:
+    raw = config_manager.get_path("harness.self_evolution.observe_limit", default=DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT)
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT
+    return max(1, min(value, 100))
 
 
 def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:

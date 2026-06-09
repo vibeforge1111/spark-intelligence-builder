@@ -4401,6 +4401,10 @@ def _governor_authorizes_researcher_tool_call(
     reason_codes = tuple(str(reason) for reason in verification.get("reason_codes") or [])
     source_kind = str(verification.get("source_kind") or "governor_decision")
     if verification.get("allowed") is True:
+        from spark_intelligence.bridge_authority import bridge_governor_decision_has_canonical_binding
+
+        if not bridge_governor_decision_has_canonical_binding(governor_decision):
+            return ("blocked", ("canonical_governor_binding_missing",), source_kind, decision_id)
         return ("allowed", (), source_kind, decision_id)
     if reason_codes:
         return ("blocked", reason_codes, source_kind, decision_id)

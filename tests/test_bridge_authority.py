@@ -5,6 +5,7 @@ from spark_intelligence.bridge_authority import (
     DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
+    bridge_governor_decision_has_canonical_binding,
     build_governor_decision_from_bridge_authority,
     build_telegram_memory_read_turn_intent_payload,
     build_telegram_memory_read_turn_intent_payload_vnext,
@@ -164,6 +165,7 @@ def test_authorizes_builder_memory_write_through_governed_legacy_adapter() -> No
     assert verdict.governor_decision["schema_version"] == "governor-decision-v1"
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
 
 
 def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
@@ -194,6 +196,7 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
 
 
 def test_bridge_governor_degrades_copied_tool_ledger() -> None:
@@ -246,6 +249,29 @@ def test_bridge_governor_degrades_copied_tool_ledger() -> None:
     assert governor["outcome"] == "degrade"
     assert governor["execution_boundary"]["action_authorized"] is False
     assert "tool_ledger_turn_mismatch" in governor["execution_boundary"]["reasons"]
+
+
+def test_bridge_governor_binding_rejects_unmarked_local_shape() -> None:
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-unmarked-governor",
+        channel_kind="telegram",
+        session_id="session-write-unmarked-governor",
+        human_id="human-write-unmarked-governor",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert verdict.governor_decision is not None
+    copied = deepcopy(verdict.governor_decision)
+    copied["evidence"] = [item for item in copied["evidence"] if item.get("source") != "issuer:spark-harness-core/governor"]
+
+    assert bridge_governor_decision_has_canonical_binding(copied) is False
 
 
 def test_blocks_native_vnext_when_action_is_not_proposed() -> None:

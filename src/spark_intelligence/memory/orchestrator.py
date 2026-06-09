@@ -6061,12 +6061,18 @@ def _memory_shadow_mode(config_manager: ConfigManager) -> bool:
     return bool(config_manager.get_path("spark.memory.shadow_mode", default=True))
 
 
-def _disabled_write_result(*, operation: str, reason: str = "memory_disabled") -> MemoryWriteResult:
+def _disabled_write_result(
+    *,
+    operation: str,
+    method: str = "write_observation",
+    default_role: str = "current_state",
+    reason: str = "memory_disabled",
+) -> MemoryWriteResult:
     return MemoryWriteResult(
         status="disabled",
         operation=operation,
-        method="write_observation",
-        memory_role="current_state",
+        method=method,
+        memory_role=default_role,
         accepted_count=0,
         rejected_count=0,
         skipped_count=0,

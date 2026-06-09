@@ -14,6 +14,11 @@ def _quote_sqlite_identifier(identifier: str) -> str:
     return f'"{identifier}"'
 
 
+def _is_index_statement(statement: str) -> bool:
+    normalized = statement.lstrip().upper()
+    return normalized.startswith("CREATE INDEX") or normalized.startswith("CREATE UNIQUE INDEX")
+
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS schema_info (
@@ -261,6 +266,7 @@ SCHEMA_STATEMENTS = [
         parent_event_id TEXT,
         correlation_id TEXT,
         request_id TEXT,
+        turn_id TEXT,
         trace_ref TEXT,
         channel_id TEXT,
         session_id TEXT,
@@ -285,6 +291,7 @@ SCHEMA_STATEMENTS = [
         workspace_id TEXT,
         trace_ref TEXT,
         request_id TEXT,
+        turn_id TEXT,
         run_id TEXT,
         session_id TEXT,
         surface_kind TEXT,
@@ -294,6 +301,27 @@ SCHEMA_STATEMENTS = [
         status TEXT,
         severity TEXT,
         payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tool_call_ledger (
+        ledger_id TEXT PRIMARY KEY,
+        turn_id TEXT,
+        action_id TEXT,
+        capability_id TEXT,
+        authorization_decision_id TEXT,
+        tool_name TEXT,
+        owner_system TEXT,
+        mutation_class TEXT,
+        outcome TEXT,
+        status TEXT,
+        surface TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        summary TEXT,
+        ledger_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """
@@ -776,12 +804,17 @@ SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_builder_events_run_id ON builder_events(run_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_builder_events_turn_id ON builder_events(turn_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_events_type ON builder_events(event_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_type_recorded_at ON event_log(event_type, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_trace_ref ON event_log(trace_ref, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_turn_id ON event_log(turn_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_turn_id ON tool_call_ledger(turn_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_surface ON tool_call_ledger(surface, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_status ON tool_call_ledger(status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_run_registry_status ON run_registry(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_status_attempted_at ON delivery_registry(status, attempted_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_run_id ON delivery_registry(run_id, attempted_at)",
@@ -871,11 +904,19 @@ class StateDB:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    continue
                 conn.execute(statement)
             self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_source", "TEXT")
             self._ensure_column(conn, "humans", "user_address", "TEXT")
+            self._ensure_column(conn, "builder_events", "turn_id", "TEXT")
+            self._ensure_column(conn, "event_log", "turn_id", "TEXT")
+            self._ensure_column(conn, "tool_call_ledger", "turn_id", "TEXT")
+            for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    conn.execute(statement)
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """
@@ -913,12 +954,36 @@ class StateDB:
                     updated_at=CURRENT_TIMESTAMP
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('observability:retention', 'observability_retention', 'scheduled', 'builtin:observability_retention')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('harness:self-evolution-observe', 'harness_self_evolution_observe', 'scheduled', 'builtin:harness_self_evolution_observe')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     @staticmethod

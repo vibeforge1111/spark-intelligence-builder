@@ -432,13 +432,13 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertTrue(ledger_events)
         latest_ledger = ledger_events[0]
         self.assertEqual(latest_ledger["component"], "telegram_runtime")
-        self.assertEqual(latest_ledger["request_id"], "sim:98709")
+        self.assertEqual(latest_ledger["request_id"], vnext["turn_id"])
         self.assertEqual(latest_ledger["facts_json"]["tool_name"], "schedule.list")
         result_events = latest_events_by_type(self.state_db, event_type="tool_call_ledger_result_recorded", limit=5)
         self.assertTrue(result_events)
         latest_result = result_events[0]
         self.assertEqual(latest_result["component"], "telegram_runtime")
-        self.assertEqual(latest_result["request_id"], "sim:98709")
+        self.assertEqual(latest_result["request_id"], vnext["turn_id"])
         self.assertEqual(latest_result["parent_event_id"], latest_ledger["event_id"])
         self.assertEqual(latest_result["facts_json"]["tool_name"], "schedule.list")
         self.assertEqual(latest_result["facts_json"]["result_status"], "success")
@@ -983,6 +983,45 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "memory.write")
         self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
+
+    def test_simulate_telegram_update_uses_embedded_vnext_turn_id_as_request_id(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+        vnext = self.vnext_tool_intent_payload(
+            request_id="turn:telegram:harness-join-key",
+            tool_name="answer.compose",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            source_kind="telegram_runtime_test",
+        )
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98702,
+                    "turn_intent_envelope_vnext": vnext,
+                    "message": {
+                        "message_id": 102,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "Give me a concise status.",
+                    },
+                },
+                simulation=False,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(captured.get("request_id"), vnext["turn_id"])
+        self.assertEqual(captured.get("turn_intent_envelope_vnext"), vnext)
 
     def test_simulate_telegram_update_does_not_shortcircuit_raw_user_instruction(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
