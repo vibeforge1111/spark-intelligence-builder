@@ -32,6 +32,11 @@ from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.observability.store import record_environment_snapshot
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.bridge_authority import (
+    record_scoped_bridge_tool_call_results,
+    reset_bridge_authority_ledger_context,
+    set_bridge_authority_ledger_context,
+)
 
 
 GATEWAY_BLOCKING_DOCTOR_CHECKS = {
@@ -434,6 +439,29 @@ def _provider_execution_repair_hint(provider_execution_detail: str) -> str:
     return "spark-intelligence operator security"
 
 
+def _simulate_telegram_update_scoped(**kwargs: Any) -> Any:
+    """Run a Telegram turn inside a bridge-authority ledger scope so governed
+    tool-call ledger rows get finalized (success/failure) instead of stranded as
+    not_started. Mirrors the runtime-command scope in adapters/telegram/runtime.py."""
+    token = set_bridge_authority_ledger_context(
+        state_db=kwargs.get("state_db"),
+        component="telegram_runtime",
+        channel_id="telegram",
+    )
+    try:
+        result = simulate_telegram_update(**kwargs)
+        try:
+            record_scoped_bridge_tool_call_results(
+                status="success" if getattr(result, "ok", False) else "failure",
+                summary="Telegram turn tool calls finalized.",
+            )
+        except Exception:
+            pass
+        return result
+    finally:
+        reset_bridge_authority_ledger_context(token)
+
+
 def gateway_simulate_telegram_update(
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -443,7 +471,7 @@ def gateway_simulate_telegram_update(
     simulation: bool = True,
 ) -> str:
     payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
-    result = simulate_telegram_update(
+    result = _simulate_telegram_update_scoped(
         config_manager=config_manager,
         state_db=state_db,
         update_payload=payload,
@@ -496,7 +524,7 @@ def gateway_serve_stdio(
                 raise ValueError("stdio request missing update_payload object")
             request_simulation = bool(request.get("simulation")) if "simulation" in request else simulation
             if error_stream is None:
-                result = simulate_telegram_update(
+                result = _simulate_telegram_update_scoped(
                     config_manager=config_manager,
                     state_db=state_db,
                     update_payload=update_payload,
@@ -504,7 +532,7 @@ def gateway_serve_stdio(
                 )
             else:
                 with redirect_stdout(error_stream):
-                    result = simulate_telegram_update(
+                    result = _simulate_telegram_update_scoped(
                         config_manager=config_manager,
                         state_db=state_db,
                         update_payload=update_payload,
@@ -569,7 +597,7 @@ def gateway_ask_telegram(
             "text": normalized_message,
         },
     }
-    result = simulate_telegram_update(
+    result = _simulate_telegram_update_scoped(
         config_manager=config_manager,
         state_db=state_db,
         update_payload=update_payload,

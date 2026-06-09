@@ -1452,7 +1452,7 @@ def _strip_correction_prefix(text: str) -> str:
 def _is_memoryworthy_text(text: str) -> bool:
     if not text or "?" in text:
         return False
-    if len(text) < 8 or len(text) > 220:
+    if len(text) < 8 or len(text) > 600:
         return False
     tokens = re.findall(r"[a-z0-9]+(?:[-'][a-z0-9]+)?", text.casefold())
     if len(tokens) <= 2 and not (_BELIEF_PREFIX_PATTERN.search(text) or _STRUCTURED_EVIDENCE_PATTERN.search(text)):
