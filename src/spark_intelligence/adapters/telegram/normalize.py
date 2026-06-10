@@ -35,17 +35,57 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     text_payload = message.get("text")
     voice_payload = message.get("voice")
     audio_payload = message.get("audio")
+    photo_payload = message.get("photo")
+    sticker_payload = message.get("sticker")
+    video_payload = message.get("video")
+    video_note_payload = message.get("video_note")
+    document_payload = message.get("document")
+    animation_payload = message.get("animation")
+    contact_payload = message.get("contact")
+    location_payload = message.get("location")
+    caption = str(message.get("caption") or "").strip()
     message_kind = "text"
     if isinstance(text_payload, str) and text_payload.strip():
         text = text_payload.strip()
     elif isinstance(voice_payload, dict):
-        text = "[voice message]"
+        text = caption or "[voice message]"
         message_kind = "voice"
     elif isinstance(audio_payload, dict):
-        text = "[audio message]"
+        text = caption or "[audio message]"
         message_kind = "audio"
+    elif isinstance(photo_payload, list) and photo_payload:
+        text = caption or "[photo]"
+        message_kind = "photo"
+    elif isinstance(sticker_payload, dict):
+        emoji = str(sticker_payload.get("emoji") or "").strip()
+        text = f"[sticker{': ' + emoji if emoji else ''}]"
+        message_kind = "sticker"
+    elif isinstance(video_payload, dict):
+        text = caption or "[video]"
+        message_kind = "video"
+    elif isinstance(video_note_payload, dict):
+        text = "[video note]"
+        message_kind = "video_note"
+    elif isinstance(document_payload, dict):
+        doc_name = str(document_payload.get("file_name") or "").strip()
+        text = caption or f"[document{': ' + doc_name if doc_name else ''}]"
+        message_kind = "document"
+    elif isinstance(animation_payload, dict):
+        text = caption or "[animation]"
+        message_kind = "animation"
+    elif isinstance(contact_payload, dict):
+        phone = str(contact_payload.get("phone_number") or "").strip()
+        first = str(contact_payload.get("first_name") or "").strip()
+        text = f"[contact{': ' + first if first else ''}{', ' + phone if phone else ''}]"
+        message_kind = "contact"
+    elif isinstance(location_payload, dict):
+        lat = location_payload.get("latitude")
+        lon = location_payload.get("longitude")
+        text = f"[location: {lat}, {lon}]" if lat is not None and lon is not None else "[location]"
+        message_kind = "location"
     else:
-        raise ValueError("Telegram update does not contain a supported text, voice, or audio message")
+        text = caption or "[unsupported message type]"
+        message_kind = "unsupported"
 
     update_id = update.get("update_id")
     message_id = message.get("message_id")
@@ -57,7 +97,17 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
 
     chat_type = str(chat.get("type") or "")
     is_dm = chat_type == "private"
-    media_payload = voice_payload if isinstance(voice_payload, dict) else (audio_payload if isinstance(audio_payload, dict) else {})
+    # Extract media payload from the first available media type
+    for candidate in [voice_payload, audio_payload, video_payload, video_note_payload, document_payload, animation_payload]:
+        if isinstance(candidate, dict):
+            media_payload = candidate
+            break
+    else:
+        # For photo, use the last (largest) photo size
+        if isinstance(photo_payload, list) and photo_payload:
+            media_payload = photo_payload[-1] if isinstance(photo_payload[-1], dict) else {}
+        else:
+            media_payload = {}
     media_file_id = str(media_payload.get("file_id")).strip() if media_payload.get("file_id") else None
     media_mime_type = str(media_payload.get("mime_type")).strip() if media_payload.get("mime_type") else None
     media_duration_seconds = int(media_payload.get("duration")) if media_payload.get("duration") is not None else None
@@ -65,7 +115,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     media_audio_base64 = str(spark_media.get("audio_base64")).strip() if spark_media.get("audio_base64") else None
     media_filename = str(spark_media.get("filename")).strip() if spark_media.get("filename") else None
     media_source = str(spark_media.get("source")).strip() if spark_media.get("source") else None
-    caption_text = str(message.get("caption") or "").strip() or None
+    caption_text = caption or None
 
     return NormalizedTelegramUpdate(
         update_id=int(update_id),
