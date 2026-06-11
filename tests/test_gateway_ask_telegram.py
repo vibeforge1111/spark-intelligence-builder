@@ -16,7 +16,7 @@ from spark_intelligence.bridge_authority import (
     extract_turn_intent_envelope_vnext,
 )
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
-from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.gateway.tracing import append_gateway_trace, read_gateway_traces
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -124,6 +124,66 @@ class GatewayAskTelegramTests(SparkTestCase):
     def enable_fake_researcher_runtime(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
+    def test_simulate_telegram_update_records_denied_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98700,
+                "message": {
+                    "message_id": 100,
+                    "chat": {"id": "222", "type": "private"},
+                    "from": {"id": "222", "username": "blocked_operator"},
+                    "text": "Can you see me?",
+                },
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.decision, "blocked")
+        traces = read_gateway_traces(self.config_manager, limit=5)
+        denied = [trace for trace in traces if trace.get("event") == "telegram_update_denied"]
+        self.assertEqual(len(denied), 1, traces)
+        self.assertEqual(denied[0]["update_id"], 98700)
+        self.assertEqual(denied[0]["request_id"], "sim:98700")
+        self.assertEqual(denied[0]["decision"], "blocked")
+        self.assertEqual(denied[0]["user_message_preview"], "Can you see me?")
+
+    def test_simulate_telegram_update_records_bridge_exception_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=RuntimeError("forced bridge failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                simulate_telegram_update(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    update_payload={
+                        "update_id": 98703,
+                        "message": {
+                            "message_id": 103,
+                            "chat": {"id": "111", "type": "private"},
+                            "from": {"id": "111", "username": "operator"},
+                            "text": "Give me a concise status.",
+                        },
+                    },
+                )
+
+        traces = read_gateway_traces(self.config_manager, limit=5)
+        errors = [trace for trace in traces if trace.get("event") == "telegram_update_error"]
+        self.assertEqual(len(errors), 1, traces)
+        self.assertEqual(errors[0]["update_id"], 98703)
+        self.assertEqual(errors[0]["request_id"], "sim:98703")
+        self.assertEqual(errors[0]["decision"], "allowed")
+        self.assertEqual(errors[0]["bridge_mode"], "researcher_bridge_error")
+        self.assertEqual(errors[0]["routing_decision"], "bridge_exception")
+        self.assertEqual(errors[0]["error_type"], "RuntimeError")
+        self.assertIn("forced bridge failure", errors[0]["error_preview"])
 
     def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")

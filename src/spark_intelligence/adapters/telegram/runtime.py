@@ -2115,20 +2115,49 @@ def simulate_telegram_update(
                         human_id=resolution.human_id,
                         agent_id=resolution.agent_id,
                     )
-                    bridge_result = build_researcher_reply(
-                        config_manager=config_manager,
-                        state_db=state_db,
-                        request_id=request_id,
-                        agent_id=resolution.agent_id,
-                        human_id=resolution.human_id,
-                        session_id=resolution.session_id,
-                        channel_kind="telegram",
-                        user_message=effective_text,
-                        turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
-                        turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
-                        governor_decision=researcher_memory_write_governor,
-                        allow_memory_adapter_envelope=False,
-                    )
+                    try:
+                        bridge_result = build_researcher_reply(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            request_id=request_id,
+                            agent_id=resolution.agent_id,
+                            human_id=resolution.human_id,
+                            session_id=resolution.session_id,
+                            channel_kind="telegram",
+                            user_message=effective_text,
+                            turn_intent_envelope=extract_turn_intent_envelope(researcher_update_payload),
+                            turn_intent_envelope_vnext=extract_turn_intent_envelope_vnext(researcher_update_payload),
+                            governor_decision=researcher_memory_write_governor,
+                            allow_memory_adapter_envelope=False,
+                        )
+                    except Exception as exc:
+                        error_text = f"{type(exc).__name__}: {exc}"
+                        append_gateway_trace(
+                            config_manager,
+                            {
+                                "event": "telegram_update_error",
+                                "channel_id": "telegram",
+                                "update_id": normalized.update_id,
+                                "telegram_user_id": normalized.telegram_user_id,
+                                "chat_id": normalized.chat_id,
+                                "session_id": resolution.session_id,
+                                "human_id": resolution.human_id,
+                                "agent_id": resolution.agent_id,
+                                "decision": resolution.decision,
+                                "bridge_mode": "researcher_bridge_error",
+                                "routing_decision": "bridge_exception",
+                                "error_type": type(exc).__name__,
+                                "error_preview": _preview_text(error_text),
+                                "delivery_ok": False,
+                                "delivery_error": _preview_text(error_text),
+                                "user_message_preview": _preview_text(effective_text) if effective_text else None,
+                                "user_message_length": len(effective_text) if effective_text else None,
+                                "simulation": simulation,
+                                "origin_surface": origin_surface,
+                                "request_id": request_id,
+                            },
+                        )
+                        raise
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
                     spark_character_reply = _maybe_spark_character_reply(
                         config_manager=config_manager,
@@ -2323,38 +2352,40 @@ def simulate_telegram_update(
         detail["voice_error"] = bridge_voice_error
     if voice_timing:
         detail["voice_timing"] = voice_timing
-    if resolution.allowed:
-        append_gateway_trace(
-            config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "update_id": normalized.update_id,
-                "telegram_user_id": normalized.telegram_user_id,
-                "chat_id": normalized.chat_id,
-                "session_id": resolution.session_id,
-                "trace_ref": trace_ref,
-                "bridge_mode": bridge_mode,
-                "routing_decision": routing_decision,
-                **delivery_primary_route,
-                "evidence_summary": evidence_summary,
-                "attachment_context": attachment_context,
-                "active_chip_key": active_chip_key,
-                "active_chip_task_type": active_chip_task_type,
-                "active_chip_evaluate_used": active_chip_evaluate_used,
-                "response_preview": _preview_text(sanitized_outbound_text),
-                "response_length": len(sanitized_outbound_text),
-                "user_message_preview": _preview_text(effective_text) if effective_text else None,
-                "user_message_length": len(effective_text) if effective_text else None,
-                **({"runtime_command_metadata": runtime_command_metadata} if runtime_command_metadata is not None else {}),
-                "delivery_ok": True,
-                "delivery_error": None,
-                "guardrail_actions": _outbound_actions,
-                "simulation": simulation,
-                "origin_surface": origin_surface,
-                "request_id": request_id,
-            },
-        )
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "telegram_update_processed" if resolution.allowed else "telegram_update_denied",
+            "channel_id": "telegram",
+            "update_id": normalized.update_id,
+            "telegram_user_id": normalized.telegram_user_id,
+            "chat_id": normalized.chat_id,
+            "session_id": resolution.session_id,
+            "human_id": resolution.human_id,
+            "agent_id": resolution.agent_id,
+            "decision": resolution.decision,
+            "trace_ref": trace_ref,
+            "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            **delivery_primary_route,
+            "evidence_summary": evidence_summary,
+            "attachment_context": attachment_context,
+            "active_chip_key": active_chip_key,
+            "active_chip_task_type": active_chip_task_type,
+            "active_chip_evaluate_used": active_chip_evaluate_used,
+            "response_preview": _preview_text(sanitized_outbound_text),
+            "response_length": len(sanitized_outbound_text),
+            "user_message_preview": _preview_text(effective_text) if effective_text else None,
+            "user_message_length": len(effective_text) if effective_text else None,
+            **({"runtime_command_metadata": runtime_command_metadata} if runtime_command_metadata is not None else {}),
+            "delivery_ok": True,
+            "delivery_error": None,
+            "guardrail_actions": _outbound_actions,
+            "simulation": simulation,
+            "origin_surface": origin_surface,
+            "request_id": request_id,
+        },
+    )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
 
