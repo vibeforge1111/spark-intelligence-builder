@@ -9,6 +9,7 @@ from tests.test_support import SparkTestCase
 
 class AgentOperatingPanelTests(SparkTestCase):
     def test_panel_combines_aoc_black_box_memory_inbox_and_stale_sweep(self) -> None:
+        self.write_trace_repair_system_map()
         record_agent_event(
             self.state_db,
             AgentEvent(

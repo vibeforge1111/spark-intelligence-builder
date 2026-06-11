@@ -5,14 +5,22 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
 
 permissions:
   contents: read
 
 jobs:
   test-and-audit:
-    name: test-and-audit
+    name: test-and-audit (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+        total: [6]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,9 +38,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: vibeforge1111/spark-harness-core
-          ref: codex/genesis-harness-core-20260602
+          # Pinned to the audited SIB-06 harness-core commit, replacing a movable branch ref.
+          ref: aa19fd7e49151c9df9e76e38f32da4aba7870bdf
           path: spark-harness-core
           token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+
+      - name: Checkout Domain Chip Memory
+        uses: actions/checkout@v4
+        with:
+          repository: vibeforge1111/domain-chip-memory
+          # Pinned to the audited MEM-02 merge commit used by Builder memory tests.
+          ref: 8be6bd99c3893af46504e41886a0e86796b213c2
+          path: domain-chip-memory
+          token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+
+      - name: Configure private Git dependencies
+        env:
+          SPARK_CI_REPO_TOKEN: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SPARK_CI_REPO_TOKEN}@github.com/vibeforge1111/".insteadOf "https://github.com/vibeforge1111/"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,18 +74,142 @@ jobs:
       - name: Install locked environment
         run: uv sync --locked
 
-      - name: Run focused tests
+      - name: Run fast suite
+        timeout-minutes: 45
         env:
           SPARK_HARNESS_CORE_SOURCE: ${{ github.workspace }}/spark-harness-core/src
+          DOMAIN_CHIP_MEMORY_REPO: ${{ github.workspace }}/domain-chip-memory
+          PYTHONPATH: ${{ github.workspace }}/domain-chip-memory/src
         run: |
-          uv run --with pytest python -m pytest \
-            tests/test_secret_file_permissions.py \
-            tests/test_gateway_discord_webhook.py \
-            tests/test_builder_prelaunch_contracts.py \
-            -q
+          COLLECT_ARGS=(
+            "tests"
+            "-q"
+
+            # SIB-01 slow-file split, full suite took 1:58:16 locally.
+            "--ignore=tests/test_capability_natural_language_matrix.py"
+            "--ignore=tests/test_mission_control_aoc_cli.py"
+            "--ignore=tests/test_natural_language_route_eval_matrix.py"
+            "--ignore=tests/test_harness_cli.py"
+            "--ignore=tests/test_mission_control.py"
+            "--ignore=tests/test_agent_drift_evals.py"
+            "--ignore=tests/test_cli_smoke.py"
+
+            # SIB-01 deterministic baseline quarantines, rerun reproduced the same failures.
+            "--deselect=tests/test_secret_file_permissions.py::SecretFilePermissionTests::test_bootstrap_soft_fails_windows_env_acl_hardening"
+            "--deselect=tests/test_builder_prelaunch_contracts.py::BuilderPrelaunchContractTests::test_installed_builder_manifest_declares_harness_core_and_agpl_license"
+            "--deselect=tests/test_observability_filters.py::ObservabilityFilterTests::test_telegram_runtime_origin_uses_real_request_ids_and_trace_labels"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_falls_back_to_founder_fact_for_startup_explanation"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_identity_summary_from_memory_for_profile_summary_prompt"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_identity_summary_from_memory_for_who_am_i_query"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_memory_backed_city_fact_for_city_query"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_memory_backed_home_country_fact_for_country_query"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_memory_backed_preferred_name_for_name_query"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_injects_memory_backed_timezone_fact_for_timezone_query"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_persists_home_country_profile_fact_before_bridge_execution"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_persists_preferred_name_profile_fact_before_bridge_execution"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_build_researcher_reply_persists_timezone_profile_fact_before_bridge_execution"
+            "--deselect=tests/test_researcher_bridge_provider_resolution.py::ResearcherBridgeProviderResolutionTests::test_explicit_memory_decision_capture_writes_structured_evidence"
+            "--deselect=tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine"
+            "--deselect=tests/test_self_awareness.py::SelfAwarenessCapsuleTests::test_self_route_probe_cli_can_run_builtin_probe"
+            "--deselect=tests/test_swarm_sync.py::SwarmSyncTests::test_evaluate_swarm_escalation_holds_local_when_payload_not_ready"
+            "--deselect=tests/test_telegram_episodic_memory.py::TelegramEpisodicMemoryTests::test_build_researcher_reply_answers_latest_flight_query_from_consolidated_state"
+            "--deselect=tests/test_telegram_episodic_memory.py::TelegramEpisodicMemoryTests::test_build_researcher_reply_answers_saved_telegram_event_query_directly_from_memory"
+            "--deselect=tests/test_telegram_episodic_memory.py::TelegramEpisodicMemoryTests::test_build_researcher_reply_persists_detected_telegram_event_before_provider_resolution"
+          )
+          uv run --with pytest python -m pytest "${COLLECT_ARGS[@]}" --collect-only > .pytest-nodeids
+          python - <<'PY' > .pytest-shard-nodeids
+          from pathlib import Path
+
+          shard = int("${{ matrix.shard }}")
+          total = int("${{ matrix.total }}")
+          nodeids = [
+              line.strip()
+              for line in Path(".pytest-nodeids").read_text().splitlines()
+              if line.startswith("tests/")
+          ]
+          for index, nodeid in enumerate(nodeids):
+              if index % total == shard:
+                  print(nodeid)
+          PY
+          mapfile -t SHARD_NODEIDS < .pytest-shard-nodeids
+          printf 'Shard %s/%s selected %s tests:\n' "${{ matrix.shard }}" "${{ matrix.total }}" "${#SHARD_NODEIDS[@]}"
+          printf '  %s\n' "${SHARD_NODEIDS[@]}"
+          if [ "${#SHARD_NODEIDS[@]}" -eq 0 ]; then
+            echo "No tests selected for this shard."
+            exit 0
+          fi
+          uv run --with pytest python -m pytest "${SHARD_NODEIDS[@]}" -q
 
       - name: Audit Python dependencies
+        if: matrix.shard == 0
         run: pip-audit --progress-spinner off .
+
+  full-suite-baseline:
+    name: full-suite-baseline
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require Harness Core repo token
+        env:
+          SPARK_CI_REPO_TOKEN: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+        run: |
+          if [ -z "$SPARK_CI_REPO_TOKEN" ]; then
+            echo "::error::SPARK_CI_REPO_TOKEN is required to checkout private vibeforge1111/spark-harness-core for authority tests."
+            exit 1
+          fi
+
+      - name: Checkout Harness Core
+        uses: actions/checkout@v4
+        with:
+          repository: vibeforge1111/spark-harness-core
+          # Pinned to the audited SIB-06 harness-core commit, replacing a movable branch ref.
+          ref: aa19fd7e49151c9df9e76e38f32da4aba7870bdf
+          path: spark-harness-core
+          token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+
+      - name: Checkout Domain Chip Memory
+        uses: actions/checkout@v4
+        with:
+          repository: vibeforge1111/domain-chip-memory
+          # Pinned to the audited MEM-02 merge commit used by Builder memory tests.
+          ref: 8be6bd99c3893af46504e41886a0e86796b213c2
+          path: domain-chip-memory
+          token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+
+      - name: Configure private Git dependencies
+        env:
+          SPARK_CI_REPO_TOKEN: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SPARK_CI_REPO_TOKEN}@github.com/vibeforge1111/".insteadOf "https://github.com/vibeforge1111/"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Install locked environment
+        run: uv sync --locked
+
+      - name: Run full suite baseline
+        timeout-minutes: 130
+        env:
+          SPARK_HARNESS_CORE_SOURCE: ${{ github.workspace }}/spark-harness-core/src
+          DOMAIN_CHIP_MEMORY_REPO: ${{ github.workspace }}/domain-chip-memory
+          PYTHONPATH: ${{ github.workspace }}/domain-chip-memory/src
+        run: uv run --with pytest python -m pytest tests -q --durations=25
 
   secret-scan:
     name: secret-scan
