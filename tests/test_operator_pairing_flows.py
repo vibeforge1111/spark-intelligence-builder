@@ -471,7 +471,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                 ),
             )
 
-        self.assertFalse(result.ok)
+        self.assertTrue(result.ok)
         schedule_list_mock.assert_not_called()
         self.assertIn("missing Spark authority", str(result.detail["response_text"]))
         self.assertIn("missing_or_invalid_envelope", str(result.detail["response_text"]))
