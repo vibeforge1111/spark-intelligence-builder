@@ -8,6 +8,7 @@ from tests.test_support import SparkTestCase
 
 class AgentPanelSectionsTests(SparkTestCase):
     def test_panel_sections_expose_drilldown_contract(self) -> None:
+        self.write_trace_repair_system_map()
         record_agent_event(
             self.state_db,
             AgentEvent(
