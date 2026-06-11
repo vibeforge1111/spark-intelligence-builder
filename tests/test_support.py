@@ -748,6 +748,88 @@ class SparkTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self._tempdir.cleanup()
 
+    def write_trace_repair_system_map(self) -> Path:
+        system_map_dir = self.home / "system-map"
+        system_map_dir.mkdir(parents=True)
+        self.config_manager.set_path("spark.system_map.output_dir", str(system_map_dir))
+        (system_map_dir / "system-map.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.system_map.compiled.v0",
+                    "generated_at": "2026-05-10T13:21:20Z",
+                    "privacy": {
+                        "raw_secret_values_read": False,
+                        "raw_logs_read": False,
+                        "raw_conversation_content_read": False,
+                        "raw_memory_evidence_read": False,
+                        "sqlite_row_contents_read": False,
+                    },
+                    "modules": [{"id": "spark-intelligence-builder"}],
+                    "discovered_repos": [{"name": "spark-intelligence-builder"}],
+                    "gaps": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (system_map_dir / "trace-index.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "spark.trace_index.compiled.v0",
+                    "builder_trace_health": {
+                        "health_flags": ["missing_trace_refs"],
+                        "missing_trace_ref_count": 8,
+                        "high_severity_open_count": 1,
+                        "orphan_parent_event_id_count": 1,
+                        "trace_group_count": 2,
+                        "missing_trace_ref_sources": {
+                            "rows": [
+                                {
+                                    "component": "memory_orchestrator",
+                                    "event_type": "memory_read_requested",
+                                    "status": "recorded",
+                                    "severity": "medium",
+                                    "target_surface": "spark_intelligence_builder",
+                                    "evidence_lane": "realworld_validated",
+                                    "event_count": 5,
+                                }
+                            ],
+                        },
+                        "orphan_parent_event_sources": {
+                            "rows": [
+                                {
+                                    "component": "workflow_recovery",
+                                    "event_type": "lesson_promoted",
+                                    "status": "recorded",
+                                    "severity": "medium",
+                                    "target_surface": "spark_intelligence_builder",
+                                    "evidence_lane": "realworld_validated",
+                                    "event_count": 1,
+                                }
+                            ],
+                        },
+                    },
+                    "builder_trace_groups": {
+                        "group_count": 2,
+                        "groups": [
+                            {
+                                "trace_ref": "trace-1",
+                                "event_count": 2,
+                                "topology": {
+                                    "available": True,
+                                    "parent_link_count": 1,
+                                    "orphan_parent_event_count": 1,
+                                    "edge_sample_count": 1,
+                                    "edge_sample": [],
+                                },
+                            }
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return system_map_dir
+
     def add_telegram_channel(
         self,
         *,
