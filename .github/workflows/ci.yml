@@ -34,6 +34,12 @@ jobs:
           path: spark-harness-core
           token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
 
+      - name: Configure private Git dependencies
+        env:
+          SPARK_CI_REPO_TOKEN: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SPARK_CI_REPO_TOKEN}@github.com/vibeforge1111/".insteadOf "https://github.com/vibeforge1111/"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
