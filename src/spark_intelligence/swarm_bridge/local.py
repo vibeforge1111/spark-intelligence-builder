@@ -13,6 +13,9 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution.governed import GovernedCommandExecution, run_governed_command
 
 
+SWARM_RUNTIME_ROOT_ENV = "SPARK_SWARM_RUNTIME_ROOT"
+
+
 @dataclass(frozen=True)
 class SwarmBridgeCommandResult:
     ok: bool
@@ -305,15 +308,19 @@ def _run_swarm_bridge_command(
 
 
 def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
-    configured = config_manager.get_path("spark.swarm.runtime_root")
+    configured = _resolve_swarm_runtime_root_env(config_manager)
     if configured:
         candidate = config_manager.normalize_runtime_path(configured)
         if candidate is not None:
             return candidate
-    candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
-    if candidate.exists():
-        return candidate
     raise RuntimeError("Spark Swarm runtime root is not configured.")
+
+
+def _resolve_swarm_runtime_root_env(config_manager: ConfigManager) -> str | None:
+    env_value = str(os.environ.get(SWARM_RUNTIME_ROOT_ENV) or "").strip()
+    if env_value:
+        return env_value
+    return str(config_manager.read_env_map().get(SWARM_RUNTIME_ROOT_ENV) or "").strip() or None
 
 
 def _specialization_repo_env_var(path_key: str) -> str:
