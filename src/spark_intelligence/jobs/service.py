@@ -5,10 +5,20 @@ from datetime import UTC, datetime, timedelta
 
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
+from spark_intelligence.bot_drafts import prune_stale_drafts
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import prune_gateway_logs
+from spark_intelligence.identity.service import expire_stale_pairing_reviews
 from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
-from spark_intelligence.observability.store import close_run, open_run, prune_observability_store, record_environment_snapshot
+from spark_intelligence.observability.store import (
+    close_run,
+    open_run,
+    prune_observability_store,
+    record_environment_snapshot,
+    record_state_transition_event,
+    sweep_open_builder_runs,
+    sweep_stale_tool_call_ledgers,
+)
 from spark_intelligence.state.db import StateDB
 
 
@@ -20,6 +30,10 @@ OAUTH_MAINTENANCE_STALE_SECONDS = 900
 DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
 DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS = True
 DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT = 20
+DEFAULT_TOOL_LEDGER_TIMEOUT_HOURS = 24
+DEFAULT_PAIRING_REVIEW_TIMEOUT_DAYS = 7
+DEFAULT_BUILDER_RUN_TIMEOUT_HOURS = 24
+DEFAULT_BOT_DRAFT_TIMEOUT_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -43,21 +57,67 @@ def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
         env_refs={"jobs_scheduler_enabled": bool(config_manager.get_path("jobs.scheduler.enabled", default=True))},
         facts={"origin_surface": "jobs_tick"},
     )
+    sweep_summary = _run_sib_state_timeout_sweeps(config_manager=config_manager, state_db=state_db)
     with state_db.connect() as conn:
         jobs = conn.execute(
             "SELECT job_id, job_kind, status FROM job_records WHERE status = 'scheduled' ORDER BY job_id"
         ).fetchall()
     if not jobs:
+        if any(sweep_summary.values()):
+            return f"No scheduled jobs due. Scheduler sweeps repaired {sum(sweep_summary.values())} stale state(s)."
         return "No scheduled jobs due. Scheduler harness is healthy."
     lines = [f"Ran {len(jobs)} scheduled job(s)."]
+    if any(sweep_summary.values()):
+        lines.append(f"- state_timeouts repaired={sum(sweep_summary.values())} details={sweep_summary}")
     for job in jobs:
-        result = _run_job(
-            config_manager=config_manager,
-            state_db=state_db,
-            job_id=str(job["job_id"]),
-            job_kind=str(job["job_kind"]),
+        job_id = str(job["job_id"])
+        job_kind = str(job["job_kind"])
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.job_record",
+            entity_id=job_id,
+            from_state="scheduled",
+            to_state="running",
+            reason="scheduled_job_tick",
+            component="jobs_tick",
+            request_id=job_id,
+            actor_id="jobs_tick",
+            facts={"job_kind": job_kind},
         )
-        lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
+        try:
+            result = _run_job(
+                config_manager=config_manager,
+                state_db=state_db,
+                job_id=job_id,
+                job_kind=job_kind,
+            )
+        except Exception:
+            record_state_transition_event(
+                state_db,
+                entity_type="sib.job_record",
+                entity_id=job_id,
+                from_state="running",
+                to_state="scheduled",
+                reason="scheduled_job_exception",
+                component="jobs_tick",
+                request_id=job_id,
+                actor_id="jobs_tick",
+                facts={"job_kind": job_kind},
+            )
+            raise
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.job_record",
+            entity_id=job_id,
+            from_state="running",
+            to_state="scheduled",
+            reason="scheduled_job_completed",
+            component="jobs_tick",
+            request_id=job_id,
+            actor_id="jobs_tick",
+            facts={"job_kind": job_kind, "result": result},
+        )
+        lines.append(f"- {job_id} kind={job_kind} result={result}")
     return "\n".join(lines)
 
 
@@ -317,8 +377,59 @@ def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
         conn.commit()
 
 
+def _run_sib_state_timeout_sweeps(*, config_manager: ConfigManager, state_db: StateDB) -> dict[str, int]:
+    now = datetime.now(UTC)
+    tool_ledger_count = sweep_stale_tool_call_ledgers(
+        state_db,
+        older_than=now - timedelta(hours=_positive_int_config(
+            config_manager,
+            "jobs.state_timeouts.tool_call_ledger_hours",
+            DEFAULT_TOOL_LEDGER_TIMEOUT_HOURS,
+        )),
+    )
+    pairing_count = expire_stale_pairing_reviews(
+        state_db,
+        older_than=now - timedelta(days=_positive_int_config(
+            config_manager,
+            "jobs.state_timeouts.pairing_review_days",
+            DEFAULT_PAIRING_REVIEW_TIMEOUT_DAYS,
+        )),
+    )
+    builder_run_count = sweep_open_builder_runs(
+        state_db,
+        older_than=now - timedelta(hours=_positive_int_config(
+            config_manager,
+            "jobs.state_timeouts.builder_run_hours",
+            DEFAULT_BUILDER_RUN_TIMEOUT_HOURS,
+        )),
+    )
+    draft_count = prune_stale_drafts(
+        state_db,
+        older_than=now - timedelta(days=_positive_int_config(
+            config_manager,
+            "jobs.state_timeouts.bot_draft_days",
+            DEFAULT_BOT_DRAFT_TIMEOUT_DAYS,
+        )),
+    )
+    return {
+        "tool_call_ledger": tool_ledger_count,
+        "pairing_records": pairing_count,
+        "builder_runs": builder_run_count,
+        "bot_drafts": draft_count,
+    }
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _positive_int_config(config_manager: ConfigManager, path: str, default: int) -> int:
+    raw = config_manager.get_path(path, default=default)
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return default
+    return max(value, 1)
 
 
 def _observability_retention_days(config_manager: ConfigManager) -> int:

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from spark_intelligence.observability.store import record_state_transition_event
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
@@ -1790,6 +1791,58 @@ def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, h
         )
         conn.commit()
     return f"Held pairing for {channel_id}:{external_user_id}"
+
+
+def expire_stale_pairing_reviews(
+    state_db: StateDB,
+    *,
+    older_than: datetime | str,
+    limit: int = 100,
+) -> int:
+    cutoff = older_than.isoformat() if isinstance(older_than, datetime) else str(older_than)
+    bounded_limit = max(1, min(int(limit), 1000))
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT pairing_id, channel_id, external_user_id, human_id, status, updated_at
+            FROM pairing_records
+            WHERE status IN ('pending', 'held')
+              AND updated_at < ?
+            ORDER BY updated_at ASC, pairing_id ASC
+            LIMIT ?
+            """,
+            (cutoff, bounded_limit),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                """
+                UPDATE pairing_records
+                SET status = 'expired',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE pairing_id = ?
+                """,
+                (row["pairing_id"],),
+            )
+        conn.commit()
+    for row in rows:
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.pairing_record",
+            entity_id=str(row["pairing_id"]),
+            from_state=str(row["status"]),
+            to_state="expired",
+            reason="pairing_review_timeout",
+            component="identity_service",
+            actor_id="jobs_tick",
+            facts={
+                "cutoff": cutoff,
+                "channel_id": str(row["channel_id"]),
+                "external_user_id": str(row["external_user_id"]),
+                "human_id": str(row["human_id"]),
+                "updated_at": str(row["updated_at"]),
+            },
+        )
+    return len(rows)
 
 
 def record_pairing_context(

@@ -310,6 +310,174 @@ def persist_bound_ledger(
     return ledger_id
 
 
+def record_state_transition_event(
+    state_db: StateDB,
+    *,
+    entity_type: str,
+    entity_id: str,
+    from_state: str,
+    to_state: str,
+    reason: str,
+    turn_id: str | None = None,
+    component: str = "state_lifecycle",
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    run_id: str | None = None,
+    actor_id: str = "state_lifecycle_sweeper",
+    facts: dict[str, Any] | None = None,
+) -> str:
+    transition_facts = {
+        "entity_type": str(entity_type),
+        "entity_id": str(entity_id),
+        "from_state": str(from_state),
+        "to_state": str(to_state),
+        "reason": str(reason),
+    }
+    transition_facts.update(facts or {})
+    return record_event(
+        state_db,
+        event_type="state_transition",
+        component=component,
+        summary=(
+            f"State transition: {transition_facts['entity_type']} "
+            f"{transition_facts['entity_id']} {transition_facts['from_state']} "
+            f"to {transition_facts['to_state']}."
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        turn_id=turn_id,
+        trace_ref=trace_ref,
+        actor_id=actor_id,
+        reason_code=str(reason),
+        facts=transition_facts,
+    )
+
+
+def sweep_stale_tool_call_ledgers(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    limit: int = 100,
+) -> int:
+    cutoff = _normalize_prune_cutoff(older_than)
+    bounded_limit = max(1, min(int(limit), 1000))
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM tool_call_ledger
+            WHERE status = 'not_started'
+              AND updated_at < ?
+            ORDER BY updated_at ASC, created_at ASC, ledger_id ASC
+            LIMIT ?
+            """,
+            (cutoff, bounded_limit),
+        ).fetchall()
+        for row in rows:
+            payload: dict[str, Any]
+            try:
+                parsed = json.loads(row["ledger_json"]) if row["ledger_json"] else {}
+                payload = parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                payload = {}
+            payload["result"] = {
+                **(payload.get("result") if isinstance(payload.get("result"), dict) else {}),
+                "status": "expired",
+                "summary": "Tool call ledger expired before scoped finalization.",
+            }
+            conn.execute(
+                """
+                UPDATE tool_call_ledger
+                SET status = 'expired',
+                    outcome = COALESCE(outcome, 'expired'),
+                    summary = COALESCE(summary, 'Tool call ledger expired before scoped finalization.'),
+                    ledger_json = ?,
+                    updated_at = ?
+                WHERE ledger_id = ?
+                """,
+                (json.dumps(payload, sort_keys=True), utc_now_iso(), row["ledger_id"]),
+            )
+        conn.commit()
+    for row in rows:
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.tool_call_ledger",
+            entity_id=str(row["ledger_id"]),
+            from_state="not_started",
+            to_state="expired",
+            reason="tool_call_ledger_timeout",
+            turn_id=str(row["turn_id"]) if row["turn_id"] else None,
+            component="observability_store",
+            request_id=str(row["request_id"]) if row["request_id"] else None,
+            trace_ref=str(row["trace_ref"]) if row["trace_ref"] else None,
+            facts={"cutoff": cutoff},
+        )
+    return len(rows)
+
+
+def sweep_open_builder_runs(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    limit: int = 100,
+) -> int:
+    cutoff = _normalize_prune_cutoff(older_than)
+    closed_at = utc_now_iso()
+    bounded_limit = max(1, min(int(limit), 1000))
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM builder_runs
+            WHERE status = 'open'
+              AND opened_at < ?
+            ORDER BY opened_at ASC, run_id ASC
+            LIMIT ?
+            """,
+            (cutoff, bounded_limit),
+        ).fetchall()
+        for row in rows:
+            facts = {"timeout_cutoff": cutoff, "previous_status": "open"}
+            conn.execute(
+                """
+                UPDATE builder_runs
+                SET status = 'stalled',
+                    close_reason = 'builder_run_timeout',
+                    summary_json = ?,
+                    closed_at = ?
+                WHERE run_id = ?
+                """,
+                (json.dumps(facts, sort_keys=True), closed_at, row["run_id"]),
+            )
+            conn.execute(
+                """
+                UPDATE run_registry
+                SET status = 'stalled',
+                    closed_at = ?,
+                    closure_reason = 'builder_run_timeout'
+                WHERE run_id = ?
+                """,
+                (closed_at, row["run_id"]),
+            )
+        conn.commit()
+    for row in rows:
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.builder_run",
+            entity_id=str(row["run_id"]),
+            from_state="open",
+            to_state="stalled",
+            reason="builder_run_timeout",
+            component=str(row["origin_surface"] or "observability_store"),
+            request_id=str(row["request_id"]) if row["request_id"] else None,
+            trace_ref=str(row["trace_ref"]) if row["trace_ref"] else None,
+            run_id=str(row["run_id"]),
+            actor_id="jobs_tick",
+            facts={"cutoff": cutoff, "run_kind": str(row["run_kind"])},
+        )
+    return len(rows)
+
+
 def recent_tool_call_ledgers(
     state_db: StateDB,
     *,

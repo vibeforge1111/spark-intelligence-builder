@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+from spark_intelligence.observability.store import record_state_transition_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -187,6 +188,51 @@ def update_draft_content(
             (text, len(text), chip_used, topic_hint, updated_at, draft_id),
         )
         return cur.rowcount > 0
+
+
+def prune_stale_drafts(
+    state_db: StateDB,
+    *,
+    older_than: datetime | str,
+    limit: int = 100,
+) -> int:
+    cutoff = older_than.isoformat() if isinstance(older_than, datetime) else str(older_than)
+    bounded_limit = max(1, min(int(limit), 1000))
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT draft_id, external_user_id, channel_kind, session_id, created_at
+            FROM bot_drafts
+            WHERE created_at < ?
+            ORDER BY created_at ASC, draft_id ASC
+            LIMIT ?
+            """,
+            (cutoff, bounded_limit),
+        ).fetchall()
+        draft_ids = [str(row["draft_id"]) for row in rows]
+        if draft_ids:
+            placeholders = ",".join("?" for _ in draft_ids)
+            conn.execute(f"DELETE FROM bot_drafts WHERE draft_id IN ({placeholders})", draft_ids)
+        conn.commit()
+    for row in rows:
+        record_state_transition_event(
+            state_db,
+            entity_type="sib.bot_draft",
+            entity_id=str(row["draft_id"]),
+            from_state="active",
+            to_state="expired",
+            reason="bot_draft_timeout",
+            component="bot_drafts",
+            actor_id="jobs_tick",
+            request_id=str(row["draft_id"]),
+            facts={
+                "cutoff": cutoff,
+                "channel_kind": str(row["channel_kind"]),
+                "session_id": str(row["session_id"]) if row["session_id"] else None,
+                "created_at": str(row["created_at"]),
+            },
+        )
+    return len(rows)
 
 
 def list_recent_drafts(
