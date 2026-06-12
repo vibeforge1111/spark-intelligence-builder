@@ -8336,12 +8336,6 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
                 notes.append(f"discovered spark-researcher config at {resolved}")
 
     swarm_runtime_root = args.swarm_runtime_root
-    if not swarm_runtime_root:
-        current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
-        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
-        if not current_swarm_root and default_swarm_root.exists():
-            swarm_runtime_root = str(default_swarm_root)
-            notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
 
     if any(
         [
@@ -8369,7 +8363,7 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         if args.swarm_workspace_id:
             notes.append(f"configured spark.swarm.workspace_id = {args.swarm_workspace_id}")
         if swarm_runtime_root:
-            notes.append(f"configured spark.swarm.runtime_root = {Path(swarm_runtime_root).expanduser()}")
+            notes.append(f"configured SPARK_SWARM_RUNTIME_ROOT = {Path(swarm_runtime_root).expanduser()}")
         if args.swarm_access_token:
             notes.append(f"stored spark.swarm access token in {args.swarm_access_token_env}")
 
@@ -8411,7 +8405,9 @@ def _configure_swarm(
         config_manager.set_path("spark.swarm.workspace_id", workspace_id)
         config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", workspace_id)
     if runtime_root:
-        config_manager.set_path("spark.swarm.runtime_root", str(Path(runtime_root).expanduser()))
+        normalized_root = str(Path(runtime_root).expanduser())
+        config_manager.set_path("spark.swarm.runtime_root", normalized_root)
+        config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", normalized_root)
     if access_token:
         env_name = access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
         config_manager.upsert_env_secret(env_name, access_token)
