@@ -26,13 +26,13 @@ class SecretFilePermissionTests(SparkTestCase):
         else:
             self.assertFalse(mock_run.called)
 
-    @patch("spark_intelligence.config.loader.os.name", "nt")
     @patch.object(ConfigManager, "_harden_windows_env_file_permissions")
     def test_bootstrap_soft_fails_windows_env_acl_hardening(self, mock_harden) -> None:
         mock_harden.side_effect = OSError("acl unavailable")
         config_manager = ConfigManager.from_home(str(self.home / "windows-acl-unavailable"))
 
-        config_manager.bootstrap()
+        with patch("spark_intelligence.config.loader.os.name", "nt"):
+            config_manager.bootstrap()
 
         self.assertTrue(config_manager.paths.env_file.exists())
 
