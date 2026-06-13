@@ -9,9 +9,90 @@ from spark_intelligence.gateway.tracing import (
     rotate_gateway_logs_if_oversized,
     trace_log_path,
 )
-from spark_intelligence.observability.store import build_observability_store_report, prune_observability_store, record_event
+from spark_intelligence.observability.store import (
+    abandon_stale_tool_call_ledgers,
+    build_observability_store_report,
+    prune_observability_store,
+    recent_tool_call_ledgers,
+    record_event,
+)
 from spark_intelligence.state.db import StateDB
 from tests.test_support import SparkTestCase
+
+
+EXTENDED_RETENTION_TABLES = (
+    "builder_events",
+    "memory_lane_records",
+    "provenance_mutation_log",
+    "observer_packet_records",
+    "runtime_environment_snapshots",
+    "attachment_state_snapshots",
+)
+
+
+def _insert_extended_retention_rows(state_db: StateDB, *, old_timestamp: str, current_timestamp: str) -> None:
+    with state_db.connect() as conn:
+        for suffix, timestamp in (("old", old_timestamp), ("current", current_timestamp)):
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component,
+                    evidence_lane, severity, status, summary, created_at
+                )
+                VALUES (?, 'retention_probe', 'fact', 'test', 'test', 'test', 'low', 'recorded', 'Retention probe.', ?)
+                """,
+                (f"event:extended:{suffix}", timestamp),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_lane_records(
+                    lane_record_id, recorded_at, event_id, component, artifact_kind,
+                    source_kind, artifact_lane, status
+                )
+                VALUES (?, ?, ?, 'test', 'probe', 'test', 'working', 'recorded')
+                """,
+                (f"memory-lane:{suffix}", timestamp, f"memory-event:{suffix}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO provenance_mutation_log(
+                    mutation_id, recorded_at, surface, mutation_type,
+                    source_kind, source_id, trust_level
+                )
+                VALUES (?, ?, 'test', 'probe', 'test', ?, 'low')
+                """,
+                (f"mutation:{suffix}", timestamp, f"source:{suffix}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO observer_packet_records(
+                    packet_id, packet_kind, target_surface, created_at, created_by,
+                    evidence_lane, severity, confidence, status, summary, owner_target,
+                    first_recorded_at, last_seen_at
+                )
+                VALUES (?, 'probe', 'test', ?, 'test', 'test', 'low', 'low', 'recorded',
+                        'Retention probe.', 'operator', ?, ?)
+                """,
+                (f"packet:{suffix}", timestamp, timestamp, timestamp),
+            )
+            conn.execute(
+                """
+                INSERT INTO runtime_environment_snapshots(snapshot_id, surface, summary, created_at)
+                VALUES (?, 'test', 'Retention probe.', ?)
+                """,
+                (f"runtime-snapshot:{suffix}", timestamp),
+            )
+            conn.execute(
+                """
+                INSERT INTO attachment_state_snapshots(
+                    snapshot_id, snapshot_path, active_chip_keys_json, pinned_chip_keys_json,
+                    generated_at, created_at
+                )
+                VALUES (?, ?, '[]', '[]', ?, ?)
+                """,
+                (f"attachment-snapshot:{suffix}", f"C:/tmp/attachment-{suffix}.json", timestamp, timestamp),
+            )
+        conn.commit()
 
 
 def test_state_db_connections_apply_write_pragmas(tmp_path) -> None:
@@ -89,6 +170,47 @@ def test_prune_observability_store_prunes_mirrors_and_ledgers_by_default(tmp_pat
         assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:current'").fetchone()[0] == 1
 
 
+def test_abandon_stale_unowned_not_started_tool_call_ledgers(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    stale_timestamp = "2026-06-01T00:00:00+00:00"
+    current_timestamp = "2026-06-13T00:00:00+00:00"
+    cutoff = "2026-06-12T00:00:00+00:00"
+    abandoned_at = "2026-06-13T01:00:00+00:00"
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+            VALUES ('ledger:stale', 'turn:stale', 'not_started', '{}', ?, ?)
+            """,
+            (stale_timestamp, stale_timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(ledger_id, turn_id, owner_system, status, ledger_json, created_at, updated_at)
+            VALUES ('ledger:owned', 'turn:owned', 'spawner-ui', 'not_started', '{}', ?, ?)
+            """,
+            (stale_timestamp, stale_timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+            VALUES ('ledger:current', 'turn:current', 'not_started', '{}', ?, ?)
+            """,
+            (current_timestamp, current_timestamp),
+        )
+        conn.commit()
+
+    result = abandon_stale_tool_call_ledgers(state_db, older_than=cutoff, abandoned_at=abandoned_at)
+    ledgers = {row["ledger_id"]: row for row in recent_tool_call_ledgers(state_db, limit=10)}
+
+    assert result.abandoned_count == 1
+    assert ledgers["ledger:stale"]["status"] == "abandoned"
+    assert ledgers["ledger:stale"]["updated_at"] == abandoned_at
+    assert ledgers["ledger:owned"]["status"] == "not_started"
+    assert ledgers["ledger:current"]["status"] == "not_started"
+
+
 def test_observability_store_report_counts_prunable_rows_without_deleting(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
@@ -145,6 +267,53 @@ def test_observability_store_report_counts_prunable_rows_without_deleting(tmp_pa
     with state_db.connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM event_log").fetchone()[0] == 2
         assert conn.execute("SELECT COUNT(*) FROM tool_call_ledger").fetchone()[0] == 2
+
+
+def test_prune_observability_store_prunes_extended_growth_tables_with_separate_cutoff(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    old_timestamp = "2025-01-01T00:00:00+00:00"
+    current_timestamp = "2026-01-03T00:00:00+00:00"
+    base_cutoff = "2025-03-01T00:00:00+00:00"
+    extended_cutoff = "2026-01-02T00:00:00+00:00"
+    _insert_extended_retention_rows(state_db, old_timestamp=old_timestamp, current_timestamp=current_timestamp)
+
+    result = prune_observability_store(
+        state_db,
+        older_than=base_cutoff,
+        extended_older_than=extended_cutoff,
+    )
+
+    for table_name in EXTENDED_RETENTION_TABLES:
+        assert result.deleted_counts[table_name] == 1
+    assert result.total_deleted == 6
+    with state_db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM builder_events").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM memory_lane_records").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM provenance_mutation_log").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM observer_packet_records").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM runtime_environment_snapshots").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM attachment_state_snapshots").fetchone()[0] == 1
+
+
+def test_observability_store_report_counts_extended_growth_tables_without_deleting(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    old_timestamp = "2025-01-01T00:00:00+00:00"
+    current_timestamp = "2026-01-03T00:00:00+00:00"
+    extended_cutoff = "2026-01-02T00:00:00+00:00"
+    _insert_extended_retention_rows(state_db, old_timestamp=old_timestamp, current_timestamp=current_timestamp)
+
+    report = build_observability_store_report(state_db, extended_older_than=extended_cutoff)
+
+    assert report.extended_cutoff == extended_cutoff
+    for table_name in EXTENDED_RETENTION_TABLES:
+        assert report.table_counts[table_name] == 2
+        assert report.prunable_counts[table_name] == 1
+    assert report.total_prunable == 6
+    with state_db.connect() as conn:
+        for table_name in EXTENDED_RETENTION_TABLES:
+            assert conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] == 2
 
 
 def test_prune_gateway_logs_prunes_old_trace_and_outbound_records(tmp_path) -> None:
@@ -293,6 +462,41 @@ class ObservabilityRetentionCliTests(SparkTestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:retention-report-cli-old'").fetchone()[0],
                 1,
+            )
+
+    def test_jobs_observability_report_cli_reports_extended_counts_without_pruning(self) -> None:
+        old_timestamp = "2025-01-01T00:00:00+00:00"
+        current_timestamp = "2026-01-03T00:00:00+00:00"
+        extended_cutoff = "2026-01-02T00:00:00+00:00"
+        _insert_extended_retention_rows(self.state_db, old_timestamp=old_timestamp, current_timestamp=current_timestamp)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "jobs",
+            "observability-report",
+            "--home",
+            str(self.home),
+            "--extended-older-than",
+            extended_cutoff,
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["state_db"]["extended_cutoff"], extended_cutoff)
+        for table_name in EXTENDED_RETENTION_TABLES:
+            self.assertEqual(payload["state_db"]["prunable_counts"][table_name], 1)
+        with self.state_db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM builder_events WHERE event_id LIKE 'event:extended:%'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_lane_records WHERE lane_record_id LIKE 'memory-lane:%'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM provenance_mutation_log WHERE mutation_id LIKE 'mutation:%'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM observer_packet_records WHERE packet_id LIKE 'packet:%'").fetchone()[0], 2)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM runtime_environment_snapshots WHERE snapshot_id LIKE 'runtime-snapshot:%'").fetchone()[0],
+                2,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM attachment_state_snapshots WHERE snapshot_id LIKE 'attachment-snapshot:%'").fetchone()[0],
+                2,
             )
 
     def test_jobs_observability_report_cli_reports_unowned_jsonl_without_opening(self) -> None:
@@ -511,3 +715,38 @@ class ObservabilityRetentionCliTests(SparkTestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM event_log WHERE event_id = ?", (old_event_id,)).fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM builder_events WHERE event_id = ?", (old_event_id,)).fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM tool_call_ledger WHERE ledger_id = 'ledger:retention-cli-old'").fetchone()[0], 0)
+
+    def test_jobs_tick_records_extended_retention_table_counts(self) -> None:
+        old_timestamp = "2025-01-01T00:00:00+00:00"
+        current_timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+        _insert_extended_retention_rows(self.state_db, old_timestamp=old_timestamp, current_timestamp=current_timestamp)
+
+        exit_code, stdout, stderr = self.run_cli("jobs", "tick", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("observability:retention", stdout)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT last_result
+                FROM job_records
+                WHERE job_id = 'observability:retention'
+                LIMIT 1
+                """
+            ).fetchone()
+            self.assertIsNotNone(row)
+            result = row["last_result"]
+            for table_name in EXTENDED_RETENTION_TABLES:
+                self.assertIn(f"{table_name}=", result)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM builder_events WHERE event_id = 'event:extended:old'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_lane_records WHERE lane_record_id = 'memory-lane:old'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM provenance_mutation_log WHERE mutation_id = 'mutation:old'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM observer_packet_records WHERE packet_id = 'packet:old'").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM runtime_environment_snapshots WHERE snapshot_id = 'runtime-snapshot:old'").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM attachment_state_snapshots WHERE snapshot_id = 'attachment-snapshot:old'").fetchone()[0],
+                0,
+            )

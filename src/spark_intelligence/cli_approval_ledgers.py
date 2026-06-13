@@ -10,11 +10,15 @@ from spark_intelligence.observability.store import persist_bound_ledger
 from spark_intelligence.state.db import StateDB
 
 
+DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES = 1000
+
+
 @dataclass(frozen=True)
 class CliApprovalLedgerImportResult:
     ledger_dir: str
     imported: int
     skipped: int
+    pruned: int
     errors: list[str]
     ledger_ids: list[str]
 
@@ -23,6 +27,7 @@ class CliApprovalLedgerImportResult:
             "ledger_dir": self.ledger_dir,
             "imported": self.imported,
             "skipped": self.skipped,
+            "pruned": self.pruned,
             "errors": self.errors,
             "ledger_ids": self.ledger_ids,
         }
@@ -35,6 +40,7 @@ class CliApprovalLedgerImportResult:
         lines.append(f"- ledger_dir: {self.ledger_dir}")
         lines.append(f"- imported: {self.imported}")
         lines.append(f"- skipped: {self.skipped}")
+        lines.append(f"- pruned: {self.pruned}")
         lines.append(f"- errors: {len(self.errors)}")
         for ledger_id in self.ledger_ids[:10]:
             lines.append(f"- ledger: {ledger_id}")
@@ -54,10 +60,12 @@ def import_cli_approval_ledgers(
     state_db: StateDB,
     *,
     ledger_dir: Path | None = None,
+    retention_cap: int | None = DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
 ) -> CliApprovalLedgerImportResult:
     resolved_dir = (ledger_dir or default_cli_approval_ledger_dir()).expanduser()
     imported = 0
     skipped = 0
+    pruned = 0
     errors: list[str] = []
     ledger_ids: list[str] = []
     if not resolved_dir.exists():
@@ -65,6 +73,7 @@ def import_cli_approval_ledgers(
             ledger_dir=str(resolved_dir),
             imported=0,
             skipped=0,
+            pruned=0,
             errors=[f"ledger dir not found: {resolved_dir}"],
             ledger_ids=[],
         )
@@ -85,13 +94,39 @@ def import_cli_approval_ledgers(
             continue
         imported += 1
         ledger_ids.append(ledger_id)
+    if retention_cap is not None:
+        try:
+            pruned = prune_cli_approval_ledger_dir(resolved_dir, keep_files=retention_cap)
+        except OSError as exc:
+            errors.append(f"approval ledger prune: {exc}")
     return CliApprovalLedgerImportResult(
         ledger_dir=str(resolved_dir),
         imported=imported,
         skipped=skipped,
+        pruned=pruned,
         errors=errors,
         ledger_ids=ledger_ids,
     )
+
+
+def prune_cli_approval_ledger_dir(
+    ledger_dir: Path,
+    *,
+    keep_files: int = DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
+) -> int:
+    if keep_files < 0:
+        raise ValueError("keep_files must be non-negative")
+    if not ledger_dir.exists():
+        return 0
+    ledger_files = [path for path in ledger_dir.glob("*.json") if path.is_file()]
+    excess = len(ledger_files) - keep_files
+    if excess <= 0:
+        return 0
+    pruned = 0
+    for path in sorted(ledger_files, key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.name))[:excess]:
+        path.unlink()
+        pruned += 1
+    return pruned
 
 
 def _row_from_cli_ledger(payload: dict[str, Any], *, source_path: Path) -> dict[str, Any]:

@@ -812,6 +812,7 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_event_log_turn_id ON event_log(turn_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_updated_at ON tool_call_ledger(updated_at DESC, created_at DESC, ledger_id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_turn_id ON tool_call_ledger(turn_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_surface ON tool_call_ledger(surface, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_status ON tool_call_ledger(status, updated_at)",
@@ -914,6 +915,7 @@ class StateDB:
             self._ensure_column(conn, "builder_events", "turn_id", "TEXT")
             self._ensure_column(conn, "event_log", "turn_id", "TEXT")
             self._ensure_column(conn, "tool_call_ledger", "turn_id", "TEXT")
+            self._ensure_column(conn, "tool_call_ledger", "created_at", "TEXT")
             for statement in SCHEMA_STATEMENTS:
                 if _is_index_statement(statement):
                     conn.execute(statement)

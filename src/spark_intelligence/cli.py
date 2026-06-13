@@ -54,7 +54,11 @@ from spark_intelligence.channel.service import (
     set_channel_status,
     test_configured_telegram_channel,
 )
-from spark_intelligence.cli_approval_ledgers import default_cli_approval_ledger_dir, import_cli_approval_ledgers
+from spark_intelligence.cli_approval_ledgers import (
+    DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
+    default_cli_approval_ledger_dir,
+    import_cli_approval_ledgers,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
@@ -2908,6 +2912,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include counts that would be pruned by this ISO-8601 cutoff",
     )
     jobs_observability_report_parser.add_argument(
+        "--extended-older-than",
+        help="Include growth-table counts that would be pruned by the extended retention cutoff",
+    )
+    jobs_observability_report_parser.add_argument(
         "--include-builder-events",
         action="store_true",
         help="Include builder_events in prunable counts; omitted by default because Watchtower reads this table",
@@ -2972,6 +2980,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--ledger-dir",
         default=str(default_cli_approval_ledger_dir()),
         help="Directory containing Spark CLI approval ledger JSON files",
+    )
+    harness_import_cli_ledgers_parser.add_argument(
+        "--retention-cap",
+        type=int,
+        default=DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
+        help="Keep only this many newest approval-ledger JSON files after import",
     )
     harness_import_cli_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_self_evolution_parser = harness_subparsers.add_parser(
@@ -8095,11 +8109,68 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
     return 0 if int(summary.get("completed_runs") or 0) > 0 else 1
 
 
+def _build_memory_direct_smoke_governor_decision(
+    *,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    operation: str,
+    actor_id: str = "memory_cli",
+) -> dict[str, Any] | None:
+    request_id = f"memory-direct-smoke:{operation}:{uuid4().hex}"
+    envelope = build_vnext_tool_intent_envelope(
+        surface="cli",
+        actor_id_ref=actor_id,
+        request_id=request_id,
+        source_kind="memory_cli_direct_smoke",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary=f"CLI direct memory smoke authorized a scoped {operation} operation.",
+        raw_turn_summary=(
+            f"subject:{subject}\n"
+            f"predicate:{predicate}\n"
+            f"operation:{operation}\n"
+            "Raw memory value remains in the smoke payload."
+        ),
+        args_path=f"builder://memory-direct-smoke/{request_id}/{operation}",
+    )
+    if not isinstance(envelope, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        actor_id=actor_id,
+        component="memory_direct_smoke_cli",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    governor_decision = _build_memory_direct_smoke_governor_decision(
+        state_db=state_db,
+        subject=args.subject,
+        predicate=args.predicate,
+        operation="update",
+    )
+    cleanup_governor_decision = (
+        _build_memory_direct_smoke_governor_decision(
+            state_db=state_db,
+            subject=args.subject,
+            predicate=args.predicate,
+            operation="delete",
+        )
+        if not bool(args.no_cleanup)
+        else None
+    )
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -8108,6 +8179,8 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         predicate=args.predicate,
         value=args.value,
         cleanup=not bool(args.no_cleanup),
+        governor_decision=governor_decision,
+        cleanup_governor_decision=cleanup_governor_decision,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
@@ -8493,10 +8566,12 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     older_than = str(getattr(args, "older_than", "") or "").strip() or None
+    extended_older_than = str(getattr(args, "extended_older_than", "") or "").strip() or None
     state_report = build_observability_store_report(
         state_db,
         older_than=older_than,
         include_builder_events=bool(getattr(args, "include_builder_events", False)),
+        extended_older_than=extended_older_than,
     )
     gateway_report = None
     if bool(getattr(args, "include_gateway_logs", False)):
@@ -8528,6 +8603,9 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             lines.append(f"- {table}: {count}")
         if state_report.cutoff is not None:
             lines.append(f"- cutoff: {state_report.cutoff}")
+        if state_report.extended_cutoff is not None:
+            lines.append(f"- extended_cutoff: {state_report.extended_cutoff}")
+        if state_report.cutoff is not None or state_report.extended_cutoff is not None:
             lines.append(f"- total_prunable: {state_report.total_prunable}")
             for table, count in sorted(state_report.prunable_counts.items()):
                 lines.append(f"- prunable {table}: {count}")
@@ -8665,6 +8743,7 @@ def handle_harness_import_cli_ledgers(args: argparse.Namespace) -> int:
     result = import_cli_approval_ledgers(
         state_db,
         ledger_dir=Path(str(getattr(args, "ledger_dir", "") or default_cli_approval_ledger_dir())),
+        retention_cap=int(getattr(args, "retention_cap", DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES)),
     )
     print(result.to_json() if args.json else result.to_text())
     return 1 if result.errors and result.imported == 0 else 0

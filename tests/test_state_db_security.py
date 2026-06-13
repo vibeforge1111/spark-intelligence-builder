@@ -84,6 +84,35 @@ def test_initialize_adds_turn_id_before_turn_indexes_on_existing_tables(tmp_path
     assert "idx_builder_events_turn_id" in indexes
     assert "idx_event_log_turn_id" in indexes
     assert "idx_tool_call_ledger_turn_id" in indexes
+    assert "idx_tool_call_ledger_updated_at" in indexes
+
+
+def test_tool_call_ledger_listing_uses_updated_at_index(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.db")
+    state_db.initialize()
+    with state_db.connect() as conn:
+        for index in range(5):
+            timestamp = f"2026-06-13T0{index}:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO tool_call_ledger(ledger_id, turn_id, status, ledger_json, created_at, updated_at)
+                VALUES (?, ?, 'success', '{}', ?, ?)
+                """,
+                (f"ledger:{index}", f"turn:{index}", timestamp, timestamp),
+            )
+        conn.commit()
+        plan_rows = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT ledger_id, updated_at
+            FROM tool_call_ledger
+            ORDER BY updated_at DESC, created_at DESC, ledger_id DESC
+            LIMIT 3
+            """
+        ).fetchall()
+
+    plan_text = "\n".join(str(row["detail"]) for row in plan_rows)
+    assert "idx_tool_call_ledger_updated_at" in plan_text
 
 
 class TelegramAllowlistSecurityTests(SparkTestCase):
