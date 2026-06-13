@@ -306,6 +306,7 @@ def latest_pending_tasks(
         placeholders = ", ".join("?" for _ in OPEN_PENDING_TASK_STATUSES)
         clauses.append(f"status IN ({placeholders})")
         params.extend(sorted(OPEN_PENDING_TASK_STATUSES))
+    if open_only:
         clauses.append("closed_at IS NULL")
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
