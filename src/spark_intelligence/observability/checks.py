@@ -55,6 +55,7 @@ NON_PROMOTABLE_DISPOSITIONS = {
     "quarantined",
     "quarantined_blocked",
 }
+GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES = 1_073_741_824
 
 
 def _expected_artifact_lane(keepability: str) -> str:
@@ -112,6 +113,10 @@ def evaluate_stop_ship_issues(
         ("stop_ship_bridge_residue_persistence", lambda: _bridge_residue_persistence_issue(state_db)),
         ("stop_ship_memory_contract", lambda: _memory_contract_issue(state_db)),
         ("stop_ship_environment_parity", lambda: _environment_parity_issue(state_db)),
+        (
+            "stop_ship_graphiti_sidecar_size",
+            lambda: _graphiti_sidecar_size_issue(config_manager=config_manager),
+        ),
         ("stop_ship_daemon_reentry", lambda: _daemon_reentry_issue(config_manager=config_manager)),
         ("stop_ship_external_execution_governance", _external_execution_governance_issue),
         ("stop_ship_bridge_output_governance", _bridge_output_governance_issue),
@@ -990,6 +995,77 @@ def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
         detail="Autostart remains on the native wrapper posture.",
         severity="high",
     )
+
+
+def _graphiti_sidecar_size_issue(*, config_manager: ConfigManager) -> StopShipIssue:
+    configured = str(
+        config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default="") or ""
+    ).strip()
+    enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
+    threshold = _positive_int(
+        config_manager.get_path(
+            "spark.memory.sidecars.graphiti.max_bytes",
+            default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+        ),
+        default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+    )
+    if not configured:
+        return StopShipIssue(
+            name="stop_ship_graphiti_sidecar_size",
+            ok=True,
+            detail="Graphiti sidecar db_path is not configured.",
+            severity="high",
+        )
+    path = _graphiti_sidecar_path(config_manager=config_manager, configured=configured)
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        status = "enabled" if enabled else "disabled"
+        return StopShipIssue(
+            name="stop_ship_graphiti_sidecar_size",
+            ok=True,
+            detail=f"Graphiti sidecar file is absent while sidecar is {status}.",
+            severity="high",
+        )
+    except OSError as exc:
+        return StopShipIssue(
+            name="stop_ship_graphiti_sidecar_size",
+            ok=False,
+            detail=f"Graphiti sidecar size check failed: {exc.__class__.__name__}.",
+            severity="high",
+        )
+    if size > threshold:
+        status = "enabled" if enabled else "disabled"
+        return StopShipIssue(
+            name="stop_ship_graphiti_sidecar_size",
+            ok=False,
+            detail=(
+                f"Graphiti sidecar is {status} and size={size} bytes exceeds "
+                f"threshold={threshold} bytes."
+            ),
+            severity="high",
+        )
+    status = "enabled" if enabled else "disabled"
+    return StopShipIssue(
+        name="stop_ship_graphiti_sidecar_size",
+        ok=True,
+        detail=f"Graphiti sidecar is {status} and size={size} bytes within threshold={threshold} bytes.",
+        severity="high",
+    )
+
+
+def _graphiti_sidecar_path(*, config_manager: ConfigManager, configured: str) -> Path:
+    home = str(config_manager.paths.home)
+    expanded = configured.replace("{home}", home).replace("$SPARK_HOME", home)
+    return Path(expanded).expanduser()
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _external_execution_governance_issue() -> StopShipIssue:

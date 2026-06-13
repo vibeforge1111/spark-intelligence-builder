@@ -398,6 +398,37 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-agent-identity", checks)
         self.assertFalse(checks["watchtower-agent-identity"].ok)
 
+    def test_graphiti_sidecar_size_watchdog_flags_oversized_file(self) -> None:
+        graphiti_path = self.home / "sidecars" / "graphiti" / "kuzu" / "graphiti.kuzu"
+        graphiti_path.parent.mkdir(parents=True, exist_ok=True)
+        graphiti_path.write_bytes(b"oversized")
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.db_path", str(graphiti_path))
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.max_bytes", 4)
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertIn("stop_ship_graphiti_sidecar_size", issues)
+        self.assertFalse(issues["stop_ship_graphiti_sidecar_size"].ok)
+        self.assertIn("exceeds threshold=4 bytes", issues["stop_ship_graphiti_sidecar_size"].detail)
+
+    def test_graphiti_sidecar_size_watchdog_accepts_disabled_missing_file(self) -> None:
+        graphiti_path = self.home / "sidecars" / "graphiti" / "kuzu" / "graphiti.kuzu"
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", False)
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.db_path", str(graphiti_path))
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertIn("stop_ship_graphiti_sidecar_size", issues)
+        self.assertTrue(issues["stop_ship_graphiti_sidecar_size"].ok)
+        self.assertIn("absent while sidecar is disabled", issues["stop_ship_graphiti_sidecar_size"].detail)
+
     def test_outbound_strips_em_dashes_before_delivery(self) -> None:
         guarded = prepare_outbound_text(
             text="Two chips routing live \u2014 X Content and Startup. Yeah \u2014 fair point.",
