@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -2636,7 +2637,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
         self.assertEqual(result.reply_text, "Hey there. How can I help?")
-        self.assertEqual(result.trace_ref, "fast-greeting-req-fallback")
+        self.assertEqual(result.trace_ref, "trace:agent-1:human-1:req-fallback")
+        self.assertNotIn("fast-greeting-", result.trace_ref)
+        events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=5)
+        self.assertTrue(events)
+        self.assertEqual(events[0]["trace_ref"], "trace:agent-1:human-1:req-fallback")
         self.assertEqual(result.provider_id, "custom")
         self.assertEqual(result.provider_execution_transport, "direct_http")
         self.assertEqual(result.evidence_summary, "status=under_supported provider_fallback=direct_http_chat")
@@ -5595,9 +5600,15 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             model: str,
             command_override: list[str] | None = None,
             dry_run: bool = False,
+            governor_decision: dict[str, object] | None = None,
+            memory_governor_decision: dict[str, object] | None = None,
         ) -> dict[str, object]:
             captured_execution["model"] = model
             captured_execution["command_override"] = list(command_override or [])
+            captured_execution["governor_decision"] = governor_decision
+            captured_execution["memory_governor_decision"] = memory_governor_decision
+            captured_execution["generic_adapter_enabled"] = os.environ.get("SPARK_RESEARCHER_ENABLE_GENERIC_ADAPTER")
+            captured_execution["generic_adapter_allowlist"] = os.environ.get("SPARK_RESEARCHER_ADAPTER_ALLOWED_EXECUTABLES")
             return {
                 "status": "ok",
                 "decision": "approve",
@@ -5642,6 +5653,15 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "{response_path}",
             ],
         )
+        governor = captured_execution["governor_decision"]
+        self.assertIsInstance(governor, dict)
+        self.assertEqual(governor["schema_version"], "governor-decision-v1")
+        self.assertEqual(governor["outcome"], "execute")
+        self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "researcher.advisory.execute")
+        self.assertEqual(governor["authorizations"][0]["capability_id"], "capability:spark-researcher:researcher.advisory.execute")
+        self.assertIsNone(captured_execution["memory_governor_decision"])
+        self.assertEqual(captured_execution["generic_adapter_enabled"], "1")
+        self.assertEqual(captured_execution["generic_adapter_allowlist"], Path(sys.executable).name)
         self.assertEqual(result.mode, "external_configured")
         self.assertEqual(result.reply_text, "Provider-backed reply")
         self.assertEqual(result.provider_id, "anthropic")
@@ -5688,6 +5708,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             model: str,
             command_override: list[str] | None = None,
             dry_run: bool = False,
+            governor_decision: dict[str, object] | None = None,
+            memory_governor_decision: dict[str, object] | None = None,
         ) -> dict[str, object]:
             intent = advisory.get("intent")
             if isinstance(intent, dict):
@@ -5799,6 +5821,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             model: str,
             command_override: list[str] | None = None,
             dry_run: bool = False,
+            governor_decision: dict[str, object] | None = None,
+            memory_governor_decision: dict[str, object] | None = None,
         ) -> dict[str, object]:
             captured["execution_model"] = model
             captured["command_override"] = command_override
