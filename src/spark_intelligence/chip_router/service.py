@@ -205,18 +205,8 @@ def select_chips_for_message(
             considered.append(scored)
             considered_keys.add(scored.chip_key)
 
-    for record in chips:
-        if record.key not in sticky_set or record.key in considered_keys:
-            continue
-        keywords = _chip_field(record, "task_keywords")
-        topics = _chip_field(record, "task_topics")
-        if not keywords and not topics:
-            continue
-        considered.append(ScoredChip(chip_key=record.key, score=0.0))
-        considered_keys.add(record.key)
-
     for s in considered:
-        if s.chip_key in sticky_set:
+        if s.chip_key in sticky_set and s.score > 0.0:
             s.score += RECENT_CHIP_STICKY_BOOST
             s.sticky_boost_applied = True
 
