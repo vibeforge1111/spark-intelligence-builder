@@ -3662,14 +3662,14 @@ def _resolve_active_personality_chip_id() -> str:
 
 def _read_sib_active_personality_id() -> str | None:
     """Read the most recently updated agent_persona_profiles row for the
-    current workspace's state.db. Returns the persona_name when one exists,
-    None otherwise. Soft-fails on any error so the resolver can continue."""
+    current workspace's state.db. Prefer explicit chip ids recorded in
+    provenance_json, then fall back to a normalized persona_name. Soft-fails
+    on any error so the resolver can continue."""
     home = os.environ.get("SPARK_INTELLIGENCE_HOME")
     if not home:
         return None
     try:
         import sqlite3
-        from pathlib import Path
         db = Path(home) / "state.db"
         if not db.exists():
             return None
@@ -3677,16 +3677,65 @@ def _read_sib_active_personality_id() -> str | None:
         try:
             cur = con.cursor()
             cur.execute(
-                "SELECT persona_name FROM agent_persona_profiles "
-                "WHERE persona_name IS NOT NULL AND persona_name != '' "
+                "SELECT persona_name, provenance_json FROM agent_persona_profiles "
+                "WHERE (persona_name IS NOT NULL AND persona_name != '') "
+                "OR (provenance_json IS NOT NULL AND provenance_json != '') "
                 "ORDER BY updated_at DESC LIMIT 1"
             )
             row = cur.fetchone()
-            return str(row[0]) if row else None
+            if not row:
+                return None
+            persona_name = str(row[0] or "")
+            provenance = _parse_sib_persona_provenance(row[1] if len(row) > 1 else None)
+            for value in _sib_persona_chip_candidates(persona_name=persona_name, provenance=provenance):
+                normalized = _normalize_personality_chip_id(value)
+                if normalized:
+                    return normalized
+            return None
         finally:
             con.close()
     except Exception:
         return None
+
+
+def _parse_sib_persona_provenance(raw: object) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _sib_persona_chip_candidates(*, persona_name: str, provenance: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in (
+        "personality_chip_id",
+        "active_personality_chip_id",
+        "active_chip_id",
+        "chip_id",
+        "personality_id",
+        "base_chip_id",
+        "chip_key",
+    ):
+        value = provenance.get(key)
+        if isinstance(value, str) and value.strip():
+            candidates.append(value)
+    if persona_name.strip():
+        candidates.append(persona_name)
+    return candidates
+
+
+def _normalize_personality_chip_id(value: object) -> str | None:
+    raw = str(value or "").strip().lower()
+    if not raw or "/" in raw or "\\" in raw:
+        return None
+    normalized = re.sub(r"[\s_]+", "-", raw)
+    normalized = re.sub(r"[^a-z0-9.-]+", "-", normalized).strip(".-")
+    return normalized or None
 
 
 def _load_spark_character_persona() -> str:
