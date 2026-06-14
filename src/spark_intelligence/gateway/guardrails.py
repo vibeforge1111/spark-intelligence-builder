@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import re
 import time
-import unicodedata
 from typing import Any
 
+from spark_character import sanitize_voice_output as _sanitize_voice_output
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
@@ -215,42 +215,9 @@ _SCORE_LABEL_PATTERN = re.compile(
 )
 
 
-def _is_dash_punctuation(character: str) -> bool:
-    if character == "-":
-        return False
-    return unicodedata.category(character) == "Pd" or character == "\u2212"
-
-
 def _strip_em_dashes(text: str) -> str:
-    """Replace em-dash family characters with hyphens.
-
-    Persona forbids em dashes but production telemetry shows ~50% of LLM
-    replies still emit them. Prompt engineering hasn't been enough, so we
-    apply a deterministic post-output substitution at the outbound boundary.
-    Keep this boundary intentionally narrow: operational identifiers such as
-    chip keys and session ids frequently use ASCII hyphens and must not be
-    rewritten.
-    """
-    if not text:
-        return text
-    replacement = " - "
-    trim_left = replacement[:1] == " "
-    trim_right = replacement[-1:] == " "
-    out: list[str] = []
-    index = 0
-    while index < len(text):
-        character = text[index]
-        if _is_dash_punctuation(character):
-            if trim_left and out and out[-1] in " \t":
-                out.pop()
-            out.append(replacement)
-            index += 1
-            if trim_right and index < len(text) and text[index] in " \t":
-                index += 1
-        else:
-            out.append(character)
-            index += 1
-    return "".join(out)
+    """Apply the canonical spark-character voice sanitizer at the outbound boundary."""
+    return _sanitize_voice_output(text)
 
 
 def _normalize_score_decimals_to_percent(text: str) -> str:
