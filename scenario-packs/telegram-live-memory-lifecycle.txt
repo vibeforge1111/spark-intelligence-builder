@@ -1,6 +1,6 @@
 # Live Telegram memory lifecycle probe
 # Send these to the real Spark Telegram bot, in order, then verify with:
-# powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_live_telegram_memory_probe.ps1 -SparkHome .tmp-home-live-telegram-real
+# powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_live_telegram_memory_probe.ps1 -SparkHome "$env:USERPROFILE\.spark\state\spark-intelligence"
 #
 # This pack is intentionally for manual live long-polling checks, not shadow-telegram-pack.
 

@@ -1,5 +1,5 @@
 param(
-    [string]$SparkHome = ".tmp-home-live-telegram-real",
+    [string]$SparkHome = (Join-Path $env:USERPROFILE ".spark\state\spark-intelligence"),
     [int]$Limit = 80,
     [switch]$PrintPromptsOnly,
     [switch]$Json

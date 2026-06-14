@@ -1,6 +1,6 @@
 param(
     [string]$Distro = "Ubuntu-24.04",
-    [string]$SparkHome = ".tmp-home-live-telegram-real",
+    [string]$SparkHome = (Join-Path $env:USERPROFILE ".spark\state\spark-intelligence"),
     [string]$PythonExe = "python",
     [switch]$Status,
     [switch]$SkipTest

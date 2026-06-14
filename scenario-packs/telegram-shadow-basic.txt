@@ -1,6 +1,6 @@
 # Builder Telegram shadow-validation pack
 # Run with:
-# spark-intelligence gateway shadow-telegram-pack .\scenario-packs\telegram-shadow-basic.txt --home .tmp-home-live-telegram-real
+# spark-intelligence gateway shadow-telegram-pack .\scenario-packs\telegram-shadow-basic.txt --home "%USERPROFILE%\.spark\state\spark-intelligence"
 
 /start
 /myid
