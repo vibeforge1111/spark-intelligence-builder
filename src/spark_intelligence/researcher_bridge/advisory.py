@@ -3492,17 +3492,14 @@ def try_spark_character_fallback(
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
-            # enable_search=True turns on the spark-character client-side
-            # web search adapter for prompts that look like they need
-            # current data (price, news, today's, latest). Provider-
-            # agnostic, works even when the backend's native web_search
-            # tool is ignored (Z.AI coding endpoint) or unavailable.
+            # The spark-character client-side search backend is governed
+            # by an explicit network policy. SIB does not pass that policy
+            # yet, so only provider-native tools are attached here.
             result = generate(
                 text,
                 provider=provider,
                 persona=persona,
                 tools=tools,
-                enable_search=True,
                 surface=surface,
             )
         reply = str(result.final or "").strip()
