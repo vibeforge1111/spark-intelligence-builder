@@ -5,6 +5,7 @@ from spark_intelligence.bot_drafts import (
     detect_iteration_intent,
     find_draft_for_iteration,
     list_recent_drafts,
+    prune_aged_drafts,
     reply_resembles_draft,
     save_draft,
     update_draft_content,
@@ -292,3 +293,46 @@ class IterationRoundTripTests(SparkTestCase):
             ).fetchone()
         self.assertEqual(row["created_at"], first_created_at)
         self.assertGreater(row["updated_at"], second_created_at)
+
+    def test_prune_aged_drafts_deletes_only_rows_older_than_cutoff(self) -> None:
+        old = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="old draft",
+        )
+        current = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="current draft",
+        )
+        assert old is not None
+        assert current is not None
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", old.draft_id),
+            )
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-06-01T00:00:00+00:00",
+                    current.draft_id,
+                ),
+            )
+
+        deleted = prune_aged_drafts(
+            self.state_db,
+            older_than="2026-03-01T00:00:00+00:00",
+        )
+
+        self.assertEqual(deleted, 1)
+        drafts = list_recent_drafts(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            limit=10,
+        )
+        self.assertEqual([draft.draft_id for draft in drafts], [current.draft_id])

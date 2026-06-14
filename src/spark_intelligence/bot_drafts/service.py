@@ -192,6 +192,19 @@ def update_draft_content(
         return cur.rowcount > 0
 
 
+def prune_aged_drafts(state_db: StateDB, *, older_than: str | datetime) -> int:
+    cutoff = older_than.isoformat() if isinstance(older_than, datetime) else str(older_than)
+    with state_db.connect() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM bot_drafts
+            WHERE COALESCE(updated_at, created_at) < ?
+            """,
+            (cutoff,),
+        )
+        return cur.rowcount
+
+
 def list_recent_drafts(
     state_db: StateDB,
     *,
