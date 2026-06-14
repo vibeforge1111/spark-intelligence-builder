@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
@@ -214,6 +215,12 @@ _SCORE_LABEL_PATTERN = re.compile(
 )
 
 
+def _is_dash_punctuation(character: str) -> bool:
+    if character == "-":
+        return False
+    return unicodedata.category(character) == "Pd" or character == "\u2212"
+
+
 def _strip_em_dashes(text: str) -> str:
     """Replace em-dash family characters with hyphens.
 
@@ -226,13 +233,24 @@ def _strip_em_dashes(text: str) -> str:
     """
     if not text:
         return text
-    em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
-    out = text
-    for ch in em_dash_family:
-        out = out.replace(ch, " - ")
-    while "  " in out:
-        out = out.replace("  ", " ")
-    return out
+    replacement = " - "
+    trim_left = replacement[:1] == " "
+    trim_right = replacement[-1:] == " "
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if _is_dash_punctuation(character):
+            if trim_left and out and out[-1] in " \t":
+                out.pop()
+            out.append(replacement)
+            index += 1
+            if trim_right and index < len(text) and text[index] in " \t":
+                index += 1
+        else:
+            out.append(character)
+            index += 1
+    return "".join(out)
 
 
 def _normalize_score_decimals_to_percent(text: str) -> str:
