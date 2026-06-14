@@ -8,6 +8,7 @@ from spark_intelligence.attachments.registry import attachment_status
 from spark_intelligence.attachments.hooks import run_chip_hook, run_first_active_chip_hook
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.chip_router import select_chips_for_message
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
@@ -131,6 +132,49 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(len(duplicate_records), 1)
         self.assertEqual(Path(duplicate_records[0].repo_root), canonical_root)
         self.assertFalse(any("duplicate chip key 'domain-chip-duplicate'" in warning for warning in scan.warnings))
+
+    def test_chip_router_refuses_future_manifest_version(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        manifest_path = chip_root / "spark-chip.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["manifest_version"] = 3
+        manifest["schema_version"] = "spark-chip.v3"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+
+        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+            scan = attachment_status(self.config_manager)
+        decision = select_chips_for_message("startup founder focus", scan.records)
+
+        self.assertFalse(any(record.key == "startup-yc" for record in scan.records))
+        self.assertEqual(decision.selected, [])
+        self.assertTrue(any("chip manifest_version 3 is unsupported" in warning for warning in scan.warnings))
+        self.assertTrue(any("spark chip upgrade" in warning for warning in scan.warnings))
+
+    def test_attachment_status_accepts_valid_v2_chip_manifest(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        manifest_path = chip_root / "spark-chip.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(
+            {
+                "manifest_version": 2,
+                "schema_version": "spark-chip.v2",
+                "version": "0.1.0",
+                "requires_runtime": {"spark-intelligence-builder": ">=0.1.0"},
+            }
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+            scan = attachment_status(self.config_manager)
+
+        records = [record for record in scan.records if record.key == "startup-yc"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].manifest_version, 2)
+        self.assertEqual(records[0].requires_runtime, {"spark-intelligence-builder": ">=0.1.0"})
+        self.assertFalse(any("unsupported chip manifest" in warning for warning in scan.warnings))
 
     def test_build_attachment_context_includes_attached_chip_inventory(self) -> None:
         browser_root = create_fake_hook_chip(self.home, chip_key="spark-browser")

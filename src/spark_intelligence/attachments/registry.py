@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from spark_intelligence.config.loader import ConfigManager
+
+CHIP_MANIFEST_CURRENT_VERSION = 2
+CHIP_MANIFEST_MIN_SUPPORTED_VERSION = CHIP_MANIFEST_CURRENT_VERSION - 1
+CHIP_MANIFEST_SUPPORTED_VERSIONS = set(range(CHIP_MANIFEST_MIN_SUPPORTED_VERSION, CHIP_MANIFEST_CURRENT_VERSION + 1))
+CHIP_COMPATIBILITY_UPGRADE_COMMAND = "spark chip upgrade"
+CHIP_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+SEMVER_PATTERN = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$")
+TASK_TOPIC_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 
 
 @dataclass
@@ -16,6 +25,7 @@ class AttachmentRecord:
     repo_root: str
     manifest_path: str
     hook_manifest_path: str | None
+    manifest_version: int | None
     schema_version: str | None
     io_protocol: str | None
     status: str
@@ -24,6 +34,7 @@ class AttachmentRecord:
     commands: dict[str, list[str]]
     description: str | None
     frontier: dict[str, Any] | None
+    requires_runtime: dict[str, str]
     task_topics: list[str]
     task_keywords: list[str]
     combine_with: list[str]
@@ -37,6 +48,7 @@ class AttachmentRecord:
             "repo_root": self.repo_root,
             "manifest_path": self.manifest_path,
             "hook_manifest_path": self.hook_manifest_path,
+            "manifest_version": self.manifest_version,
             "schema_version": self.schema_version,
             "io_protocol": self.io_protocol,
             "status": self.status,
@@ -45,6 +57,7 @@ class AttachmentRecord:
             "commands": self.commands,
             "description": self.description,
             "frontier": self.frontier,
+            "requires_runtime": self.requires_runtime,
             "task_topics": self.task_topics,
             "task_keywords": self.task_keywords,
             "combine_with": self.combine_with,
@@ -224,6 +237,10 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
         payload = _read_json_manifest(manifest_path, warnings)
         if not payload:
             continue
+        manifest_issues = _chip_manifest_issues(payload)
+        if manifest_issues:
+            _append_chip_manifest_warning(manifest_path, manifest_issues, warnings)
+            continue
         if (repo_root / "specialization-path.json").exists():
             continue
         chip_name = str(payload.get("chip_name") or payload.get("domain") or repo_root.name).strip()
@@ -236,6 +253,7 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 repo_root=str(repo_root),
                 manifest_path=str(manifest_path),
                 hook_manifest_path=None,
+                manifest_version=_chip_manifest_version(payload),
                 schema_version=_normalize_optional_string(payload.get("schema_version")),
                 io_protocol=_normalize_optional_string(payload.get("io_protocol")),
                 status="available",
@@ -244,6 +262,7 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(payload.get("commands")),
                 description=str(payload.get("description") or "").strip() or None,
                 frontier=payload.get("frontier") if isinstance(payload.get("frontier"), dict) else None,
+                requires_runtime=_normalize_runtime_requirements(payload.get("requires_runtime")),
                 task_topics=_normalize_string_list(payload.get("task_topics")),
                 task_keywords=_normalize_string_list(payload.get("task_keywords")),
                 combine_with=_normalize_string_list(payload.get("combine_with")),
@@ -262,6 +281,11 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
             continue
         hook_manifest_path = repo_root / "spark-chip.json"
         hook_manifest = _read_json_manifest(hook_manifest_path, warnings) if hook_manifest_path.exists() else {}
+        if hook_manifest:
+            manifest_issues = _chip_manifest_issues(hook_manifest)
+            if manifest_issues:
+                _append_chip_manifest_warning(hook_manifest_path, manifest_issues, warnings)
+                continue
         path_key = str(payload.get("pathKey") or repo_root.name).strip()
         capabilities = [str(item) for item in hook_manifest.get("capabilities", []) if str(item).strip()]
         label = path_key
@@ -278,6 +302,7 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 repo_root=str(repo_root),
                 manifest_path=str(manifest_path),
                 hook_manifest_path=str(hook_manifest_path) if hook_manifest_path.exists() else None,
+                manifest_version=_chip_manifest_version(hook_manifest) if hook_manifest else None,
                 schema_version=_normalize_optional_string(hook_manifest.get("schema_version")),
                 io_protocol=_normalize_optional_string(hook_manifest.get("io_protocol")),
                 status="available",
@@ -286,6 +311,7 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(hook_manifest.get("commands")),
                 description=None,
                 frontier=hook_manifest.get("frontier") if isinstance(hook_manifest.get("frontier"), dict) else None,
+                requires_runtime=_normalize_runtime_requirements(hook_manifest.get("requires_runtime")),
                 task_topics=_normalize_string_list(hook_manifest.get("task_topics")),
                 task_keywords=_normalize_string_list(hook_manifest.get("task_keywords")),
                 combine_with=_normalize_string_list(hook_manifest.get("combine_with")),
@@ -318,6 +344,102 @@ def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+def _normalize_runtime_requirements(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(runtime).strip(): str(requirement).strip()
+        for runtime, requirement in value.items()
+        if str(runtime).strip() and str(requirement).strip()
+    }
+
+
+def _chip_manifest_version(payload: dict[str, Any]) -> int | None:
+    raw = payload.get("manifest_version")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    schema_version = _normalize_optional_string(payload.get("schema_version"))
+    if schema_version:
+        match = re.fullmatch(r"spark-chip\.v(\d+)", schema_version)
+        if match:
+            return int(match.group(1))
+    return 1
+
+
+def _chip_manifest_issues(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    version = _chip_manifest_version(payload)
+    raw_version = payload.get("manifest_version")
+    if raw_version is not None and (version is None or not isinstance(raw_version, int) or isinstance(raw_version, bool)):
+        issues.append("manifest_version must be a positive integer")
+    if version is None or version < 1:
+        issues.append("manifest_version must be a positive integer")
+        return issues
+    schema_version = _normalize_optional_string(payload.get("schema_version"))
+    if schema_version and schema_version != f"spark-chip.v{version}":
+        issues.append(f"schema_version must be spark-chip.v{version}")
+    if version not in CHIP_MANIFEST_SUPPORTED_VERSIONS:
+        supported = ", ".join(str(item) for item in sorted(CHIP_MANIFEST_SUPPORTED_VERSIONS))
+        issues.append(f"chip manifest_version {version} is unsupported; supported versions: {supported}")
+        return issues
+    if version == 2:
+        issues.extend(_chip_v2_manifest_issues(payload))
+    return issues
+
+
+def _chip_v2_manifest_issues(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for key in (
+        "manifest_version",
+        "schema_version",
+        "io_protocol",
+        "chip_name",
+        "version",
+        "domain",
+        "description",
+        "requires_runtime",
+        "capabilities",
+        "commands",
+        "task_topics",
+        "task_keywords",
+    ):
+        if key not in payload:
+            issues.append(f"missing {key}")
+    if payload.get("manifest_version") != 2:
+        issues.append("manifest_version must be 2")
+    if payload.get("schema_version") != "spark-chip.v2":
+        issues.append("schema_version must be spark-chip.v2")
+    if payload.get("io_protocol") != "spark-hook-io.v1":
+        issues.append("io_protocol must be spark-hook-io.v1")
+    chip_name = str(payload.get("chip_name") or "")
+    if not CHIP_NAME_PATTERN.fullmatch(chip_name):
+        issues.append("chip_name must be router-safe kebab-case")
+    if not SEMVER_PATTERN.fullmatch(str(payload.get("version") or "")):
+        issues.append("version must be semver")
+    for key in ("domain", "description"):
+        if not str(payload.get(key) or "").strip():
+            issues.append(f"{key} must be non-empty")
+    if not _normalize_runtime_requirements(payload.get("requires_runtime")):
+        issues.append("requires_runtime must name at least one runtime")
+    if not _normalize_string_list(payload.get("capabilities")):
+        issues.append("capabilities must be a non-empty string list")
+    if not _normalize_commands(payload.get("commands")):
+        issues.append("commands must use non-empty argv arrays")
+    topics = _normalize_string_list(payload.get("task_topics"))
+    if not topics or any(not TASK_TOPIC_PATTERN.fullmatch(topic) for topic in topics):
+        issues.append("task_topics must be non-empty router topics")
+    if not _normalize_string_list(payload.get("task_keywords")):
+        issues.append("task_keywords must be a non-empty string list")
+    return issues
+
+
+def _append_chip_manifest_warning(path: Path, issues: list[str], warnings: list[str]) -> None:
+    detail = "; ".join(issues)
+    warnings.append(f"unsupported chip manifest: {path} ({detail}). Run `{CHIP_COMPATIBILITY_UPGRADE_COMMAND}`.")
 
 
 def _expand_repo_roots(roots: Iterable[Path], *, manifest_name: str) -> list[Path]:
