@@ -209,3 +209,86 @@ class IterationRoundTripTests(SparkTestCase):
         )
         self.assertEqual(drafts[0].content, "v2 tighter text")
         self.assertEqual(drafts[0].draft_id, draft.draft_id)
+
+    def test_update_preserves_created_at_and_sets_updated_at(self) -> None:
+        draft = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="v1 text",
+        )
+        assert draft is not None
+        original_created_at = "2026-03-01T10:00:00+00:00"
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = NULL WHERE draft_id = ?",
+                (original_created_at, draft.draft_id),
+            )
+
+        ok = update_draft_content(
+            self.state_db,
+            draft_id=draft.draft_id,
+            content="v2 tighter text",
+        )
+        self.assertTrue(ok)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT created_at, updated_at FROM bot_drafts WHERE draft_id = ?",
+                (draft.draft_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["created_at"], original_created_at)
+        self.assertIsNotNone(row["updated_at"])
+        self.assertNotEqual(row["updated_at"], original_created_at)
+
+    def test_recent_draft_order_uses_updated_at_without_rewriting_created_at(self) -> None:
+        first = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="old draft now revised",
+        )
+        second = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="newer draft untouched",
+        )
+        assert first is not None
+        assert second is not None
+        first_created_at = "2026-03-01T10:00:00+00:00"
+        second_created_at = "2026-03-02T10:00:00+00:00"
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (first_created_at, first_created_at, first.draft_id),
+            )
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (second_created_at, second_created_at, second.draft_id),
+            )
+
+        self.assertTrue(
+            update_draft_content(
+                self.state_db,
+                draft_id=first.draft_id,
+                content="old draft now revised with sharper wording",
+            )
+        )
+
+        drafts = list_recent_drafts(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            limit=2,
+        )
+        self.assertEqual([draft.draft_id for draft in drafts], [first.draft_id, second.draft_id])
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT created_at, updated_at FROM bot_drafts WHERE draft_id = ?",
+                (first.draft_id,),
+            ).fetchone()
+        self.assertEqual(row["created_at"], first_created_at)
+        self.assertGreater(row["updated_at"], second_created_at)

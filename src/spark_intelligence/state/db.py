@@ -874,10 +874,12 @@ SCHEMA_STATEMENTS = [
         content_length INTEGER NOT NULL,
         chip_used TEXT,
         topic_hint TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_bot_drafts_lookup ON bot_drafts(external_user_id, channel_kind, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_bot_drafts_recency ON bot_drafts(external_user_id, channel_kind, updated_at, created_at)",
 ]
 
 
@@ -916,6 +918,8 @@ class StateDB:
             self._ensure_column(conn, "event_log", "turn_id", "TEXT")
             self._ensure_column(conn, "tool_call_ledger", "turn_id", "TEXT")
             self._ensure_column(conn, "tool_call_ledger", "created_at", "TEXT")
+            self._ensure_column(conn, "bot_drafts", "updated_at", "TEXT")
+            conn.execute("UPDATE bot_drafts SET updated_at = created_at WHERE updated_at IS NULL")
             for statement in SCHEMA_STATEMENTS:
                 if _is_index_statement(statement):
                     conn.execute(statement)
