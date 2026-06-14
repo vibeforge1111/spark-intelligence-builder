@@ -43,7 +43,7 @@ def test_spark_character_provider_resolver_uses_explicit_env_map(monkeypatch) ->
     )
 
 
-def test_spark_character_fallback_does_not_enable_client_side_search(monkeypatch) -> None:
+def test_spark_character_fallback_passes_governed_client_side_search(monkeypatch) -> None:
     captured: dict = {}
 
     def fake_generate(_text: str, **kwargs):
@@ -82,6 +82,54 @@ def test_spark_character_fallback_does_not_enable_client_side_search(monkeypatch
     )
 
     assert reply == "fallback reply"
-    assert "enable_search" not in captured
+    assert captured["enable_search"] is True
+    assert captured["network_policy"] == {
+        "allowed": True,
+        "authority": "spark-intelligence-builder.researcher_bridge.spark_character_fallback",
+        "risk": "network",
+    }
+    assert captured["disable_thinking"] is True
     assert captured["tools"] == [{"type": "web_search"}]
     assert captured["surface"] == "telegram"
+
+
+def test_spark_character_fallback_disables_thinking_payload_for_openai_compat(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_generate(_text: str, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(final="fallback reply")
+
+    fake_module = types.SimpleNamespace(
+        ProviderSpec=_FakeProviderSpec,
+        generate=fake_generate,
+        generate_with_critique=lambda *args, **kwargs: SimpleNamespace(final="fallback reply"),
+        load_persona=lambda *args, **kwargs: SimpleNamespace(version="v-test"),
+    )
+    monkeypatch.setitem(sys.modules, "spark_character", fake_module)
+    monkeypatch.setattr(advisory, "ensure_spark_character_path", lambda: None)
+    monkeypatch.setattr(
+        advisory,
+        "_resolve_spark_character_provider",
+        lambda _env: _FakeProviderSpec(
+            base_url="https://api.openai.com/v1/",
+            model="gpt-4o-mini",
+            api_key="mapped-secret",
+        ),
+    )
+    monkeypatch.setattr(advisory, "_spark_character_provider_tools", lambda _provider: None)
+    monkeypatch.setattr(
+        advisory,
+        "_resolve_chip_or_persona",
+        lambda **_kwargs: SimpleNamespace(version="v-test"),
+    )
+    config = SimpleNamespace(read_env_map=lambda: {"OPENAI_API_KEY": "mapped-secret"})
+
+    reply = advisory.try_spark_character_fallback(
+        user_message="What's the latest OpenAI news?",
+        config_manager=config,
+        surface="telegram",
+    )
+
+    assert reply == "fallback reply"
+    assert captured["disable_thinking"] is False

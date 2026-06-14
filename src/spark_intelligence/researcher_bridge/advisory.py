@@ -3482,6 +3482,7 @@ def try_spark_character_fallback(
     if provider is None:
         return None
     tools = _spark_character_provider_tools(provider)
+    network_policy = _spark_character_fallback_network_policy()
     try:
         try:
             from spark_character.persona import detect_provider_kind  # type: ignore
@@ -3492,14 +3493,17 @@ def try_spark_character_fallback(
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
-            # The spark-character client-side search backend is governed
-            # by an explicit network policy. SIB does not pass that policy
-            # yet, so only provider-native tools are attached here.
+            # Client-side live search stays behind an explicit SIB fallback
+            # network policy; spark-character still decides whether the
+            # prompt actually needs current data before fetching anything.
             result = generate(
                 text,
                 provider=provider,
                 persona=persona,
                 tools=tools,
+                enable_search=True,
+                network_policy=network_policy,
+                disable_thinking=_spark_character_disable_thinking(provider),
                 surface=surface,
             )
         reply = str(result.final or "").strip()
@@ -3558,6 +3562,22 @@ def _resolve_chip_or_persona(*, kind: str | None, surface: str | None = None):
             )
         except Exception:
             return None
+
+
+def _spark_character_fallback_network_policy() -> dict[str, object]:
+    return {
+        "allowed": True,
+        "authority": "spark-intelligence-builder.researcher_bridge.spark_character_fallback",
+        "risk": "network",
+    }
+
+
+def _spark_character_disable_thinking(provider) -> bool:
+    base = (getattr(provider, "base_url", "") or "").lower()
+    model = (getattr(provider, "model", "") or "").lower()
+    if "api.openai.com" in base or model.startswith("gpt-"):
+        return False
+    return True
 
 
 def _spark_character_provider_tools(provider) -> list[dict] | None:
