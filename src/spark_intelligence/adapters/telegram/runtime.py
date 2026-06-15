@@ -672,19 +672,6 @@ def _maybe_save_reply_as_draft(
         if not authority.allowed:
             return reply_text
 
-    try:
-        from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
-        _dbg.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        with _dbg.open("a", encoding="utf-8") as _fh:
-            _fh.write(
-                f"{timestamp}Z user={user} iter={is_iteration} "
-                f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
-            )
-    except Exception:
-        pass
-
     if is_iteration:
         source_draft = None
         try:
@@ -695,12 +682,20 @@ def _maybe_save_reply_as_draft(
                 user_message=user_message,
             )
         except Exception:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "draft: find_draft_for_iteration failed for user=%s", user, exc_info=True
+            )
             source_draft = None
         if source_draft is not None:
             on_topic = True
             try:
                 on_topic = reply_resembles_draft(source_draft.content, reply)
             except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "draft: reply_resembles_draft failed for draft_id=%s", source_draft.draft_id, exc_info=True
+                )
                 on_topic = True
             if on_topic:
                 try:
@@ -711,7 +706,10 @@ def _maybe_save_reply_as_draft(
                         chip_used=chip_used,
                     )
                 except Exception:
-                    pass
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "draft: update_draft_content failed for draft_id=%s", source_draft.draft_id, exc_info=True
+                    )
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
             # preserve the original draft and capture the divergent
@@ -726,7 +724,10 @@ def _maybe_save_reply_as_draft(
                     chip_used=chip_used,
                 )
             except Exception:
-                pass
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "draft: save_draft (off-topic branch) failed for user=%s", user, exc_info=True
+                )
             return reply_text
         try:
             save_draft(
@@ -738,7 +739,10 @@ def _maybe_save_reply_as_draft(
                 chip_used=chip_used,
             )
         except Exception:
-            pass
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "draft: save_draft (no-source-draft branch) failed for user=%s", user, exc_info=True
+            )
         return reply_text
 
     if is_generative:
@@ -752,7 +756,10 @@ def _maybe_save_reply_as_draft(
                 chip_used=chip_used,
             )
         except Exception:
-            pass
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "draft: save_draft (generative branch) failed for user=%s", user, exc_info=True
+            )
         return reply_text
 
     return reply_text
