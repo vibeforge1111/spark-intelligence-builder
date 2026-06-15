@@ -3929,6 +3929,28 @@ def _render_direct_provider_chat_fallback(
         state_db=state_db,
         user_message=user_message,
     )
+    direct_user_prompt = _build_contextual_task(
+        user_message=(
+            f"[channel_kind={channel_kind}]\n"
+            f"[fallback_mode=conversational_under_supported]\n"
+            f"{user_message}"
+        ),
+        channel_kind=channel_kind,
+        attachment_context=attachment_context,
+        active_chip_evaluate=active_chip_evaluate,
+        personality_profile=personality_profile,
+        personality_context_extra=personality_context_extra,
+        browser_search_context_extra=browser_search_context_extra,
+        recent_conversation_context=recent_conversation_context,
+        context_capsule=context_capsule,
+        system_registry_context=system_registry_context,
+        mission_control_context=mission_control_context,
+        capability_router_context=capability_router_context,
+        harness_context=harness_context,
+        provider_id=provider.provider_id,
+        provider_model=provider.default_model,
+        provider_execution_transport=provider.execution_transport,
+    )
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -3940,25 +3962,7 @@ def _render_direct_provider_chat_fallback(
             secret_value=provider.secret_value,
         ),
         system_prompt=base_system_prompt,
-        user_prompt=_build_contextual_task(
-            user_message=(
-                f"[channel_kind={channel_kind}]\n"
-                f"[fallback_mode=conversational_under_supported]\n"
-                f"{user_message}"
-            ),
-            channel_kind=channel_kind,
-            attachment_context=attachment_context,
-            active_chip_evaluate=active_chip_evaluate,
-            personality_profile=personality_profile,
-            personality_context_extra=personality_context_extra,
-            browser_search_context_extra=browser_search_context_extra,
-            recent_conversation_context=recent_conversation_context,
-            context_capsule=context_capsule,
-            system_registry_context=system_registry_context,
-            mission_control_context=mission_control_context,
-            capability_router_context=capability_router_context,
-            harness_context=harness_context,
-        ),
+        user_prompt=direct_user_prompt,
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
             source_kind="researcher_bridge_direct_prompt",
@@ -6135,6 +6139,81 @@ def _truncate_recent_recall(text: str, *, limit: int = 360) -> str:
     return f"{cleaned[: limit - 3].rstrip()}..."
 
 
+def _build_constraint_reasoning_context(user_message: str) -> str:
+    text = str(user_message or "").strip()
+    lowered = text.lower()
+    if not text:
+        return ""
+    signals = 0
+    if any(token in lowered for token in ("do you", "would you", "should i", "should you", "or do you")):
+        signals += 1
+    if any(token in lowered for token in ("save fuel", "save money", "save time", "convenience")):
+        signals += 1
+    if any(token in lowered for token in ("needs a", "needs to", "must", "have to", "goal is", "dirty", "carwash", "car wash")):
+        signals += 1
+    if signals < 2:
+        return ""
+    return "\n".join(
+        [
+            "[Constraint-aware scenario reasoning]",
+            "- For practical scenario questions, first identify the user's actual goal and any real-world constraints stated in the prompt.",
+            "- If one phrase suggests an optimization but another phrase defines a necessary task requirement, do not ignore the task requirement.",
+            "- Do not recommend an action that makes the stated task impossible or pointless.",
+            "- Answer goal first, then tradeoffs like time, fuel, or convenience.",
+            "- If the scenario contains a conflict, explain it explicitly in one or two sentences before giving the recommendation.",
+        ]
+    )
+
+
+def _build_provider_transparency_context(
+    user_message: str,
+    *,
+    provider_id: str = "unknown",
+    provider_model: str = "unknown",
+    provider_execution_transport: str = "unknown",
+) -> str:
+    text = str(user_message or "").strip()
+    lowered = text.lower()
+    if not text:
+        return ""
+    provider_terms = (
+        "deepseek",
+        "openai",
+        "claude",
+        "anthropic",
+        "provider",
+        "model",
+        "backend",
+        "api key",
+        "api",
+    )
+    reasoning_terms = (
+        "did you reason",
+        "reason independently",
+        "fed this by",
+        "where did this answer come from",
+        "which model",
+        "which provider",
+        "source of reasoning",
+        "backend",
+    )
+    if not any(term in lowered for term in provider_terms) and not any(term in lowered for term in reasoning_terms):
+        return ""
+    return "\n".join(
+        [
+            "[Provider/source-of-reasoning transparency]",
+            "- When the user asks where an answer came from, answer truthfully about the runtime path rather than roleplaying independent cognition.",
+            "- Do not claim your reasoning is independent of the configured model/provider when this reply is being generated through that provider.",
+            "- Explain that Spark is the agent/runtime layer coordinating the conversation, and the configured provider/model is the inference backend for the reply.",
+            "- If the provider/model is known in this turn, name it plainly using the facts below.",
+            "- If the provider/model is not known, say that plainly instead of inventing certainty.",
+            f"- provider_id={provider_id}",
+            f"- provider_model={provider_model}",
+            f"- provider_execution_transport={provider_execution_transport}",
+        ]
+    )
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -6152,6 +6231,9 @@ def _build_contextual_task(
     harness_context: str = "",
     user_instructions_context: str = "",
     iteration_draft_context: str = "",
+    provider_id: str = "unknown",
+    provider_model: str = "unknown",
+    provider_execution_transport: str = "unknown",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -6196,6 +6278,17 @@ def _build_contextual_task(
                 "",
             ]
         )
+    scenario_reasoning_context = _build_constraint_reasoning_context(user_message)
+    if scenario_reasoning_context:
+        lines.extend([scenario_reasoning_context, ""])
+    provider_transparency_context = _build_provider_transparency_context(
+        user_message,
+        provider_id=provider_id,
+        provider_model=provider_model,
+        provider_execution_transport=provider_execution_transport,
+    )
+    if provider_transparency_context:
+        lines.extend([provider_transparency_context, ""])
     spark_self_knowledge_context = _build_spark_self_knowledge_context(
         user_message=user_message,
         attachment_context=attachment_context,
