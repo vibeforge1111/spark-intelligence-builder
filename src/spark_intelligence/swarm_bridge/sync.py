@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -298,11 +298,11 @@ class SwarmDecisionResult:
 @dataclass
 class SwarmSession:
     access_token_env: str | None
-    access_token: str | None
+    access_token: str | None = field(repr=False)
     refresh_token_env: str | None
-    refresh_token: str | None
+    refresh_token: str | None = field(repr=False)
     auth_client_key_env: str | None
-    auth_client_key: str | None
+    auth_client_key: str | None = field(repr=False)
     supabase_url: str | None
     access_token_expires_at: str | None
     auth_state: str
