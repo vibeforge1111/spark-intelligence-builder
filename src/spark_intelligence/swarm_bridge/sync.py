@@ -2534,7 +2534,8 @@ def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
     try:
         raw = base64.urlsafe_b64decode(padded.encode("ascii"))
         payload = json.loads(raw.decode("utf-8"))
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return {}
     return payload if isinstance(payload, dict) else {}
 
