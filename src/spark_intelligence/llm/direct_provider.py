@@ -257,7 +257,11 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
     )
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
+            raw = response.read().decode("utf-8")
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                raise RuntimeError(f"Provider returned invalid JSON: {raw[:200]}")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
