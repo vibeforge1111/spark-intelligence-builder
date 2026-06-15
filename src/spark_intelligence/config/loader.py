@@ -311,7 +311,7 @@ class ConfigManager:
             )
             return
         env_map[key] = value
-        content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
+        content = "# Spark Intelligence secrets\n" + "".join(f'{name}="{env_map[name]}"\n' for name in sorted(env_map))
         self._write_env_file(
             content,
             actor_id=actor_id,
