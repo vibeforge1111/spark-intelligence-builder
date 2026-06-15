@@ -53,7 +53,7 @@ _REMEMBER_PREFIXES = (
 )
 
 _INLINE_DIRECTIVE = re.compile(
-    r"\b(?:please\s+)?(?P<directive>always|never|stop)\s+(?P<body>[^.\n]{4,200})",
+    r"(?:^|(?<=[.!?]\s))(?!(?:I|you|we|they|he|she|it)\s)(?:please\s+)?(?P<directive>always|never|stop)\s+(?P<body>[^.\n]{4,200})",
     re.IGNORECASE,
 )
 

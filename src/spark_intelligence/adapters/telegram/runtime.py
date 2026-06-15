@@ -7002,7 +7002,7 @@ def _match_contextual_memory_doctor_command(
         external_user_id=external_user_id,
         session_id=session_id,
         current_request_id=current_request_id,
-        include_memory_doctor=True,
+        include_memory_doctor=False,
     )
     if previous_record is None:
         return None
@@ -7015,6 +7015,13 @@ def _match_contextual_memory_doctor_command(
         score += 2
         threshold = 3
         contextual_signal_names.append("previous_turn_memory_failure_signal")
+    import sys
+    print(f"[MEMORY_DOCTOR_DEBUG] simplified={simplified!r}", file=sys.stderr)
+    print(f"[MEMORY_DOCTOR_DEBUG] prev_user={str(previous_record.get('user_message_preview',''))[:80]!r}", file=sys.stderr)
+    print(f"[MEMORY_DOCTOR_DEBUG] prev_resp={str(previous_record.get('response_preview',''))[:80]!r}", file=sys.stderr)
+    print(f"[MEMORY_DOCTOR_DEBUG] distress={contextual_signal_names}", file=sys.stderr)
+    print(f"[MEMORY_DOCTOR_DEBUG] prev_fail={previous_failure_signals}", file=sys.stderr)
+    print(f"[MEMORY_DOCTOR_DEBUG] score={score} threshold={threshold}", file=sys.stderr)
     if score < threshold:
         return None
     previous_metadata = previous_record.get("runtime_command_metadata") if isinstance(previous_record, dict) else None
@@ -7080,7 +7087,8 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
         signals.append({"name": "diagnostic_question", "weight": 1})
     if re.search(
-        r"\b(?:not\s+[a-z][a-z0-9_-]*|wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+)\b",
+        r"\b(?:wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+|"
+        r"not\s+(?:called|named)\s+\w+|my\s+name\s+is\s+not\s+\w+)\b",
         text,
     ):
         signals.append({"name": "identity_correction_after_wrong_name", "weight": 2})
