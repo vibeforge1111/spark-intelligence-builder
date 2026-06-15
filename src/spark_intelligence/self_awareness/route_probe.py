@@ -77,6 +77,8 @@ def run_route_probe_and_record(
     try:
         probe = _run_route_probe(config_manager, state_db, capability_key=normalized_key)
     except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).warning('route probe failed for %s: %s', normalized_key, exc, exc_info=True)
         return record_route_probe_evidence(
             state_db,
             capability_key=normalized_key,
