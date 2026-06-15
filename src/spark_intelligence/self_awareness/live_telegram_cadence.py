@@ -217,7 +217,9 @@ def _prompt_pack(path: Path) -> list[str]:
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        import logging as _log
+        _log.getLogger(__name__).warning('Cadence JSON invalid in %s: %s', path, exc)
         return {}
     return payload if isinstance(payload, dict) else {}
 
