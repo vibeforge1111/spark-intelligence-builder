@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import urllib.parse
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -650,8 +651,20 @@ def exchange_oauth_authorization_code(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(2048).decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        raise RuntimeError(
+            f"OAuth token exchange for '{provider}' failed (HTTP {exc.code}) against {spec.oauth.token_url}. "
+            f"Check network connectivity and the OAuth app configuration. {detail}".strip()
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            f"OAuth token exchange for '{provider}' failed against {spec.oauth.token_url}: {exc}. "
+            "Check network connectivity, proxies, and whether the token endpoint is reachable."
+        )
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
     return payload
@@ -678,8 +691,20 @@ def exchange_oauth_refresh_token(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(2048).decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        raise RuntimeError(
+            f"OAuth refresh for '{provider}' failed (HTTP {exc.code}) against {spec.oauth.token_url}. "
+            f"Check network connectivity and the OAuth app configuration. {detail}".strip()
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            f"OAuth refresh for '{provider}' failed against {spec.oauth.token_url}: {exc}. "
+            "Check network connectivity, proxies, and whether the token endpoint is reachable."
+        )
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
