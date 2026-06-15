@@ -228,6 +228,38 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.recent_family_members")
         self.assertEqual(recorded_observations[0]["value"], "mother, sister")
 
+    def test_build_researcher_reply_authorizes_adapter_for_entity_memory_without_supplied_governor(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for governed entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for governed entity memory"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-adapter-write",
+                agent_id="agent-1",
+                human_id="human:telegram:111",
+                session_id="session-entity-owner-adapter-write",
+                channel_kind="telegram",
+                user_message="For later, Omar owns the launch checklist.",
+            )
+
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        self.assertEqual(result.routing_decision, "memory_generic_observation")
+        self.assertIn("owned by Omar", result.reply_text)
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "entity.owner")
+        self.assertEqual(recorded_observations[0]["value"], "Omar")
+
     def test_build_researcher_reply_answers_recent_family_shared_time_query_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -4934,7 +4934,7 @@ def _authorize_researcher_memory_read(
     return False
 
 
-def _authorize_researcher_memory_write(
+def _authorize_researcher_memory_write_governor(
     *,
     state_db: StateDB,
     governor_decision: dict[str, Any] | None = None,
@@ -4950,7 +4950,7 @@ def _authorize_researcher_memory_write(
     source_kind: str,
     operation: str,
     allow_adapter_envelope: bool,
-) -> bool:
+) -> dict[str, Any] | None:
     authority_vnext = turn_intent_envelope_vnext
     authority_envelope = turn_intent_envelope
     adapter_envelope_used = False
@@ -4976,6 +4976,24 @@ def _authorize_researcher_memory_write(
         )
         adapter_envelope_used = authority_envelope is not None
     effective_governor_decision = governor_decision
+    if effective_governor_decision is None and adapter_vnext_used and isinstance(authority_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": authority_vnext},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        if authority.allowed and isinstance(authority.governor_decision, dict):
+            effective_governor_decision = authority.governor_decision
     verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
         governor_decision=effective_governor_decision,
         tool_name="memory.write",
@@ -4983,7 +5001,7 @@ def _authorize_researcher_memory_write(
         mutation_class="writes_memory",
     )
     if verdict == "allowed":
-        return True
+        return effective_governor_decision
     reason_codes = list(reasons)
     if turn_intent_envelope is not None and "provided_envelope_not_memory_authority" not in reason_codes:
         reason_codes.append("provided_envelope_not_memory_authority")
@@ -5045,7 +5063,45 @@ def _authorize_researcher_memory_write(
         )
     except Exception:
         pass
-    return False
+    return None
+
+
+def _authorize_researcher_memory_write(
+    *,
+    state_db: StateDB,
+    governor_decision: dict[str, Any] | None = None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+    turn_intent_envelope: TurnIntentEnvelope | None = None,
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    source_kind: str,
+    operation: str,
+    allow_adapter_envelope: bool,
+) -> bool:
+    return (
+        _authorize_researcher_memory_write_governor(
+            state_db=state_db,
+            governor_decision=governor_decision,
+            turn_intent_envelope=turn_intent_envelope,
+            turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            source_kind=source_kind,
+            operation=operation,
+            allow_adapter_envelope=allow_adapter_envelope,
+        )
+        is not None
+    )
 
 
 def _researcher_authority_turn_id(
@@ -10441,7 +10497,7 @@ def build_researcher_reply(
     plan_transition = _detect_current_plan_transition_command(memory_user_message)
     if plan_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
         write_result = None
-        if _authorize_researcher_memory_write(
+        write_governor_decision = _authorize_researcher_memory_write_governor(
             state_db=state_db,
             governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
@@ -10456,7 +10512,8 @@ def build_researcher_reply(
             source_kind="current_plan_transition",
             operation="update",
             allow_adapter_envelope=allow_memory_adapter_envelope,
-        ):
+        )
+        if write_governor_decision is not None:
             write_result = write_profile_fact_to_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -10469,7 +10526,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_plan_transition_command",
-                governor_decision=memory_write_governor_decision,
+                governor_decision=write_governor_decision,
             )
         if write_result is None:
             plan_transition = None
@@ -10533,7 +10590,7 @@ def build_researcher_reply(
     if focus_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
         closed_focus, new_focus = focus_transition
         write_result = None
-        if _authorize_researcher_memory_write(
+        write_governor_decision = _authorize_researcher_memory_write_governor(
             state_db=state_db,
             governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
@@ -10548,7 +10605,8 @@ def build_researcher_reply(
             source_kind="current_focus_transition",
             operation="update",
             allow_adapter_envelope=allow_memory_adapter_envelope,
-        ):
+        )
+        if write_governor_decision is not None:
             write_result = write_profile_fact_to_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -10561,7 +10619,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_focus_transition_command",
-                governor_decision=memory_write_governor_decision,
+                governor_decision=write_governor_decision,
             )
         if write_result is None:
             focus_transition = None
@@ -10856,7 +10914,7 @@ def build_researcher_reply(
         ).strip("_")
         if config_manager.get_path("spark.memory.enabled", default=False):
             try:
-                if _authorize_researcher_memory_write(
+                write_governor_decision = _authorize_researcher_memory_write_governor(
                     state_db=state_db,
                     governor_decision=memory_write_governor_decision,
                     turn_intent_envelope=turn_intent_envelope,
@@ -10871,7 +10929,8 @@ def build_researcher_reply(
                     source_kind="explicit_decision",
                     operation="update",
                     allow_adapter_envelope=allow_memory_adapter_envelope,
-                ):
+                )
+                if write_governor_decision is not None:
                     write_result = write_structured_evidence_to_memory(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -10883,7 +10942,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
-                        governor_decision=memory_write_governor_decision,
+                        governor_decision=write_governor_decision,
                     )
                     accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
                     rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
@@ -10901,7 +10960,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
-                        governor_decision=memory_write_governor_decision,
+                        governor_decision=write_governor_decision,
                     )
                     current_state_accepted_count = int(
                         getattr(current_state_result, "accepted_count", 0) or 0
@@ -11242,7 +11301,7 @@ def build_researcher_reply(
         try:
             detected_profile_fact = detect_profile_fact_observation(memory_user_message)
             if detected_profile_fact is not None:
-                if _authorize_researcher_memory_write(
+                write_governor_decision = _authorize_researcher_memory_write_governor(
                     state_db=state_db,
                     governor_decision=memory_write_governor_decision,
                     turn_intent_envelope=turn_intent_envelope,
@@ -11257,7 +11316,8 @@ def build_researcher_reply(
                     source_kind="profile_fact_observation",
                     operation="update",
                     allow_adapter_envelope=allow_memory_adapter_envelope,
-                ):
+                )
+                if write_governor_decision is not None:
                     write_profile_fact_to_memory(
                         config_manager=config_manager,
                         state_db=state_db,
@@ -11269,14 +11329,14 @@ def build_researcher_reply(
                         session_id=session_id,
                         turn_id=request_id,
                         channel_kind=channel_kind,
-                        governor_decision=memory_write_governor_decision,
+                        governor_decision=write_governor_decision,
                     )
                 else:
                     detected_profile_fact = None
             elif config_manager.get_path("spark.memory.enabled", default=False):
                 detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
                 if detected_memory_event is not None:
-                    if _authorize_researcher_memory_write(
+                    write_governor_decision = _authorize_researcher_memory_write_governor(
                         state_db=state_db,
                         governor_decision=memory_write_governor_decision,
                         turn_intent_envelope=turn_intent_envelope,
@@ -11291,7 +11351,8 @@ def build_researcher_reply(
                         source_kind="telegram_event_observation",
                         operation="update",
                         allow_adapter_envelope=allow_memory_adapter_envelope,
-                    ):
+                    )
+                    if write_governor_decision is not None:
                         write_telegram_event_to_memory(
                             config_manager=config_manager,
                             state_db=state_db,
@@ -11303,7 +11364,7 @@ def build_researcher_reply(
                             session_id=session_id,
                             turn_id=request_id,
                             channel_kind=channel_kind,
-                            governor_decision=memory_write_governor_decision,
+                            governor_decision=write_governor_decision,
                         )
                     else:
                         detected_memory_event = None
@@ -11311,7 +11372,7 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            if _authorize_researcher_memory_write(
+                            write_governor_decision = _authorize_researcher_memory_write_governor(
                                 state_db=state_db,
                                 governor_decision=memory_write_governor_decision,
                                 turn_intent_envelope=turn_intent_envelope,
@@ -11326,7 +11387,8 @@ def build_researcher_reply(
                                 source_kind="generic_memory_deletion",
                                 operation="delete",
                                 allow_adapter_envelope=allow_memory_adapter_envelope,
-                            ):
+                            )
+                            if write_governor_decision is not None:
                                 detected_generic_memory_deletions = detect_telegram_generic_deletions(memory_user_message)
                                 accepted_generic_memory_deletions = []
                                 for deletion_index, generic_memory_deletion in enumerate(
@@ -11347,7 +11409,7 @@ def build_researcher_reply(
                                         turn_id=deletion_turn_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
-                                        governor_decision=memory_write_governor_decision,
+                                        governor_decision=write_governor_decision,
                                     )
                                     if generic_delete_result.accepted_count > 0:
                                         accepted_generic_memory_deletions.append(generic_memory_deletion)
@@ -11366,7 +11428,7 @@ def build_researcher_reply(
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
-                                if _authorize_researcher_memory_write(
+                                write_governor_decision = _authorize_researcher_memory_write_governor(
                                     state_db=state_db,
                                     governor_decision=memory_write_governor_decision,
                                     turn_intent_envelope=turn_intent_envelope,
@@ -11381,7 +11443,8 @@ def build_researcher_reply(
                                     source_kind="generic_memory_observation",
                                     operation="update",
                                     allow_adapter_envelope=allow_memory_adapter_envelope,
-                                ):
+                                )
+                                if write_governor_decision is not None:
                                     generic_write_result = write_profile_fact_to_memory(
                                         config_manager=config_manager,
                                         state_db=state_db,
@@ -11394,7 +11457,7 @@ def build_researcher_reply(
                                         turn_id=request_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
-                                        governor_decision=memory_write_governor_decision,
+                                        governor_decision=write_governor_decision,
                                     )
                                 else:
                                     generic_write_result = None
@@ -11476,7 +11539,7 @@ def build_researcher_reply(
             pass
 
     if assessed_generic_memory_candidate is not None:
-        memory_candidate_authorized = _authorize_researcher_memory_write(
+        write_governor_decision = _authorize_researcher_memory_write_governor(
             state_db=state_db,
             governor_decision=memory_write_governor_decision,
             turn_intent_envelope=turn_intent_envelope,
@@ -11492,7 +11555,7 @@ def build_researcher_reply(
             operation=str(assessed_generic_memory_candidate.operation or "update"),
             allow_adapter_envelope=allow_memory_adapter_envelope,
         )
-        if not memory_candidate_authorized:
+        if write_governor_decision is None:
             assessed_generic_memory_candidate = None
         elif assessed_generic_memory_candidate.outcome == "structured_evidence":
             try:
@@ -11508,7 +11571,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
-                    governor_decision=memory_write_governor_decision,
+                    governor_decision=write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11525,7 +11588,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
-                    governor_decision=memory_write_governor_decision,
+                    governor_decision=write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11543,7 +11606,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_belief_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
-                    governor_decision=memory_write_governor_decision,
+                    governor_decision=write_governor_decision,
                 )
             except Exception:
                 pass

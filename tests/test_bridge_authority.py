@@ -479,6 +479,32 @@ def test_researcher_memory_write_blocks_bare_vnext_without_governor(tmp_path) ->
     assert blocks[0]["facts_json"]["reason_codes"] == ["missing_governor_decision"]
 
 
+def test_researcher_memory_write_authorizes_internally_built_adapter_vnext(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+
+    allowed = _authorize_researcher_memory_write(
+        state_db=state_db,
+        governor_decision=None,
+        turn_intent_envelope=None,
+        turn_intent_envelope_vnext=None,
+        run_id=None,
+        request_id="req-researcher-write-adapter-vnext",
+        channel_kind="telegram",
+        session_id="session-researcher-write-adapter-vnext",
+        human_id="human-researcher-write-adapter-vnext",
+        agent_id="agent:test",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+        operation="update",
+        allow_adapter_envelope=True,
+    )
+
+    assert allowed is True
+    blocks = latest_events_by_type(state_db, event_type="policy_gate_blocked", limit=5)
+    assert blocks == []
+
+
 def test_researcher_memory_write_authorizes_with_governor_decision(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()
