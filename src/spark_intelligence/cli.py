@@ -7121,12 +7121,16 @@ def handle_auth_login(args: argparse.Namespace) -> int:
         return 2
 
     if args.callback_url:
-        result = complete_oauth_login(
-            config_manager=config_manager,
-            state_db=state_db,
-            provider=args.provider,
-            callback_url=args.callback_url,
-        )
+        try:
+            result = complete_oauth_login(
+                config_manager=config_manager,
+                state_db=state_db,
+                provider=args.provider,
+                callback_url=args.callback_url,
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(result.to_json() if args.json else result.to_text())
         return 0
 

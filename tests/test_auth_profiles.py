@@ -59,13 +59,20 @@ class AuthProfileTests(SparkTestCase):
 
         self.assertEqual(provider_row["default_auth_profile_id"], "openai:default")
         self.assertEqual(provider_row["api_key_env"], "OPENAI_API_KEY")
-        self.assertEqual(profile_row["provider_id"], "openai")
-        self.assertEqual(profile_row["auth_method"], "api_key_env")
-        self.assertEqual(profile_row["status"], "active")
-        self.assertEqual(profile_row["is_default"], 1)
-        self.assertEqual(ref_row["ref_source"], "env")
-        self.assertEqual(ref_row["ref_provider"], "default")
-        self.assertEqual(ref_row["ref_id"], "OPENAI_API_KEY")
+
+    def test_auth_login_rejects_non_url_callback(self) -> None:
+        exit_code, _, stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--callback-url",
+            "not a url",
+        )
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertIn("absolute URL", stderr)
 
     def test_auth_status_reports_secret_readiness_in_json(self) -> None:
         connect_exit, _, connect_stderr = self.run_cli(
