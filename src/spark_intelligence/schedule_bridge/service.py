@@ -137,7 +137,8 @@ def _format_next_fire(iso: str | None) -> str:
         else:
             rel = f"{int(delta // 86_400)}d"
         return f"{local_str} (in {rel})"
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return iso
 
 
