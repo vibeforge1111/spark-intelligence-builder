@@ -575,7 +575,9 @@ def _json_dict(value: Any) -> dict[str, Any]:
         return value
     try:
         parsed = json.loads(str(value))
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        import logging as _log
+        _log.getLogger(__name__).warning('procedural lesson JSON invalid: %s', exc)
         return {}
     return parsed if isinstance(parsed, dict) else {}
 
