@@ -242,11 +242,19 @@ def _validate_discord_interaction_signature(
     signature: str | None,
     timestamp: str | None,
     body: bytes,
+    max_skew_seconds: int = 300,
 ) -> tuple[int, str] | None:
     if not signature:
         return (401, "Discord signature header is missing.")
     if not timestamp:
         return (401, "Discord signature timestamp header is missing.")
+    try:
+        ts = float(timestamp)
+    except (ValueError, TypeError):
+        return (401, "Discord signature timestamp header is invalid.")
+    import time
+    if abs(time.time() - ts) > max_skew_seconds:
+        return (401, "Discord signature timestamp is too far from current time.")
     try:
         verify_key = VerifyKey(bytes.fromhex(interaction_public_key))
     except ValueError:
