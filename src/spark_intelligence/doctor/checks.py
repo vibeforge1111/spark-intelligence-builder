@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from spark_intelligence.attachments import attachment_status
@@ -16,7 +17,14 @@ from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.jobs.service import oauth_maintenance_health
+from spark_intelligence.jobs.service import (
+    HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID,
+    MEMORY_MAINTENANCE_JOB_ID,
+    OAUTH_MAINTENANCE_JOB_ID,
+    OBSERVABILITY_RETENTION_JOB_ID,
+    list_job_records,
+    oauth_maintenance_health,
+)
 from spark_intelligence.memory.doctor import run_memory_doctor
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
@@ -28,6 +36,7 @@ from spark_intelligence.observability.store import (
     repair_missing_memory_lane_records,
     repair_non_promotable_chip_hook_dispositions,
 )
+from spark_intelligence.ops.backups import backup_age_health, configured_backup_root
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -117,6 +126,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(DoctorCheck("config.yaml", paths.config_yaml.exists(), str(paths.config_yaml)))
     checks.append(DoctorCheck(".env", paths.env_file.exists(), str(paths.env_file)))
     checks.append(DoctorCheck("state.db", paths.state_db.exists(), str(paths.state_db)))
+    checks.append(_state_backup_age_check(config_manager))
     env_permissions_ok, env_permissions_detail = config_manager.env_file_permission_status()
     checks.append(DoctorCheck(".env-permissions", env_permissions_ok, env_permissions_detail))
 
@@ -215,6 +225,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         state_db=state_db,
     )
     checks.append(DoctorCheck("oauth-maintenance", oauth_maintenance_ok, oauth_maintenance_detail))
+    checks.append(_jobs_freshness_doctor_check(config_manager=config_manager, state_db=state_db))
     provider_execution_ok, provider_execution_detail = provider_execution_health(
         config_manager=config_manager,
         state_db=state_db,
@@ -317,6 +328,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         )
 
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
+    checks.append(_telegram_single_receiver_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
     memory_doctor_report = run_memory_doctor(state_db)
@@ -332,6 +344,44 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
     return DoctorReport(checks=checks)
+
+
+def _state_backup_age_check(config_manager: ConfigManager) -> DoctorCheck:
+    configured_root = str(config_manager.get_path("spark.backups.root", default="") or "").strip()
+    enforce = bool(configured_root) or _is_canonical_live_home(config_manager)
+    backup_root = configured_backup_root(config_manager)
+    health = backup_age_health(backup_root=backup_root)
+    if enforce:
+        return DoctorCheck("state-backup-age", health.ok, health.detail)
+    if health.latest_path:
+        return DoctorCheck("state-backup-age", True, health.detail)
+    return DoctorCheck("state-backup-age", True, f"not required for non-live home; default_root={backup_root}")
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        left_resolved = left.resolve()
+    except OSError:
+        left_resolved = left.absolute()
+    try:
+        right_resolved = right.resolve()
+    except OSError:
+        right_resolved = right.absolute()
+    return str(left_resolved).casefold() == str(right_resolved).casefold()
+
+
+def _is_canonical_live_home(config_manager: ConfigManager) -> bool:
+    canonical_live_home = Path.home() / ".spark" / "state" / "spark-intelligence"
+    return _same_path(config_manager.paths.home, canonical_live_home)
+
+
+def _jobs_freshness_doctor_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
+    check = _jobs_freshness_check(state_db=state_db)
+    if check.ok:
+        return check
+    if _is_canonical_live_home(config_manager):
+        return check
+    return DoctorCheck("jobs-freshness", True, f"not required for non-live home; {check.detail}")
 
 
 def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
@@ -681,6 +731,30 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
     return DoctorCheck("telegram-runtime", True, " ".join(detail_parts))
 
 
+def _telegram_single_receiver_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
+    autostart_enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
+    summary = build_telegram_runtime_summary(config_manager, state_db)
+    active_status = (summary.status or "enabled") in {"enabled", "configured"}
+    telegram_record_resolves = summary.configured and bool(summary.auth_ref) and active_status
+    if autostart_enabled and telegram_record_resolves:
+        return DoctorCheck(
+            "telegram-single-receiver",
+            False,
+            (
+                "runtime.autostart.enabled=true would start Builder as a competing Telegram receiver; "
+                "SECURITY.md launch boundary and docs/TELEGRAM_BRIDGE.md require spark-telegram-bot "
+                "as the single live ingress owner"
+            ),
+        )
+    if telegram_record_resolves:
+        return DoctorCheck(
+            "telegram-single-receiver",
+            True,
+            "Builder autostart disabled; spark-telegram-bot remains the single live ingress owner",
+        )
+    return DoctorCheck("telegram-single-receiver", True, "no active Telegram receiver conflict")
+
+
 def _discord_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
     summary = build_discord_runtime_summary(config_manager, state_db)
     if not summary.configured:
@@ -968,3 +1042,37 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
         )
     )
     return checks
+
+
+def _jobs_freshness_check(*, state_db: StateDB, max_age: timedelta = timedelta(hours=48)) -> DoctorCheck:
+    required_job_ids = (
+        OAUTH_MAINTENANCE_JOB_ID,
+        MEMORY_MAINTENANCE_JOB_ID,
+        OBSERVABILITY_RETENTION_JOB_ID,
+        HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID,
+    )
+    records = {record.job_id: record for record in list_job_records(state_db)}
+    now = datetime.now(UTC)
+    failures: list[str] = []
+    fresh: list[str] = []
+    for job_id in required_job_ids:
+        record = records.get(job_id)
+        if record is None:
+            failures.append(f"{job_id}:missing")
+            continue
+        if not record.last_run_at:
+            failures.append(f"{job_id}:never")
+            continue
+        try:
+            last_run = datetime.fromisoformat(record.last_run_at.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            failures.append(f"{job_id}:invalid:{record.last_run_at}")
+            continue
+        age_seconds = max(0, int((now - last_run).total_seconds()))
+        if age_seconds > max_age.total_seconds():
+            failures.append(f"{job_id}:stale:{record.last_run_at}")
+        else:
+            fresh.append(f"{job_id}:{record.last_run_at}")
+    if failures:
+        return DoctorCheck("jobs-freshness", False, " ".join(failures))
+    return DoctorCheck("jobs-freshness", True, " ".join(fresh) if fresh else "no builtin jobs found")

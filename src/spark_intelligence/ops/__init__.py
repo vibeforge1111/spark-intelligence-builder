@@ -21,12 +21,21 @@ from spark_intelligence.ops.service import (
     log_operator_event,
     snooze_webhook_alert,
 )
+from spark_intelligence.ops.backups import (
+    BackupAgeHealth,
+    StateBackupReport,
+    backup_age_health,
+    configured_backup_root,
+    run_state_backup,
+)
 
 __all__ = [
+    "BackupAgeHealth",
     "ObserverHandoffReport",
     "ObserverPacketExportReport",
     "ObserverPacketReport",
     "PersonalityReport",
+    "StateBackupReport",
     "OperatorEventReport",
     "OperatorInboxReport",
     "OperatorSecurityReport",
@@ -34,6 +43,7 @@ __all__ = [
     "build_operator_inbox",
     "build_personality_report",
     "build_operator_security_report",
+    "backup_age_health",
     "build_observer_handoff_payload",
     "clear_webhook_alert_snooze",
     "export_operator_observer_packets",
@@ -43,5 +53,7 @@ __all__ = [
     "list_operator_events",
     "list_webhook_alert_snoozes",
     "log_operator_event",
+    "configured_backup_root",
+    "run_state_backup",
     "snooze_webhook_alert",
 ]

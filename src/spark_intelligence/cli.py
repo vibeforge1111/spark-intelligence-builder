@@ -166,18 +166,21 @@ from spark_intelligence.observability.store import (
 )
 from spark_intelligence.observability.jsonl_residue import build_jsonl_residue_report
 from spark_intelligence.ops import (
+    backup_age_health,
     build_observer_handoff_payload,
     build_personality_report,
     build_operator_inbox,
     export_operator_observer_packets,
     build_operator_security_report,
     clear_webhook_alert_snooze,
+    configured_backup_root,
     list_observer_handoffs,
     list_observer_packets,
     list_operator_events,
     list_webhook_alert_events,
     list_webhook_alert_snoozes,
     log_operator_event,
+    run_state_backup,
     snooze_webhook_alert,
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
@@ -330,6 +333,8 @@ class SystemStatus:
             if contradiction_key:
                 lines.append(f"- contradiction key: {contradiction_key}")
         for check in self.payload.get("doctor", {}).get("checks") or []:
+            if str(check.get("name") or "") == "state-backup-age":
+                lines.append(f"- backup age: {str(check.get('detail') or 'unknown')}")
             if bool(check.get("ok")):
                 continue
             name = str(check.get("name") or "").strip()
@@ -2880,6 +2885,14 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_backup_state_parser = jobs_subparsers.add_parser(
+        "backup-state",
+        help="Back up live state.db to the daily backup directory and rotate old daily copies",
+    )
+    jobs_backup_state_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_backup_state_parser.add_argument("--backup-root", help="Override backup root; defaults to ~/.spark_backups")
+    jobs_backup_state_parser.add_argument("--no-weekly", action="store_true", help="Skip weekly sidecar state copies")
+    jobs_backup_state_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     jobs_prune_observability_parser = jobs_subparsers.add_parser(
         "prune-observability",
         help="Prune old observability mirror rows and optionally VACUUM state.db",
@@ -2906,6 +2919,10 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_observability_report_parser.add_argument(
         "--older-than",
         help="Include counts that would be pruned by this ISO-8601 cutoff",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--extended-older-than",
+        help="Include growth-table counts that would be pruned by the extended retention cutoff",
     )
     jobs_observability_report_parser.add_argument(
         "--include-builder-events",
@@ -8446,6 +8463,33 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_jobs_backup_state(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    backup_root = Path(args.backup_root).expanduser() if getattr(args, "backup_root", None) else configured_backup_root(config_manager)
+    report = run_state_backup(
+        home=config_manager.paths.home,
+        backup_root=backup_root,
+        include_weekly=not bool(getattr(args, "no_weekly", False)),
+    )
+    health = backup_age_health(backup_root=backup_root)
+    payload = report.to_payload()
+    payload["backup_age"] = {
+        "ok": health.ok,
+        "detail": health.detail,
+        "latest_path": health.latest_path,
+        "age_seconds": health.age_seconds,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(report.to_text())
+        print(f"- backup_age: {health.detail}")
+    return 0 if health.ok else 1
+
+
 def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8493,10 +8537,12 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     older_than = str(getattr(args, "older_than", "") or "").strip() or None
+    extended_older_than = str(getattr(args, "extended_older_than", "") or "").strip() or None
     state_report = build_observability_store_report(
         state_db,
         older_than=older_than,
         include_builder_events=bool(getattr(args, "include_builder_events", False)),
+        extended_older_than=extended_older_than,
     )
     gateway_report = None
     if bool(getattr(args, "include_gateway_logs", False)):
@@ -8528,6 +8574,9 @@ def handle_jobs_observability_report(args: argparse.Namespace) -> int:
             lines.append(f"- {table}: {count}")
         if state_report.cutoff is not None:
             lines.append(f"- cutoff: {state_report.cutoff}")
+        if state_report.extended_cutoff is not None:
+            lines.append(f"- extended_cutoff: {state_report.extended_cutoff}")
+        if state_report.cutoff is not None or state_report.extended_cutoff is not None:
             lines.append(f"- total_prunable: {state_report.total_prunable}")
             for table, count in sorted(state_report.prunable_counts.items()):
                 lines.append(f"- prunable {table}: {count}")
@@ -10207,6 +10256,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "jobs" and args.jobs_command == "backup-state":
+        return handle_jobs_backup_state(args)
     if args.command == "jobs" and args.jobs_command == "prune-observability":
         return handle_jobs_prune_observability(args)
     if args.command == "jobs" and args.jobs_command == "observability-report":

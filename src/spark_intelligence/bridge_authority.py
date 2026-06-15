@@ -265,6 +265,9 @@ def build_governor_decision_from_bridge_authority(
     ]
     return {
         "schema_version": "governor-decision-v1",
+        "wire_contract_version": int(
+            authorization.get("wire_contract_version") or ledger.get("wire_contract_version") or 1
+        ),
         "decision_id": f"governor-decision:{authorization.get('decision_id') or envelope.get('turn_id')}",
         "created_at": authorization.get("created_at") or ledger.get("created_at") or envelope.get("created_at"),
         "surface": envelope.get("surface") or "builder",

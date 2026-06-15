@@ -81,6 +81,7 @@ class ObservabilityStoreReport:
     table_counts: dict[str, int]
     cutoff: str | None
     prunable_counts: dict[str, int]
+    extended_cutoff: str | None = None
 
     @property
     def total_prunable(self) -> int:
@@ -95,6 +96,7 @@ class ObservabilityStoreReport:
             "page_size": self.page_size,
             "table_counts": self.table_counts,
             "cutoff": self.cutoff,
+            "extended_cutoff": self.extended_cutoff,
             "prunable_counts": self.prunable_counts,
             "total_prunable": self.total_prunable,
         }
@@ -112,31 +114,45 @@ def _normalize_prune_cutoff(value: str | datetime) -> str:
     return cutoff
 
 
+BASE_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    ("event_log", "recorded_at"),
+    ("tool_call_ledger", "created_at"),
+    ("provider_runtime_events", "created_at"),
+)
+BUILDER_EVENTS_RETENTION_SPEC = ("builder_events", "created_at")
+EXTENDED_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    BUILDER_EVENTS_RETENTION_SPEC,
+    ("memory_lane_records", "recorded_at"),
+    ("provenance_mutation_log", "recorded_at"),
+    ("observer_packet_records", "created_at"),
+    ("runtime_environment_snapshots", "created_at"),
+    ("attachment_state_snapshots", "created_at"),
+)
+REPORT_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    ("event_log", "recorded_at"),
+    *EXTENDED_RETENTION_TABLE_SPECS,
+    ("tool_call_ledger", "created_at"),
+    ("provider_runtime_events", "created_at"),
+)
+
+
 def build_observability_store_report(
     state_db: StateDB,
     *,
     older_than: str | datetime | None = None,
     include_builder_events: bool = False,
+    extended_older_than: str | datetime | None = None,
 ) -> ObservabilityStoreReport:
     cutoff = _normalize_prune_cutoff(older_than) if older_than is not None else None
-    table_specs = [
-        ("event_log", "recorded_at"),
-        ("builder_events", "created_at"),
-        ("tool_call_ledger", "created_at"),
-        ("provider_runtime_events", "created_at"),
-    ]
-    prunable_specs = [
-        ("event_log", "recorded_at"),
-        ("tool_call_ledger", "created_at"),
-        ("provider_runtime_events", "created_at"),
-    ]
+    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
+    prunable_specs = list(BASE_RETENTION_TABLE_SPECS)
     if include_builder_events:
-        prunable_specs.append(("builder_events", "created_at"))
+        prunable_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
 
     with state_db.connect() as conn:
         table_counts = {
             table_name: int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] or 0)
-            for table_name, _column_name in table_specs
+            for table_name, _column_name in REPORT_TABLE_SPECS
         }
         prunable_counts: dict[str, int] = {}
         if cutoff is not None:
@@ -150,6 +166,19 @@ def build_observability_store_report(
                 )
                 for table_name, column_name in prunable_specs
             }
+        if extended_cutoff is not None:
+            prunable_counts.update(
+                {
+                    table_name: int(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
+                            (extended_cutoff,),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                    for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS
+                }
+            )
         page_count = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
         freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
         page_size = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
@@ -168,6 +197,7 @@ def build_observability_store_report(
         table_counts=table_counts,
         cutoff=cutoff,
         prunable_counts=prunable_counts,
+        extended_cutoff=extended_cutoff,
     )
 
 
@@ -176,16 +206,14 @@ def prune_observability_store(
     *,
     older_than: str | datetime,
     include_builder_events: bool = False,
+    extended_older_than: str | datetime | None = None,
     vacuum: bool = False,
 ) -> ObservabilityPruneResult:
     cutoff = _normalize_prune_cutoff(older_than)
-    delete_specs = [
-        ("event_log", "recorded_at"),
-        ("tool_call_ledger", "created_at"),
-        ("provider_runtime_events", "created_at"),
-    ]
+    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
+    delete_specs = list(BASE_RETENTION_TABLE_SPECS)
     if include_builder_events:
-        delete_specs.append(("builder_events", "created_at"))
+        delete_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
 
     deleted_counts: dict[str, int] = {}
     with state_db.connect() as conn:
@@ -195,6 +223,13 @@ def prune_observability_store(
                 (cutoff,),
             )
             deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        if extended_cutoff is not None:
+            for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS:
+                cursor = conn.execute(
+                    f"DELETE FROM {table_name} WHERE {column_name} < ?",
+                    (extended_cutoff,),
+                )
+                deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
         conn.commit()
 
         total_deleted = sum(deleted_counts.values())

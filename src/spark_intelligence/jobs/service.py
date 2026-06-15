@@ -28,6 +28,7 @@ OBSERVABILITY_RETENTION_JOB_ID = "observability:retention"
 HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID = "harness:self-evolution-observe"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
 DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
+DEFAULT_OBSERVABILITY_EXTENDED_RETENTION_DAYS = 180
 DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS = True
 DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT = 20
 DEFAULT_TOOL_LEDGER_TIMEOUT_HOURS = 24
@@ -271,10 +272,13 @@ def _run_job(
             return result
         if job_kind == "observability_retention":
             retention_days = _observability_retention_days(config_manager)
+            extended_retention_days = _observability_extended_retention_days(config_manager)
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+            extended_cutoff = datetime.now(UTC) - timedelta(days=extended_retention_days)
             payload = prune_observability_store(
                 state_db,
                 older_than=cutoff,
+                extended_older_than=extended_cutoff,
                 vacuum=True,
                 include_builder_events=False,
             )
@@ -284,10 +288,17 @@ def _run_job(
             gateway_log_deleted = gateway_log_payload.total_deleted if gateway_log_payload is not None else 0
             result = (
                 f"retention_days={retention_days} cutoff={payload.cutoff} "
+                f"extended_retention_days={extended_retention_days} "
                 f"deleted={payload.total_deleted} "
                 f"event_log={payload.deleted_counts.get('event_log', 0)} "
                 f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
                 f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
+                f"builder_events={payload.deleted_counts.get('builder_events', 0)} "
+                f"memory_lane_records={payload.deleted_counts.get('memory_lane_records', 0)} "
+                f"provenance_mutation_log={payload.deleted_counts.get('provenance_mutation_log', 0)} "
+                f"observer_packet_records={payload.deleted_counts.get('observer_packet_records', 0)} "
+                f"runtime_environment_snapshots={payload.deleted_counts.get('runtime_environment_snapshots', 0)} "
+                f"attachment_state_snapshots={payload.deleted_counts.get('attachment_state_snapshots', 0)} "
                 f"gateway_logs_deleted={gateway_log_deleted} "
                 f"vacuumed={payload.vacuumed}"
             )
@@ -303,6 +314,7 @@ def _run_job(
                     "job_kind": job_kind,
                     "result": result,
                     "retention_days": retention_days,
+                    "extended_retention_days": extended_retention_days,
                     "cutoff": payload.cutoff,
                     "deleted_counts": payload.deleted_counts,
                     "gateway_logs": gateway_log_payload.to_payload() if gateway_log_payload is not None else None,
@@ -438,6 +450,18 @@ def _observability_retention_days(config_manager: ConfigManager) -> int:
         value = int(str(raw))
     except (TypeError, ValueError):
         return DEFAULT_OBSERVABILITY_RETENTION_DAYS
+    return max(value, 1)
+
+
+def _observability_extended_retention_days(config_manager: ConfigManager) -> int:
+    raw = config_manager.get_path(
+        "observability.retention.extended_days",
+        default=DEFAULT_OBSERVABILITY_EXTENDED_RETENTION_DAYS,
+    )
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_OBSERVABILITY_EXTENDED_RETENTION_DAYS
     return max(value, 1)
 
 

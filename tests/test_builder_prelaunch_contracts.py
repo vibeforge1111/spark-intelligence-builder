@@ -2708,6 +2708,29 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("total=0", checks["tool-call-ledger-adoption"].detail)
         self.assertIn("no canonical governed tool-call ledgers", checks["tool-call-ledger-adoption"].detail)
 
+    def test_doctor_allows_telegram_record_when_builder_autostart_is_disabled(self) -> None:
+        self.add_telegram_channel(bot_token="telegram-test-token")
+        self.config_manager.set_path("runtime.autostart.enabled", False)
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("telegram-single-receiver", checks)
+        self.assertTrue(checks["telegram-single-receiver"].ok)
+        self.assertIn("single live ingress owner", checks["telegram-single-receiver"].detail)
+
+    def test_doctor_warns_when_builder_autostart_competes_with_telegram_owner(self) -> None:
+        self.add_telegram_channel(bot_token="telegram-test-token")
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("telegram-single-receiver", checks)
+        self.assertFalse(checks["telegram-single-receiver"].ok)
+        self.assertIn("runtime.autostart.enabled=true", checks["telegram-single-receiver"].detail)
+        self.assertIn("SECURITY.md", checks["telegram-single-receiver"].detail)
+
     def test_doctor_reports_tool_call_ledger_adoption_counts(self) -> None:
         persist_bound_ledger(
             self.state_db,

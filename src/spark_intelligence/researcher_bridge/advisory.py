@@ -57,6 +57,7 @@ from spark_intelligence.harness_contract import (
     authorize_tool_call,
     authorize_vnext_tool_call,
     build_vnext_action_intent_envelope,
+    build_vnext_tool_intent_envelope,
     parse_turn_intent_envelope,
     verify_governor_tool_authority,
 )
@@ -4505,6 +4506,83 @@ def _build_researcher_memory_write_governor_decision(
 ) -> dict[str, Any] | None:
     if isinstance(governor_decision, dict):
         return governor_decision
+    return None
+
+
+def _build_researcher_advisory_execution_governor_decision(
+    *,
+    state_db: StateDB,
+    request_id: str,
+    run_id: str | None,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    try:
+        envelope_vnext = build_vnext_tool_intent_envelope(
+            surface=channel_kind or "builder",
+            actor_id_ref=human_id,
+            request_id=request_id,
+            source_kind="researcher_bridge_advisory_execute",
+            tool_name="researcher.advisory.execute",
+            owner_system="spark-researcher",
+            mutation_class="external_network",
+            intent_summary="SIB researcher bridge selected governed spark-researcher advisory execution.",
+            raw_turn_summary=(
+                f"Researcher bridge request {request_id} selected governed advisory execution. "
+                "Raw Telegram text omitted from authority packet."
+            ),
+            confidence=0.95,
+            external_network=True,
+        )
+    except Exception:
+        envelope_vnext = None
+    if not isinstance(envelope_vnext, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope_vnext},
+        tool_name="researcher.advisory.execute",
+        owner_system="spark-researcher",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="researcher_bridge",
+        component="researcher_bridge",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+    try:
+        record_policy_gate_block(
+            state_db,
+            component="researcher_bridge",
+            policy_domain="governor_authority",
+            gate_name="researcher_bridge.advisory_execute",
+            source_kind="governor_decision",
+            source_ref=request_id,
+            summary="Researcher bridge blocked advisory execution without matching Governor authority.",
+            action="blocked",
+            reason_code="researcher_advisory_authority_blocked",
+            blocked_stage="researcher_advisory_execute",
+            input_ref=request_id,
+            severity="high",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            actor_id="researcher_bridge",
+            provenance={"owner_system": "spark-researcher", "human_id": human_id, "agent_id": agent_id},
+            facts={"reason_codes": list(authority.reason_codes or ())},
+        )
+    except Exception:
+        pass
     return None
 
 
@@ -15607,6 +15685,15 @@ def build_researcher_reply(
                         promotion_disposition=promotion_disposition,
                     )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
+                    advisory_execution_governor_decision = _build_researcher_advisory_execution_governor_decision(
+                        state_db=state_db,
+                        request_id=request_id,
+                        run_id=run_id,
+                        channel_kind=channel_kind,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                    )
                     with _temporary_provider_env(
                         provider_selection.provider,
                         state_db=state_db,
@@ -15620,6 +15707,8 @@ def build_researcher_reply(
                             model=provider_selection.model_family,
                             command_override=_command_override_for_provider(provider_selection),
                             dry_run=False,
+                            governor_decision=advisory_execution_governor_decision,
+                            memory_governor_decision=memory_write_governor_decision,
                         )
                     reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
                 else:
@@ -15964,6 +16053,9 @@ def _temporary_provider_env(
         "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": provider.base_url or "",
         "SPARK_INTELLIGENCE_PROVIDER_SECRET": provider.secret_value,
     }
+    if provider.execution_transport == "direct_http":
+        values["SPARK_RESEARCHER_ENABLE_GENERIC_ADAPTER"] = "1"
+        values["SPARK_RESEARCHER_ADAPTER_ALLOWED_EXECUTABLES"] = Path(sys.executable).name
     if state_db is not None:
         values["SPARK_INTELLIGENCE_STATE_DB_PATH"] = str(state_db.path)
     if run_id:

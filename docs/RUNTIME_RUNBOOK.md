@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Runtime Runbook
 
-Last updated: 2026-06-08
+Last updated: 2026-06-12
 
 This runbook is for local operators and future implementation sessions. It captures the safe checks to run before calling Builder healthy.
 
@@ -39,6 +39,59 @@ the same check reports it as `desktop_backlog` when the checkout carries a
 `.spark-source-truth.toml` marker with `canonical = false`. Without that marker
 it reports `desktop_backlog_unmarked`. Both labels are backlog evidence, not
 live runtime truth.
+
+## Live Runtime Topology
+
+The launch topology has exactly one Telegram receiver.
+
+```text
+Telegram
+  -> spark-telegram-bot long-polling ingress
+  -> Builder gateway simulation/runtime entrypoints
+  -> provider, memory, researcher, swarm, and chip decisions
+  -> spark-telegram-bot delivery
+```
+
+Live anchors:
+
+- Spark home: `C:\Users\USER\.spark`
+- Builder home: `C:\Users\USER\.spark\state\spark-intelligence`
+- Telegram ingress owner: `spark-telegram-bot`
+- Builder source truth: `C:\Users\USER\.spark\modules\spark-intelligence-builder\source`
+- Recursive relay: `http://127.0.0.1:8791`
+- Spawner UI: `http://127.0.0.1:3333`
+- Startup launcher: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\spark-telegram-agent.vbs`
+- Startup command: `C:\Users\USER\.spark\bin\spark.cmd start --allow-boot-warnings telegram-starter`
+
+Builder stores Telegram channel contracts and handles runtime decisions behind
+the bot. Builder must not autostart its own long-polling `gateway start
+--continuous` receiver while `spark-telegram-bot` owns the live token.
+`runtime.autostart.enabled` should stay `false` in the Builder home.
+
+Retired topology:
+
+- `C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-live-telegram-real` is not the live home.
+- The old tmp-home Startup launcher is disabled.
+- The old tmp-home `runtime.autostart.enabled` flag should stay `false`.
+
+Operator boot helpers that remain expected:
+
+- `Spark SIB Jobs Tick`
+- `Spark SIB State Backup`
+- `spark-telegram-agent.vbs`
+
+Topology checks:
+
+```powershell
+C:\Users\USER\.spark\bin\spark.cmd status
+python -m spark_intelligence.cli config show --home C:\Users\USER\.spark\state\spark-intelligence --path runtime.autostart.enabled
+python -m spark_intelligence.cli doctor --home C:\Users\USER\.spark\state\spark-intelligence
+```
+
+The `telegram-single-receiver` doctor check warns if Builder autostart is
+enabled while a live Telegram channel record resolves. That warning cites the
+launch boundary in `SECURITY.md` and the single-owner rule in
+`docs/TELEGRAM_BRIDGE.md`.
 
 ```powershell
 python -m pip install -e .

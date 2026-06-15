@@ -89,6 +89,7 @@ class ConfigManager:
             "channels": {"records": {}},
             "identity": {"default_pairing_mode": "pairing", "shared_surfaces_enabled": False},
             "jobs": {"scheduler": {"enabled": True, "tick_seconds": 60}},
+            "observability": {"retention": {"days": 90, "extended_days": 180, "include_gateway_logs": True}},
             "spark": {
                 "researcher": {
                     "enabled": True,
