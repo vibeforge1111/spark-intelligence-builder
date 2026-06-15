@@ -157,6 +157,7 @@ def _git_changed_paths(repo_root: Path) -> list[str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=30,
         )
         untracked_result = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
@@ -164,6 +165,7 @@ def _git_changed_paths(repo_root: Path) -> list[str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=30,
         )
     except OSError:
         return []
