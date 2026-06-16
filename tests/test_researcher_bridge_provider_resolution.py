@@ -3933,6 +3933,41 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "memory_open_recall_query")
         self.assertNotIn("saved entity state", result.reply_text)
 
+    def test_specific_policy_memory_recall_uses_open_recall_not_identity_summary(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        user_message = (
+            "What do you remember about memory-readiness-policy-20260616b? "
+            "Include the source or proof boundary."
+        )
+        query = _detect_open_memory_recall_query(user_message)
+
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "evidence_recall")
+        self.assertEqual(query.topic, "memory-readiness-policy-20260616b")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for direct memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-readiness-policy-recall",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-readiness-policy-recall",
+                channel_kind="telegram",
+                user_message=user_message,
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertNotIn("identity details", result.reply_text)
+        self.assertNotIn("saved entity state", result.reply_text)
+
     def test_open_memory_recall_source_boundary_answer_separates_current_and_supporting(self) -> None:
         reply = _build_open_memory_recall_answer(
             query=OpenMemoryRecallQuery(

@@ -1223,6 +1223,98 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(vnext, dict)
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
 
+    def test_simulate_telegram_update_upgrades_legacy_memory_recall_to_native_read_vnext(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+        legacy_memory_recall = {
+            "schema": "spark.turn_intent.v1",
+            "turnId": "telegram-update:98710",
+            "traceId": "trace:test-legacy-memory-recall",
+            "surface": "telegram",
+            "directive": {
+                "mode": "inspect",
+                "noExecution": False,
+                "noPublish": True,
+                "localOnly": True,
+                "explanationOnly": False,
+                "quotedOrMetaLanguage": False,
+            },
+            "selectedIntent": {
+                "kind": "memory_recall",
+                "ownerSystem": "domain-chip-memory",
+                "action": "memory.recall",
+                "confidence": "explicit",
+                "requiresConfirmation": False,
+                "source": "memory",
+            },
+            "sessionScope": {
+                "sessionKey": "session:telegram:dm:111",
+                "surface": "telegram",
+                "conversationKind": "dm",
+                "userRef": "human:telegram:111",
+                "chatRef": "111",
+                "memoryLoadPolicy": "evidence_only",
+                "pendingStateScope": "same_session_only",
+            },
+            "toolPolicy": {
+                "allowedTools": ["answer.compose", "memory.recall"],
+                "deniedTools": [],
+                "enabledToolsets": ["telegram.reply", "domain-chip-memory"],
+                "sandboxClass": "local",
+                "networkPolicy": "none",
+                "elevatedAllowed": False,
+                "mutationClassesAllowed": ["none", "read_only"],
+                "requiresApprovalFor": [],
+            },
+            "executionPolicy": {
+                "canMutateFiles": False,
+                "canLaunchMission": False,
+                "canWriteMemory": False,
+                "canDeleteSchedule": False,
+                "canCreateChip": False,
+                "canPublish": False,
+                "canUseExternalNetwork": False,
+            },
+            "threatDefense": {"reasonCodes": ["fresh_user_turn_is_authority"]},
+        }
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98710,
+                    "spark_turn_intent": legacy_memory_recall,
+                    "message": {
+                        "message_id": 110,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": (
+                            "What do you remember about memory-readiness-policy-20260616b? "
+                            "Include the source or proof boundary."
+                        ),
+                        "spark_turn_intent": legacy_memory_recall,
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        envelope = captured.get("turn_intent_envelope")
+        self.assertIsNotNone(envelope)
+        self.assertEqual(getattr(getattr(envelope, "selected_intent", None), "action", None), "memory.recall")
+        vnext = captured.get("turn_intent_envelope_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["selected_move"], "read_current_state")
+        self.assertEqual(vnext["proposed_actions"][0]["capability_id"], "capability:domain-chip-memory:memory.read")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
+
     def test_simulate_telegram_update_respects_inbound_memory_recall_authority(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured: dict[str, object] = {}

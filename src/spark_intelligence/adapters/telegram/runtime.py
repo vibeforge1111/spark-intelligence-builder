@@ -351,6 +351,21 @@ def _attach_telegram_turn_intent_payloads(
     return enriched
 
 
+def _attach_telegram_vnext_turn_intent_payload(
+    update_payload: dict[str, Any],
+    *,
+    vnext_payload: dict[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(update_payload)
+    enriched["turn_intent_envelope_vnext"] = vnext_payload
+    message = enriched.get("message")
+    if isinstance(message, dict):
+        enriched_message = dict(message)
+        enriched_message["turn_intent_envelope_vnext"] = vnext_payload
+        enriched["message"] = enriched_message
+    return enriched
+
+
 def _turn_intent_selects_memory_read(update_payload: dict[str, Any] | None) -> bool:
     legacy = extract_turn_intent_envelope(update_payload)
     selected_action = str(getattr(getattr(legacy, "selected_intent", None), "action", "") or "")
@@ -389,12 +404,22 @@ def _with_telegram_memory_turn_intent(
 ) -> dict[str, Any] | None:
     if not isinstance(update_payload, dict):
         return update_payload
-    if (
-        extract_turn_intent_envelope(update_payload) is not None
-        or extract_turn_intent_envelope_vnext(update_payload) is not None
-    ):
+    if extract_turn_intent_envelope_vnext(update_payload) is not None:
         return update_payload
     read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+    if extract_turn_intent_envelope(update_payload) is not None:
+        if read_source_kind is not None and _turn_intent_selects_memory_read(update_payload):
+            vnext_payload = build_telegram_memory_read_turn_intent_payload_vnext(
+                request_id=request_id,
+                channel_kind="telegram",
+                session_id=session_id,
+                human_id=human_id,
+                user_message=user_message,
+                source_kind=read_source_kind,
+            )
+            if vnext_payload is not None:
+                return _attach_telegram_vnext_turn_intent_payload(update_payload, vnext_payload=vnext_payload)
+        return update_payload
     if read_source_kind is not None:
         turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
             request_id=request_id,

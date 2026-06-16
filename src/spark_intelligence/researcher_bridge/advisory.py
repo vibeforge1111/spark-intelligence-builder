@@ -1431,12 +1431,31 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
         if not match:
             continue
         topic = str(next((group for group in match.groups() if group), "")).strip(" \t\r\n?!.\"'")
+        topic = _clean_open_memory_recall_topic(topic)
         if not topic and query_kind == "discussion_recall":
             topic = "recent memory work"
         if not topic or topic in {"me", "my profile"}:
             return None
         return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
     return None
+
+
+def _clean_open_memory_recall_topic(topic: str) -> str:
+    cleaned = str(topic or "").strip(" \t\r\n?!.\"'")
+    cleaned = re.split(
+        r"[?.!]\s+(?:include|show|give|with|and\s+include|plus)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" \t\r\n?!.\"'")
+    cleaned = re.sub(
+        r"\b(?:include|show|give|with)\s+(?:the\s+)?(?:source|proof|evidence|boundary|source\s+or\s+proof)[\s\S]*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" \t\r\n?!.\"'")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
 
 
 def _detect_entity_state_summary_query(user_message: str) -> EntityStateSummaryQuery | None:
@@ -10175,6 +10194,7 @@ def build_researcher_reply(
         if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
             "decision_recall",
             "discussion_recall",
+            "evidence_recall",
             "memory_test_label_recall",
             "open_recall",
             "retired_memory_label_recall",
@@ -11174,6 +11194,7 @@ def build_researcher_reply(
             if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
                 "decision_recall",
                 "discussion_recall",
+                "evidence_recall",
                 "memory_test_label_recall",
                 "open_recall",
                 "retired_memory_label_recall",
@@ -11221,6 +11242,7 @@ def build_researcher_reply(
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
                 and detected_entity_state_summary_query is None
+                and detected_open_memory_recall_query is None
             ):
                 detected_entity_state_history_query = _detect_entity_state_history_query(user_message)
             if (
@@ -11228,6 +11250,7 @@ def build_researcher_reply(
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
                 and detected_entity_state_summary_query is None
+                and detected_open_memory_recall_query is None
             ):
                 followup_history_query = _detect_entity_state_followup_history_query(
                     user_message=user_message,
@@ -11245,6 +11268,7 @@ def build_researcher_reply(
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
                 and detected_entity_state_summary_query is None
+                and detected_open_memory_recall_query is None
             ):
                 detected_entity_state_summary_query = _detect_entity_state_summary_query(user_message)
             if (
@@ -13952,6 +13976,7 @@ def build_researcher_reply(
         if not recall_records and detected_open_memory_recall_query.query_kind in {
             "decision_recall",
             "discussion_recall",
+            "evidence_recall",
             "episodic_recall",
             "memory_test_label_recall",
             "open_recall",
