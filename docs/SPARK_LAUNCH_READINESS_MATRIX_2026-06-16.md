@@ -27,9 +27,12 @@ Use this before changing or QA testing any Spark natural-language route.
 6. Status, readout, trace, failure, and "what happened" questions about an
    existing mission are Mission Control readouts before any build route is
    eligible.
-7. Telegram rich formatting and draft streaming are delivery surfaces only. They
+7. Board history counts can include operational residue, but user-facing
+   "latest project/job" promotion must skip question/readout residue unless the
+   entry has real artifact/build task evidence.
+8. Telegram rich formatting and draft streaming are delivery surfaces only. They
    cannot authorize work or become durable truth.
-8. Live Telegram Desktop CUA is required for user-visible Telegram formatting,
+9. Live Telegram Desktop CUA is required for user-visible Telegram formatting,
    route behavior, and streaming claims.
 
 Canonical route flow:
@@ -69,14 +72,15 @@ every category below, with no red blocker.
 | Telegram mission-id status routing | `spark-telegram-bot` commit `67729ae fix: route mission status questions through Mission Control` | Proven by unit/E2E/build and live Telegram CUA |
 | Live bad route repro | 2026-06-16 04:28 Telegram: "Quick QA after fix..." incorrectly started a direct build for `mission-1781569728060` | Root cause identified as mission-status route losing to broad build intent |
 | Live corrected route | 2026-06-16 04:38 Telegram: "Quick QA final check..." replied "Mission is failed", showed Codex failed, and said not to treat it as completed | Live CUA pass for this flow |
+| Board latest residue guard | 2026-06-16 04:47 Telegram `/board` kept history counts but no longer promoted the accidental "what happened" mission as latest | Live CUA pass after `spark-telegram-bot` board/readout selector fix |
 | Governance rules | `spark-telegram-bot/docs/SPARK_CONVERSATIONAL_AUTHORITY_GOVERNANCE.md` and Telegram platform/composition docs exist | Usable baseline; keep updating as live failures reveal new rule classes |
 
 ## Current System Matrix
 
 | System | Human use cases to test | Current evidence | Score | Release posture | Next audit action |
 | --- | --- | --- | --- | --- | --- |
-| Spawner continuum | Natural ideation, build start, PRD/canvas, Kanban, provider execution, preview, iteration, status/failure readout, rerun | Recent fixes cover mission failure/status and contextual project iteration tests. Live CUA proved one failure readout. | 7 | Yellow | Run broader live Telegram flow: vague idea -> advice -> explicit apply -> canvas -> completion/failure -> status/readout. |
-| Telegram routing/authority | Natural chat, slash commands, "ok do it", no-action/meta talk, status questions, access questions, mission controls | Broad E2E suite and route matrix pass for touched routes. Live CUA used for mission status. | 7 | Yellow | Run mixed prompt pack against Telegram Desktop and inspect route ledgers for mismatches. |
+| Spawner continuum | Natural ideation, build start, PRD/canvas, Kanban, provider execution, preview, iteration, status/failure readout, rerun | Recent fixes cover mission failure/status, contextual project iteration, and board latest residue. Live CUA proved failure readout and `/board` promotion boundary. | 7 | Yellow | Run broader live Telegram flow: vague idea -> advice -> explicit apply -> canvas -> completion/failure -> status/readout. |
+| Telegram routing/authority | Natural chat, slash commands, "ok do it", no-action/meta talk, status questions, access questions, mission controls | Broad E2E suite and route matrix pass for touched routes. Live CUA used for mission status and `/board` residue regression. | 7 | Yellow | Run mixed prompt pack against Telegram Desktop and inspect route ledgers for mismatches. |
 | Telegram readability/rich messages | Status cards, canvas-ready, failure, board, diagnostics, long reports, links, paragraph spacing | Composition/platform docs exist. Some known messages had too many dividers or duplicated links; some were fixed earlier, but full live visual pass is incomplete. | 6 | Yellow/red | Run live formatting smoke on `/status`, `/board`, canvas-ready, failure, and mission-status cards. |
 | Builder bridge | Plain chat, provider fallback, final-answer gate, unsupported edit claims, memory-route boundary | E2E tests show unsupported edit claims are suppressed and trace ids preserved. Live coverage incomplete in this slice. | 6 | Yellow | Test natural chat and Builder fallback via Telegram; verify no edit/done claims without owner proof. |
 | Memory/wiki | Remember directives, recall, wiki source boundaries, no duplicate truth, no local fallback memory lies | E2E tests cover Builder-off memory no-claim cases. Broader runtime memory/wiki proof not inspected this slice. | 5 | Yellow/red | Run memory save/recall negative/positive prompts with Builder available/unavailable and inspect source ledgers. |
