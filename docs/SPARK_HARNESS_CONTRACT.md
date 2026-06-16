@@ -11,6 +11,7 @@ Builder should:
 - consume `TurnIntentEnvelopeVNext`, `AuthorizationDecisionV1`, and `GovernorDecisionV1` records from `spark-harness-core`;
 - treat memory, retrieved context, pending state, and tool output as evidence, not authority;
 - obey no-action, local-only, no-publish, and mutation-boundary directives;
+- treat privacy-withholding language for memory writes as a pre-authority blocker, while leaving the final non-bypassable write veto to `domain-chip-memory`;
 - verify governed tool decisions before execution;
 - persist bound `tool_call_ledger` rows into `state.db`;
 - expose operator-readable ledger queries by `turn_id` and surface;
@@ -21,6 +22,7 @@ Builder should not:
 - override Telegram's fresh turn verdict;
 - re-authorize actions from raw text;
 - treat memory, skills, or pending state as command authority;
+- claim that a memory write succeeded from a route decision, reply, or Governor record alone; the memory owner must accept the write and return proof;
 - promote learning artifacts without benchmark and ledger evidence;
 - accept unbound tool-ledger rows missing the authority join fields.
 
@@ -89,3 +91,12 @@ Harness Core is the schema/runtime source for the authority records. Builder mus
 Spark improvement is accepted only through named benchmark and ledger evidence.
 
 Memory writes, skill drafts, tool ledgers, and advisory output are candidates. They become durable behavior only after benchmark proof, before/after answer comparison, and a promotion gate.
+
+## Memory Write Privacy Boundary
+
+Memory-write authority has two layers:
+
+1. Builder preflight: if the fresh user turn withholds storage, Builder does not mint a `memory.write` TurnIntent envelope or Governor-backed tool call.
+2. Memory owner veto: `domain-chip-memory` refuses durable writes containing storage-withholding language even when an upstream caller supplies a valid Governor decision.
+
+This is not duplicate truth. Builder prevents unnecessary authority minting; the memory chip is the source of truth for durable persistence. Tests must cover both the positive path where explicit memory saves still work and the negative path where no-store or answer-only language leaves no persisted memory.

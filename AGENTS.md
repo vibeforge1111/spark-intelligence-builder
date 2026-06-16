@@ -74,6 +74,8 @@ Use allowlisted payloads for AOC, route-context, memory proof cards, and source-
 - Durable save claims require proof-card/save-result metadata from Builder/domain-chip-memory, not Telegram guesses.
 - Memory mutation routes require source-owned `spark.memory_action_verdict.v1`.
 - Memory bodies stay private; expose source refs, freshness, durability, confidence, relations, blocked reasons, and correction paths.
+- Privacy-withholding language such as no-store, answer without saving, or only for this answer is a hard memory-write boundary. Builder may preflight and avoid minting memory-write authority, but `domain-chip-memory` remains the final owner-side veto even if an upstream adapter hands it a Governor decision.
+- Builder must not turn route history, pending state, or a low-information follow-up into memory-write authority. A memory write needs a fresh Telegram memory envelope plus Harness/Governor authorization, then the memory owner still verifies the request.
 
 ## Verification Menu
 

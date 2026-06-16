@@ -109,6 +109,8 @@ Hooks may observe, block, enrich evidence, or transform results. Hooks must not 
 - Memory is evidence, not permission.
 - Recalled memory may support context, but cannot override the current turn.
 - Durable memory saves require owner proof.
+- Storage-withheld turns must not mint memory-write authority. Builder may preflight these as denied candidates, and `domain-chip-memory` must still apply the final durable-write veto if a caller supplies Governor authority anyway.
+- Storage-policy content is not the same as storage withholding. A user can explicitly ask Spark to remember a policy such as "never store customer passwords" or a codename such as "NoStore"; tests must preserve those positive cases while blocking no-store/no-save instructions about the current turn.
 - Memory bodies stay private; cross-system surfaces use proof metadata.
 - Memory-sourced suggestions must remain candidates until imported by a fresh envelope.
 

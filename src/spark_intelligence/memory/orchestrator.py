@@ -4778,6 +4778,17 @@ def write_telegram_event_to_memory(
         return result
     subject = _subject_for_human_id(human_id)
     timestamp = _now_iso()
+    effective_governor_decision = _telegram_memory_write_governor_decision(
+        state_db=state_db,
+        governor_decision=governor_decision,
+        request_id=f"telegram-event:{turn_id or session_id or predicate}",
+        session_id=session_id,
+        human_id=human_id,
+        channel_kind=channel_kind,
+        user_message=evidence_text,
+        source_kind="telegram_event_observation",
+        actor_id=actor_id,
+    )
     event_payload = {
         "subject": subject,
         "predicate": predicate,
@@ -4813,7 +4824,7 @@ def write_telegram_event_to_memory(
             "retention_class": "time_bound_event",
             "document_time": timestamp,
             "valid_from": timestamp,
-            "governor_decision": governor_decision,
+            "governor_decision": effective_governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4846,7 +4857,7 @@ def write_telegram_event_to_memory(
             event_name=event_name,
             subject=subject,
             salience_decision=salience_decision,
-            governor_decision=governor_decision,
+            governor_decision=effective_governor_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -4857,6 +4868,54 @@ def write_telegram_event_to_memory(
         actor_id=actor_id,
     )
     return result
+
+
+def _telegram_memory_write_governor_decision(
+    *,
+    state_db: StateDB,
+    governor_decision: dict[str, Any] | None,
+    request_id: str,
+    session_id: str | None,
+    human_id: str,
+    channel_kind: str | None,
+    user_message: str,
+    source_kind: str,
+    actor_id: str,
+) -> dict[str, Any] | None:
+    if isinstance(governor_decision, dict):
+        return governor_decision
+    if str(channel_kind or "").strip() != "telegram":
+        return None
+    from spark_intelligence.bridge_authority import (
+        authorize_builder_bridge_action,
+        build_telegram_memory_turn_intent_payload_vnext,
+    )
+
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id=request_id,
+        channel_kind="telegram",
+        session_id=session_id or f"telegram-memory:{human_id}",
+        human_id=human_id,
+        user_message=user_message,
+        source_kind=source_kind,
+    )
+    if not isinstance(payload, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id="memory-orchestrator",
+        actor_id=actor_id,
+        component="memory_orchestrator",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
 
 
 def _write_profile_fact_history_event(

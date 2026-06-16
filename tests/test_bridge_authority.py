@@ -142,6 +142,46 @@ def test_extracts_vnext_turn_intent_from_message_payload() -> None:
     assert envelope["selected_move"] == "execute_action"
 
 
+def test_no_store_privacy_language_does_not_mint_memory_write_vnext_authority() -> None:
+    blocked_messages = [
+        "No-store this private launch QA note; answer without storing it.",
+        "Use this private phrase only for this answer: violet-0616.",
+        "Please answer without storing this memory note.",
+        "Never remember this private phrase after this answer.",
+    ]
+
+    for index, user_message in enumerate(blocked_messages):
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=f"req-no-store-vnext-{index}",
+            channel_kind="telegram",
+            session_id=f"session-no-store-vnext-{index}",
+            human_id=f"human-no-store-vnext-{index}",
+            user_message=user_message,
+            source_kind="telegram_runtime_profile_fact_observation",
+        )
+
+        assert payload is None, user_message
+
+
+def test_storage_policy_content_can_mint_memory_write_vnext_authority() -> None:
+    allowed_messages = [
+        "Remember this security policy: never store customer passwords in memory.",
+        "Remember this project codename: NoStore means the storage-policy refactor.",
+    ]
+
+    for index, user_message in enumerate(allowed_messages):
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=f"req-storage-policy-vnext-{index}",
+            channel_kind="telegram",
+            session_id=f"session-storage-policy-vnext-{index}",
+            human_id=f"human-storage-policy-vnext-{index}",
+            user_message=user_message,
+            source_kind="telegram_runtime_profile_fact_observation",
+        )
+
+        assert payload is not None, user_message
+
+
 def test_authorizes_builder_memory_write_through_governed_legacy_adapter() -> None:
     update = {"message": {"spark_turn_intent": _envelope(route="memory.write")}}
 

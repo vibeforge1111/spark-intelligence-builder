@@ -459,9 +459,29 @@ def memory_write_boundary_blocks_adapter_authority(user_message: str) -> bool:
     if not text:
         return True
     lowered = text.casefold()
+    storage_object = (
+        r"(?:this|that|it|anything|something|memory|note|detail|context|phrase|"
+        r"private\s+(?:phrase|detail|context|note))"
+    )
+    if re.search(rf"\bno[-\s]+store\b(?=\s*(?:[:.;!?]|$|\b(?:{storage_object}|the|my|our|please)\b))", lowered):
+        return True
+    if re.search(r"\b(?:answer|reply|respond)\s+without\s+(?:saving|storing|remembering|recording|capturing|persisting|learning)\b", lowered):
+        return True
     if re.search(
-        r"\b(?:do\s+not|don't|dont|please\s+don't|no\s+need\s+to|without)\s+"
-        r"(?:save|remember|store|write|record|capture|persist|learn)\b",
+        r"\b(?:do\s+not|don't|dont|please\s+don't|please\s+dont|no\s+need\s+to|without|never)\s+"
+        r"(?:save|remember|store|write|record|capture|persist|learn)\s+"
+        rf"{storage_object}\b",
+        lowered,
+    ):
+        return True
+    if re.search(
+        r"\b(?:do\s+not|don't|dont|please\s+don't|please\s+dont|no\s+need\s+to|without|never)\s+"
+        r"(?:save|remember|store|write|record|capture|persist|learn)\s*(?:[.!?;:]|$)",
+        lowered,
+    ):
+        return True
+    if re.search(r"\b(?:only|just)\s+for\s+this\s+(?:answer|reply|response|turn|message)\b", lowered) and re.search(
+        r"\b(?:private|phrase|detail|context|secret|do\s+not\s+store|don't\s+store|dont\s+store|no[-\s]+store)\b",
         lowered,
     ):
         return True
