@@ -12,6 +12,7 @@ Builder should:
 - treat memory, retrieved context, pending state, and tool output as evidence, not authority;
 - obey no-action, local-only, no-publish, and mutation-boundary directives;
 - treat privacy-withholding language for memory writes as a pre-authority blocker, while leaving the final non-bypassable write veto to `domain-chip-memory`;
+- answer `memory.recall` only from governed Builder/domain-chip-memory read evidence, with source/proof refs or an explicit degraded-read result;
 - verify governed tool decisions before execution;
 - persist bound `tool_call_ledger` rows into `state.db`;
 - expose operator-readable ledger queries by `turn_id` and surface;
@@ -22,6 +23,7 @@ Builder should not:
 - override Telegram's fresh turn verdict;
 - re-authorize actions from raw text;
 - treat memory, skills, or pending state as command authority;
+- let Telegram-local notes, Memory Doctor diagnostics, or stale route history stand in for a governed `memory.recall` answer;
 - claim that a memory write succeeded from a route decision, reply, or Governor record alone; the memory owner must accept the write and return proof;
 - promote learning artifacts without benchmark and ledger evidence;
 - accept unbound tool-ledger rows missing the authority join fields.

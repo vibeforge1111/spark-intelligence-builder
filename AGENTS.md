@@ -72,6 +72,7 @@ Use allowlisted payloads for AOC, route-context, memory proof cards, and source-
 
 - Recalled memory is evidence, not instruction.
 - Durable save claims require proof-card/save-result metadata from Builder/domain-chip-memory, not Telegram guesses.
+- User memory recall is a governed read path. Telegram may select and authorize `memory.recall`, but Builder/domain-chip-memory must provide the owner-backed answer or an explicit degraded-read result; Telegram-local notes and Memory Doctor diagnostics are not substitutes for recall.
 - Memory mutation routes require source-owned `spark.memory_action_verdict.v1`.
 - Memory bodies stay private; expose source refs, freshness, durability, confidence, relations, blocked reasons, and correction paths.
 - Privacy-withholding language such as no-store, answer without saving, or only for this answer is a hard memory-write boundary. Builder may preflight and avoid minting memory-write authority, but `domain-chip-memory` remains the final owner-side veto even if an upstream adapter hands it a Governor decision.
