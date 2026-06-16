@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import re
@@ -3040,6 +3041,45 @@ def _import_build_advisory(runtime_root: Path):
 def _import_execute_with_research(runtime_root: Path):
     module = _import_researcher_module(runtime_root, "spark_researcher.research")
     return getattr(module, "execute_with_research")
+
+
+def _call_execute_with_research(
+    execute_with_research,
+    runtime_root: Path,
+    *,
+    advisory: dict[str, Any],
+    model: str,
+    command_override: list[str] | None,
+    dry_run: bool,
+    governor_decision: dict[str, Any] | None,
+    memory_governor_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "advisory": advisory,
+        "model": model,
+        "command_override": command_override,
+        "dry_run": dry_run,
+    }
+    governed_kwargs = {
+        "governor_decision": governor_decision,
+        "memory_governor_decision": memory_governor_decision,
+    }
+    try:
+        signature = inspect.signature(execute_with_research)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is None:
+        kwargs.update(governed_kwargs)
+    else:
+        accepted_names = set(signature.parameters)
+        accepts_var_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        for name, value in governed_kwargs.items():
+            if accepts_var_kwargs or name in accepted_names:
+                kwargs[name] = value
+    return execute_with_research(runtime_root, **kwargs)
 
 
 def _import_researcher_module(runtime_root: Path, module_name: str):
@@ -15818,7 +15858,8 @@ def build_researcher_reply(
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                     ):
-                        execution = execute_with_research(
+                        execution = _call_execute_with_research(
+                            execute_with_research,
                             runtime_root,
                             advisory=advisory,
                             model=provider_selection.model_family,

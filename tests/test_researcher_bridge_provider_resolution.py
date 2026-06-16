@@ -8,7 +8,7 @@ from unittest.mock import ANY, patch
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
-from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory
+from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory as write_profile_fact_to_memory_raw
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
     OpenMemoryRecallQuery,
@@ -151,6 +151,55 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         assert payload is not None
         return payload
+
+    def _memory_write_governor_decision(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        human_id: str,
+        user_message: str,
+    ) -> dict[str, object]:
+        from spark_intelligence.bridge_authority import (
+            authorize_builder_bridge_action,
+            build_telegram_memory_turn_intent_payload_vnext,
+        )
+
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind="researcher_bridge_provider_resolution_test",
+        )
+        assert payload is not None
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="researcher_bridge_provider_resolution_test",
+            component="researcher_bridge_provider_resolution_test",
+        )
+        self.assertTrue(verdict.allowed)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return verdict.governor_decision
+
+    def _write_profile_fact_to_memory(self, **kwargs):
+        kwargs.setdefault(
+            "governor_decision",
+            self._memory_write_governor_decision(
+                request_id=f"{kwargs.get('turn_id') or 'profile-fact'}:governed-write",
+                session_id=str(kwargs.get("session_id") or "session:test"),
+                human_id=str(kwargs.get("human_id") or "human:test"),
+                user_message=str(kwargs.get("evidence_text") or "Remember this profile fact."),
+            ),
+        )
+        return write_profile_fact_to_memory_raw(**kwargs)
 
     def _assert_all_browser_hook_calls_used_vnext(self, hook_mock) -> None:
         self.assertGreater(hook_mock.call_count, 0)
@@ -3001,7 +3050,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3139,7 +3188,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3360,7 +3409,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3534,7 +3583,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3713,7 +3762,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3840,7 +3889,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3852,7 +3901,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             turn_id="turn-identity-query-write-1",
             channel_kind="telegram",
         )
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -3864,7 +3913,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             turn_id="turn-identity-query-write-2",
             channel_kind="telegram",
         )
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -4582,7 +4631,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -4594,7 +4643,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             turn_id="turn-identity-summary-rich-write-1",
             channel_kind="telegram",
         )
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -4606,7 +4655,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             turn_id="turn-identity-summary-rich-write-2",
             channel_kind="telegram",
         )
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
@@ -4618,7 +4667,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             turn_id="turn-identity-summary-rich-write-3",
             channel_kind="telegram",
         )
-        write_profile_fact_to_memory(
+        self._write_profile_fact_to_memory(
             config_manager=self.config_manager,
             state_db=self.state_db,
             human_id="human-1",
