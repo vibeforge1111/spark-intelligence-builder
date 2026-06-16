@@ -135,6 +135,23 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             ],
         )
 
+    def _memory_recall_turn_intent_vnext(self) -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        payload = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human:telegram:111",
+            request_id="req-memory-recall-vnext-test",
+            source_kind="telegram_runtime_explicit_memory_recall",
+            tool_name="memory.recall",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            intent_summary="User asked for a governed memory recall answer.",
+            raw_turn_summary="Raw memory-recall turn is offloaded in the test fixture.",
+        )
+        assert payload is not None
+        return payload
+
     def _assert_all_browser_hook_calls_used_vnext(self, hook_mock) -> None:
         self.assertGreater(hook_mock.call_count, 0)
         for call in hook_mock.call_args_list:
@@ -889,6 +906,35 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
         )
         self.assertFalse(_should_collect_browser_search_context("open the discussion"))
+
+    def test_browser_search_context_respects_memory_recall_authority(self) -> None:
+        self.assertTrue(
+            _should_collect_browser_search_context(
+                "What do you remember about memory-readiness-policy-20260616b? Include the source or proof boundary."
+            )
+        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=AssertionError("memory recall must not try browser source collection"),
+        ):
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message=(
+                    "What do you remember about memory-readiness-policy-20260616b? "
+                    "Include the source or proof boundary."
+                ),
+                request_id="req-memory-recall-no-browser",
+                channel_kind="telegram",
+                agent_id="agent-1",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                turn_intent_envelope_vnext=self._memory_recall_turn_intent_vnext(),
+            )
+
+        self.assertEqual(result["context"], "")
+        self.assertIsNone(result["blocked_reply"])
+        self.assertIsNone(result["blocked_code"])
 
     def test_select_search_result_candidate_from_text_result_prefers_external_domain(self) -> None:
         candidate = _select_search_result_candidate_from_text_result(

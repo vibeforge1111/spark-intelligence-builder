@@ -4182,6 +4182,33 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     )
 
 
+def _turn_intent_selects_memory_read(
+    turn_intent_envelope: TurnIntentEnvelope | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None = None,
+) -> bool:
+    selected_action = str(getattr(getattr(turn_intent_envelope, "selected_intent", None), "action", "") or "")
+    if selected_action in {"memory.read", "memory.recall"}:
+        return True
+    if not isinstance(turn_intent_envelope_vnext, dict):
+        return False
+    proposed_actions = turn_intent_envelope_vnext.get("proposed_actions")
+    if not isinstance(proposed_actions, list):
+        return False
+    for action in proposed_actions:
+        if not isinstance(action, dict):
+            continue
+        action_type = str(action.get("action_type") or "")
+        capability_id = str(action.get("capability_id") or "")
+        tool_name = str(action.get("tool_name") or "")
+        if action_type == "read" and (
+            capability_id.endswith(":memory.read")
+            or capability_id.endswith(":memory.recall")
+            or tool_name in {"memory.read", "memory.recall"}
+        ):
+            return True
+    return False
+
+
 _BROWSER_AUTHORITY_HOOKS: tuple[str, ...] = (
     "browser.status",
     "browser.navigate",
@@ -5625,6 +5652,8 @@ def _build_browser_search_context(
         "blocked_reply": None,
         "blocked_code": None,
     }
+    if _turn_intent_selects_memory_read(turn_intent_envelope, turn_intent_envelope_vnext):
+        return empty
     if not _should_collect_browser_search_context(user_message):
         return empty
     browser_authority_vnext = turn_intent_envelope_vnext
