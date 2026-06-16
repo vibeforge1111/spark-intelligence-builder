@@ -710,6 +710,11 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+_OPEN_MEMORY_RECALL_PREAMBLE_RE = re.compile(
+    r"^(?=.{1,80}:)(?=.*\b(?:qa|question|check|canary|probe|smoke|test|verification|post[-\s]*promotion|release|follow[-\s]*up)\b)[^:]+:\s*$",
+    re.IGNORECASE,
+)
+
 
 _ENTITY_STATE_HISTORY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     (
@@ -1420,24 +1425,29 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
         return None
-    lowered = normalized.casefold()
-    if re.match(r"^what(?:'s| is)\s+(?:the\s+)?active\s+memory\s+test\s+label\s+now[\?\.\!]*$", normalized, re.IGNORECASE):
-        return OpenMemoryRecallQuery(topic="memory test label", query_kind="memory_test_label_recall")
-    if re.match(r"^what\s+did\s+we\s+retire[\?\.\!]*$", normalized, re.IGNORECASE):
-        return OpenMemoryRecallQuery(topic="memory", query_kind="retired_memory_label_recall")
-    if "not treat as current anymore" in lowered:
-        return OpenMemoryRecallQuery(topic="memory test label", query_kind="stale_memory_context_recall")
-    for query_kind, pattern in _OPEN_MEMORY_RECALL_PATTERNS:
-        match = pattern.match(normalized)
-        if not match:
-            continue
-        topic = str(next((group for group in match.groups() if group), "")).strip(" \t\r\n?!.\"'")
-        topic = _clean_open_memory_recall_topic(topic)
-        if not topic and query_kind == "discussion_recall":
-            topic = "recent memory work"
-        if not topic or topic in {"me", "my profile"}:
-            return None
-        return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
+    candidates = [normalized]
+    prefix_match = re.match(r"^([^:]{1,80}):\s+(.+)$", normalized)
+    if prefix_match and _OPEN_MEMORY_RECALL_PREAMBLE_RE.match(f"{prefix_match.group(1)}:"):
+        candidates.append(prefix_match.group(2).strip())
+    for candidate in candidates:
+        lowered = candidate.casefold()
+        if re.match(r"^what(?:'s| is)\s+(?:the\s+)?active\s+memory\s+test\s+label\s+now[\?\.\!]*$", candidate, re.IGNORECASE):
+            return OpenMemoryRecallQuery(topic="memory test label", query_kind="memory_test_label_recall")
+        if re.match(r"^what\s+did\s+we\s+retire[\?\.\!]*$", candidate, re.IGNORECASE):
+            return OpenMemoryRecallQuery(topic="memory", query_kind="retired_memory_label_recall")
+        if "not treat as current anymore" in lowered:
+            return OpenMemoryRecallQuery(topic="memory test label", query_kind="stale_memory_context_recall")
+        for query_kind, pattern in _OPEN_MEMORY_RECALL_PATTERNS:
+            match = pattern.match(candidate)
+            if not match:
+                continue
+            topic = str(next((group for group in match.groups() if group), "")).strip(" \t\r\n?!.\"'")
+            topic = _clean_open_memory_recall_topic(topic)
+            if not topic and query_kind == "discussion_recall":
+                topic = "recent memory work"
+            if not topic or topic in {"me", "my profile"}:
+                return None
+            return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
     return None
 
 

@@ -3987,7 +3987,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
         user_message = (
-            "What do you remember about memory-readiness-policy-20260616b? "
+            "Post-promotion QA: What do you remember about memory-readiness-policy-20260616b? "
             "Include the source or proof boundary."
         )
         query = _detect_open_memory_recall_query(user_message)
@@ -3996,6 +3996,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         assert query is not None
         self.assertEqual(query.query_kind, "evidence_recall")
         self.assertEqual(query.topic, "memory-readiness-policy-20260616b")
+        self.assertIsNone(
+            _detect_open_memory_recall_query(
+                "Quoted example: What do you remember about memory-readiness-policy-20260616b?"
+            )
+        )
 
         with patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
