@@ -662,6 +662,8 @@ def memory_read_boundary_blocks_adapter_authority(user_message: str) -> bool:
         return True
     if re.search(r"\bwithout\s+(?:using\s+)?(?:memory|memories|history|saved\s+context)\b", lowered):
         return True
+    if re.search(r"\bwhy\s+(?:did|is)\s+(?:memory|spark|you)\s+(?:recall|recalling)\b", lowered):
+        return True
     if re.search(
         r"\b(?:not\s+a\s+(?:command|request|instruction)|just\s+(?:an?\s+)?example|"
         r"example\s+only|quoted\s+example|bug\s+report|hypothetical|for\s+example|just\s+explain)\b",

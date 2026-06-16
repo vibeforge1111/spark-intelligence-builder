@@ -1184,6 +1184,88 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
+    def test_simulate_telegram_update_prefers_memory_read_over_contextual_memory_doctor(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("spark.memory.enabled", True)
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98708,
+                    "message": {
+                        "message_id": 108,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": (
+                            "What do you remember about memory-readiness-policy-20260616b? "
+                            "Include the source or proof boundary."
+                        ),
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("Memory Doctor", result.detail["response_text"])
+        envelope = captured.get("turn_intent_envelope")
+        self.assertIsNotNone(envelope)
+        self.assertEqual(getattr(getattr(envelope, "selected_intent", None), "action", None), "memory.read")
+        vnext = captured.get("turn_intent_envelope_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "read")
+
+    def test_simulate_telegram_update_respects_inbound_memory_recall_authority(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98709,
+                    "turn_intent_envelope_vnext": self.vnext_tool_intent_payload(
+                        request_id="sim:98709",
+                        tool_name="memory.recall",
+                        owner_system="spark-intelligence-builder",
+                        mutation_class="read_only",
+                        source_kind="telegram_runtime_explicit_memory_recall",
+                    ),
+                    "message": {
+                        "message_id": 109,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": (
+                            "What do you remember about memory-readiness-policy-20260616b? "
+                            "Include the source or proof boundary."
+                        ),
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("Memory Doctor", result.detail["response_text"])
+        self.assertTrue(captured)
+        vnext = captured.get("turn_intent_envelope_vnext")
+        self.assertIsInstance(vnext, dict)
+        self.assertEqual(vnext["proposed_actions"][0]["capability_id"], "capability:spark-intelligence-builder:memory.recall")
+
     def test_simulate_telegram_update_keeps_meta_memory_read_example_chat_only_for_researcher(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured: dict[str, object] = {}

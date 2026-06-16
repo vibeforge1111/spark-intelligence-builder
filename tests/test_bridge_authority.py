@@ -772,6 +772,23 @@ def test_blocks_memory_read_turn_intent_for_meta_examples() -> None:
     )
 
 
+def test_blocks_memory_read_turn_intent_for_recall_diagnostics() -> None:
+    source_kind = detect_telegram_memory_read_authority_source_kind("Why did memory recall Maya?")
+
+    assert source_kind is None
+    assert (
+        build_telegram_memory_read_turn_intent_payload(
+            request_id="req-recall-diagnostic",
+            channel_kind="telegram",
+            session_id="session-recall-diagnostic",
+            human_id="human-recall-diagnostic",
+            user_message="Why did memory recall Maya?",
+            source_kind="test",
+        )
+        is None
+    )
+
+
 def test_blocks_builder_memory_write_without_envelope() -> None:
     verdict = authorize_builder_bridge_action(
         {"message": {"text": "draft a launch note"}},

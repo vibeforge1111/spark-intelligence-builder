@@ -351,6 +351,32 @@ def _attach_telegram_turn_intent_payloads(
     return enriched
 
 
+def _turn_intent_selects_memory_read(update_payload: dict[str, Any] | None) -> bool:
+    legacy = extract_turn_intent_envelope(update_payload)
+    selected_action = str(getattr(getattr(legacy, "selected_intent", None), "action", "") or "")
+    if selected_action in {"memory.read", "memory.recall"}:
+        return True
+    vnext = extract_turn_intent_envelope_vnext(update_payload)
+    if not isinstance(vnext, dict):
+        return False
+    proposed_actions = vnext.get("proposed_actions")
+    if not isinstance(proposed_actions, list):
+        return False
+    for action in proposed_actions:
+        if not isinstance(action, dict):
+            continue
+        action_type = str(action.get("action_type") or "")
+        capability_id = str(action.get("capability_id") or "")
+        tool_name = str(action.get("tool_name") or "")
+        if action_type == "read" and (
+            capability_id.endswith(":memory.read")
+            or capability_id.endswith(":memory.recall")
+            or tool_name in {"memory.read", "memory.recall"}
+        ):
+            return True
+    return False
+
+
 def _with_telegram_memory_turn_intent(
     *,
     config_manager: ConfigManager | None = None,
@@ -368,6 +394,29 @@ def _with_telegram_memory_turn_intent(
         or extract_turn_intent_envelope_vnext(update_payload) is not None
     ):
         return update_payload
+    read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+    if read_source_kind is not None:
+        turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
+            request_id=request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind=read_source_kind,
+        )
+        if turn_intent_payload is not None:
+            return _attach_telegram_turn_intent_payloads(
+                update_payload,
+                legacy_payload=turn_intent_payload,
+                vnext_payload=build_telegram_memory_read_turn_intent_payload_vnext(
+                    request_id=request_id,
+                    channel_kind="telegram",
+                    session_id=session_id,
+                    human_id=human_id,
+                    user_message=user_message,
+                    source_kind=read_source_kind,
+                ),
+            )
     diagnostic_source_kind = _detect_telegram_memory_diagnostic_authority_source_kind(
         config_manager=config_manager,
         external_user_id=external_user_id,
@@ -393,29 +442,6 @@ def _with_telegram_memory_turn_intent(
                     session_id=session_id,
                     human_id=human_id,
                     source_kind=diagnostic_source_kind,
-                ),
-            )
-    read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
-    if read_source_kind is not None:
-        turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
-            request_id=request_id,
-            channel_kind="telegram",
-            session_id=session_id,
-            human_id=human_id,
-            user_message=user_message,
-            source_kind=read_source_kind,
-        )
-        if turn_intent_payload is not None:
-            return _attach_telegram_turn_intent_payloads(
-                update_payload,
-                legacy_payload=turn_intent_payload,
-                vnext_payload=build_telegram_memory_read_turn_intent_payload_vnext(
-                    request_id=request_id,
-                    channel_kind="telegram",
-                    session_id=session_id,
-                    human_id=human_id,
-                    user_message=user_message,
-                    source_kind=read_source_kind,
                 ),
             )
     source_kind = _detect_telegram_memory_authority_source_kind(user_message)
@@ -4757,9 +4783,10 @@ def _handle_runtime_command_impl(
 ) -> dict[str, Any] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
+    memory_read_selected = _turn_intent_selects_memory_read(update_payload)
     natural_swarm_command = _match_natural_swarm_command(normalized)
-    natural_memory_doctor_command = _match_natural_memory_doctor_command(normalized)
-    if natural_memory_doctor_command is None:
+    natural_memory_doctor_command = None if memory_read_selected else _match_natural_memory_doctor_command(normalized)
+    if natural_memory_doctor_command is None and not memory_read_selected:
         natural_memory_doctor_command = _match_contextual_memory_doctor_command(
             inbound_text=normalized,
             config_manager=config_manager,
