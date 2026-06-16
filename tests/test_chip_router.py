@@ -58,3 +58,32 @@ def test_sticky_boost_still_applies_when_chip_has_topical_signal() -> None:
     selected = decision.selected[0]
     assert selected.sticky_boost_applied is True
     assert selected.score >= 1.0 + RECENT_CHIP_STICKY_BOOST
+
+
+def test_quoted_or_meta_keyword_does_not_select_chip() -> None:
+    # Word-hijack regression (2026-06-16): a chip keyword that is only QUOTED or DISCUSSED
+    # ("the word oauth", typed 'oauth') must not select the chip. Topical use, including
+    # negation and questions, must still select it (relevance is never dropped).
+    oauth = _chip(
+        "oauth-chip",
+        task_keywords=["oauth", "auth", "login", "sso"],
+        task_topics=["authentication"],
+    )
+
+    for text in [
+        'the keyword "oauth" tripped the router, ignore it',
+        "qa case: user typed 'oauth' and the bot wrongly loaded a chip",
+        "talking about the word oauth here",
+    ]:
+        decision = select_chips_for_message(text, [oauth])
+        assert decision.selected == [], f"quoted/meta mention hijacked chip selection: {text!r}"
+
+    for text in [
+        "set up oauth login for my app",
+        "i dont want to use oauth, what are the alternatives",
+        "how does oauth work under the hood",
+    ]:
+        decision = select_chips_for_message(text, [oauth])
+        assert [c.chip_key for c in decision.selected] == ["oauth-chip"], (
+            f"relevant chip wrongly dropped: {text!r}"
+        )

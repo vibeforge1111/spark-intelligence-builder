@@ -12,6 +12,7 @@ TOPIC_EXACT_MATCH_WEIGHT = 2.5
 COMBINE_WITH_BOOST = 0.75
 SELECTION_THRESHOLD = 1.0
 MAX_SELECTED_CHIPS = 2
+UNROUTABLE_WARNING_PREFIX = "WARNING attached-but-unroutable chips:"
 
 CONVERSATION_HISTORY_WEIGHT = 0.5
 RECENT_CHIP_STICKY_BOOST = 1.5
@@ -69,6 +70,28 @@ def _tokenize(message: str) -> set[str]:
 
 def _normalize_keyword(token: str) -> str:
     return str(token or "").strip().lower()
+
+
+# Word-hijack guard (added 2026-06-16): a chip must not be selected merely because its
+# keyword was QUOTED or DISCUSSED rather than USED. We strip quoted spans and explicit
+# meta-language frames ("the word X", typed 'X') before matching. Deliberately conservative:
+# only clearly-meta/quoted spans are removed, so topical use, including negation
+# ("I dont want oauth") and questions ("how does oauth work"), is preserved and a
+# genuinely relevant chip is never dropped. Fails safe toward keeping chips.
+_QUOTED_DOUBLE_SPAN = re.compile(r'"[^"]{1,80}"')
+_QUOTED_BACKTICK_SPAN = re.compile(r"`[^`]{1,80}`")
+_QUOTED_SINGLE_SPAN = re.compile(r"(?<!\w)'[^']{1,80}'(?!\w)")
+_META_TERM_FRAME = re.compile(
+    r"\b(?:the (?:word|keyword|term|phrase|string)|typed|wrote|spelled|quoted)\s+\w+"
+)
+
+
+def _strip_meta_and_quoted_spans(text_lower: str) -> str:
+    stripped = _QUOTED_DOUBLE_SPAN.sub(" ", text_lower)
+    stripped = _QUOTED_BACKTICK_SPAN.sub(" ", stripped)
+    stripped = _QUOTED_SINGLE_SPAN.sub(" ", stripped)
+    stripped = _META_TERM_FRAME.sub(" ", stripped)
+    return stripped
 
 
 def _match_keywords_and_topics(
@@ -174,6 +197,29 @@ def _chip_field(record: AttachmentRecord, field_name: str) -> list[str]:
     return []
 
 
+def attached_but_unroutable_chip_keys(active_chips: Iterable[AttachmentRecord]) -> list[str]:
+    unroutable: list[str] = []
+    for record in active_chips:
+        if record.kind != "chip":
+            continue
+        if _chip_field(record, "task_keywords") or _chip_field(record, "task_topics"):
+            continue
+        key = str(record.key or "").strip()
+        if key:
+            unroutable.append(key)
+    return sorted(set(unroutable))
+
+
+def attached_but_unroutable_warning_line(active_chips: Iterable[AttachmentRecord]) -> str | None:
+    keys = attached_but_unroutable_chip_keys(active_chips)
+    if not keys:
+        return None
+    return (
+        f"{UNROUTABLE_WARNING_PREFIX} {', '.join(keys)}. "
+        "Missing task_topics or task_keywords in spark-chip.json; chip_router cannot select these chips."
+    )
+
+
 def select_chips_for_message(
     message: str,
     active_chips: Iterable[AttachmentRecord],
@@ -183,9 +229,9 @@ def select_chips_for_message(
     conversation_history: str = "",
     recent_active_chip_keys: Iterable[str] = (),
 ) -> ChipRoutingDecision:
-    message_lower = str(message or "").lower()
+    message_lower = _strip_meta_and_quoted_spans(str(message or "").lower())
     message_tokens = _tokenize(message_lower)
-    history_lower = str(conversation_history or "").lower()
+    history_lower = _strip_meta_and_quoted_spans(str(conversation_history or "").lower())
     history_tokens = _tokenize(history_lower) if history_lower else set()
     chips = [c for c in active_chips if c.kind == "chip"]
     chip_index = {c.key: c for c in chips}
