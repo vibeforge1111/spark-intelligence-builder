@@ -114,6 +114,42 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["event_log"][0]["turn_id"], "turn:trace-turn")
         self.assertEqual(payload["event_log"][0]["payload_json"]["turn_id"], "turn:trace-turn")
 
+    def test_follow_on_memory_policy_gates_inherit_parent_turn_id(self) -> None:
+        parent_turn_id = "telegram-update:trace-join-memory"
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            component="memory_orchestrator",
+            summary="Spark memory write completed.",
+            request_id=parent_turn_id,
+            turn_id=parent_turn_id,
+            session_id="telegram:1278511160",
+            facts={
+                "keepability": "durable_user_memory",
+                "memory_role": "current_state",
+                "promotion_disposition": "promote_current_state",
+            },
+        )
+
+        blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=5)
+        self.assertTrue(blocks)
+        self.assertEqual(blocks[0]["turn_id"], parent_turn_id)
+        self.assertEqual((blocks[0]["facts_json"] or {}).get("turn_id"), parent_turn_id)
+
+        with self.state_db.connect() as conn:
+            event_log = conn.execute(
+                """
+                SELECT turn_id, payload_json
+                FROM event_log
+                WHERE event_type = 'policy_gate_blocked'
+                ORDER BY recorded_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(event_log)
+        self.assertEqual(event_log["turn_id"], parent_turn_id)
+        self.assertEqual(json.loads(event_log["payload_json"])["turn_id"], parent_turn_id)
+
     def test_harness_import_cli_ledgers_indexes_tool_call_files(self) -> None:
         ledger_dir = self.home / "approval-ledgers"
         ledger_dir.mkdir(parents=True)

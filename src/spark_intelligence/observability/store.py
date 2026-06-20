@@ -1031,6 +1031,7 @@ def record_event(
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -1047,6 +1048,7 @@ def record_event(
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -1076,10 +1078,15 @@ def record_policy_gate_block(
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
+    turn_id: str | None = None,
     actor_id: str | None = None,
     provenance: dict[str, Any] | None = None,
     facts: dict[str, Any] | None = None,
 ) -> str:
+    normalized_facts = dict(facts or {})
+    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
+    if normalized_turn_id:
+        normalized_facts.setdefault("turn_id", normalized_turn_id)
     event_id = record_event(
         state_db,
         event_type="policy_gate_blocked",
@@ -1087,6 +1094,7 @@ def record_policy_gate_block(
         summary=summary,
         run_id=run_id,
         request_id=request_id,
+        turn_id=normalized_turn_id,
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
@@ -1103,7 +1111,7 @@ def record_policy_gate_block(
             "input_ref": input_ref,
             "output_ref": output_ref,
             "action": action,
-            **(facts or {}),
+            **normalized_facts,
         },
         provenance=provenance,
     )
@@ -2942,6 +2950,7 @@ def _record_follow_on_policy_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
+    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -2974,6 +2983,7 @@ def _record_follow_on_policy_block_if_needed(
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=turn_id,
         actor_id=actor_id,
         provenance={
             "source_kind": source_kind,
@@ -2995,6 +3005,7 @@ def _record_follow_on_promotion_gate_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
+    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -3077,6 +3088,7 @@ def _record_follow_on_promotion_gate_block_if_needed(
             trace_ref=trace_ref,
             channel_id=channel_id,
             session_id=session_id,
+            turn_id=turn_id,
             actor_id=actor_id,
             provenance={
                 "source_kind": source_kind,

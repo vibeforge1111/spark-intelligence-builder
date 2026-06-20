@@ -26,6 +26,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _authorize_researcher_memory_write,
 )
 from spark_intelligence.state.db import StateDB
+from spark_harness_core.schemas import validate_instance
 
 
 def _envelope(*, route: str = "memory.write", no_execution: bool = False) -> dict:
@@ -364,6 +365,7 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
 
     assert payload is not None
     assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["turn_id"] == "req-write-vnext"
     assert payload["selected_move"] == "execute_action"
     assert payload["action_authority"]["state"] == "executable"
     assert payload["proposed_actions"][0]["capability_id"] == "capability:domain-chip-memory:memory.write"
@@ -380,9 +382,12 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.authorization_decision["turn_id"] == payload["turn_id"]
     assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["turn_id"] == payload["turn_id"]
     assert verdict.tool_call_ledger["tool_name"] == DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME
     assert verdict.governor_decision is not None
+    assert verdict.governor_decision["turn_id"] == payload["turn_id"]
     assert verdict.governor_decision["outcome"] == "execute"
 
 
@@ -398,6 +403,7 @@ def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
 
     assert payload is not None
     assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["turn_id"] == "req-read-vnext"
     assert payload["selected_move"] == "read_current_state"
     assert payload["action_authority"]["state"] == "read_only"
     assert payload["proposed_actions"][0]["action_type"] == "read"
@@ -413,8 +419,51 @@ def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
     assert verdict.envelope is None
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
+    assert verdict.authorization_decision["turn_id"] == payload["turn_id"]
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["turn_id"] == payload["turn_id"]
     assert verdict.governor_decision is not None
-    assert verdict.governor_decision["outcome"] == "execute"
+    assert verdict.governor_decision["turn_id"] == payload["turn_id"]
+    assert verdict.governor_decision["outcome"] == "read_only"
+    assert verdict.governor_decision["authority_state"] == "read_only"
+    assert verdict.governor_decision["tool_ledgers"]
+    validate_instance("governor-decision-v1", verdict.governor_decision)
+
+
+def test_detects_current_state_slot_queries_as_read_only_memory_authority() -> None:
+    source_kind = detect_telegram_memory_read_authority_source_kind("What is our constraint?")
+
+    assert source_kind == "telegram_runtime_profile_fact_read"
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-current-slot-read-vnext",
+        channel_kind="telegram",
+        session_id="session-current-slot-read-vnext",
+        human_id="human-current-slot-read-vnext",
+        user_message="What is our constraint?",
+        source_kind=source_kind,
+    )
+
+    assert payload is not None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+    )
+
+    assert verdict.allowed is True
+    assert verdict.governor_decision is not None
+    assert verdict.governor_decision["outcome"] == "read_only"
+
+
+def test_does_not_treat_generic_or_meta_current_state_slot_mentions_as_memory_read() -> None:
+    assert detect_telegram_memory_read_authority_source_kind("What is a constraint?") is None
+    assert (
+        detect_telegram_memory_read_authority_source_kind(
+            "For example: 'what is our constraint?' should not use memory."
+        )
+        is None
+    )
 
 
 def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
@@ -783,7 +832,8 @@ def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
 
     assert verdict.allowed is False
     assert event_id is None
-    assert len(latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)) == 1
+    assert verdict.tool_call_ledger is None
+    assert latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5) == []
     assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 
@@ -827,7 +877,8 @@ def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) ->
 
     assert verdict.allowed is False
     assert result_events == ()
-    assert len(latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)) == 1
+    assert verdict.tool_call_ledger is None
+    assert latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5) == []
     assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 
@@ -866,6 +917,56 @@ def test_records_bridge_tool_call_ledger_to_observability_store(tmp_path) -> Non
     assert event["facts_json"]["ledger_id"] == verdict.tool_call_ledger["ledger_id"]
     assert event["facts_json"]["authorization_verdict"] == "allow"
     assert event["facts_json"]["tool_call_ledger"]["schema_version"] == "tool-call-ledger-v1"
+
+
+def test_voice_speak_retries_reuse_existing_persisted_ledger_row(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = _tool_vnext(
+        request_id="telegram:599",
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        source_kind="telegram_voice_delivery",
+    )
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
+
+    first = authorize_builder_bridge_action(
+        update,
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id="telegram:599",
+        component="telegram_runtime",
+    )
+    second = authorize_builder_bridge_action(
+        update,
+        tool_name="voice.speak",
+        owner_system="spark-voice-comms",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id="telegram:599",
+        component="telegram_runtime",
+    )
+
+    assert first.allowed is True
+    assert second.allowed is True
+    assert first.tool_call_ledger["ledger_id"] != second.tool_call_ledger["ledger_id"]
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT ledger_id, tool_name, turn_id, action_id, request_id
+            FROM tool_call_ledger
+            WHERE tool_name = 'voice.speak'
+            """
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["turn_id"] == first.tool_call_ledger["turn_id"]
+    assert rows[0]["action_id"] == first.tool_call_ledger["action_id"]
+    assert rows[0]["request_id"] == "telegram:599"
 
 
 def test_records_bridge_tool_call_ledger_from_scoped_context(tmp_path) -> None:

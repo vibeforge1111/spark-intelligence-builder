@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from spark_intelligence import harness_contract
 from spark_intelligence.gateway.routes import GatewayRouteRegistration
 from spark_intelligence.observability.store import persist_bound_ledger
 from spark_intelligence.state.db import StateDB
@@ -76,8 +77,10 @@ def ingest_tool_ledger_payload(
 ) -> GatewayToolLedgerIngestResult:
     row = _extract_ledger_row(payload)
     ledger_payload = _ledger_json_payload(row)
+    ledger_payload = _kernel_validated_ledger_payload(row, ledger_payload)
     authorization = ledger_payload.get("authorization") if isinstance(ledger_payload.get("authorization"), dict) else {}
     normalized = dict(row)
+    normalized["ledger_json"] = ledger_payload
     extracted = {
         "ledger_id": _text(row.get("ledger_id") or ledger_payload.get("ledger_id")),
         "turn_id": _text(row.get("turn_id") or ledger_payload.get("turn_id")),
@@ -105,6 +108,53 @@ def ingest_tool_ledger_payload(
         surface=str(extracted["surface"]),
         status=extracted["status"],
     )
+
+
+def _kernel_validated_ledger_payload(row: dict[str, Any], ledger_payload: dict[str, Any]) -> dict[str, Any]:
+    if not harness_contract.HARNESS_CORE_AVAILABLE:
+        raise ValueError(
+            "tool ledger ingest kernel validation unavailable: "
+            f"{harness_contract.HARNESS_CORE_IMPORT_ERROR or 'spark_harness_core_unavailable'}"
+        )
+    if not ledger_payload:
+        raise ValueError("tool ledger ingest kernel validation failed: missing ledger_json")
+    try:
+        from spark_harness_core import HarnessKernel, validate_instance
+
+        validated = validate_instance("tool-call-ledger-v1", ledger_payload)
+        kernel = HarnessKernel(surface=_text(row.get("surface")) or "builder")
+        kernel._assert_ledger_authorization_binding(validated)
+        authorization = validated.get("authorization") if isinstance(validated.get("authorization"), dict) else {}
+        result = validated.get("result") if isinstance(validated.get("result"), dict) else {}
+        kernel._assert_execution_status_authorized(
+            str(authorization.get("verdict") or ""),
+            str(result.get("status") or ""),
+        )
+    except Exception as exc:
+        raise ValueError(f"tool ledger ingest kernel validation failed: {exc}") from exc
+    _assert_row_matches_validated_ledger(row, validated)
+    return dict(validated)
+
+
+def _assert_row_matches_validated_ledger(row: dict[str, Any], ledger: dict[str, Any]) -> None:
+    authorization = ledger.get("authorization") if isinstance(ledger.get("authorization"), dict) else {}
+    result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
+    expected = {
+        "ledger_id": _text(ledger.get("ledger_id")),
+        "turn_id": _text(ledger.get("turn_id")),
+        "action_id": _text(ledger.get("action_id")),
+        "capability_id": _text(ledger.get("capability_id")),
+        "authorization_decision_id": _text(authorization.get("decision_id")),
+        "tool_name": _text(ledger.get("tool_name")),
+        "status": _text(result.get("status")),
+    }
+    mismatches = [
+        field
+        for field, expected_value in expected.items()
+        if _text(row.get(field)) and expected_value and _text(row.get(field)) != expected_value
+    ]
+    if mismatches:
+        raise ValueError(f"tool ledger ingest kernel validation mismatch: {', '.join(mismatches)}")
 
 
 def _extract_ledger_row(payload: dict[str, Any]) -> dict[str, Any]:
