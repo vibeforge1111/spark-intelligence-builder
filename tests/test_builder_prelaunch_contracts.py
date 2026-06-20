@@ -8,7 +8,12 @@ import unittest
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
-from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply, record_telegram_auth_result
+from spark_intelligence.adapters.telegram.runtime import (
+    poll_telegram_updates_once,
+    _send_telegram_reply,
+    _telegram_request_id_for_update,
+    record_telegram_auth_result,
+)
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
@@ -52,10 +57,96 @@ from spark_intelligence.researcher_bridge.advisory import (
     researcher_bridge_status,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
+    def test_telegram_runtime_request_id_uses_incoming_vnext_turn_id(self) -> None:
+        canonical_turn_id = "turn:telegram:memory.recall:telegram-update:452998661"
+        update = make_telegram_update(
+            update_id=452998661,
+            user_id="42",
+            text="what did I say I should focus on next?",
+        )
+        update["turn_intent_envelope_vnext"] = {
+            "schema_version": "turn-intent-envelope-vnext",
+            "turn_id": canonical_turn_id,
+        }
+        normalized = SimpleNamespace(update_id=452998661)
+
+        self.assertEqual(
+            _telegram_request_id_for_update(update, normalized=normalized, simulation=False),
+            canonical_turn_id,
+        )
+
+    def test_telegram_runtime_request_id_falls_back_without_vnext_turn_id(self) -> None:
+        update = make_telegram_update(
+            update_id=452998662,
+            user_id="42",
+            text="hello",
+        )
+        normalized = SimpleNamespace(update_id=452998662)
+
+        self.assertEqual(
+            _telegram_request_id_for_update(update, normalized=normalized, simulation=False),
+            "telegram:452998662",
+        )
+        self.assertEqual(
+            _telegram_request_id_for_update(update, normalized=normalized, simulation=True),
+            "sim:452998662",
+        )
+
+    def test_telegram_poll_rows_use_incoming_vnext_turn_id(self) -> None:
+        canonical_turn_id = "turn:telegram:memory.recall:telegram-update:452998663"
+        update = make_telegram_update(
+            update_id=452998663,
+            user_id="42",
+            text="what did I say I should focus on next?",
+        )
+        update["message"]["turn_intent_envelope_vnext"] = {
+            "schema_version": "turn-intent-envelope-vnext",
+            "turn_id": canonical_turn_id,
+        }
+
+        class FakeTelegramClient:
+            def get_updates(self, *, offset: int | None, timeout_seconds: int) -> list[dict[str, object]]:
+                return [update]
+
+            def send_message(self, *, chat_id: str, text: str) -> dict[str, object]:
+                return {"ok": True, "chat_id": chat_id, "text": text}
+
+        poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=FakeTelegramClient(),
+            timeout_seconds=0,
+        )
+        with self.state_db.connect() as conn:
+            event_row = conn.execute(
+                """
+                SELECT request_id, turn_id
+                FROM event_log
+                WHERE event_type = 'delivery_attempted'
+                ORDER BY event_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            builder_event_row = conn.execute(
+                """
+                SELECT request_id
+                FROM builder_events
+                WHERE event_type = 'delivery_attempted'
+                ORDER BY event_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertIsNotNone(event_row)
+        self.assertIsNotNone(builder_event_row)
+        self.assertEqual(event_row["request_id"], canonical_turn_id)
+        self.assertEqual(event_row["turn_id"], canonical_turn_id)
+        self.assertEqual(builder_event_row["request_id"], canonical_turn_id)
+
     def _chip_evaluate_turn_intent_vnext(self, *, request_id: str) -> dict[str, object]:
         from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 

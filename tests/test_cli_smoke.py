@@ -812,6 +812,239 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("upstream Telegram memory authority is invalid", payload["reason"])
         writer.assert_not_called()
 
+    def test_memory_write_telegram_note_performs_typed_current_state_write(self) -> None:
+        governor_path = self.home / "governor-decision.json"
+        governor_path.write_text(json.dumps(self._telegram_memory_upstream_governor()), encoding="utf-8")
+        evidence_result = MemoryWriteResult(
+            status="succeeded",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+        )
+        typed_result = MemoryWriteResult(
+            status="succeeded",
+            operation="update",
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+        )
+
+        with patch(
+            "spark_intelligence.cli.write_structured_evidence_to_memory", return_value=evidence_result
+        ), patch(
+            "spark_intelligence.cli.write_profile_fact_to_memory", return_value=typed_result
+        ) as typed_writer:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "write-telegram-note",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:telegram:123",
+                "--text",
+                "User's current blocker is the Builder CLI typed-write flags.",
+                "--domain-pack",
+                "telegram_runtime",
+                "--evidence-kind",
+                "telegram_memory_note",
+                "--session-id",
+                "telegram:123",
+                "--turn-id",
+                "telegram-update:1",
+                "--actor-id",
+                "telegram_memory_direct_adapter",
+                "--governor-decision-file",
+                str(governor_path),
+                "--memory-role",
+                "current_state",
+                "--predicate",
+                "profile.current_blocker",
+                "--value",
+                "the Builder CLI typed-write flags",
+                "--fact-name",
+                "current_blocker",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        # The exact-note structured-evidence write still drives the primary acceptance signal.
+        self.assertEqual(payload["accepted_count"], 1)
+        typed_payload = payload["typed_current_state"]
+        self.assertTrue(typed_payload["attempted"])
+        self.assertEqual(typed_payload["memory_role"], "current_state")
+        self.assertEqual(typed_payload["predicate"], "profile.current_blocker")
+        self.assertEqual(typed_payload["fact_name"], "current_blocker")
+        self.assertEqual(typed_payload["status"], "succeeded")
+        self.assertEqual(typed_payload["accepted_count"], 1)
+
+        typed_writer.assert_called_once()
+        typed_kwargs = typed_writer.call_args.kwargs
+        self.assertEqual(typed_kwargs["predicate"], "profile.current_blocker")
+        self.assertEqual(typed_kwargs["value"], "the Builder CLI typed-write flags")
+        self.assertEqual(typed_kwargs["fact_name"], "current_blocker")
+        self.assertEqual(
+            typed_kwargs["evidence_text"],
+            "User's current blocker is the Builder CLI typed-write flags.",
+        )
+        # The typed write reuses the same governed authority the structured-evidence write used.
+        self.assertEqual(typed_kwargs["governor_decision"]["schema_version"], "governor-decision-v1")
+        self.assertEqual(typed_kwargs["governor_decision"]["outcome"], "execute")
+
+    def test_memory_write_telegram_note_skips_typed_write_without_typed_fields(self) -> None:
+        governor_path = self.home / "governor-decision.json"
+        governor_path.write_text(json.dumps(self._telegram_memory_upstream_governor()), encoding="utf-8")
+        evidence_result = MemoryWriteResult(
+            status="succeeded",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+        )
+
+        with patch(
+            "spark_intelligence.cli.write_structured_evidence_to_memory", return_value=evidence_result
+        ), patch("spark_intelligence.cli.write_profile_fact_to_memory") as typed_writer:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "write-telegram-note",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:telegram:123",
+                "--text",
+                "User prefers concise highlighted communication.",
+                "--domain-pack",
+                "telegram_runtime",
+                "--evidence-kind",
+                "telegram_memory_note",
+                "--governor-decision-file",
+                str(governor_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertNotIn("typed_current_state", payload)
+        typed_writer.assert_not_called()
+
+    def test_memory_inspect_capsule_records_audited_governed_read(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:telegram:123",
+            "--predicate",
+            "profile.current_focus",
+            "--value",
+            "restoring the typed and audited memory richness",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "inspect-capsule",
+            "--home",
+            str(self.home),
+            "--query",
+            "What is my current focus?",
+            "--subject",
+            "human:telegram:123",
+            "--predicate",
+            "profile.current_focus",
+            "--governed-read-request-id",
+            "telegram-update:7",
+            "--governed-read-session-id",
+            "telegram:123",
+            "--governed-read-human-id",
+            "human:telegram:123",
+            "--governed-read-source-kind",
+            "telegram_runtime_current_focus_read",
+            "--governed-read-user-message",
+            "What is my current focus?",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertGreaterEqual(payload["selected_count"], 1)
+        governed_read = payload["governed_read"]
+        self.assertTrue(governed_read["recorded"])
+        self.assertTrue(governed_read["allowed"])
+        self.assertEqual(governed_read["tool_name"], "memory.read")
+        self.assertEqual(governed_read["mutation_class"], "read_only")
+        self.assertEqual(governed_read["source_kind"], "telegram_runtime_current_focus_read")
+        self.assertEqual(governed_read["request_id"], "telegram-update:7")
+        self.assertEqual(governed_read["session_id"], "telegram:123")
+        self.assertEqual(governed_read["human_id"], "human:telegram:123")
+        self.assertTrue(governed_read["ledger_event_id"])
+
+        # The governed read leaves an audited Harness Core tool-call ledger trail.
+        with self.state_db.connect() as conn:
+            audit_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM builder_events
+                WHERE event_type = 'tool_call_ledger_recorded'
+                  AND component = 'telegram_memory_read_cli'
+                """
+            ).fetchone()[0]
+        self.assertGreaterEqual(audit_count, 1)
+
+    def test_memory_inspect_capsule_without_governed_read_flags_omits_audit(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:capsule:plain",
+            "--predicate",
+            "profile.current_focus",
+            "--value",
+            "supported-args recall path",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "inspect-capsule",
+            "--home",
+            str(self.home),
+            "--query",
+            "What is my current focus?",
+            "--subject",
+            "human:capsule:plain",
+            "--predicate",
+            "profile.current_focus",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertNotIn("governed_read", payload)
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

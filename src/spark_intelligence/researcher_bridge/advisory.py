@@ -8280,7 +8280,15 @@ def _detect_open_ended_memory_next_step_query(user_message: str) -> bool:
         "continue on",
         "continue?",
     )
-    return any(marker in text for marker in next_step_markers)
+    if not any(marker in text for marker in next_step_markers):
+        return False
+    request_shape_patterns = (
+        r"^(?:please\s+)?(?:what\b|what's\b|whats\b|what\s+next\b)",
+        r"^(?:please\s+)?(?:give|tell|show)\s+(?:me|us)\b",
+        r"^(?:can|could|would)\s+you\b",
+        r"^(?:please\s+)?continue\??$",
+    )
+    return any(re.search(pattern, text) for pattern in request_shape_patterns)
 
 
 def _detect_current_focus_plan_query(user_message: str) -> bool:
