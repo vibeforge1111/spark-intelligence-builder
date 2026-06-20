@@ -15,6 +15,12 @@ dependencies = [
   "PyYAML>=6.0",
   "referencing>=0.35.0",
   "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@9a6a3a637eda4641fafcf4335d5ba5b9f6919d46",
+  "spark-harness-core @ git+https://github.com/vibeforge1111/spark-harness-core.git@aa19fd7e49151c9df9e76e38f32da4aba7870bdf",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
 ]
 
 [project.scripts]

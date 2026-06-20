@@ -30,6 +30,7 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
+    DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_telegram_memory_diagnostic_turn_intent_payload,
@@ -73,7 +74,11 @@ from spark_intelligence.llm_wiki import (
 )
 from spark_intelligence.memory import run_memory_doctor
 from spark_intelligence.memory.episodic_events import detect_telegram_memory_event_observation
-from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
+from spark_intelligence.memory.flags import memory_enabled, memory_shadow_mode
+from spark_intelligence.memory.generic_observations import (
+    classify_telegram_generic_memory_candidate,
+    detect_telegram_generic_deletion,
+)
 from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
@@ -91,6 +96,7 @@ from spark_intelligence.personality import (
 )
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.researcher_bridge.advisory import (
+    _canonical_bridge_trace_ref,
     _detect_current_focus_transition_command,
     _detect_current_plan_transition_command,
     _detect_explicit_decision_statement,
@@ -455,8 +461,43 @@ def _telegram_researcher_memory_write_governor_decision(
     session_id: str,
     human_id: str,
     agent_id: str,
+    allow_runtime_memory_authority: bool = False,
 ) -> dict[str, Any] | None:
-    return _inbound_governor_decision(update_payload)
+    inbound_governor = _inbound_governor_decision(update_payload)
+    if isinstance(inbound_governor, dict):
+        return inbound_governor
+    if not allow_runtime_memory_authority:
+        return None
+    message_text = ""
+    if isinstance(update_payload, dict):
+        message = update_payload.get("message")
+        if isinstance(message, dict):
+            message_text = str(message.get("text") or message.get("caption") or "")
+    if _looks_like_memory_forget_request(message_text):
+        return None
+    try:
+        if detect_telegram_generic_deletion(message_text) is not None:
+            return None
+    except Exception:
+        pass
+    if extract_turn_intent_envelope_vnext(update_payload) is None:
+        return None
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
 
 
 def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -671,19 +712,6 @@ def _maybe_save_reply_as_draft(
         )
         if not authority.allowed:
             return reply_text
-
-    try:
-        from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
-        _dbg.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        with _dbg.open("a", encoding="utf-8") as _fh:
-            _fh.write(
-                f"{timestamp}Z user={user} iter={is_iteration} "
-                f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
-            )
-    except Exception:
-        pass
 
     if is_iteration:
         source_draft = None
@@ -1479,7 +1507,9 @@ def simulate_telegram_update(
 ) -> TelegramSimulationResult:
     normalized = normalize_telegram_update(update_payload, channel_id="telegram")
     request_prefix = "sim" if simulation else "telegram"
-    request_id = f"{request_prefix}:{normalized.update_id}"
+    incoming_vnext = extract_turn_intent_envelope_vnext(update_payload)
+    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if isinstance(incoming_vnext, dict) else ""
+    request_id = incoming_turn_id or f"{request_prefix}:{normalized.update_id}"
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
     if not normalized.is_dm:
         return TelegramSimulationResult(
@@ -1622,7 +1652,7 @@ def simulate_telegram_update(
                 spoken_source = str(command_result.get("voice_text") or outbound_text)
                 spoken_text = _prepare_voice_reply_text(spoken_source)
                 try:
-                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                    voice_authority = _telegram_voice_speak_authority(
                         update_payload=researcher_update_payload,
                         existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
                         state_db=state_db,
@@ -1642,7 +1672,8 @@ def simulate_telegram_update(
                         text=spoken_text,
                         tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
-                        turn_intent_payload=voice_turn_intent_payload,
+                        turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
+                        governor_decision=voice_authority.governor_decision if voice_authority else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -1717,9 +1748,9 @@ def simulate_telegram_update(
                         _instruction_intent = None
                     if _instruction_intent is not None:
                         try:
-                            memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
-                            shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
-                            if memory_enabled and not shadow_mode:
+                            memory_enabled_flag = memory_enabled(config_manager)
+                            shadow_mode = memory_shadow_mode(config_manager)
+                            if memory_enabled_flag and not shadow_mode:
                                 from spark_intelligence.memory.generic_observations import (
                                     detect_telegram_generic_deletion as _detect_generic_memory_deletion,
                                 )
@@ -1729,9 +1760,9 @@ def simulate_telegram_update(
                         except Exception:
                             pass
                     try:
-                        memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
-                        shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
-                        if memory_enabled and not shadow_mode:
+                        memory_enabled_flag = memory_enabled(config_manager)
+                        shadow_mode = memory_shadow_mode(config_manager)
+                        if memory_enabled_flag and not shadow_mode:
                             from spark_intelligence.memory.generic_observations import (
                                 detect_telegram_generic_observation as _detect_generic_memory_observation,
                             )
@@ -2112,6 +2143,7 @@ def simulate_telegram_update(
                         session_id=resolution.session_id,
                         human_id=resolution.human_id,
                         agent_id=resolution.agent_id,
+                        allow_runtime_memory_authority=not simulation,
                     )
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
@@ -2230,7 +2262,7 @@ def simulate_telegram_update(
             spoken_text = _prepare_voice_reply_text(outbound_text)
             if spoken_text:
                 try:
-                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+                    voice_authority = _telegram_voice_speak_authority(
                         update_payload=researcher_update_payload,
                         existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
                         state_db=state_db,
@@ -2249,7 +2281,8 @@ def simulate_telegram_update(
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
-                        turn_intent_payload=voice_turn_intent_payload,
+                        turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
+                        governor_decision=voice_authority.governor_decision if voice_authority else None,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
@@ -2996,6 +3029,7 @@ def poll_telegram_updates_once(
                 session_id=resolution.session_id,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
+                allow_runtime_memory_authority=True,
             ),
             config_manager=config_manager,
             state_db=state_db,
@@ -3203,7 +3237,13 @@ def _describe_telegram_delivery_exception(exc: Exception) -> str:
     return str(exc)
 
 
-def _telegram_voice_speak_turn_intent_payload(
+@dataclass(frozen=True)
+class _TelegramVoiceSpeakAuthority:
+    turn_intent_payload: dict[str, Any]
+    governor_decision: dict[str, Any] | None
+
+
+def _telegram_voice_speak_authority(
     *,
     update_payload: dict[str, Any] | None,
     existing_turn_intent_payload: dict[str, Any] | None = None,
@@ -3214,7 +3254,7 @@ def _telegram_voice_speak_turn_intent_payload(
     agent_id: str | None = None,
     user_message: str | None = None,
     source_kind: str = "telegram_voice_delivery",
-) -> dict[str, Any] | None:
+) -> _TelegramVoiceSpeakAuthority | None:
     if isinstance(existing_turn_intent_payload, dict):
         existing_authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": existing_turn_intent_payload},
@@ -3222,9 +3262,20 @@ def _telegram_voice_speak_turn_intent_payload(
             owner_system="spark-voice-comms",
             mutation_class="external_network",
             external_network=True,
+            state_db=state_db,
+            request_id=request_id,
+            channel_id="telegram" if state_db is not None else None,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="telegram_runtime" if state_db is not None else None,
+            component="telegram_runtime" if state_db is not None else "bridge_authority",
         )
         if existing_authority.allowed:
-            return existing_authority.harness_core_envelope or existing_turn_intent_payload
+            return _TelegramVoiceSpeakAuthority(
+                turn_intent_payload=existing_authority.harness_core_envelope or existing_turn_intent_payload,
+                governor_decision=existing_authority.governor_decision if isinstance(existing_authority.governor_decision, dict) else None,
+            )
     legacy_authority = authorize_builder_bridge_action(
         update_payload,
         tool_name="voice.speak",
@@ -3241,7 +3292,12 @@ def _telegram_voice_speak_turn_intent_payload(
         component="telegram_runtime" if state_db is not None else "bridge_authority",
     )
     if legacy_authority.allowed:
-        return legacy_authority.harness_core_envelope
+        if not isinstance(legacy_authority.harness_core_envelope, dict):
+            return None
+        return _TelegramVoiceSpeakAuthority(
+            turn_intent_payload=legacy_authority.harness_core_envelope,
+            governor_decision=legacy_authority.governor_decision if isinstance(legacy_authority.governor_decision, dict) else None,
+        )
     clean_message = " ".join(str(user_message or "").split())
     if not human_id or not session_id or not clean_message:
         return None
@@ -3272,7 +3328,10 @@ def _telegram_voice_speak_turn_intent_payload(
     )
     if not vnext_authority.allowed:
         return None
-    return vnext_authority.harness_core_envelope or vnext_payload
+    return _TelegramVoiceSpeakAuthority(
+        turn_intent_payload=vnext_authority.harness_core_envelope or vnext_payload,
+        governor_decision=vnext_authority.governor_decision if isinstance(vnext_authority.governor_decision, dict) else None,
+    )
 
 
 def _synthesize_telegram_voice_reply(
@@ -3288,9 +3347,9 @@ def _synthesize_telegram_voice_reply(
     coherence_mode: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    governor_decision: dict[str, Any] | None = None
-    if isinstance(turn_intent_payload, dict):
+    if governor_decision is None and isinstance(turn_intent_payload, dict):
         voice_authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": turn_intent_payload},
             tool_name="voice.speak",
@@ -3997,8 +4056,9 @@ def _send_telegram_reply(
         respect_voice_reply_state
         and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
     )
+    voice_authority: _TelegramVoiceSpeakAuthority | None = None
     if voice_requested:
-        turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
+        voice_authority = _telegram_voice_speak_authority(
             update_payload=turn_intent_update_payload,
             existing_turn_intent_payload=turn_intent_payload,
             state_db=state_db,
@@ -4009,7 +4069,7 @@ def _send_telegram_reply(
             user_message=user_message or text,
             source_kind="telegram_reply_voice_delivery",
         )
-        if not isinstance(turn_intent_payload, dict):
+        if voice_authority is None:
             voice_requested = False
     if voice_requested:
         filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
@@ -4057,7 +4117,8 @@ def _send_telegram_reply(
                     caption_text=voice_caption_text,
                     coherence_mode="caption_preview" if voice_text is not None else "exact",
                     voice_input_runtime_state=voice_input_runtime_state,
-                    turn_intent_payload=turn_intent_payload,
+                    turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
+                    governor_decision=voice_authority.governor_decision if voice_authority else None,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
@@ -10545,7 +10606,7 @@ def _handle_telegram_chip_command(
         blocked_stage="telegram_reply",
         run_id=run_id,
         request_id=request_id,
-        trace_ref=f"trace:telegram:{request_id}",
+        trace_ref=_canonical_bridge_trace_ref(agent_id=agent_id, human_id=human_id, request_id=request_id),
     )
     if not screened["allowed"]:
         return _with_tool_result_metadata(

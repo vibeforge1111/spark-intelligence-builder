@@ -26,7 +26,7 @@ capabilities = [
 binary = "spark-intelligence"
 
 [needs]
-modules = []
+modules = ["spark-harness-core"]
 capabilities = []
 secrets = ["voice.elevenlabs.api_key"]
 

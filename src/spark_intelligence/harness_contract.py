@@ -162,6 +162,7 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
         mutation_class: MutationClass,
         intent_summary: str,
         raw_turn_summary: str,
+        turn_id: str | None = None,
         publishes: bool = False,
         external_network: bool = False,
         confidence: float = 0.95,
@@ -179,6 +180,7 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
         intent_summary: str,
         raw_turn_summary: str,
         actions: list[dict[str, Any]],
+        turn_id: str | None = None,
         confidence: float = 0.95,
     ) -> dict[str, Any] | None:
         return None

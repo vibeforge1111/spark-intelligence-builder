@@ -6,8 +6,9 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import yaml
@@ -33,7 +34,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
-from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -53,6 +54,11 @@ from spark_intelligence.channel.service import (
     set_channel_status,
     test_configured_telegram_channel,
 )
+from spark_intelligence.cli_approval_ledgers import (
+    DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
+    default_cli_approval_ledger_dir,
+    import_cli_approval_ledgers,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
@@ -62,13 +68,23 @@ from spark_intelligence.gateway.runtime import (
     gateway_simulate_discord_message,
     gateway_simulate_telegram_update,
     gateway_simulate_whatsapp_message,
+    gateway_serve_stdio,
     gateway_start,
     gateway_status,
     gateway_trace_view,
 )
-from spark_intelligence.gateway.tracing import read_gateway_traces
+from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
+from spark_intelligence.gateway.tracing import gateway_log_report, prune_gateway_logs, read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
-from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+from spark_intelligence.harness_contract import (
+    build_vnext_action_intent_envelope,
+    build_vnext_tool_intent_envelope,
+    verify_governor_tool_authority,
+)
+from spark_intelligence.harness_evolution import (
+    build_harness_self_evolution_snapshot,
+    run_harness_change_manifest_runner,
+)
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -127,6 +143,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
     write_memory_movement_status_export,
+    write_structured_evidence_to_memory,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
@@ -139,15 +156,19 @@ from spark_intelligence.personality import (
     save_agent_persona_profile,
     write_personality_evolver_state,
 )
-from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import (
+    build_observability_store_report,
     build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
     open_run,
+    prune_observability_store,
+    recent_tool_call_ledgers,
     record_event,
     record_observer_handoff_record,
+    trace_turn,
 )
+from spark_intelligence.observability.jsonl_residue import build_jsonl_residue_report
 from spark_intelligence.ops import (
     build_observer_handoff_payload,
     build_personality_report,
@@ -2168,6 +2189,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
     )
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_serve_stdio_parser = gateway_subparsers.add_parser(
+        "serve-stdio",
+        help="Serve Telegram gateway turns over newline-delimited JSON on stdio",
+    )
+    gateway_serve_stdio_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_serve_stdio_parser.add_argument(
+        "--origin",
+        choices=("simulation", "telegram-runtime"),
+        default="simulation",
+        help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
+    )
+    gateway_ingest_tool_ledger_parser = gateway_subparsers.add_parser(
+        "ingest-tool-ledger",
+        help="Persist one governed tool-ledger row into the canonical observability store",
+    )
+    gateway_ingest_tool_ledger_parser.add_argument("ledger_file", help="JSON ledger row file, or '-' for stdin")
+    gateway_ingest_tool_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_ingest_tool_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
         help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
@@ -2580,6 +2619,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not write a memory-read event for this inspection",
     )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_write_telegram_note_parser = memory_subparsers.add_parser(
+        "write-telegram-note",
+        help="Write one explicit Telegram memory note through the governed memory kernel",
+    )
+    memory_write_telegram_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_write_telegram_note_parser.add_argument("--sdk-module", help="Override the SDK module for this write")
+    memory_write_telegram_note_parser.add_argument("--human-id", required=True, help="Builder human id to write under")
+    memory_write_telegram_note_parser.add_argument("--text", required=True, help="Exact Telegram note text to preserve")
+    memory_write_telegram_note_parser.add_argument("--domain-pack", required=True, help="Memory domain pack label")
+    memory_write_telegram_note_parser.add_argument("--evidence-kind", required=True, help="Evidence kind label")
+    memory_write_telegram_note_parser.add_argument("--session-id", help="Source session id")
+    memory_write_telegram_note_parser.add_argument("--turn-id", help="Source turn id")
+    memory_write_telegram_note_parser.add_argument(
+        "--actor-id",
+        default="telegram_memory_direct_adapter",
+        help="Actor id to record for the write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--governor-decision-file",
+        required=True,
+        help="JSON file containing the Harness Core Governor decision authorizing this memory write",
+    )
+    memory_write_telegram_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -2822,12 +2884,169 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_observability_parser = jobs_subparsers.add_parser(
+        "prune-observability",
+        help="Prune old observability mirror rows and optionally VACUUM state.db",
+    )
+    jobs_prune_observability_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_observability_parser.add_argument("--older-than", required=True, help="Delete rows older than this ISO-8601 timestamp")
+    jobs_prune_observability_parser.add_argument("--vacuum", action="store_true", help="Run VACUUM if rows were deleted")
+    jobs_prune_observability_parser.add_argument(
+        "--include-builder-events",
+        action="store_true",
+        help="Also prune builder_events; omitted by default because Watchtower reads this table",
+    )
+    jobs_prune_observability_parser.add_argument(
+        "--include-gateway-logs",
+        action="store_true",
+        help="Also prune gateway JSONL trace and outbound audit records older than the cutoff",
+    )
+    jobs_prune_observability_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    jobs_observability_report_parser = jobs_subparsers.add_parser(
+        "observability-report",
+        help="Report state.db and gateway observability size/counts without pruning",
+    )
+    jobs_observability_report_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_observability_report_parser.add_argument(
+        "--older-than",
+        help="Include counts that would be pruned by this ISO-8601 cutoff",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--extended-older-than",
+        help="Include growth-table counts that would be pruned by the extended retention cutoff",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--include-builder-events",
+        action="store_true",
+        help="Include builder_events in prunable counts; omitted by default because Watchtower reads this table",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--include-gateway-logs",
+        action="store_true",
+        help="Also report gateway JSONL trace and outbound audit sizes/counts",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--include-unowned-jsonl",
+        action="store_true",
+        help="Also report loose JSONL files under the Spark root without opening or deleting them",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--spark-root",
+        help="Override Spark root for loose JSONL reporting; defaults to SPARK_HOME or the .spark ancestor of --home",
+    )
+    jobs_observability_report_parser.add_argument("--jsonl-limit", type=int, default=40, help="Maximum loose JSONL files to list")
+    jobs_observability_report_parser.add_argument("--jsonl-min-bytes", type=int, default=0, help="Minimum loose JSONL size to list")
+    jobs_observability_report_parser.add_argument(
+        "--jsonl-reference-scan",
+        action="store_true",
+        help="Scan non-JSONL code/config text for references to reported loose JSONL paths",
+    )
+    jobs_observability_report_parser.add_argument(
+        "--jsonl-reference-root",
+        action="append",
+        default=[],
+        help="Reference root to scan; repeatable. Defaults to installed source/config/modules/tools with nested roots deduped",
+    )
+    jobs_observability_report_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
     harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
     harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
     harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_tool_ledgers_parser = harness_subparsers.add_parser(
+        "tool-ledgers",
+        help="Show canonical governed tool ledgers from state.db",
+    )
+    harness_tool_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_tool_ledgers_parser.add_argument("--turn-id", help="Filter ledgers by turn id")
+    harness_tool_ledgers_parser.add_argument("--surface", help="Filter ledgers by producing surface")
+    harness_tool_ledgers_parser.add_argument("--limit", type=int, default=20, help="Maximum ledgers to show")
+    harness_tool_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_trace_turn_parser = harness_subparsers.add_parser(
+        "trace-turn",
+        help="Show canonical ledgers and event mirror rows for one turn id",
+    )
+    harness_trace_turn_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_trace_turn_parser.add_argument("--turn-id", required=True, help="Turn id to trace")
+    harness_trace_turn_parser.add_argument("--limit", type=int, default=100, help="Maximum rows per section")
+    harness_trace_turn_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_import_cli_ledgers_parser = harness_subparsers.add_parser(
+        "import-cli-ledgers",
+        help="Import Spark CLI approval ledgers into the canonical tool-ledger table",
+    )
+    harness_import_cli_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_import_cli_ledgers_parser.add_argument(
+        "--ledger-dir",
+        default=str(default_cli_approval_ledger_dir()),
+        help="Directory containing Spark CLI approval ledger JSON files",
+    )
+    harness_import_cli_ledgers_parser.add_argument(
+        "--retention-cap",
+        type=int,
+        default=DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
+        help="Keep only this many newest approval-ledger JSON files after import",
+    )
+    harness_import_cli_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_self_evolution_parser = harness_subparsers.add_parser(
+        "self-evolution-snapshot",
+        help="Build an observe-only Harness Core self-evolution run from canonical tool ledgers",
+    )
+    harness_self_evolution_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_self_evolution_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
+    harness_self_evolution_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_change_runner_parser = harness_subparsers.add_parser(
+        "change-manifest-runner",
+        help="Evaluate Harness Core change manifests against Builder ledger and test evidence",
+    )
+    harness_change_runner_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_change_runner_parser.add_argument(
+        "--manifest",
+        action="append",
+        required=True,
+        help="Path to a change-manifest-v1 JSON file; repeat for multiple manifests",
+    )
+    harness_change_runner_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
+    harness_change_runner_parser.add_argument(
+        "--mode",
+        default="promote",
+        choices=["observe", "propose", "sandbox", "live_qa", "promote", "rollback"],
+        help="Self-evolution mode to feed into Harness Core",
+    )
+    harness_change_runner_parser.add_argument(
+        "--requested-verdict",
+        choices=["promote_private", "promote_release_candidate", "rollback"],
+        help="Promotion or rollback verdict requested from the gated runner",
+    )
+    harness_change_runner_parser.add_argument(
+        "--command",
+        action="append",
+        dest="runner_commands",
+        help="Test command to record or run; repeat to override manifest required_tests",
+    )
+    harness_change_runner_parser.add_argument(
+        "--run-tests",
+        action="store_true",
+        help="Run allowlisted test commands with shell disabled before asking the runner to promote",
+    )
+    harness_change_runner_parser.add_argument(
+        "--allow-private-promotion",
+        action="store_true",
+        help="Allow the adapter to mark local private-promotion readiness when tests and manifests pass",
+    )
+    harness_change_runner_parser.add_argument(
+        "--live-surface-required",
+        action="store_true",
+        help="Keep live-surface proof marked as required, which blocks promotion",
+    )
+    harness_change_runner_parser.add_argument("--cwd", help="Working directory for allowlisted test commands")
+    harness_change_runner_parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=120,
+        help="Per-test-command timeout when --run-tests is used",
+    )
+    harness_change_runner_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
     harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
     harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -4627,7 +4846,7 @@ def handle_self_context(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
-        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
+        runner_writable=runner_writable,
         runner_label=str(getattr(args, "runner_label", "") or ""),
         execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
         live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
@@ -5515,6 +5734,39 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
             simulation=args.origin != "telegram-runtime",
         )
     )
+    return 0
+
+
+def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    return gateway_serve_stdio(
+        config_manager,
+        state_db,
+        input_stream=sys.stdin,
+        output_stream=sys.stdout,
+        error_stream=sys.stderr,
+        simulation=args.origin != "telegram-runtime",
+    )
+
+
+def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        raw_payload = sys.stdin.read() if args.ledger_file == "-" else Path(args.ledger_file).read_text(encoding="utf-8-sig")
+        payload = json.loads(raw_payload)
+        if not isinstance(payload, dict):
+            raise ValueError("ledger file must contain a JSON object")
+        result = ingest_tool_ledger_payload(state_db, payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(result.to_json() if args.json else result.to_text())
     return 0
 
 
@@ -6585,6 +6837,7 @@ def _run_browser_hook(
         args,
         hook_name=hook_name,
         payload=payload,
+        render_result=render_result,
         action=action,
         target_ref=target_ref,
     )
@@ -6602,6 +6855,7 @@ def _execute_browser_hook(
     *,
     hook_name: str,
     payload: dict[str, object],
+    render_result,
     action: str,
     target_ref: str,
 ) -> tuple[int, dict[str, object] | None, str | None]:
@@ -6960,6 +7214,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
         payload=payload,
+        render_result=render_browser_page_snapshot,
         action="browser_page_snapshot",
         target_ref=args.origin,
     )
@@ -6984,6 +7239,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_NAVIGATE_HOOK,
         payload=navigate_payload,
+        render_result=lambda result: "Browser navigation completed.",
         action="browser_page_snapshot_navigate",
         target_ref=args.origin,
     )
@@ -7020,6 +7276,7 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_TAB_WAIT_HOOK,
         payload=wait_payload,
+        render_result=lambda result: "Browser tab wait completed.",
         action="browser_page_snapshot_wait",
         target_ref=tab_id,
     )
@@ -7380,6 +7637,175 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_governor_decision_file(path_value: str) -> dict:
+    path = Path(path_value)
+    parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(parsed, dict):
+        raise ValueError("--governor-decision-file must decode to a JSON object")
+    return parsed
+
+
+def _trace_id_from_governor_decision(governor_decision: dict[str, Any] | None) -> str | None:
+    if not isinstance(governor_decision, dict):
+        return None
+    trace = governor_decision.get("trace") if isinstance(governor_decision.get("trace"), dict) else {}
+    return (
+        str(governor_decision.get("traceId") or "").strip()
+        or str(governor_decision.get("trace_id") or "").strip()
+        or str(trace.get("id") or "").strip()
+        or None
+    )
+
+
+def _derive_telegram_memory_materialization_governor(
+    *,
+    upstream_governor_decision: dict[str, Any],
+    state_db: StateDB,
+    human_id: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> dict[str, Any]:
+    upstream_verification = verify_governor_tool_authority(
+        upstream_governor_decision,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        require_pre_execution_ledger=True,
+    )
+    if not upstream_verification.get("allowed"):
+        reasons = upstream_verification.get("reason_codes")
+        reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "upstream_governor_not_allowed"
+        raise ValueError(f"upstream Telegram memory authority is invalid: {reason_text}")
+
+    upstream_trace = _trace_id_from_governor_decision(upstream_governor_decision)
+    request_id = str(turn_id or upstream_governor_decision.get("turn_id") or session_id or human_id).strip()
+    envelope = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=human_id,
+        request_id=request_id,
+        source_kind="telegram_memory_direct_adapter",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary="Fresh Telegram Harness Core authority selected this exact Builder/domain-chip memory materialization.",
+        raw_turn_summary=(
+            "Upstream Telegram Governor authorized a scoped memory.write; "
+            f"source turn={turn_id or 'unknown'} session={session_id or 'unknown'} "
+            f"upstream_trace={upstream_trace or 'unknown'}. Raw note text remains in the memory write payload."
+        ),
+        args_path=f"builder://telegram-memory/{request_id}/domain-chip-memory-write",
+    )
+    if not isinstance(envelope, dict):
+        raise ValueError("could not build downstream memory materialization envelope")
+
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        actor_id=actor_id,
+        component="telegram_memory_write_cli",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+
+    reasons = tuple(authority.reason_codes or ("downstream_memory_materialization_not_authorized",))
+    reason_text = ", ".join(str(reason) for reason in reasons if str(reason))
+    raise ValueError(f"downstream memory materialization authority is invalid: {reason_text}")
+
+
+def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    if args.sdk_module:
+        config_manager.set_path("spark.memory.sdk_module", args.sdk_module)
+    try:
+        upstream_governor_decision = _load_governor_decision_file(args.governor_decision_file)
+        governor_decision = _derive_telegram_memory_materialization_governor(
+            upstream_governor_decision=upstream_governor_decision,
+            state_db=state_db,
+            human_id=args.human_id,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            actor_id=args.actor_id,
+        )
+        result = write_structured_evidence_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=args.human_id,
+            evidence_text=args.text,
+            domain_pack=args.domain_pack,
+            evidence_kind=args.evidence_kind,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            channel_kind="telegram",
+            actor_id=args.actor_id,
+            governor_decision=governor_decision,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "schema_version": "spark.telegram_memory_write.v1",
+            "status": "failed",
+            "accepted_count": 0,
+            "rejected_count": 1,
+            "skipped_count": 0,
+            "abstained": False,
+            "reason": str(exc),
+            "human_id": args.human_id,
+            "domain_pack": args.domain_pack,
+            "evidence_kind": args.evidence_kind,
+            "session_id": args.session_id,
+            "turn_id": args.turn_id,
+        }
+        print(json.dumps(payload, indent=2) if args.json else f"Telegram memory write blocked: {exc}")
+        return 1
+
+    result_payload = asdict(result)
+    governor_trace = _trace_id_from_governor_decision(governor_decision)
+    governor_outcome = governor_decision.get("outcome") or governor_decision.get("decision")
+    payload = {
+        "schema_version": "spark.telegram_memory_write.v1",
+        "status": result.status,
+        "accepted_count": result.accepted_count,
+        "rejected_count": result.rejected_count,
+        "skipped_count": result.skipped_count,
+        "abstained": result.abstained,
+        "reason": result.reason,
+        "operation": result.operation,
+        "method": result.method,
+        "memory_role": result.memory_role,
+        "human_id": args.human_id,
+        "domain_pack": args.domain_pack,
+        "evidence_kind": args.evidence_kind,
+        "session_id": args.session_id,
+        "turn_id": args.turn_id,
+        "authority": {
+            "source": "governor_decision_file",
+            "trace_id": governor_trace,
+            "outcome": governor_outcome,
+        },
+        "retrieval_trace": result_payload.get("retrieval_trace"),
+        "provenance": result_payload.get("provenance") or [],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "Telegram memory write "
+            f"{result.status}: accepted={result.accepted_count} "
+            f"rejected={result.rejected_count} skipped={result.skipped_count}"
+        )
+    return 0 if result.accepted_count > 0 and not result.abstained else 1
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -7683,11 +8109,68 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
     return 0 if int(summary.get("completed_runs") or 0) > 0 else 1
 
 
+def _build_memory_direct_smoke_governor_decision(
+    *,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    operation: str,
+    actor_id: str = "memory_cli",
+) -> dict[str, Any] | None:
+    request_id = f"memory-direct-smoke:{operation}:{uuid4().hex}"
+    envelope = build_vnext_tool_intent_envelope(
+        surface="cli",
+        actor_id_ref=actor_id,
+        request_id=request_id,
+        source_kind="memory_cli_direct_smoke",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary=f"CLI direct memory smoke authorized a scoped {operation} operation.",
+        raw_turn_summary=(
+            f"subject:{subject}\n"
+            f"predicate:{predicate}\n"
+            f"operation:{operation}\n"
+            "Raw memory value remains in the smoke payload."
+        ),
+        args_path=f"builder://memory-direct-smoke/{request_id}/{operation}",
+    )
+    if not isinstance(envelope, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        actor_id=actor_id,
+        component="memory_direct_smoke_cli",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    governor_decision = _build_memory_direct_smoke_governor_decision(
+        state_db=state_db,
+        subject=args.subject,
+        predicate=args.predicate,
+        operation="update",
+    )
+    cleanup_governor_decision = (
+        _build_memory_direct_smoke_governor_decision(
+            state_db=state_db,
+            subject=args.subject,
+            predicate=args.predicate,
+            operation="delete",
+        )
+        if not bool(args.no_cleanup)
+        else None
+    )
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -7696,6 +8179,8 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         predicate=args.predicate,
         value=args.value,
         cleanup=not bool(args.no_cleanup),
+        governor_decision=governor_decision,
+        cleanup_governor_decision=cleanup_governor_decision,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
@@ -7924,12 +8409,6 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
                 notes.append(f"discovered spark-researcher config at {resolved}")
 
     swarm_runtime_root = args.swarm_runtime_root
-    if not swarm_runtime_root:
-        current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
-        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
-        if not current_swarm_root and default_swarm_root.exists():
-            swarm_runtime_root = str(default_swarm_root)
-            notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
 
     if any(
         [
@@ -7957,7 +8436,7 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         if args.swarm_workspace_id:
             notes.append(f"configured spark.swarm.workspace_id = {args.swarm_workspace_id}")
         if swarm_runtime_root:
-            notes.append(f"configured spark.swarm.runtime_root = {Path(swarm_runtime_root).expanduser()}")
+            notes.append(f"configured SPARK_SWARM_RUNTIME_ROOT = {Path(swarm_runtime_root).expanduser()}")
         if args.swarm_access_token:
             notes.append(f"stored spark.swarm access token in {args.swarm_access_token_env}")
 
@@ -7999,7 +8478,9 @@ def _configure_swarm(
         config_manager.set_path("spark.swarm.workspace_id", workspace_id)
         config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", workspace_id)
     if runtime_root:
-        config_manager.set_path("spark.swarm.runtime_root", str(Path(runtime_root).expanduser()))
+        normalized_root = str(Path(runtime_root).expanduser())
+        config_manager.set_path("spark.swarm.runtime_root", normalized_root)
+        config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", normalized_root)
     if access_token:
         env_name = access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
         config_manager.upsert_env_secret(env_name, access_token)
@@ -8038,6 +8519,130 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = prune_observability_store(
+        state_db,
+        older_than=str(getattr(args, "older_than", "") or ""),
+        vacuum=bool(getattr(args, "vacuum", False)),
+        include_builder_events=bool(getattr(args, "include_builder_events", False)),
+    )
+    gateway_logs_result = None
+    if bool(getattr(args, "include_gateway_logs", False)):
+        gateway_logs_result = prune_gateway_logs(
+            config_manager,
+            older_than=str(getattr(args, "older_than", "") or ""),
+        )
+    payload = {
+        "cutoff": result.cutoff,
+        "deleted_counts": result.deleted_counts,
+        "total_deleted": result.total_deleted,
+        "vacuumed": result.vacuumed,
+        "gateway_logs": gateway_logs_result.to_payload() if gateway_logs_result is not None else None,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Observability prune complete"]
+        lines.append(f"- cutoff: {result.cutoff}")
+        lines.append(f"- deleted: {result.total_deleted}")
+        for table, count in sorted(result.deleted_counts.items()):
+            lines.append(f"- {table}: {count}")
+        if gateway_logs_result is not None:
+            lines.append(f"- gateway_logs: {gateway_logs_result.total_deleted}")
+            for log_name, count in sorted(gateway_logs_result.deleted_counts.items()):
+                lines.append(f"- {log_name}: {count}")
+        lines.append(f"- vacuumed: {'yes' if result.vacuumed else 'no'}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_jobs_observability_report(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    older_than = str(getattr(args, "older_than", "") or "").strip() or None
+    extended_older_than = str(getattr(args, "extended_older_than", "") or "").strip() or None
+    state_report = build_observability_store_report(
+        state_db,
+        older_than=older_than,
+        include_builder_events=bool(getattr(args, "include_builder_events", False)),
+        extended_older_than=extended_older_than,
+    )
+    gateway_report = None
+    if bool(getattr(args, "include_gateway_logs", False)):
+        gateway_report = gateway_log_report(config_manager, older_than=older_than)
+    jsonl_report = None
+    if bool(getattr(args, "include_unowned_jsonl", False)):
+        jsonl_report = build_jsonl_residue_report(
+            config_manager,
+            root=getattr(args, "spark_root", None),
+            limit=int(getattr(args, "jsonl_limit", 40) or 40),
+            min_bytes=int(getattr(args, "jsonl_min_bytes", 0) or 0),
+            reference_scan=bool(getattr(args, "jsonl_reference_scan", False)),
+            reference_roots=list(getattr(args, "jsonl_reference_root", []) or []),
+        ).to_payload()
+    payload = {
+        "state_db": state_report.to_payload(),
+        "gateway_logs": gateway_report,
+        "unowned_jsonl": jsonl_report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Observability report"]
+        lines.append(f"- state_db: {state_report.state_db_path}")
+        lines.append(f"- state_db_bytes: {state_report.state_db_bytes}")
+        lines.append(f"- page_count: {state_report.page_count}")
+        lines.append(f"- freelist_count: {state_report.freelist_count}")
+        for table, count in sorted(state_report.table_counts.items()):
+            lines.append(f"- {table}: {count}")
+        if state_report.cutoff is not None:
+            lines.append(f"- cutoff: {state_report.cutoff}")
+        if state_report.extended_cutoff is not None:
+            lines.append(f"- extended_cutoff: {state_report.extended_cutoff}")
+        if state_report.cutoff is not None or state_report.extended_cutoff is not None:
+            lines.append(f"- total_prunable: {state_report.total_prunable}")
+            for table, count in sorted(state_report.prunable_counts.items()):
+                lines.append(f"- prunable {table}: {count}")
+        if gateway_report is not None:
+            lines.append(f"- gateway_log_bytes: {gateway_report['total_bytes']}")
+            lines.append(f"- gateway_log_records: {gateway_report['total_records']}")
+            lines.append(f"- gateway_log_old_records: {gateway_report['total_old_records']}")
+        if jsonl_report is not None:
+            lines.append(f"- unowned_jsonl_root: {jsonl_report['root']}")
+            lines.append(f"- unowned_jsonl_files: {jsonl_report['total_files']}")
+            lines.append(f"- unowned_jsonl_bytes: {jsonl_report['total_bytes']}")
+            lines.append(f"- unowned_jsonl_candidates: {jsonl_report['candidate_files']}")
+            lines.append(f"- unowned_jsonl_below_min_bytes: {jsonl_report['below_min_bytes_files']}")
+            for action, count in sorted(jsonl_report["candidate_manifest_action_counts"].items()):
+                lines.append(f"- unowned_jsonl_action {action}: {count}")
+            if jsonl_report.get("reference_scan_enabled"):
+                for status, count in sorted(jsonl_report["candidate_reference_scan_status_counts"].items()):
+                    lines.append(f"- unowned_jsonl_reference_scan {status}: {count}")
+            for item in jsonl_report["reported_files"][:10]:
+                reference_scan = item.get("reference_scan") or {}
+                reference_detail = ""
+                if reference_scan:
+                    reference_detail = (
+                        f" ref_scan={reference_scan.get('status', 'unknown')}"
+                        f" matches={int(reference_scan.get('match_count') or 0)}"
+                    )
+                lines.append(
+                    f"- jsonl {item['relative_path']} "
+                    f"bytes={item['bytes']} class={item['classification']} "
+                    f"action={item['manifest_action']} "
+                    f"blocked_by={item['movement_blocker'] or 'none'}"
+                    f"{reference_detail}"
+                )
+        print("\n".join(lines))
+    return 0
+
+
 def handle_harness_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8061,6 +8666,146 @@ def handle_harness_status(args: argparse.Namespace) -> int:
         lines.append(f"- recent runs: {int(runtime_summary.get('recent_run_count') or 0)}")
         if runtime_summary.get("last_harness_id"):
             lines.append(f"- last harness: {runtime_summary['last_harness_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_tool_ledgers(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    ledgers = recent_tool_call_ledgers(
+        state_db,
+        turn_id=getattr(args, "turn_id", None),
+        surface=getattr(args, "surface", None),
+        limit=int(getattr(args, "limit", 20) or 20),
+    )
+    if args.json:
+        print(json.dumps({"count": len(ledgers), "ledgers": ledgers}, indent=2))
+    else:
+        lines = ["Spark harness tool ledgers"]
+        lines.append(f"- count: {len(ledgers)}")
+        for row in ledgers:
+            lines.append(
+                f"- {row.get('ledger_id') or 'unknown'} "
+                f"turn={row.get('turn_id') or 'unknown'} "
+                f"surface={row.get('surface') or 'unknown'} "
+                f"tool={row.get('tool_name') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_trace_turn(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = trace_turn(
+        state_db,
+        turn_id=str(getattr(args, "turn_id", "") or ""),
+        limit=int(getattr(args, "limit", 100) or 100),
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        counts = payload["counts"]
+        lines = ["Spark harness turn trace"]
+        lines.append(f"- turn_id: {payload['turn_id']}")
+        lines.append(f"- tool_call_ledgers: {counts['tool_call_ledgers']}")
+        lines.append(f"- builder_events: {counts['builder_events']}")
+        lines.append(f"- event_log: {counts['event_log']}")
+        for row in payload["tool_call_ledgers"]:
+            lines.append(
+                f"- ledger {row.get('ledger_id') or 'unknown'} "
+                f"surface={row.get('surface') or 'unknown'} "
+                f"tool={row.get('tool_name') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        for row in payload["builder_events"]:
+            lines.append(
+                f"- event {row.get('event_id') or 'unknown'} "
+                f"type={row.get('event_type') or 'unknown'} "
+                f"component={row.get('component') or 'unknown'} "
+                f"status={row.get('status') or 'unknown'}"
+            )
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_import_cli_ledgers(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = import_cli_approval_ledgers(
+        state_db,
+        ledger_dir=Path(str(getattr(args, "ledger_dir", "") or default_cli_approval_ledger_dir())),
+        retention_cap=int(getattr(args, "retention_cap", DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.errors and result.imported == 0 else 0
+
+
+def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_harness_self_evolution_snapshot(state_db, limit=args.limit)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        readiness = payload["readiness_score"]["overall"]
+        run = payload["self_evolution_run"]
+        lines = ["Spark harness self-evolution snapshot"]
+        lines.append("- mode: observe")
+        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
+        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
+        lines.append(f"- evolution: {run['evolution_id']}")
+        lines.append("- commands: observe-only; no commands executed")
+        if payload.get("event_id"):
+            lines.append(f"- event: {payload['event_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_change_manifest_runner(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = run_harness_change_manifest_runner(
+        state_db,
+        manifest_paths=args.manifest,
+        mode=args.mode,
+        requested_verdict=args.requested_verdict,
+        commands=args.runner_commands,
+        run_tests=bool(args.run_tests),
+        allow_private_promotion=bool(args.allow_private_promotion),
+        cwd=args.cwd,
+        timeout_seconds=args.timeout_seconds,
+        limit=args.limit,
+        live_surface_required=bool(args.live_surface_required),
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        readiness = payload["readiness_score"]["overall"]
+        run = payload["self_evolution_run"]
+        decision = run["promotion_decision"]
+        lines = ["Spark harness change-manifest runner"]
+        lines.append(f"- mode: {payload['mode']}")
+        lines.append(f"- manifests: {int(payload.get('manifest_count') or 0)}")
+        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
+        lines.append(f"- tests: {'run' if payload.get('run_tests') else 'not run'}")
+        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
+        lines.append(f"- decision: {decision['verdict']}")
+        lines.append(f"- evolution: {run['evolution_id']}")
+        if payload.get("event_id"):
+            lines.append(f"- event: {payload['event_id']}")
         print("\n".join(lines))
     return 0
 
@@ -9401,6 +10146,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_oauth_callback(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
+    if args.command == "gateway" and args.gateway_command == "serve-stdio":
+        return handle_gateway_serve_stdio(args)
+    if args.command == "gateway" and args.gateway_command == "ingest-tool-ledger":
+        return handle_gateway_ingest_tool_ledger(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "shadow-telegram":
@@ -9491,6 +10240,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "inspect-capsule":
         return handle_memory_inspect_capsule(args)
+    if args.command == "memory" and args.memory_command == "write-telegram-note":
+        return handle_memory_write_telegram_note(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
@@ -9535,8 +10286,22 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "jobs" and args.jobs_command == "prune-observability":
+        return handle_jobs_prune_observability(args)
+    if args.command == "jobs" and args.jobs_command == "observability-report":
+        return handle_jobs_observability_report(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "tool-ledgers":
+        return handle_harness_tool_ledgers(args)
+    if args.command == "harness" and args.harness_command == "trace-turn":
+        return handle_harness_trace_turn(args)
+    if args.command == "harness" and args.harness_command == "import-cli-ledgers":
+        return handle_harness_import_cli_ledgers(args)
+    if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
+        return handle_harness_self_evolution_snapshot(args)
+    if args.command == "harness" and args.harness_command == "change-manifest-runner":
+        return handle_harness_change_manifest_runner(args)
     if args.command == "harness" and args.harness_command == "plan":
         return handle_harness_plan(args)
     if args.command == "harness" and args.harness_command == "execute":

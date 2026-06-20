@@ -14,7 +14,10 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+from spark_intelligence.memory.flags import memory_enabled, memory_shadow_mode
 from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_observation,
     parse_entity_state_deletion,
@@ -23,6 +26,8 @@ from spark_intelligence.memory.generic_observations import (
 from spark_intelligence.memory.profile_facts import (
     active_state_revalidate_at,
     active_state_revalidation_days,
+    filter_project_scoped_current_state_records,
+    is_project_scoped_current_state_predicate,
     parse_named_object_fact,
 )
 from spark_intelligence.memory.constitution import (
@@ -1310,6 +1315,65 @@ class _DomainChipMemoryClientAdapter:
             temp_path.replace(self._persistence_path)
 
 
+def _build_memory_write_governor_decision(
+    *,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    operation: str,
+    memory_role: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+    source_surface: str,
+) -> dict[str, Any] | None:
+    request_seed = {
+        "subject": subject,
+        "predicate": predicate,
+        "operation": operation,
+        "memory_role": memory_role,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "actor_id": actor_id,
+        "source_surface": source_surface,
+        "ts": _now_iso(),
+    }
+    request_id = f"memory-write:{payload_hash(request_seed)[:16]}"
+    envelope = build_vnext_tool_intent_envelope(
+        surface=source_surface or "builder",
+        actor_id_ref=actor_id,
+        request_id=request_id,
+        source_kind=source_surface or "memory_orchestrator",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        intent_summary=f"SIB memory orchestrator authorized {operation} for {memory_role}.",
+        raw_turn_summary=(
+            f"subject={subject}\n"
+            f"predicate={predicate}\n"
+            f"operation={operation}\n"
+            f"memory_role={memory_role}\n"
+            f"session_id={session_id or 'unknown'}\n"
+            f"turn_id={turn_id or 'unknown'}"
+        ),
+        args_path=f"builder://memory-write/{request_id}",
+    )
+    if not isinstance(envelope, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        component="memory_orchestrator",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def run_memory_sdk_smoke_test(
     *,
     config_manager: ConfigManager,
@@ -1366,6 +1430,18 @@ def run_memory_sdk_smoke_test(
     }
     if governor_decision is not None:
         payload["governor_decision"] = governor_decision
+    elif not isinstance(payload.get("governor_decision"), dict):
+        payload["governor_decision"] = _build_memory_write_governor_decision(
+            state_db=state_db,
+            subject=subject,
+            predicate=predicate,
+            operation="update",
+            memory_role="current_state",
+            session_id=session_id,
+            turn_id=write_turn_id,
+            actor_id=actor_id,
+            source_surface="memory_cli_smoke",
+        )
     raw_write = _call_sdk_method(client, "write_observation", payload)
     write_result = _normalize_write_result(raw=raw_write, operation="update")
     raw_read = _call_sdk_method(
@@ -1395,6 +1471,18 @@ def run_memory_sdk_smoke_test(
         }
         if cleanup_governor_decision is not None:
             cleanup_payload["governor_decision"] = cleanup_governor_decision
+        elif not isinstance(cleanup_payload.get("governor_decision"), dict):
+            cleanup_payload["governor_decision"] = _build_memory_write_governor_decision(
+                state_db=state_db,
+                subject=subject,
+                predicate=predicate,
+                operation="delete",
+                memory_role="current_state",
+                session_id=session_id,
+                turn_id=cleanup_turn_id,
+                actor_id=actor_id,
+                source_surface="memory_cli_smoke",
+            )
         raw_cleanup = _call_sdk_method(
             client,
             "write_observation",
@@ -2284,6 +2372,21 @@ def hybrid_memory_retrieve(
                 record_activity=False,
             ),
         )
+    if normalized_subject and not normalized_predicate:
+        add_lane(
+            "current_state_scan",
+            adapter.read_current_state(
+                subject=normalized_subject,
+                predicate=None,
+                predicate_prefix="",
+                entity_key=normalized_entity_key,
+                query=normalized_query,
+                session_id=session_id,
+                turn_id=f"{turn_id}:current-state-scan",
+                source_surface=f"{source_surface}:current_state_scan",
+                record_activity=False,
+            ),
+        )
     if normalized_subject and normalized_entity_key and not normalized_predicate:
         add_lane(
             "entity_current_state",
@@ -2451,17 +2554,50 @@ def hybrid_memory_retrieve(
     selected_records: list[dict[str, Any]] = []
     candidates: list[HybridMemoryCandidate] = []
     seen_keys: set[str] = set()
+    superseded_record_ids = _hybrid_memory_superseded_record_ids(ranked_entries)
+    source_recall_requires_overlap = _hybrid_memory_source_recall_requires_overlap(normalized_query)
+    required_answer_tokens = _hybrid_memory_required_answer_tokens(normalized_query)
     for entry in ranked_entries:
         record = entry["record"]
         record_key = str(entry["record_key"])
         stale = entry["lane"] != "historical_state" and _memory_kernel_record_is_stale(record)
+        superseded = (
+            entry["lane"] != "historical_state"
+            and bool(record_key)
+            and record_key in superseded_record_ids
+        )
+        missing_source_overlap = (
+            source_recall_requires_overlap
+            and entry["lane"] not in {"current_state", "current_state_scan", "entity_current_state", "historical_state"}
+            and not _hybrid_memory_entry_has_query_overlap(entry)
+        )
+        current_state_scan_query_miss = (
+            entry["lane"] == "current_state_scan"
+            and _hybrid_memory_entry_query_overlap_count(entry) < _hybrid_memory_current_state_scan_min_overlap(normalized_query)
+        )
+        missing_required_answer_slot = (
+            bool(required_answer_tokens)
+            and not _hybrid_memory_entry_has_required_answer_overlap(entry, required_answer_tokens)
+        )
         selected = False
         reason_selected = None
         reason_discarded = None
         if record_key in seen_keys:
             reason_discarded = "duplicate_lower_rank"
+        elif superseded:
+            reason_discarded = "superseded_by_memory_lifecycle"
+            seen_keys.add(record_key)
         elif stale:
             reason_discarded = "stale_or_superseded"
+            seen_keys.add(record_key)
+        elif current_state_scan_query_miss:
+            reason_discarded = "current_state_query_miss"
+            seen_keys.add(record_key)
+        elif missing_required_answer_slot:
+            reason_discarded = "required_answer_slot_query_miss"
+            seen_keys.add(record_key)
+        elif missing_source_overlap:
+            reason_discarded = "source_recall_query_miss"
             seen_keys.add(record_key)
         elif len(selected_records) >= normalized_limit:
             reason_discarded = "outside_context_budget"
@@ -2784,6 +2920,15 @@ def recover_task_context_in_memory(
         },
     )
     read_result = _normalize_read_result(raw=raw, method="recover_task_context", shadow_only=False)
+    if _records_include_project_scoped_current_state(read_result.records):
+        read_result = _filter_project_scoped_read_result(
+            read_result,
+            scope_records=_read_project_scope_reference_records(
+                client=client,
+                subject=subject,
+                actor_id=actor_id,
+            ),
+        )
     _record_memory_read_event(
         state_db=state_db,
         result=read_result,
@@ -2872,6 +3017,15 @@ def recall_episodic_context_in_memory(
         },
     )
     read_result = _normalize_read_result(raw=raw, method="recall_episodic_context", shadow_only=False)
+    if _records_include_project_scoped_current_state(read_result.records):
+        read_result = _filter_project_scoped_read_result(
+            read_result,
+            scope_records=_read_project_scope_reference_records(
+                client=client,
+                subject=subject,
+                actor_id=actor_id,
+            ),
+        )
     _record_memory_read_event(
         state_db=state_db,
         result=read_result,
@@ -3474,6 +3628,17 @@ def write_structured_evidence_to_memory(
         summary="Spark memory write requested for structured evidence.",
         salience_decision=salience_decision,
     )
+    effective_governor_decision = governor_decision or _build_memory_write_governor_decision(
+        state_db=state_db,
+        subject=subject,
+        predicate=predicate,
+        operation="create",
+        memory_role="structured_evidence",
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        source_surface="memory_orchestrator_structured_evidence",
+    )
     raw = _call_sdk_method(
         client,
         "write_observation",
@@ -3491,7 +3656,7 @@ def write_structured_evidence_to_memory(
             "retention_class": "episodic_archive",
             "document_time": timestamp,
             "valid_from": timestamp,
-            "governor_decision": governor_decision,
+            "governor_decision": effective_governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -3538,7 +3703,7 @@ def write_structured_evidence_to_memory(
                 turn_id=turn_id,
                 channel_kind=channel_kind,
                 actor_id=f"{actor_id}_belief_consolidator",
-                governor_decision=governor_decision,
+                governor_decision=effective_governor_decision,
             )
         except Exception:
             pass
@@ -3560,7 +3725,7 @@ def write_structured_evidence_to_memory(
                     turn_id=turn_id,
                     channel_kind=channel_kind,
                     actor_id=f"{actor_id}_current_state_consolidator",
-                    governor_decision=governor_decision,
+                    governor_decision=effective_governor_decision,
                 )
             except Exception:
                 pass
@@ -4551,6 +4716,17 @@ def _write_profile_fact_memory_operation(
         actor_id=actor_id,
         salience_decision=salience_decision,
     )
+    effective_governor_decision = governor_decision or _build_memory_write_governor_decision(
+        state_db=state_db,
+        subject=subject,
+        predicate=predicate,
+        operation=operation,
+        memory_role="current_state",
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        source_surface="memory_orchestrator_profile_fact",
+    )
     raw = _call_sdk_method(
         client,
         "write_observation",
@@ -4569,7 +4745,7 @@ def _write_profile_fact_memory_operation(
             "valid_from": None if operation == "delete" else timestamp,
             "valid_to": timestamp if operation == "delete" else None,
             "deleted_at": timestamp if operation == "delete" else None,
-            "governor_decision": governor_decision,
+            "governor_decision": effective_governor_decision,
             "metadata": metadata,
         },
     )
@@ -4594,7 +4770,7 @@ def _write_profile_fact_memory_operation(
                 "valid_from": projected_observation["valid_from"],
                 "valid_to": projected_observation["valid_to"],
                 "deleted_at": projected_observation["deleted_at"],
-                "governor_decision": governor_decision,
+                "governor_decision": effective_governor_decision,
                 "metadata": projected_observation["metadata"],
             },
         )
@@ -4609,7 +4785,7 @@ def _write_profile_fact_memory_operation(
             session_id=session_id,
             turn_id=turn_id,
             channel_kind=channel_kind,
-            governor_decision=governor_decision,
+            governor_decision=effective_governor_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -4797,6 +4973,17 @@ def write_telegram_event_to_memory(
         actor_id=actor_id,
         salience_decision=salience_decision,
     )
+    effective_governor_decision = governor_decision or _build_memory_write_governor_decision(
+        state_db=state_db,
+        subject=subject,
+        predicate=predicate,
+        operation="event",
+        memory_role="event",
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        source_surface="memory_orchestrator_telegram_event",
+    )
     raw = _call_sdk_method(
         client,
         "write_event",
@@ -4813,7 +5000,7 @@ def write_telegram_event_to_memory(
             "retention_class": "time_bound_event",
             "document_time": timestamp,
             "valid_from": timestamp,
-            "governor_decision": governor_decision,
+            "governor_decision": effective_governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4846,7 +5033,7 @@ def write_telegram_event_to_memory(
             event_name=event_name,
             subject=subject,
             salience_decision=salience_decision,
-            governor_decision=governor_decision,
+            governor_decision=effective_governor_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -5427,7 +5614,7 @@ def _coerce_int(value: Any, *, default: int) -> int:
 
 
 def _human_id_from_subject(subject: str) -> str | None:
-    text = _optional_string(subject)
+    text = _optional_string(_canonical_memory_subject_text(subject))
     if not text:
         return None
     if text.startswith("human:"):
@@ -5436,20 +5623,40 @@ def _human_id_from_subject(subject: str) -> str | None:
 
 
 def _subject_for_human_id(human_id: str) -> str:
-    text = _optional_string(human_id) or ""
+    text = _optional_string(_canonical_memory_subject_text(human_id)) or ""
+    if text.startswith("human:"):
+        return text
+    return f"human:{text}"
+
+
+def _event_human_id_for_memory(value: str | None) -> str | None:
+    text = _optional_string(_canonical_memory_subject_text(value))
+    if not text:
+        return None
     if text.startswith("human:"):
         return text
     return f"human:{text}"
 
 
 def _subject_fallback_candidates(subject: str) -> tuple[str, ...]:
-    normalized_subject = _optional_string(subject)
+    normalized_subject = _optional_string(_canonical_memory_subject_text(subject))
     if not normalized_subject:
         return ()
-    candidates = [normalized_subject]
-    if normalized_subject.startswith("human:") and not normalized_subject.startswith("human:human:"):
-        candidates.append(f"human:{normalized_subject}")
-    return tuple(dict.fromkeys(candidates))
+    return (normalized_subject,)
+
+
+def _canonical_memory_subject_text(value: str | None) -> str | None:
+    text = _optional_string(value)
+    if not text:
+        return None
+    while text.startswith("human:human:"):
+        text = text.removeprefix("human:")
+    parts = text.split(":")
+    if len(parts) >= 4 and parts[0] == "human" and parts[2] == "human" and parts[1] == parts[3]:
+        return ":".join(parts[:2] + parts[4:])
+    if len(parts) >= 3 and parts[1] == "human" and parts[0] == parts[2]:
+        return ":".join(parts[:1] + parts[3:])
+    return text
 
 
 def _default_current_state_entity_key(predicate: str | None) -> str | None:
@@ -5769,6 +5976,144 @@ def _normalize_domain_task_recovery_result(*, result: Any) -> dict[str, Any]:
     }
 
 
+def _records_include_project_scoped_current_state(records: list[dict[str, Any]]) -> bool:
+    return any(
+        is_project_scoped_current_state_predicate(str(record.get("predicate") or "").strip())
+        for record in records
+        if isinstance(record, dict)
+    )
+
+
+def _record_match_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    turn_ids = tuple(str(item).strip() for item in (record.get("turn_ids") or []) if str(item).strip())
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return (
+        str(record.get("observation_id") or "").strip(),
+        str(record.get("event_id") or "").strip(),
+        str(record.get("predicate") or "").strip(),
+        str(record.get("value") or metadata.get("value") or "").strip(),
+        str(record.get("text") or "").strip(),
+        str(record.get("timestamp") or record.get("document_time") or "").strip(),
+        turn_ids,
+    )
+
+
+def _trace_label_matches_record(label: dict[str, Any], record: dict[str, Any]) -> bool:
+    observation_id = str(record.get("observation_id") or "").strip()
+    event_id = str(record.get("event_id") or "").strip()
+    if observation_id and str(label.get("observation_id") or "").strip() == observation_id:
+        return True
+    if event_id and str(label.get("event_id") or "").strip() == event_id:
+        return True
+    predicate = str(record.get("predicate") or "").strip()
+    if predicate and str(label.get("predicate") or "").strip() != predicate:
+        return False
+    record_turn_ids = {str(item).strip() for item in (record.get("turn_ids") or []) if str(item).strip()}
+    label_turn_ids = {str(item).strip() for item in (label.get("turn_ids") or []) if str(item).strip()}
+    if record_turn_ids and label_turn_ids and record_turn_ids.intersection(label_turn_ids):
+        return True
+    return False
+
+
+def _filter_project_scoped_source_labels(
+    retrieval_trace: dict[str, Any] | None,
+    *,
+    dropped_records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(retrieval_trace, dict) or not dropped_records:
+        return retrieval_trace
+    labels = retrieval_trace.get("source_labels")
+    if not isinstance(labels, list):
+        return retrieval_trace
+    filtered_labels: list[Any] = []
+    dropped_label_count = 0
+    for label in labels:
+        if not isinstance(label, dict):
+            filtered_labels.append(label)
+            continue
+        if any(_trace_label_matches_record(label, record) for record in dropped_records):
+            dropped_label_count += 1
+            continue
+        filtered_labels.append(label)
+    trace = dict(retrieval_trace)
+    trace["source_labels"] = filtered_labels
+    trace["project_scope_filter"] = {
+        "dropped_record_count": len(dropped_records),
+        "dropped_source_label_count": dropped_label_count,
+        "reason": "project_scoped_current_state_before_latest_current_project",
+    }
+    return trace
+
+
+def _filter_project_scoped_read_result(
+    read_result: MemoryReadResult,
+    *,
+    scope_records: list[dict[str, Any]],
+) -> MemoryReadResult:
+    if not scope_records or not _records_include_project_scoped_current_state(read_result.records):
+        return read_result
+    filtered_records = filter_project_scoped_current_state_records(
+        read_result.records,
+        scope_records=scope_records,
+    )
+    filtered_keys = {_record_match_key(record) for record in filtered_records}
+    dropped_records = [
+        record
+        for record in read_result.records
+        if _record_match_key(record) not in filtered_keys
+        and is_project_scoped_current_state_predicate(str(record.get("predicate") or "").strip())
+    ]
+    if not dropped_records:
+        return read_result
+    filtered_provenance = filter_project_scoped_current_state_records(
+        read_result.provenance,
+        scope_records=scope_records,
+    )
+    retrieval_trace = _filter_project_scoped_source_labels(
+        read_result.retrieval_trace,
+        dropped_records=dropped_records,
+    )
+    status = read_result.status
+    abstained = read_result.abstained
+    reason = read_result.reason
+    if not filtered_records and status in {"ok", "supported", "succeeded"}:
+        status = "not_found"
+        abstained = True
+        reason = reason or "project_scoped_current_state_not_in_active_project"
+    return MemoryReadResult(
+        status=status,
+        method=read_result.method,
+        memory_role=read_result.memory_role,
+        records=filtered_records,
+        provenance=filtered_provenance,
+        retrieval_trace=retrieval_trace,
+        answer_explanation=read_result.answer_explanation,
+        abstained=abstained,
+        reason=reason,
+        shadow_only=read_result.shadow_only,
+    )
+
+
+def _read_project_scope_reference_records(*, client: Any, subject: str, actor_id: str) -> list[dict[str, Any]]:
+    try:
+        raw = _call_sdk_method(
+            client,
+            "get_current_state",
+            {
+                "subject": subject,
+                "predicate_prefix": "",
+                "session_id": f"memory-project-scope:{actor_id}",
+                "turn_id": f"{actor_id}:project-scope",
+                "timestamp": _now_iso(),
+                "metadata": {"source_surface": "memory_project_scope_filter"},
+            },
+        )
+    except Exception:
+        return []
+    read_result = _normalize_read_result(raw=raw, method="get_current_state", shadow_only=False)
+    return read_result.records
+
+
 def _normalize_domain_episodic_recall_result(*, result: Any) -> dict[str, Any]:
     retrieval_trace = dict(getattr(result, "trace", {}) or {})
     records: list[dict[str, Any]] = []
@@ -6054,19 +6399,25 @@ def _normalize_memory_maintenance_payload(raw: Any) -> dict[str, Any]:
 
 
 def _memory_enabled(config_manager: ConfigManager) -> bool:
-    return bool(config_manager.get_path("spark.memory.enabled", default=False))
+    return memory_enabled(config_manager)
 
 
 def _memory_shadow_mode(config_manager: ConfigManager) -> bool:
-    return bool(config_manager.get_path("spark.memory.shadow_mode", default=True))
+    return memory_shadow_mode(config_manager)
 
 
-def _disabled_write_result(*, operation: str, reason: str = "memory_disabled") -> MemoryWriteResult:
+def _disabled_write_result(
+    *,
+    operation: str,
+    method: str = "write_observation",
+    default_role: str = "current_state",
+    reason: str = "memory_disabled",
+) -> MemoryWriteResult:
     return MemoryWriteResult(
         status="disabled",
         operation=operation,
-        method="write_observation",
-        memory_role="current_state",
+        method=method,
+        memory_role=default_role,
         accepted_count=0,
         rejected_count=0,
         skipped_count=0,
@@ -6227,6 +6578,15 @@ def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
         lifecycle = {}
     if not isinstance(metadata, dict):
         metadata = {}
+    memory_role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
+    operation = str(
+        record.get("operation")
+        or lifecycle.get("operation")
+        or metadata.get("operation")
+        or ""
+    ).strip().lower()
+    if memory_role == "state_deletion" or operation == "delete":
+        return True
     text_fields = " ".join(
         str(value or "").strip().lower()
         for value in (
@@ -6250,6 +6610,33 @@ def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
     if record.get("is_current") is False or metadata.get("is_current") is False:
         return True
     return False
+
+
+def _memory_kernel_record_superseded_ids(record: dict[str, Any]) -> set[str]:
+    lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    ids: set[str] = set()
+    for raw in (record.get("supersedes"), lifecycle.get("supersedes"), metadata.get("supersedes")):
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                value = _optional_string(item)
+                if value:
+                    ids.add(value)
+            continue
+        value = _optional_string(raw)
+        if value:
+            ids.add(value)
+    return ids
+
+
+def _hybrid_memory_superseded_record_ids(ranked_entries: list[dict[str, Any]]) -> set[str]:
+    superseded: set[str] = set()
+    for entry in ranked_entries:
+        record = entry.get("record")
+        if not isinstance(record, dict):
+            continue
+        superseded.update(_memory_kernel_record_superseded_ids(record))
+    return superseded
 
 
 def _build_hybrid_memory_context_packet(
@@ -6850,7 +7237,7 @@ def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
         return "diagnostics"
     if memory_role in {"raw_episode", "episodic"} or candidate.source_class == "recent_conversation":
         return "recent_conversation"
-    if candidate.lane == "current_state":
+    if candidate.lane in {"current_state", "current_state_scan"}:
         return "active_current_state"
     if candidate.lane == "historical_state":
         return "historical_state"
@@ -7427,7 +7814,7 @@ def _hybrid_memory_dict_source_class(record: dict[str, Any]) -> str:
 
 
 def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, record: dict[str, Any]) -> str:
-    if lane == "current_state":
+    if lane in {"current_state", "current_state_scan"}:
         return "current_state"
     if lane == "entity_current_state":
         return "entity_current_state"
@@ -7460,6 +7847,18 @@ def _hybrid_memory_record_text(record: dict[str, Any]) -> str:
         metadata.get("entity_label"),
         metadata.get("source_text"),
         metadata.get("evidence_text"),
+    ]
+    return " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
+
+
+def _hybrid_memory_record_relevance_text(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    parts = [
+        _hybrid_memory_record_text(record),
+        record.get("predicate"),
+        metadata.get("predicate"),
+        metadata.get("entity_key"),
+        metadata.get("fact_name"),
     ]
     return " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
 
@@ -7509,6 +7908,7 @@ def _hybrid_memory_query_tokens(query: str) -> set[str]:
         "where",
         "with",
         "you",
+        "remember",
     }
     return {
         token
@@ -7585,6 +7985,99 @@ def _hybrid_memory_query_prefers_project_knowledge(query: str) -> bool:
     return len(tokens.intersection(system_tokens)) >= 2
 
 
+def _hybrid_memory_source_recall_requires_overlap(query: str) -> bool:
+    lowered = str(query or "").casefold()
+    if not lowered.strip():
+        return False
+    source_recall_markers = (
+        "did i say",
+        "did we say",
+        "did i tell",
+        "did we tell",
+        "did i mention",
+        "did we mention",
+        "what did i say",
+        "what did we say",
+    )
+    if not any(marker in lowered for marker in source_recall_markers):
+        return False
+    return len(_hybrid_memory_query_tokens(lowered)) >= 2
+
+
+def _hybrid_memory_required_answer_tokens(query: str) -> set[str]:
+    lowered = str(query or "").casefold().strip()
+    if not _hybrid_memory_source_recall_requires_overlap(lowered):
+        return set()
+    if re.search(r"\bwhat\s+(?:do|can)\s+you\s+remember\s+about\b", lowered):
+        return set()
+    slot_phrases: list[str] = []
+    before_source = re.search(
+        r"\bwhat\s+(?P<slot>[a-z][a-z0-9 _-]{1,60}?)\s+"
+        r"(?:did|do)\s+(?:i|we)\s+"
+        r"(?:say|tell|mention|note|record|save|write|state|claim)\b",
+        lowered,
+    )
+    if before_source:
+        slot_phrases.append(before_source.group("slot"))
+    after_source = re.search(
+        r"\bwhat\s+(?:did|do)\s+(?:i|we)\s+"
+        r"(?:say|tell|mention|note|record|save|write|state|claim)\s+"
+        r"(?:my|our|the)\s+(?P<slot>[a-z][a-z0-9 _-]{1,60}?)\s+"
+        r"(?:is|was|uses|use|needs|needed|should|would|belongs)\b",
+        lowered,
+    )
+    if after_source:
+        slot_phrases.append(after_source.group("slot"))
+    stopwords = {
+        "a",
+        "an",
+        "any",
+        "kind",
+        "of",
+        "the",
+        "thing",
+        "value",
+        "was",
+        "were",
+    }
+    tokens: set[str] = set()
+    for phrase in slot_phrases:
+        for token in _hybrid_memory_query_tokens(phrase):
+            if token not in stopwords:
+                tokens.add(token)
+    return tokens
+
+
+def _hybrid_memory_entry_has_query_overlap(entry: dict[str, Any]) -> bool:
+    return _hybrid_memory_entry_query_overlap_count(entry) > 0
+
+
+def _hybrid_memory_entry_has_required_answer_overlap(entry: dict[str, Any], required_tokens: set[str]) -> bool:
+    if not required_tokens:
+        return True
+    record = entry.get("record")
+    if not isinstance(record, dict):
+        return False
+    text = _hybrid_memory_record_relevance_text(record).casefold()
+    return bool(required_tokens.intersection(_hybrid_memory_query_tokens(text)))
+
+
+def _hybrid_memory_entry_query_overlap_count(entry: dict[str, Any]) -> int:
+    for reason in entry.get("score_reasons") or []:
+        text = str(reason)
+        if not text.startswith("query_overlap:"):
+            continue
+        try:
+            return max(0, int(text.split(":", 1)[1]))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _hybrid_memory_current_state_scan_min_overlap(query: str) -> int:
+    return 2 if len(_hybrid_memory_query_tokens(query)) >= 2 else 1
+
+
 def _score_hybrid_memory_record(
     *,
     lane: str,
@@ -7596,6 +8089,7 @@ def _score_hybrid_memory_record(
 ) -> tuple[float, list[str]]:
     lane_authority = {
         "current_state": 100.0,
+        "current_state_scan": 94.0,
         "historical_state": 82.0,
         "events": 58.0,
         "evidence": 52.0,
@@ -7624,7 +8118,7 @@ def _score_hybrid_memory_record(
         reasons.append("entity_match")
     query_tokens = _hybrid_memory_query_tokens(query)
     if query_tokens:
-        text = _hybrid_memory_record_text(record).casefold()
+        text = _hybrid_memory_record_relevance_text(record).casefold()
         matched = {token for token in query_tokens if token in text}
         if matched:
             score += min(12.0, float(len(matched) * 3))
@@ -7733,9 +8227,10 @@ def _record_memory_write_requested(
         component="memory_orchestrator",
         summary="Spark memory write requested for durable personality preferences.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         facts={
             "operation": operation,
@@ -7881,9 +8376,10 @@ def _record_memory_write_requested_observations(
         component="memory_orchestrator",
         summary=summary,
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         facts={
             "operation": operation,
@@ -7977,9 +8473,10 @@ def _record_memory_lifecycle_transition(
         component="memory_orchestrator",
         summary=f"Spark memory lifecycle transition: {memory_role} {lifecycle_action}.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         channel_id=channel_kind,
         actor_id=actor_id,
         status="recorded",
@@ -8185,9 +8682,10 @@ def _record_memory_write_requested_events(
         component="memory_orchestrator",
         summary="Spark memory event write requested for durable Telegram events.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         facts={
             "operation": "event",
@@ -8233,9 +8731,10 @@ def _record_memory_write_event(
         component="memory_orchestrator",
         summary="Spark memory write completed." if result.accepted_count > 0 else "Spark memory write abstained.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=trace_ref,
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         status=status,
         facts={
@@ -8302,9 +8801,10 @@ def _record_memory_action_authority_verdicts(
             component="memory_orchestrator",
             summary="Spark memory action remains blocked until source authority verdict exists.",
             request_id=turn_id,
+            turn_id=turn_id,
             trace_ref=trace_ref,
             session_id=session_id,
-            human_id=human_id,
+            human_id=_event_human_id_for_memory(human_id),
             actor_id=actor_id,
             status="blocked",
             reason_code="missing_memory_authority_verdict",
@@ -8368,9 +8868,10 @@ def _record_memory_read_requested(
         component="memory_orchestrator",
         summary="Spark memory current-state lookup requested.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         facts={"method": method, "memory_role": "current_state", "subject": subject},
         provenance={"memory_role": "current_state"},
@@ -8390,6 +8891,7 @@ def _record_memory_read_requested_subject(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    subject = _subject_for_human_id(subject)
     facts = {"method": method, "memory_role": "current_state", "subject": subject}
     if predicate is not None:
         facts["predicate"] = predicate
@@ -8405,9 +8907,10 @@ def _record_memory_read_requested_subject(
         component="memory_orchestrator",
         summary="Spark memory read requested.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=_human_id_from_subject(subject),
+        human_id=_event_human_id_for_memory(subject),
         actor_id=actor_id,
         facts=facts,
         provenance={"memory_role": "current_state"},
@@ -8429,9 +8932,10 @@ def _record_memory_read_event(
         component="memory_orchestrator",
         summary="Spark memory read completed." if not result.abstained else "Spark memory read abstained.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         status="abstained" if result.abstained else "recorded",
         facts={

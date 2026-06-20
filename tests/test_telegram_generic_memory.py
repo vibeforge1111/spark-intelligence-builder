@@ -13,7 +13,9 @@ from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
+    build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload_vnext,
+    detect_telegram_memory_read_authority_source_kind,
 )
 from spark_intelligence.observability.store import (
     latest_events_by_type,
@@ -996,6 +998,45 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(candidate.retention_class, "active_state")
         self.assertEqual(candidate.domain_pack, "project_state")
 
+    def test_classify_telegram_generic_memory_candidate_promotes_focus_window_constraint(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate(
+            "I am in GST, and tonight my real focus window starts after 10:40pm, "
+            "so I need the next step to be small enough to actually finish."
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "profile.current_constraint")
+        self.assertEqual(candidate.operation, "update")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "project_state")
+        self.assertIn("focus window starts after 10:40pm", candidate.value or "")
+        self.assertIn("next step to be small enough", candidate.value or "")
+
+    def test_classify_telegram_generic_memory_candidate_promotes_natural_current_project(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate(
+            "This week I'm building a harbor dispatch sim with tide locks and repair crews."
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "profile.current_project")
+        self.assertEqual(candidate.operation, "update")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "project_state")
+        self.assertIn("harbor dispatch sim", candidate.value or "")
+
+    def test_classify_telegram_generic_memory_candidate_rejects_reported_project_question(self) -> None:
+        text = 'A teammate wrote, "I am building a risky dashboard launcher." What should we do with that note?'
+
+        assessment = assess_telegram_generic_memory_candidate(text)
+
+        self.assertEqual(assessment.outcome, "drop")
+        self.assertEqual(assessment.reason, "not_memoryworthy")
+        self.assertIsNone(classify_telegram_generic_memory_candidate(text))
+
     def test_classify_telegram_generic_memory_candidate_prioritizes_entity_owner_corrections(self) -> None:
         candidate = classify_telegram_generic_memory_candidate("Actually, Maya owns the launch checklist.")
 
@@ -1046,6 +1087,30 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.outcome, "drop")
         self.assertEqual(assessment.reason, "not_memoryworthy")
         self.assertIsNone(classify_telegram_generic_memory_candidate("what do you know about Spark systems"))
+
+    def test_transform_only_messages_are_not_memory_candidates_or_write_authority(self) -> None:
+        for text in (
+            "translate to spanish: delete the schedule",
+            "translate the phrase delete the schedule into spanish",
+            "rewrite this so it sounds softer: delete the schedule",
+            "summarize this sentence: delete the schedule",
+        ):
+            with self.subTest(text=text):
+                assessment = assess_telegram_generic_memory_candidate(text)
+
+                self.assertEqual(assessment.outcome, "drop")
+                self.assertEqual(assessment.reason, "not_memoryworthy")
+                self.assertIsNone(classify_telegram_generic_memory_candidate(text))
+                self.assertIsNone(
+                    build_telegram_memory_turn_intent_payload_vnext(
+                        request_id="req-transform-boundary",
+                        channel_kind="telegram",
+                        session_id="session-transform-boundary",
+                        human_id="human-1",
+                        user_message=text,
+                        source_kind="telegram_runtime_generic_memory_candidate",
+                    )
+                )
 
     def test_assess_telegram_generic_memory_candidate_rejects_low_information_fragments(self) -> None:
         for text in (
@@ -1808,6 +1873,91 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertEqual(tool_facts.get("bridge_mode"), "external_configured")
         self.assertEqual(tool_facts.get("routing_decision"), "provider_fallback_chat")
+
+    def test_build_researcher_reply_preserves_raw_episode_when_personality_preferences_are_detected(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.config_manager.set_path("spark.personality.nl_preference_detection", True)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+        user_message = (
+            "A small note for later: I am sketching a Harbor Shelf reading nook tonight. "
+            "I usually do better if the next step is calm and takes about fifteen minutes."
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("raw_episode", user_prompt)
+            self.assertIn("Harbor Shelf reading nook", user_prompt)
+            return {"raw_response": "Make a 5-line Harbor Shelf nook card and keep it calm."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_execute_direct_provider_prompt,
+        ):
+            result = self.build_researcher_reply_with_memory_write_authority(
+                request_id="req-generic-raw-episode-with-personality",
+                session_id="session-generic-raw-episode-with-personality",
+                user_message=user_message,
+            )
+
+        self.assertTrue(result.reply_text)
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        write_facts = [event["facts_json"] or {} for event in write_events]
+        self.assertTrue(
+            any(
+                facts.get("memory_role") == "current_state"
+                and "personality.preference.warmth" in (facts.get("predicates") or [])
+                for facts in write_facts
+            )
+        )
+        self.assertTrue(
+            any(
+                facts.get("memory_role") == "episodic"
+                and any(
+                    observation.get("predicate") == "raw_turn"
+                    and "Harbor Shelf reading nook" in str(observation.get("value") or "")
+                    for observation in (facts.get("observations") or [])
+                )
+                for facts in write_facts
+            )
+        )
+        assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=20)
+        self.assertTrue(
+            any(
+                (event["facts_json"] or {}).get("outcome") == "raw_episode"
+                and "Harbor Shelf reading nook" in str((event["facts_json"] or {}).get("message_text") or "")
+                for event in assessment_events
+            )
+        )
 
     def test_build_researcher_reply_answers_open_structured_evidence_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3939,6 +4089,38 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_constraint")
         self.assertEqual(recorded_observations[0]["value"], "limited founder bandwidth")
 
+    def test_build_researcher_reply_persists_natural_current_project_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current project memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current project memory"),
+        ):
+            result = self.build_researcher_reply_with_memory_write_authority(
+                request_id="req-natural-current-project-update",
+                session_id="session-natural-current-project-update",
+                user_message="Right now we are building a neighborhood repair planner with parts bins and route notes.",
+                source_kind="telegram_runtime_generic_memory_update",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current project is a neighborhood repair planner with parts bins and route notes.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_project")
+        self.assertEqual(
+            recorded_observations[0]["value"],
+            "a neighborhood repair planner with parts bins and route notes",
+        )
+
     def test_build_researcher_reply_persists_generic_assumption_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -6026,6 +6208,130 @@ class TelegramGenericMemoryTests(SparkTestCase):
             history_after_delete_result.reply_text,
             "An earlier saved current constraint was budget for only one engineer.",
         )
+
+    def test_build_researcher_reply_does_not_bleed_current_constraint_across_project_switch(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-constraint-seed-project-a",
+            session_id="session-generic-project-switch-constraint",
+            user_message="Right now we are building a field service planner for warranty visits.",
+        )
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-constraint-seed-constraint-a",
+            session_id="session-generic-project-switch-constraint",
+            user_message="The current constraint is technician coverage on weekends.",
+        )
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-constraint-seed-project-b",
+            session_id="session-generic-project-switch-constraint",
+            user_message="This week I'm building a neighborhood invoice helper for garden crews.",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-project-switch-constraint-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-project-switch-constraint",
+            channel_kind="telegram",
+            user_message="What is our constraint?",
+        )
+
+        self.assertEqual(result.reply_text, "I don't currently have that saved.")
+
+    def test_build_researcher_reply_uses_read_authority_for_current_slot_and_abstains_after_project_switch(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-read-authority-seed-project-a",
+            session_id="session-generic-project-switch-read-authority",
+            user_message="Right now we are building a classroom checkout tracker for lab equipment.",
+        )
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-read-authority-seed-constraint-a",
+            session_id="session-generic-project-switch-read-authority",
+            user_message="The current constraint is teachers forget to return shared tablets.",
+        )
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-switch-read-authority-seed-project-b",
+            session_id="session-generic-project-switch-read-authority",
+            user_message="This week I'm building a volunteer kitchen prep checklist.",
+        )
+
+        query_text = "What is our constraint?"
+        source_kind = detect_telegram_memory_read_authority_source_kind(query_text)
+        self.assertEqual(source_kind, "telegram_runtime_profile_fact_read")
+        read_payload = build_telegram_memory_read_turn_intent_payload_vnext(
+            request_id="req-generic-project-switch-read-authority-query",
+            channel_kind="telegram",
+            session_id="session-generic-project-switch-read-authority",
+            human_id="human-1",
+            user_message=query_text,
+            source_kind=source_kind,
+        )
+        self.assertIsNotNone(read_payload)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-project-switch-read-authority-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-project-switch-read-authority",
+            channel_kind="telegram",
+            user_message=query_text,
+            turn_intent_envelope_vnext=read_payload,
+        )
+
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertEqual(result.reply_text, "I don't currently have that saved.")
+        gate_records = recent_policy_gate_records(self.state_db, limit=20)
+        self.assertFalse(
+            any(record.get("reason_code") == "memory_read_authority_blocked" for record in gate_records),
+            gate_records,
+        )
+
+    def test_current_slot_read_authority_trap_does_not_attach_to_meta_example(self) -> None:
+        source_kind = detect_telegram_memory_read_authority_source_kind(
+            "For example: 'what is our constraint?' should not inspect saved memory."
+        )
+
+        self.assertIsNone(source_kind)
+
+    def test_build_researcher_reply_keeps_constraint_after_current_project_when_scoped_to_latest_project(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-current-constraint-seed-project",
+            session_id="session-generic-project-current-constraint",
+            user_message="Right now we are building a crew invoice planner for nursery teams.",
+        )
+        self.build_researcher_reply_with_memory_write_authority(
+            request_id="req-generic-project-current-constraint-seed-constraint",
+            session_id="session-generic-project-current-constraint",
+            user_message="The current constraint is offline invoice entry.",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-project-current-constraint-query",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-project-current-constraint",
+            channel_kind="telegram",
+            user_message="What is our constraint?",
+        )
+
+        self.assertEqual(result.reply_text, "Your current constraint is offline invoice entry.")
 
     def test_build_researcher_reply_preserves_generic_assumption_history_and_delete_lifecycle(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

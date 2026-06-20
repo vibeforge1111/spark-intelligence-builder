@@ -4,10 +4,199 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.observability.store import latest_events_by_type, persist_bound_ledger, recent_tool_call_ledgers, record_event
+from spark_intelligence.harness_evolution import run_harness_change_manifest_runner
+
 from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
 
 class HarnessCliTests(SparkTestCase):
+    def test_harness_tool_ledgers_filters_by_turn_id(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "ledger_id": "ledger:cli-ledger",
+                "turn_id": "turn:cli-ledger",
+                "action_id": "action:cli-ledger",
+                "capability_id": "capability:cli-ledger",
+                "authorization_decision_id": "decision:cli-ledger",
+                "tool_name": "test.tool",
+                "surface": "cli_test",
+                "status": "success",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:cli-ledger",
+                    "turn_id": "turn:cli-ledger",
+                    "action_id": "action:cli-ledger",
+                    "capability_id": "capability:cli-ledger",
+                    "tool_name": "test.tool",
+                    "authorization": {"decision_id": "decision:cli-ledger"},
+                    "result": {"status": "success", "summary": "Recorded for CLI visibility."},
+                },
+            },
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "tool-ledgers",
+            "--home",
+            str(self.home),
+            "--turn-id",
+            "turn:cli-ledger",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["ledgers"][0]["ledger_id"], "ledger:cli-ledger")
+        self.assertEqual(payload["ledgers"][0]["surface"], "cli_test")
+
+    def test_harness_trace_turn_collects_ledgers_and_event_mirrors(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "ledger_id": "ledger:trace-turn",
+                "turn_id": "turn:trace-turn",
+                "action_id": "action:trace-turn",
+                "capability_id": "capability:trace-turn",
+                "authorization_decision_id": "decision:trace-turn",
+                "tool_name": "test.trace",
+                "surface": "cli_test",
+                "status": "success",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:trace-turn",
+                    "turn_id": "turn:trace-turn",
+                    "action_id": "action:trace-turn",
+                    "capability_id": "capability:trace-turn",
+                    "tool_name": "test.trace",
+                    "authorization": {"decision_id": "decision:trace-turn"},
+                    "result": {"status": "success", "summary": "Recorded for turn trace."},
+                },
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="trace_turn_probe",
+            component="test",
+            summary="Trace turn probe.",
+            facts={"tool_call_ledger": {"turn_id": "turn:trace-turn"}},
+        )
+        record_event(
+            self.state_db,
+            event_type="trace_turn_other",
+            component="test",
+            summary="Other turn probe.",
+            facts={"turn_id": "turn:other"},
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "trace-turn",
+            "--home",
+            str(self.home),
+            "--turn-id",
+            "turn:trace-turn",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["turn_id"], "turn:trace-turn")
+        self.assertEqual(payload["counts"]["tool_call_ledgers"], 1)
+        self.assertEqual(payload["counts"]["builder_events"], 1)
+        self.assertEqual(payload["counts"]["event_log"], 1)
+        self.assertEqual(payload["tool_call_ledgers"][0]["ledger_id"], "ledger:trace-turn")
+        self.assertEqual(payload["builder_events"][0]["event_type"], "trace_turn_probe")
+        self.assertEqual(payload["builder_events"][0]["turn_id"], "turn:trace-turn")
+        self.assertEqual(payload["event_log"][0]["event_type"], "trace_turn_probe")
+        self.assertEqual(payload["event_log"][0]["turn_id"], "turn:trace-turn")
+        self.assertEqual(payload["event_log"][0]["payload_json"]["turn_id"], "turn:trace-turn")
+
+    def test_follow_on_memory_policy_gates_inherit_parent_turn_id(self) -> None:
+        parent_turn_id = "telegram-update:trace-join-memory"
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            component="memory_orchestrator",
+            summary="Spark memory write completed.",
+            request_id=parent_turn_id,
+            turn_id=parent_turn_id,
+            session_id="telegram:1278511160",
+            facts={
+                "keepability": "durable_user_memory",
+                "memory_role": "current_state",
+                "promotion_disposition": "promote_current_state",
+            },
+        )
+
+        blocks = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=5)
+        self.assertTrue(blocks)
+        self.assertEqual(blocks[0]["turn_id"], parent_turn_id)
+        self.assertEqual((blocks[0]["facts_json"] or {}).get("turn_id"), parent_turn_id)
+
+        with self.state_db.connect() as conn:
+            event_log = conn.execute(
+                """
+                SELECT turn_id, payload_json
+                FROM event_log
+                WHERE event_type = 'policy_gate_blocked'
+                ORDER BY recorded_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(event_log)
+        self.assertEqual(event_log["turn_id"], parent_turn_id)
+        self.assertEqual(json.loads(event_log["payload_json"])["turn_id"], parent_turn_id)
+
+    def test_harness_import_cli_ledgers_indexes_tool_call_files(self) -> None:
+        ledger_dir = self.home / "approval-ledgers"
+        ledger_dir.mkdir(parents=True)
+        (ledger_dir / "bootstrap.json").write_text(
+            json.dumps({"schema_version": "spark-cli-approval-bootstrap-ledger-v1"}),
+            encoding="utf-8",
+        )
+        (ledger_dir / "ledger.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:cli-import",
+                    "created_at": "2026-06-07T00:00:00Z",
+                    "turn_id": "turn:cli-import",
+                    "action_id": "action:cli-import",
+                    "capability_id": "capability:spark-cli:approval.runtime_state_mutation",
+                    "tool_name": "spark-cli.approval.enforced-command",
+                    "command_digest_ref": "spark-cli-command-digest:test",
+                    "authorization": {
+                        "decision_id": "decision:cli-import",
+                        "verdict": "allow",
+                        "risk_tier": "high",
+                    },
+                    "result": {"status": "success", "summary": "CLI command completed."},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "import-cli-ledgers",
+            "--home",
+            str(self.home),
+            "--ledger-dir",
+            str(ledger_dir),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["imported"], 1)
+        self.assertEqual(payload["skipped"], 1)
+        ledgers = recent_tool_call_ledgers(self.state_db, turn_id="turn:cli-import")
+        self.assertEqual(ledgers[0]["surface"], "spark_cli")
+        self.assertEqual(ledgers[0]["authorization_decision_id"], "decision:cli-import")
+
     def _enable_fake_researcher(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -185,6 +374,141 @@ class HarnessCliTests(SparkTestCase):
         )
         self.assertEqual(seen_hooks, ["voice.status", "voice.speak"])
 
+    def test_harness_execute_voice_io_transcribes_explicit_audio_payload(self) -> None:
+        seen_hooks: list[str] = []
+
+        def fake_voice_hook(
+            _config_manager,
+            *,
+            hook: str,
+            payload: dict[str, object],
+            governor_decision: dict[str, object] | None = None,
+        ):
+            seen_hooks.append(hook)
+            if hook == "voice.status":
+                self.assertIsNone(governor_decision)
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    hook=hook,
+                    repo_root=str(self.home),
+                    command=["voice.status"],
+                    exit_code=0,
+                    output={"result": {"ready": True, "reason": "ready", "reply_text": "Voice ready."}},
+                    payload=payload,
+                    stderr="",
+                    stdout="",
+                )
+            self.assertEqual(hook, "voice.transcribe")
+            self.assertEqual(payload["audio_base64"], "aGVsbG8=")
+            self.assertEqual(payload["mime_type"], "audio/ogg")
+            governor = payload["governor_decision"]
+            self.assertEqual(governor_decision, governor)
+            self.assertEqual(governor["schema_version"], "governor-decision-v1")
+            self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "voice.transcribe")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                hook=hook,
+                repo_root=str(self.home),
+                command=["voice.transcribe"],
+                exit_code=0,
+                output={
+                    "result": {
+                        "provider_id": "local_faster_whisper",
+                        "model": "tiny",
+                        "mode": "local_faster_whisper",
+                        "transcript_text": "hello",
+                    }
+                },
+                payload=payload,
+                stderr="",
+                stdout="",
+            )
+
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting", side_effect=fake_voice_hook):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "Transcribe audio_base64:aGVsbG8= mime_type:audio/ogg filename:test.ogg",
+                "--home",
+                str(self.home),
+                "--harness-id",
+                "voice.io",
+                "--channel-kind",
+                "builder",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["artifacts"]["transcription"]["transcript_text"], "hello")
+        self.assertNotIn("audio_base64", payload["artifacts"]["transcription"])
+        self.assertNotIn("aGVsbG8=", payload["envelope"]["task"])
+        authority = payload["envelope"]["turn_intent_payload"]
+        self.assertIn(
+            "capability:spark-voice-comms:voice.transcribe",
+            {action["capability_id"] for action in authority["proposed_actions"]},
+        )
+        self.assertEqual(seen_hooks, ["voice.status", "voice.transcribe"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual({ledger["tool_name"] for ledger in ledgers}, {"voice.status", "voice.transcribe"})
+
+    def test_harness_execute_swarm_escalation_records_dry_run_ledger(self) -> None:
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._load_swarm_status",
+                return_value=SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    researcher_ready=True,
+                    payload_ready=True,
+                    api_ready=True,
+                    auth_state="configured",
+                    workspace_id="workspace-1",
+                    api_url="https://swarm.example",
+                    last_decision={"mode": "manual_recommended"},
+                    last_failure=None,
+                ),
+            ),
+            patch(
+                "spark_intelligence.harness_runtime.service._run_swarm_sync_dry_run",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    mode="dry_run",
+                    message="Built payload",
+                    payload_path="C:/tmp/swarm-payload.json",
+                    api_url="https://swarm.example",
+                    workspace_id="workspace-1",
+                    accepted=None,
+                    response_body={"payload_keys": ["collective"]},
+                ),
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "Coordinate this through Swarm.",
+                "--home",
+                str(self.home),
+                "--harness-id",
+                "swarm.escalation",
+                "--channel-kind",
+                "builder",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "prepared")
+        self.assertEqual(payload["artifacts"]["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(payload["artifacts"]["swarm_sync_result"]["mode"], "dry_run")
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(ledgers[0]["status"], "partial")
+
     def test_harness_status_returns_registry_and_runtime_payload(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "harness",
@@ -198,6 +522,191 @@ class HarnessCliTests(SparkTestCase):
         payload = json.loads(stdout)
         self.assertIn("harness_registry", payload)
         self.assertIn("harness_runtime", payload)
+
+    def test_harness_self_evolution_snapshot_records_observe_run(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "turn_id": "turn:self-evolution-test",
+                "action_id": "action:self-evolution-test",
+                "capability_id": "capability:domain-chip-memory:memory.write",
+                "authorization_decision_id": "decision:self-evolution-test",
+                "ledger_id": "ledger:self-evolution-test",
+                "tool_name": "memory.write",
+                "owner_system": "domain-chip-memory",
+                "mutation_class": "writes_memory",
+                "outcome": "execute",
+                "status": "success",
+                "surface": "telegram",
+                "request_id": "req:self-evolution-test",
+                "trace_ref": "trace:self-evolution-test",
+                "summary": "Memory write completed.",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:self-evolution-test",
+                    "turn_id": "turn:self-evolution-test",
+                    "result": {"status": "success", "summary": "Memory write completed."},
+                },
+            },
+            component="telegram_runtime",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "self-evolution-snapshot",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "observe")
+        self.assertEqual(payload["ledger_count"], 1)
+        self.assertEqual(payload["self_evolution_run"]["schema_version"], "self-evolution-run-v1")
+        self.assertEqual(payload["self_evolution_run"]["mode"], "observe")
+        self.assertEqual(payload["readiness_score"]["overall"]["status"], "blocked")
+        self.assertEqual(payload["experience_index"]["entries"][0]["entry_type"], "tool_ledger")
+        events = latest_events_by_type(self.state_db, event_type="harness_self_evolution_observed", limit=1)
+        self.assertEqual(len(events), 1)
+        facts = events[0]["facts_json"]
+        self.assertEqual(facts["ledger_count"], 1)
+        self.assertEqual(
+            facts["self_evolution_run"]["evolution_id"],
+            payload["self_evolution_run"]["evolution_id"],
+        )
+
+    def test_harness_change_manifest_runner_blocks_without_executed_tests(self) -> None:
+        self._persist_self_evolution_ledger()
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "change-manifest-runner",
+            "--home",
+            str(self.home),
+            "--manifest",
+            str(manifest_path),
+            "--requested-verdict",
+            "promote_private",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["manifest_count"], 1)
+        self.assertFalse(payload["run_tests"])
+        self.assertEqual(payload["self_evolution_run"]["schema_version"], "self-evolution-run-v1")
+        self.assertEqual(payload["self_evolution_run"]["promotion_decision"]["verdict"], "not_ready")
+        self.assertIn(
+            "required_tests_not_executed",
+            payload["readiness_score"]["categories"]["verification"]["blockers"],
+        )
+        events = latest_events_by_type(self.state_db, event_type="harness_change_manifest_runner_evaluated", limit=1)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["facts_json"]["promotion_verdict"], "not_ready")
+        self.assertEqual(events[0]["facts_json"]["builder_ledger_id"], payload["builder_ledger_id"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["ledger_id"], payload["builder_ledger_id"])
+        self.assertEqual(ledgers[0]["tool_name"], "harness.change_manifest_runner")
+        self.assertEqual(ledgers[0]["status"], "success")
+
+    def test_harness_change_manifest_runner_runs_allowlisted_tests_and_promotes_private(self) -> None:
+        self._persist_self_evolution_ledger()
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "change-manifest-runner",
+            "--home",
+            str(self.home),
+            "--manifest",
+            str(manifest_path),
+            "--requested-verdict",
+            "promote_private",
+            "--run-tests",
+            "--allow-private-promotion",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["run_tests"])
+        self.assertTrue(payload["all_tests_passed"])
+        self.assertEqual(payload["test_results"][0]["status"], "passed")
+        self.assertEqual(payload["readiness_score"]["overall"]["status"], "private_ready")
+        self.assertEqual(payload["self_evolution_run"]["promotion_decision"]["verdict"], "promote_private")
+        events = latest_events_by_type(self.state_db, event_type="harness_change_manifest_runner_evaluated", limit=1)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["facts_json"]["promotion_verdict"], "promote_private")
+        self.assertEqual(events[0]["facts_json"]["builder_ledger_id"], payload["builder_ledger_id"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["ledger_id"], payload["builder_ledger_id"])
+        self.assertEqual(ledgers[0]["tool_name"], "harness.change_manifest_runner")
+        self.assertEqual(ledgers[0]["status"], "success")
+
+    def test_harness_change_manifest_runner_rejects_manifest_without_rollback_plan(self) -> None:
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        del manifest["rollback_plan"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(Exception, "rollback_plan"):
+            run_harness_change_manifest_runner(
+                self.state_db,
+                manifest_paths=[str(manifest_path)],
+                persist_event=False,
+            )
+
+    def test_harness_change_manifest_runner_rejects_protected_manifest_without_approval(self) -> None:
+        manifest_path = self._write_self_evolution_manifest(required_tests=["python -m unittest --help"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["target_component"]["component_type"] = "authority_policy"
+        manifest["target_component"]["editable_by_evolution"] = False
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(Exception, "human_approval_ref"):
+            run_harness_change_manifest_runner(
+                self.state_db,
+                manifest_paths=[str(manifest_path)],
+                persist_event=False,
+            )
+
+    def test_harness_change_manifest_runner_promotes_protected_manifest_with_approval(self) -> None:
+        self._persist_self_evolution_ledger()
+        manifest_path = self._write_self_evolution_manifest(
+            required_tests=["python -m unittest --help"],
+            component_type="authority_policy",
+            human_approval=True,
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "change-manifest-runner",
+            "--home",
+            str(self.home),
+            "--manifest",
+            str(manifest_path),
+            "--requested-verdict",
+            "promote_private",
+            "--run-tests",
+            "--allow-private-promotion",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["self_evolution_run"]["promotion_decision"]["verdict"], "promote_private")
+        self.assertEqual(
+            payload["self_evolution_run"]["target_components"][0]["component_type"],
+            "authority_policy",
+        )
+        self.assertIn("human_approval_ref", payload["self_evolution_run"]["change_manifests"][0])
 
     def test_harness_execute_supports_follow_up_harness_chain(self) -> None:
         self._enable_fake_researcher()
@@ -451,3 +960,84 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["recipe"]["recipe_id"], "advisory_voice_reply")
         self.assertEqual(payload["recipe"]["selection_mode"], "auto")
         self.assertEqual(payload["chain_status"], "completed")
+
+    def _persist_self_evolution_ledger(self) -> None:
+        persist_bound_ledger(
+            self.state_db,
+            row={
+                "turn_id": "turn:self-evolution-runner-test",
+                "action_id": "action:self-evolution-runner-test",
+                "capability_id": "capability:domain-chip-memory:memory.write",
+                "authorization_decision_id": "decision:self-evolution-runner-test",
+                "ledger_id": "ledger:self-evolution-runner-test",
+                "tool_name": "memory.write",
+                "owner_system": "domain-chip-memory",
+                "mutation_class": "writes_memory",
+                "outcome": "execute",
+                "status": "success",
+                "surface": "telegram",
+                "request_id": "req:self-evolution-runner-test",
+                "trace_ref": "trace:self-evolution-runner-test",
+                "summary": "Memory write completed.",
+                "ledger_json": {
+                    "schema_version": "tool-call-ledger-v1",
+                    "ledger_id": "ledger:self-evolution-runner-test",
+                    "turn_id": "turn:self-evolution-runner-test",
+                    "result": {"status": "success", "summary": "Memory write completed."},
+                },
+            },
+            component="telegram_runtime",
+        )
+
+    def _write_self_evolution_manifest(
+        self,
+        *,
+        required_tests: list[str],
+        component_type: str = "middleware",
+        human_approval: bool = False,
+    ):
+        from spark_intelligence.harness_contract import _ensure_harness_core_importable
+
+        _ensure_harness_core_importable()
+        from spark_harness_core import HarnessKernel, evidence_ref
+
+        kernel = HarnessKernel(surface="builder")
+        component = kernel.component(
+            component_id="component:builder-self-evolution-runner",
+            component_type=component_type,
+            owner_repo="spark-intelligence-builder",
+            path="src/spark_intelligence/harness_evolution.py",
+            summary="Builder self-evolution runner adapter.",
+            tests=required_tests,
+        )
+        manifest = kernel.change_manifest(
+            target_component=component,
+            failure_evidence=[
+                evidence_ref(
+                    "policy",
+                    "SPARK_DEEP_AUDIT_2026-06-07.md:self-evolution",
+                    "Audit found the change-manifest runner was not invoked by Builder runtime.",
+                    confidence=1.0,
+                )
+            ],
+            root_cause_hypothesis="Builder had an observe-only self-evolution snapshot but no change-manifest runner adapter.",
+            edit_summary="Feed validated change manifests through Harness Core's gated runner and persist the result.",
+            predicted_fixes=["Operators can evaluate accepted manifests against ledger and test evidence."],
+            predicted_regression_risks=["Unsafe test commands must remain blocked by the allowlist."],
+            required_tests=required_tests,
+            rollback_plan="Revert the Builder harness change-manifest runner adapter.",
+            verdict="accepted",
+            human_approval_ref=(
+                evidence_ref(
+                    "human_confirmation",
+                    "tests/test_harness_cli.py",
+                    "Test operator explicitly approved protected self-evolution boundary proof.",
+                    confidence=1.0,
+                )
+                if human_approval
+                else None
+            ),
+        )
+        path = self.home / "self-evolution-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path

@@ -10,6 +10,7 @@ from spark_intelligence.harness_runtime import (
     execute_harness_task,
     with_harness_local_operator_turn_intent,
 )
+from spark_intelligence.observability.store import recent_tool_call_ledgers
 
 from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
@@ -56,6 +57,7 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="What chips are active right now?",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         result = execute_harness_task(
             config_manager=self.config_manager,
@@ -65,13 +67,78 @@ class HarnessRuntimeTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.envelope.harness_id, "builder.direct")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "builder.direct")
         self.assertIn("execution_contract", result.artifacts)
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["status"], "success")
+        self.assertEqual(ledgers[0]["tool_name"], "builder.direct")
 
         snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
         self.assertEqual(snapshot.summary["recent_run_count"], 1)
         self.assertEqual(snapshot.summary["last_harness_id"], "builder.direct")
 
+    def test_execute_builder_direct_without_authority_does_not_prepare(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What chips are active right now?",
+            forced_harness_id="builder.direct",
+        )
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "builder.direct")
+        self.assertNotIn("execution_contract", result.artifacts)
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
+
     def test_execute_browser_grounded_harness_prepares_navigate_payload_for_url(self) -> None:
+        self._enable_fake_researcher()
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Open https://example.com and inspect it.",
+            )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        self.assertEqual(result.status, "prepared")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "browser.navigate")
+        payload = result.artifacts.get("browser_navigate_payload") or {}
+        self.assertEqual(payload.get("hook_name"), "browser.navigate")
+        self.assertEqual(payload.get("request_id"), envelope.envelope_id)
+        self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com")
+        self.assertIsInstance(payload.get("governor_decision"), dict)
+        self.assertIsInstance(payload.get("turn_intent_envelope_vnext"), dict)
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["status"], "partial")
+        self.assertEqual(ledgers[0]["tool_name"], "browser.navigate")
+
+    def test_execute_browser_grounded_harness_without_authority_does_not_prepare_payload(self) -> None:
         self._enable_fake_researcher()
         with patch(
             "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
@@ -89,10 +156,11 @@ class HarnessRuntimeTests(SparkTestCase):
             envelope=envelope,
         )
 
-        self.assertEqual(result.status, "prepared")
-        payload = result.artifacts.get("browser_navigate_payload") or {}
-        self.assertEqual(payload.get("hook_name"), "browser.navigate")
-        self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com")
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "browser.navigate")
+        self.assertNotIn("browser_navigate_payload", result.artifacts)
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
 
     def test_execute_browser_grounded_harness_requires_url_for_first_runner(self) -> None:
         self._enable_fake_researcher()
@@ -133,11 +201,12 @@ class HarnessRuntimeTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             task="Draft a direct answer for this operator question.",
-            channel_kind="telegram",
+            channel_kind="builder",
             session_id="session-r",
             human_id="human-r",
             agent_id="agent-r",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         with patch(
             "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
@@ -152,7 +221,39 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.artifacts["reply_text"], "Here is the answer.")
         self.assertEqual(result.artifacts["trace_ref"], "trace:test")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "researcher.advisory")
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["surface"], "builder")
+        self.assertEqual(ledgers[0]["status"], "success")
+        self.assertEqual(ledgers[0]["tool_name"], "researcher.advisory")
         bridge_mock.assert_called_once()
+
+    def test_execute_researcher_advisory_without_authority_does_not_run_bridge(self) -> None:
+        self._enable_fake_researcher()
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Draft a direct answer for this operator question.",
+            forced_harness_id="researcher.advisory",
+        )
+
+        with patch("spark_intelligence.harness_runtime.service._run_researcher_bridge_reply") as bridge_mock:
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "researcher.advisory")
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
+        bridge_mock.assert_not_called()
 
     def test_build_harness_task_envelope_allows_forced_harness_override(self) -> None:
         self._enable_fake_researcher()
@@ -181,23 +282,43 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="Say: Hello from Spark voice.",
             forced_harness_id="voice.io",
+            channel_kind="builder",
         )
         envelope = with_harness_local_operator_turn_intent(envelope)
 
-        def fake_voice_hook(*, hook, **kwargs):
+        def fake_voice_hook(_config_manager, *, hook, payload, governor_decision=None):
             if hook == "voice.status":
-                return (
-                    {
+                self.assertIsNone(governor_decision)
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    hook=hook,
+                    repo_root=str(self.home),
+                    command=["voice.status"],
+                    exit_code=0,
+                    output={
                         "result": {
                             "ready": True,
                             "reason": "voice ready",
                             "reply_text": "Voice chip is ready.",
-                        }
+                        },
                     },
-                    "domain-chip-voice-comms",
+                    payload=payload,
+                    stderr="",
+                    stdout="",
                 )
-            return (
-                {
+            self.assertEqual(hook, "voice.speak")
+            self.assertEqual(payload["text"], "Hello from Spark voice.")
+            self.assertIsInstance(governor_decision, dict)
+            self.assertEqual(governor_decision["tool_ledgers"][0]["tool_name"], "voice.speak")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                hook=hook,
+                repo_root=str(self.home),
+                command=["voice.speak"],
+                exit_code=0,
+                output={
                     "result": {
                         "provider_id": "elevenlabs",
                         "voice_id": "voice-123",
@@ -206,15 +327,14 @@ class HarnessRuntimeTests(SparkTestCase):
                         "filename": "voice-reply-test.ogg",
                         "voice_compatible": True,
                         "audio_base64": "aGVsbG8=",
-                    }
+                    },
                 },
-                "domain-chip-voice-comms",
+                payload=payload,
+                stderr="",
+                stdout="",
             )
 
-        with patch(
-            "spark_intelligence.harness_runtime.service._run_voice_hook",
-            side_effect=fake_voice_hook,
-        ):
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting", side_effect=fake_voice_hook):
             result = execute_harness_task(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -225,6 +345,85 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["voice_status"]["ready"], True)
         self.assertEqual(result.artifacts["spoken_audio"]["filename"], "voice-reply-test.ogg")
         self.assertEqual(result.artifacts["spoken_audio"]["audio_bytes"], 5)
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual({ledger["tool_name"] for ledger in ledgers}, {"voice.status", "voice.speak"})
+        self.assertEqual({ledger["status"] for ledger in ledgers}, {"success"})
+
+    def test_execute_voice_io_harness_transcribes_explicit_audio_payload(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Transcribe audio_base64:aGVsbG8= mime_type:audio/ogg filename:test.ogg",
+            forced_harness_id="voice.io",
+            channel_kind="builder",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+        self.assertNotIn("aGVsbG8=", envelope.to_payload()["task"])
+
+        def fake_voice_hook(_config_manager, *, hook, payload, governor_decision=None):
+            if hook == "voice.status":
+                self.assertIsNone(governor_decision)
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    hook=hook,
+                    repo_root=str(self.home),
+                    command=["voice.status"],
+                    exit_code=0,
+                    output={
+                        "result": {
+                            "ready": True,
+                            "reason": "voice ready",
+                            "reply_text": "Voice chip is ready.",
+                        },
+                    },
+                    payload=payload,
+                    stderr="",
+                    stdout="",
+                )
+            self.assertEqual(hook, "voice.transcribe")
+            self.assertEqual(payload["audio_base64"], "aGVsbG8=")
+            self.assertEqual(payload["mime_type"], "audio/ogg")
+            self.assertEqual(payload["filename"], "test.ogg")
+            self.assertIsInstance(governor_decision, dict)
+            self.assertEqual(governor_decision["tool_ledgers"][0]["tool_name"], "voice.transcribe")
+            return SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                hook=hook,
+                repo_root=str(self.home),
+                command=["voice.transcribe"],
+                exit_code=0,
+                output={
+                    "result": {
+                        "provider_id": "local_faster_whisper",
+                        "model": "tiny",
+                        "mode": "local_faster_whisper",
+                        "transcript_text": "hello",
+                    },
+                },
+                payload=payload,
+                stderr="",
+                stdout="",
+            )
+
+        with patch("spark_intelligence.attachments.run_first_chip_hook_supporting", side_effect=fake_voice_hook):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.artifacts["voice_status"]["ready"], True)
+        self.assertEqual(result.artifacts["transcription"]["transcript_text"], "hello")
+        self.assertEqual(result.artifacts["transcription"]["audio_bytes"], 5)
+        self.assertNotIn("audio_base64", result.artifacts["transcription"])
+        self.assertNotIn("aGVsbG8=", result.to_payload()["envelope"]["task"])
+        self.assertNotIn("aGVsbG8=", result.artifacts["resume_token"]["resume_command"])
+        ledgers = recent_tool_call_ledgers(self.state_db, surface="builder")
+        self.assertEqual({ledger["tool_name"] for ledger in ledgers}, {"voice.status", "voice.transcribe"})
+        self.assertEqual({ledger["status"] for ledger in ledgers}, {"success"})
 
     def test_execute_voice_io_harness_without_authority_does_not_run_chip_hook(self) -> None:
         envelope = build_harness_task_envelope(
@@ -283,7 +482,9 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="Coordinate this through Swarm.",
             forced_harness_id="swarm.escalation",
+            channel_kind="builder",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         with (
             patch(
@@ -323,7 +524,55 @@ class HarnessRuntimeTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.artifacts["swarm_sync_result"]["mode"], "dry_run")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], True)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        ledgers = recent_tool_call_ledgers(
+            self.state_db,
+            turn_id=result.artifacts["harness_authority"]["turn_id"],
+        )
+        self.assertEqual(len(ledgers), 1)
+        self.assertEqual(ledgers[0]["surface"], "builder")
+        self.assertEqual(ledgers[0]["status"], "partial")
+        self.assertEqual(ledgers[0]["tool_name"], "swarm.sync.dry_run")
         self.assertIn("swarm sync", result.artifacts["resume_token"]["resume_command"])
+
+    def test_execute_swarm_escalation_without_authority_does_not_build_payload(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Coordinate this through Swarm.",
+            forced_harness_id="swarm.escalation",
+        )
+
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._load_swarm_status",
+                return_value=SimpleNamespace(
+                    enabled=True,
+                    configured=True,
+                    researcher_ready=True,
+                    payload_ready=True,
+                    api_ready=True,
+                    auth_state="configured",
+                    workspace_id="workspace-1",
+                    api_url="https://swarm.example",
+                    last_decision={"mode": "manual_recommended"},
+                    last_failure=None,
+                ),
+            ),
+            patch("spark_intelligence.harness_runtime.service._run_swarm_sync_dry_run") as sync_mock,
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["harness_authority"]["allowed"], False)
+        self.assertEqual(result.artifacts["harness_authority"]["tool_name"], "swarm.sync.dry_run")
+        self.assertEqual(recent_tool_call_ledgers(self.state_db), [])
+        sync_mock.assert_not_called()
 
     def test_execute_swarm_escalation_harness_requests_payload_repair_when_not_ready(self) -> None:
         envelope = build_harness_task_envelope(

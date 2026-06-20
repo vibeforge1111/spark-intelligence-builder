@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import sqlite3
 import sys
@@ -61,6 +60,578 @@ class EnvironmentSnapshotRecord:
     snapshot_id: str
     surface: str
     summary: str
+
+
+@dataclass(frozen=True)
+class ObservabilityPruneResult:
+    cutoff: str
+    deleted_counts: dict[str, int]
+    total_deleted: int
+    vacuumed: bool
+
+
+@dataclass(frozen=True)
+class ObservabilityStoreReport:
+    state_db_path: str
+    state_db_bytes: int
+    page_count: int
+    freelist_count: int
+    page_size: int
+    table_counts: dict[str, int]
+    cutoff: str | None
+    prunable_counts: dict[str, int]
+    extended_cutoff: str | None = None
+
+    @property
+    def total_prunable(self) -> int:
+        return sum(self.prunable_counts.values())
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "state_db_path": self.state_db_path,
+            "state_db_bytes": self.state_db_bytes,
+            "page_count": self.page_count,
+            "freelist_count": self.freelist_count,
+            "page_size": self.page_size,
+            "table_counts": self.table_counts,
+            "cutoff": self.cutoff,
+            "extended_cutoff": self.extended_cutoff,
+            "prunable_counts": self.prunable_counts,
+            "total_prunable": self.total_prunable,
+        }
+
+
+@dataclass(frozen=True)
+class ToolLedgerAbandonResult:
+    cutoff: str
+    abandoned_count: int
+    abandoned_at: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "cutoff": self.cutoff,
+            "abandoned_count": self.abandoned_count,
+            "abandoned_at": self.abandoned_at,
+        }
+
+
+def _normalize_prune_cutoff(value: str | datetime) -> str:
+    if isinstance(value, datetime):
+        cutoff = value
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        return cutoff.isoformat(timespec="seconds")
+    cutoff = str(value).strip()
+    if not cutoff:
+        raise ValueError("older_than is required")
+    return cutoff
+
+
+def abandon_stale_tool_call_ledgers(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    abandoned_at: str | datetime | None = None,
+) -> ToolLedgerAbandonResult:
+    cutoff = _normalize_prune_cutoff(older_than)
+    abandoned_at_text = _normalize_prune_cutoff(abandoned_at or datetime.now(timezone.utc))
+    with state_db.connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tool_call_ledger
+            SET status = 'abandoned',
+                updated_at = ?
+            WHERE status = 'not_started'
+              AND COALESCE(NULLIF(owner_system, ''), '') = ''
+              AND updated_at < ?
+            """,
+            (abandoned_at_text, cutoff),
+        )
+        abandoned_count = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+    return ToolLedgerAbandonResult(
+        cutoff=cutoff,
+        abandoned_count=abandoned_count,
+        abandoned_at=abandoned_at_text,
+    )
+
+
+BASE_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    ("event_log", "recorded_at"),
+    ("tool_call_ledger", "created_at"),
+    ("provider_runtime_events", "created_at"),
+)
+BUILDER_EVENTS_RETENTION_SPEC = ("builder_events", "created_at")
+EXTENDED_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    BUILDER_EVENTS_RETENTION_SPEC,
+    ("memory_lane_records", "recorded_at"),
+    ("provenance_mutation_log", "recorded_at"),
+    ("observer_packet_records", "created_at"),
+    ("runtime_environment_snapshots", "created_at"),
+    ("attachment_state_snapshots", "created_at"),
+)
+REPORT_TABLE_SPECS: tuple[tuple[str, str], ...] = (
+    ("event_log", "recorded_at"),
+    *EXTENDED_RETENTION_TABLE_SPECS,
+    ("tool_call_ledger", "created_at"),
+    ("provider_runtime_events", "created_at"),
+)
+
+
+def build_observability_store_report(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime | None = None,
+    include_builder_events: bool = False,
+    extended_older_than: str | datetime | None = None,
+) -> ObservabilityStoreReport:
+    cutoff = _normalize_prune_cutoff(older_than) if older_than is not None else None
+    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
+    prunable_specs = list(BASE_RETENTION_TABLE_SPECS)
+    if include_builder_events:
+        prunable_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
+
+    with state_db.connect() as conn:
+        table_counts = {
+            table_name: int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] or 0)
+            for table_name, _column_name in REPORT_TABLE_SPECS
+        }
+        prunable_counts: dict[str, int] = {}
+        if cutoff is not None:
+            prunable_counts = {
+                table_name: int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
+                        (cutoff,),
+                    ).fetchone()[0]
+                    or 0
+                )
+                for table_name, column_name in prunable_specs
+            }
+        if extended_cutoff is not None:
+            prunable_counts.update(
+                {
+                    table_name: int(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
+                            (extended_cutoff,),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                    for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS
+                }
+            )
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+        freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
+
+    try:
+        state_db_bytes = int(state_db.path.stat().st_size)
+    except OSError:
+        state_db_bytes = 0
+
+    return ObservabilityStoreReport(
+        state_db_path=str(state_db.path),
+        state_db_bytes=state_db_bytes,
+        page_count=page_count,
+        freelist_count=freelist_count,
+        page_size=page_size,
+        table_counts=table_counts,
+        cutoff=cutoff,
+        prunable_counts=prunable_counts,
+        extended_cutoff=extended_cutoff,
+    )
+
+
+def prune_observability_store(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    include_builder_events: bool = False,
+    extended_older_than: str | datetime | None = None,
+    vacuum: bool = False,
+) -> ObservabilityPruneResult:
+    cutoff = _normalize_prune_cutoff(older_than)
+    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
+    delete_specs = list(BASE_RETENTION_TABLE_SPECS)
+    if include_builder_events:
+        delete_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
+
+    deleted_counts: dict[str, int] = {}
+    with state_db.connect() as conn:
+        for table_name, column_name in delete_specs:
+            cursor = conn.execute(
+                f"DELETE FROM {table_name} WHERE {column_name} < ?",
+                (cutoff,),
+            )
+            deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        if extended_cutoff is not None:
+            for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS:
+                cursor = conn.execute(
+                    f"DELETE FROM {table_name} WHERE {column_name} < ?",
+                    (extended_cutoff,),
+                )
+                deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+
+        total_deleted = sum(deleted_counts.values())
+        vacuumed = False
+        if vacuum and total_deleted > 0:
+            conn.execute("VACUUM")
+            vacuumed = True
+
+    return ObservabilityPruneResult(cutoff=cutoff, deleted_counts=deleted_counts, total_deleted=total_deleted, vacuumed=vacuumed)
+
+
+def persist_bound_ledger(
+    state_db: StateDB,
+    *,
+    row: dict[str, Any],
+    component: str | None = None,
+) -> str:
+    del component
+    ledger_json = row.get("ledger_json") if isinstance(row, dict) else None
+    ledger_payload = dict(ledger_json) if isinstance(ledger_json, dict) else {}
+    if isinstance(ledger_json, str):
+        try:
+            parsed = json.loads(ledger_json)
+            ledger_payload = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            ledger_payload = {}
+    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
+    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
+    ledger_id = _ledger_text(row.get("ledger_id") or ledger_payload.get("ledger_id"))
+    if not ledger_id:
+        raise ValueError("tool_call_ledger row requires ledger_id")
+    now = utc_now_iso()
+    values = {
+        "ledger_id": ledger_id,
+        "turn_id": _ledger_text(row.get("turn_id") or ledger_payload.get("turn_id")),
+        "action_id": _ledger_text(row.get("action_id") or ledger_payload.get("action_id")),
+        "capability_id": _ledger_text(row.get("capability_id") or ledger_payload.get("capability_id")),
+        "authorization_decision_id": _ledger_text(row.get("authorization_decision_id")),
+        "tool_name": _ledger_text(row.get("tool_name") or ledger_payload.get("tool_name")),
+        "owner_system": _ledger_text(row.get("owner_system")),
+        "mutation_class": _ledger_text(row.get("mutation_class")),
+        "outcome": _ledger_text(row.get("outcome")),
+        "status": _ledger_text(row.get("status") or result.get("status")),
+        "surface": _ledger_text(row.get("surface")),
+        "request_id": _ledger_text(row.get("request_id")),
+        "trace_ref": _ledger_text(row.get("trace_ref") or trace.get("id")),
+        "summary": _ledger_text(row.get("summary") or result.get("summary") or trace.get("summary")),
+        "ledger_json": json.dumps(ledger_payload if ledger_payload else ledger_json or {}, sort_keys=True),
+        "created_at": _ledger_text(row.get("created_at")) or now,
+        "updated_at": _ledger_text(row.get("updated_at")) or now,
+    }
+    with state_db.connect() as conn:
+        if values["tool_name"] == "voice.speak":
+            existing = conn.execute(
+                """
+                SELECT ledger_id, created_at
+                FROM tool_call_ledger
+                WHERE tool_name = ?
+                  AND turn_id = ?
+                  AND action_id = ?
+                  AND capability_id = ?
+                  AND request_id = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (
+                    values["tool_name"],
+                    values["turn_id"],
+                    values["action_id"],
+                    values["capability_id"],
+                    values["request_id"],
+                ),
+            ).fetchone()
+            if existing is not None:
+                values["ledger_id"] = str(existing["ledger_id"])
+                values["created_at"] = str(existing["created_at"])
+                if isinstance(ledger_payload, dict):
+                    ledger_payload["ledger_id"] = values["ledger_id"]
+                    values["ledger_json"] = json.dumps(ledger_payload, sort_keys=True)
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(
+                ledger_id,
+                turn_id,
+                action_id,
+                capability_id,
+                authorization_decision_id,
+                tool_name,
+                owner_system,
+                mutation_class,
+                outcome,
+                status,
+                surface,
+                request_id,
+                trace_ref,
+                summary,
+                ledger_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ledger_id) DO UPDATE SET
+                turn_id = excluded.turn_id,
+                action_id = excluded.action_id,
+                capability_id = excluded.capability_id,
+                authorization_decision_id = excluded.authorization_decision_id,
+                tool_name = excluded.tool_name,
+                owner_system = excluded.owner_system,
+                mutation_class = excluded.mutation_class,
+                outcome = excluded.outcome,
+                status = excluded.status,
+                surface = excluded.surface,
+                request_id = excluded.request_id,
+                trace_ref = excluded.trace_ref,
+                summary = excluded.summary,
+                ledger_json = excluded.ledger_json,
+                updated_at = excluded.updated_at
+            """,
+            tuple(values[column] for column in (
+                "ledger_id",
+                "turn_id",
+                "action_id",
+                "capability_id",
+                "authorization_decision_id",
+                "tool_name",
+                "owner_system",
+                "mutation_class",
+                "outcome",
+                "status",
+                "surface",
+                "request_id",
+                "trace_ref",
+                "summary",
+                "ledger_json",
+                "created_at",
+                "updated_at",
+            )),
+        )
+        conn.commit()
+    return ledger_id
+
+
+def recent_tool_call_ledgers(
+    state_db: StateDB,
+    *,
+    turn_id: str | None = None,
+    surface: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    bounded_limit = max(1, min(int(limit), 500))
+    filters: list[str] = []
+    params: list[Any] = []
+    if turn_id:
+        filters.append("turn_id = ?")
+        params.append(turn_id)
+    if surface:
+        filters.append("surface = ?")
+        params.append(surface)
+    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                ledger_id,
+                turn_id,
+                action_id,
+                capability_id,
+                authorization_decision_id,
+                tool_name,
+                owner_system,
+                mutation_class,
+                outcome,
+                status,
+                surface,
+                request_id,
+                trace_ref,
+                summary,
+                ledger_json,
+                created_at,
+                updated_at
+            FROM tool_call_ledger
+            {where_sql}
+            ORDER BY updated_at DESC, created_at DESC, ledger_id DESC
+            LIMIT ?
+            """,
+            (*params, bounded_limit),
+        ).fetchall()
+    return [_tool_call_ledger_row_to_dict(row) for row in rows]
+
+
+def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str, Any]:
+    normalized_turn_id = str(turn_id or "").strip()
+    if not normalized_turn_id:
+        raise ValueError("turn_id is required")
+    bounded_limit = max(1, min(int(limit), 500))
+    quoted_turn_id = json.dumps(normalized_turn_id, ensure_ascii=True)
+    quoted_like = f"%{quoted_turn_id}%"
+    with state_db.connect() as conn:
+        ledger_rows = conn.execute(
+            """
+            SELECT *
+            FROM tool_call_ledger
+            WHERE turn_id = ?
+            ORDER BY created_at ASC, updated_at ASC, ledger_id ASC
+            LIMIT ?
+            """,
+            (normalized_turn_id, bounded_limit),
+        ).fetchall()
+        builder_event_rows = conn.execute(
+            """
+            SELECT *
+            FROM builder_events
+            WHERE
+              turn_id = ?
+              OR correlation_id = ?
+              OR request_id = ?
+              OR trace_ref = ?
+              OR (
+                facts_json IS NOT NULL
+                AND (
+                  facts_json LIKE ?
+                  OR (
+                    json_valid(facts_json)
+                    AND (
+                      json_extract(facts_json, '$.turn_id') = ?
+                      OR json_extract(facts_json, '$.tool_call_ledger.turn_id') = ?
+                    )
+                  )
+                )
+              )
+            ORDER BY created_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                quoted_like,
+                normalized_turn_id,
+                normalized_turn_id,
+                bounded_limit,
+            ),
+        ).fetchall()
+        event_log_rows = conn.execute(
+            """
+            SELECT *
+            FROM event_log
+            WHERE
+              turn_id = ?
+              OR request_id = ?
+              OR trace_ref = ?
+              OR (
+                payload_json IS NOT NULL
+                AND (
+                  payload_json LIKE ?
+                  OR (
+                    json_valid(payload_json)
+                    AND (
+                      json_extract(payload_json, '$.turn_id') = ?
+                      OR json_extract(payload_json, '$.facts.turn_id') = ?
+                      OR json_extract(payload_json, '$.facts.tool_call_ledger.turn_id') = ?
+                    )
+                  )
+                )
+              )
+            ORDER BY recorded_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                quoted_like,
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                bounded_limit,
+            ),
+        ).fetchall()
+    ledgers = [_tool_call_ledger_row_to_dict(row) for row in ledger_rows]
+    builder_events = [_row_to_dict(row) for row in builder_event_rows]
+    event_log = [_row_to_dict(row) for row in event_log_rows]
+    return {
+        "turn_id": normalized_turn_id,
+        "counts": {
+            "tool_call_ledgers": len(ledgers),
+            "builder_events": len(builder_events),
+            "event_log": len(event_log),
+        },
+        "tool_call_ledgers": ledgers,
+        "builder_events": builder_events,
+        "event_log": event_log,
+        "coverage_note": (
+            "Includes canonical ledgers with exact turn_id plus Builder/event mirror rows "
+            "that carry the turn id in indexed columns or JSON payloads. Older rows without "
+            "turn_id remain outside this query."
+        ),
+    }
+
+
+def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(surface, ''), 'unknown') AS surface, COUNT(*) AS count
+            FROM tool_call_ledger
+            GROUP BY COALESCE(NULLIF(surface, ''), 'unknown')
+            ORDER BY surface ASC
+            """
+        ).fetchall()
+    return {str(row["surface"]): int(row["count"] or 0) for row in rows}
+
+
+def _tool_call_ledger_row_to_dict(row: Any) -> dict[str, Any]:
+    payload = {key: row[key] for key in row.keys()}
+    ledger_json = payload.get("ledger_json")
+    if isinstance(ledger_json, str):
+        try:
+            parsed = json.loads(ledger_json)
+            payload["ledger_json"] = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            payload["ledger_json"] = {}
+    ledger_payload = payload["ledger_json"] if isinstance(payload.get("ledger_json"), dict) else {}
+    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
+    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
+    payload["tool_name"] = payload.get("tool_name") or ledger_payload.get("tool_name")
+    payload["turn_id"] = payload.get("turn_id") or ledger_payload.get("turn_id")
+    payload["status"] = payload.get("status") or result.get("status")
+    payload["trace_ref"] = payload.get("trace_ref") or trace.get("id")
+    payload["summary"] = payload.get("summary") or result.get("summary") or trace.get("summary")
+    return payload
+
+
+def _ledger_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _event_turn_id(
+    explicit_turn_id: Any,
+    facts: dict[str, Any],
+    *,
+    request_id: str | None,
+    trace_ref: str | None,
+) -> str | None:
+    candidates: list[Any] = [explicit_turn_id, facts.get("turn_id")]
+    for key in ("tool_call_ledger", "ledger", "governor_decision"):
+        value = facts.get(key)
+        if isinstance(value, dict):
+            candidates.append(value.get("turn_id"))
+    for candidate in candidates:
+        normalized = _ledger_text(candidate)
+        if normalized:
+            return normalized
+    for candidate in (request_id, trace_ref):
+        normalized = _ledger_text(candidate)
+        if normalized and normalized.startswith("turn:"):
+            return normalized
+    return None
 
 
 def open_run(
@@ -268,6 +839,7 @@ def record_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
     request_id: str | None = None,
+    turn_id: str | None = None,
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
@@ -285,6 +857,7 @@ def record_event(
     recorded_at = utc_now_iso()
     normalized_facts = dict(facts or {})
     normalized_provenance = dict(provenance or {})
+    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -298,6 +871,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                turn_id,
                 trace_ref,
                 channel_id,
                 session_id,
@@ -312,7 +886,7 @@ def record_event(
                 provenance_json,
                 facts_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -324,6 +898,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                normalized_turn_id,
                 trace_ref,
                 channel_id,
                 session_id,
@@ -348,6 +923,7 @@ def record_event(
                 workspace_id,
                 trace_ref,
                 request_id,
+                turn_id,
                 run_id,
                 session_id,
                 surface_kind,
@@ -358,7 +934,7 @@ def record_event(
                 severity,
                 payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -367,6 +943,7 @@ def record_event(
                 None,
                 trace_ref,
                 request_id,
+                normalized_turn_id,
                 run_id,
                 session_id,
                 component,
@@ -381,6 +958,7 @@ def record_event(
                         "truth_kind": truth_kind,
                         "target_surface": target_surface,
                         "component": component,
+                        "turn_id": normalized_turn_id,
                         "evidence_lane": evidence_lane,
                         "reason_code": reason_code,
                         "provenance": normalized_provenance,
@@ -453,6 +1031,7 @@ def record_event(
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -469,6 +1048,7 @@ def record_event(
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -498,10 +1078,15 @@ def record_policy_gate_block(
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
+    turn_id: str | None = None,
     actor_id: str | None = None,
     provenance: dict[str, Any] | None = None,
     facts: dict[str, Any] | None = None,
 ) -> str:
+    normalized_facts = dict(facts or {})
+    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
+    if normalized_turn_id:
+        normalized_facts.setdefault("turn_id", normalized_turn_id)
     event_id = record_event(
         state_db,
         event_type="policy_gate_blocked",
@@ -509,6 +1094,7 @@ def record_policy_gate_block(
         summary=summary,
         run_id=run_id,
         request_id=request_id,
+        turn_id=normalized_turn_id,
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
@@ -525,7 +1111,7 @@ def record_policy_gate_block(
             "input_ref": input_ref,
             "output_ref": output_ref,
             "action": action,
-            **(facts or {}),
+            **normalized_facts,
         },
         provenance=provenance,
     )
@@ -2364,6 +2950,7 @@ def _record_follow_on_policy_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
+    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -2396,6 +2983,7 @@ def _record_follow_on_policy_block_if_needed(
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
+        turn_id=turn_id,
         actor_id=actor_id,
         provenance={
             "source_kind": source_kind,
@@ -2417,6 +3005,7 @@ def _record_follow_on_promotion_gate_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
+    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -2499,6 +3088,7 @@ def _record_follow_on_promotion_gate_block_if_needed(
             trace_ref=trace_ref,
             channel_id=channel_id,
             session_id=session_id,
+            turn_id=turn_id,
             actor_id=actor_id,
             provenance={
                 "source_kind": source_kind,

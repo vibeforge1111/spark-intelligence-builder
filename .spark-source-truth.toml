@@ -1,0 +1,5 @@
+[source_truth]
+canonical = true
+status = "runtime_recovery_line"
+source = "C:\\Users\\USER\\.spark\\modules\\spark-intelligence-builder\\source"
+desktop_backlog_manifest = "docs\\DESKTOP_BUILDER_BACKLOG_MANIFEST_2026-06-08.md"

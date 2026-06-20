@@ -93,7 +93,7 @@ surface adapter -> Builder RouteConfidenceGateV1 -> source-owned evidence -> sur
 
 ```powershell
 spark os compile --json
-$env:PYTHONPATH='C:\Users\USER\.spark\modules\spark-intelligence-builder-release\source\src'
+$env:PYTHONPATH='C:\Users\USER\.spark\modules\spark-intelligence-builder\source\src'
 python -m spark_intelligence.cli self route-confidence-gate --home C:\Users\USER\.spark\state\spark-intelligence --json
 ```
 

@@ -327,6 +327,135 @@ class _EmptyOkContextMemoryClient(_FakeMemoryClient):
         }
 
 
+class _ProjectScopedRecoveryMemoryClient(_FakeMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_project",
+                    "value": "field receipt cleanup dashboard",
+                    "memory_role": "current_state",
+                    "timestamp": "2026-06-20T09:00:00Z",
+                    "observation_id": "obs-project-a",
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_constraint",
+                    "value": "blurry receipt photos at night",
+                    "memory_role": "current_state",
+                    "timestamp": "2026-06-20T09:05:00Z",
+                    "observation_id": "obs-constraint-a",
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_project",
+                    "value": "pantry stock helper for shared kitchens",
+                    "memory_role": "current_state",
+                    "timestamp": "2026-06-20T09:10:00Z",
+                    "observation_id": "obs-project-b",
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-current"},
+        }
+
+    def recover_task_context(self, **payload):
+        self.task_recovery_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_constraint",
+                    "value": "blurry receipt photos at night",
+                    "memory_role": "current_state",
+                    "task_recovery_bucket": "next_actions",
+                    "authority": "authoritative_current",
+                    "source_family": "current_state",
+                    "timestamp": "2026-06-20T09:05:00Z",
+                    "observation_id": "obs-constraint-a",
+                    "turn_ids": ["turn-project-a-constraint"],
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "task.next_action",
+                    "value": "ask the user for the pantry constraint",
+                    "memory_role": "structured_evidence",
+                    "task_recovery_bucket": "next_actions",
+                    "authority": "structured_support",
+                    "source_family": "evidence",
+                    "timestamp": "2026-06-20T09:11:00Z",
+                    "observation_id": "obs-next-action",
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {
+                "promotes_memory": False,
+                "selected_counts": {"next_actions": 2},
+                "source_labels": [
+                    {
+                        "bucket": "next_actions",
+                        "observation_id": "obs-constraint-a",
+                        "predicate": "profile.current_constraint",
+                        "authority": "authoritative_current",
+                        "source_family": "current_state",
+                        "turn_ids": ["turn-project-a-constraint"],
+                    },
+                    {
+                        "bucket": "next_actions",
+                        "observation_id": "obs-next-action",
+                        "predicate": "task.next_action",
+                        "authority": "structured_support",
+                        "source_family": "evidence",
+                    },
+                ],
+            },
+            "answer_explanation": {"promotes_memory": False},
+        }
+
+    def recall_episodic_context(self, **payload):
+        self.episodic_recall_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_constraint",
+                    "value": "shared kitchens need one-tap stock confirmation",
+                    "memory_role": "current_state",
+                    "episodic_recall_bucket": "current_state",
+                    "authority": "authoritative_current",
+                    "source_family": "current_state",
+                    "timestamp": "2026-06-20T09:12:00Z",
+                    "observation_id": "obs-constraint-b",
+                    "turn_ids": ["turn-project-b-constraint"],
+                }
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {
+                "promotes_memory": False,
+                "selected_counts": {"current_state": 1},
+                "source_labels": [
+                    {
+                        "bucket": "current_state",
+                        "observation_id": "obs-constraint-b",
+                        "predicate": "profile.current_constraint",
+                        "authority": "authoritative_current",
+                        "source_family": "current_state",
+                        "turn_ids": ["turn-project-b-constraint"],
+                    }
+                ],
+            },
+            "answer_explanation": {"promotes_memory": False},
+        }
+
+
 class _HybridRetrievalMemoryClient(_FakeMemoryClient):
     def get_current_state(self, **payload):
         self.current_state_calls.append(payload)
@@ -336,7 +465,7 @@ class _HybridRetrievalMemoryClient(_FakeMemoryClient):
             "records": [
                 {
                     "subject": payload["subject"],
-                    "predicate": payload["predicate"],
+                    "predicate": payload.get("predicate") or "profile.current_focus",
                     "value": "persistent memory quality evaluation",
                     "metadata": {
                         "source_surface": "current_state_test",
@@ -381,6 +510,133 @@ class _HybridRetrievalMemoryClient(_FakeMemoryClient):
             ],
             "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-events"},
+        }
+
+
+class _DeletedEvidenceHybridRetrievalMemoryClient(_HybridRetrievalMemoryClient):
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "observation_id": "telegram-update:test:observation:1",
+                    "subject": payload.get("subject"),
+                    "predicate": "evidence.telegram.telegram_runtime",
+                    "value": "the Saffron Kite snack is ginger tea",
+                    "text": "The Saffron Kite snack is ginger tea.",
+                    "memory_role": "structured_evidence",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "observation_id": "telegram-update:test-delete:observation:1",
+                    "subject": payload.get("subject"),
+                    "predicate": "evidence.telegram.telegram_runtime",
+                    "value": "the Saffron Kite snack is ginger tea",
+                    "text": "Deleted Saffron Kite snack note.",
+                    "memory_role": "state_deletion",
+                    "operation": "delete",
+                    "supersedes": "telegram-update:test:observation:1",
+                    "metadata": {
+                        "operation": "delete",
+                        "source_surface": "telegram_memory_delete",
+                    },
+                },
+            ],
+            "provenance": [{"memory_role": "structured_evidence", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-deleted-evidence"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "event",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "profile.timezone",
+                    "value": "GST",
+                    "text": "GST",
+                    "memory_role": "event",
+                    "metadata": {"source_surface": "profile_event"},
+                },
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "profile.current_constraint",
+                    "value": "Keep tonight's next step small enough to finish.",
+                    "text": "Keep tonight's next step small enough to finish.",
+                    "memory_role": "event",
+                    "metadata": {"source_surface": "profile_event"},
+                },
+            ],
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-events-unrelated"},
+        }
+
+
+class _OpenRecallCurrentStateScanMemoryClient(_HybridRetrievalMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        if payload.get("predicate"):
+            return super().get_current_state(**payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_low_stakes_test_fact",
+                    "value": "Pocket phrase Lantern Calico belongs to the Cedar Loom demo.",
+                    "text": "human:test profile.current_low_stakes_test_fact Pocket phrase Lantern Calico belongs to the Cedar Loom demo.",
+                    "memory_role": "current_state",
+                    "metadata": {
+                        "source_surface": "telegram_memory_write",
+                        "evidence_text": "User's pocket phrase is Lantern Calico for the Cedar Loom demo.",
+                    },
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_low_stakes_test_fact",
+                    "value": "Pocket phrase Silver Thimble belongs to the Orchard Loom demo.",
+                    "text": "human:test profile.current_low_stakes_test_fact Pocket phrase Silver Thimble belongs to the Orchard Loom demo.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_focus",
+                    "value": "Building a Lantern Dock Scheduler with boat slips and tide windows.",
+                    "text": "human:test profile.current_focus Building a Lantern Dock Scheduler with boat slips and tide windows.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-current-state-scan"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "structured_evidence",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence-empty"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "event",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-events-empty"},
         }
 
 
@@ -730,6 +986,57 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(relevant), 2)
         self.assertTrue(all((event["facts_json"] or {}).get("reason") is None for event in relevant))
 
+    def test_recover_task_context_filters_project_scoped_slots_before_latest_project(self) -> None:
+        fake_client = _ProjectScopedRecoveryMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = recover_task_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="What is our constraint?",
+                actor_id="test",
+                limit=3,
+            )
+
+        values = [str(record.get("value") or "") for record in result.read_result.records]
+        self.assertNotIn("blurry receipt photos at night", values)
+        self.assertIn("ask the user for the pantry constraint", values)
+        trace = result.read_result.retrieval_trace or {}
+        labels = trace.get("source_labels")
+        self.assertIsInstance(labels, list)
+        label_observation_ids = {str(label.get("observation_id") or "") for label in labels if isinstance(label, dict)}
+        self.assertNotIn("obs-constraint-a", label_observation_ids)
+        self.assertIn("obs-next-action", label_observation_ids)
+        self.assertEqual(trace["project_scope_filter"]["dropped_record_count"], 1)
+        self.assertEqual(fake_client.current_state_calls[-1]["predicate_prefix"], "")
+
+    def test_recall_episodic_context_keeps_project_scoped_slot_after_latest_project(self) -> None:
+        fake_client = _ProjectScopedRecoveryMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = recall_episodic_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="What is our constraint?",
+                actor_id="test",
+                limit=3,
+            )
+
+        values = [str(record.get("value") or "") for record in result.read_result.records]
+        self.assertEqual(values, ["shared kitchens need one-tap stock confirmation"])
+        trace = result.read_result.retrieval_trace or {}
+        labels = trace.get("source_labels")
+        self.assertIsInstance(labels, list)
+        label_observation_ids = {str(label.get("observation_id") or "") for label in labels if isinstance(label, dict)}
+        self.assertIn("obs-constraint-b", label_observation_ids)
+        self.assertNotIn("project_scope_filter", trace)
+
     def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -779,6 +1086,142 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(fake_client.current_state_calls), 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
         self.assertEqual(len(fake_client.retrieval_event_calls), 1)
+
+    def test_hybrid_memory_retrieve_suppresses_evidence_superseded_by_delete_tombstone(self) -> None:
+        fake_client = _DeletedEvidenceHybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What snack did I say fits Saffron Kite?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        selected_text = " ".join(str(record.get("text") or "") for record in result.read_result.records)
+        self.assertNotIn("Saffron Kite snack is ginger tea", selected_text)
+        self.assertNotIn("GST", selected_text)
+        self.assertNotIn("next step small enough", selected_text)
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        discarded = [
+            candidate
+            for candidate in trace["candidates"]
+            if candidate["predicate"] == "evidence.telegram.telegram_runtime"
+        ]
+        self.assertTrue(discarded)
+        self.assertTrue(all(not candidate["selected"] for candidate in discarded))
+        self.assertIn(
+            "superseded_by_memory_lifecycle",
+            {candidate["reason_discarded"] for candidate in discarded},
+        )
+        self.assertIn(
+            "stale_or_superseded",
+            {candidate["reason_discarded"] for candidate in discarded},
+        )
+        unrelated = [
+            candidate
+            for candidate in trace["candidates"]
+            if candidate["predicate"] in {"profile.timezone", "profile.current_constraint"}
+        ]
+        self.assertTrue(unrelated)
+        self.assertTrue(all(not candidate["selected"] for candidate in unrelated))
+        self.assertEqual(
+            {"required_answer_slot_query_miss"},
+            {candidate["reason_discarded"] for candidate in unrelated},
+        )
+
+    def test_hybrid_memory_retrieve_scans_current_state_for_open_natural_recall(self) -> None:
+        fake_client = _OpenRecallCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What do you remember about Lantern Calico?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.records[0]["value"], "Pocket phrase Lantern Calico belongs to the Cedar Loom demo.")
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        self.assertIn("current_state_scan", {lane["lane"] for lane in trace["lane_summaries"]})
+        packet = trace["context_packet"]
+        self.assertEqual(packet["sections"][0]["section"], "active_current_state")
+        self.assertEqual(packet["sections"][0]["authority"], "authority")
+        self.assertEqual(packet["source_mix"]["current_state"], 1)
+        gates = packet["trace"]["promotion_gates"]
+        self.assertEqual(gates["status"], "pass")
+        self.assertEqual(gates["gates"]["source_swamp_resistance"]["status"], "pass")
+        self.assertEqual(gates["gates"]["source_swamp_resistance"]["evidence"]["authority_count"], 1)
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(any(candidate["selected"] for candidate in scan_candidates))
+        self.assertTrue(any(candidate["reason_discarded"] == "current_state_query_miss" for candidate in scan_candidates))
+        selected_values = [
+            str(candidate["predicate"] or "")
+            for candidate in scan_candidates
+            if candidate["selected"]
+        ]
+        self.assertEqual(selected_values, ["profile.current_low_stakes_test_fact"])
+        self.assertEqual(fake_client.current_state_calls[0]["predicate_prefix"], "")
+
+    def test_hybrid_memory_retrieve_abstains_when_current_state_scan_has_no_query_overlap(self) -> None:
+        fake_client = _OpenRecallCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What do you remember about Saffron Kite?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertTrue(result.read_result.abstained)
+        self.assertEqual(result.read_result.records, [])
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(scan_candidates)
+        self.assertTrue(all(not candidate["selected"] for candidate in scan_candidates))
+        self.assertEqual({"current_state_query_miss"}, {candidate["reason_discarded"] for candidate in scan_candidates})
+        packet = trace["context_packet"]
+        self.assertEqual(packet["source_mix"], {})
+        self.assertEqual(packet["sections"], [])
+
+    def test_hybrid_memory_retrieve_abstains_when_source_recall_slot_is_unstated(self) -> None:
+        fake_client = _OpenRecallCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What engine did I say the Cedar Loom demo uses?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertTrue(result.read_result.abstained)
+        self.assertEqual(result.read_result.records, [])
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(scan_candidates)
+        self.assertTrue(any(candidate["reason_discarded"] == "required_answer_slot_query_miss" for candidate in scan_candidates))
+        packet = trace["context_packet"]
+        self.assertEqual(packet["source_mix"], {})
+        self.assertEqual(packet["sections"], [])
 
     def test_hybrid_memory_context_packet_warns_when_supporting_sources_swamp_authority(self) -> None:
         fake_client = _SupportingOnlyHybridRetrievalMemoryClient()
@@ -3259,11 +3702,11 @@ class MemoryOrchestratorTests(SparkTestCase):
         call = fake_client.observation_calls[0]
         self.assertEqual(call["subject"], "human:telegram:8319079055")
 
-    def test_inspect_human_memory_uses_legacy_double_prefixed_fallback_for_prefixed_human_id(self) -> None:
+    def test_inspect_human_memory_does_not_double_prefix_prefixed_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        class _LegacyFallbackMemoryClient:
+        class _CanonicalMemoryClient:
             def __init__(self) -> None:
                 self.current_state_calls: list[dict[str, object]] = []
 
@@ -3271,14 +3714,6 @@ class MemoryOrchestratorTests(SparkTestCase):
                 self.current_state_calls.append(payload)
                 subject = str(payload.get("subject") or "")
                 if subject == "human:telegram:8319079055":
-                    return {
-                        "status": "not_found",
-                        "memory_role": "unknown",
-                        "records": [],
-                        "provenance": [],
-                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
-                    }
-                if subject == "human:human:telegram:8319079055":
                     return {
                         "status": "supported",
                         "memory_role": "current_state",
@@ -3290,11 +3725,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                             }
                         ],
                         "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
-                        "retrieval_trace": {"trace_id": "mem-trace-legacy"},
+                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
                     }
                 raise AssertionError(f"unexpected subject {subject}")
 
-        fake_client = _LegacyFallbackMemoryClient()
+        fake_client = _CanonicalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
             result = inspect_human_memory_in_memory(
                 config_manager=self.config_manager,
@@ -3308,7 +3743,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
         self.assertEqual(
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
-            ["human:telegram:8319079055", "human:human:telegram:8319079055"],
+            ["human:telegram:8319079055"],
         )
 
     def test_inspect_memory_sdk_runtime_falls_back_to_local_domain_chip_memory_src(self) -> None:
@@ -3353,11 +3788,11 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
 
-    def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
+    def test_lookup_current_state_does_not_double_prefix_prefixed_subject(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        class _LegacyLookupMemoryClient:
+        class _CanonicalLookupMemoryClient:
             def __init__(self) -> None:
                 self.current_state_calls: list[dict[str, object]] = []
 
@@ -3365,14 +3800,6 @@ class MemoryOrchestratorTests(SparkTestCase):
                 self.current_state_calls.append(payload)
                 subject = str(payload.get("subject") or "")
                 if subject == "human:telegram:8319079055":
-                    return {
-                        "status": "not_found",
-                        "memory_role": "unknown",
-                        "records": [],
-                        "provenance": [],
-                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
-                    }
-                if subject == "human:human:telegram:8319079055":
                     return {
                         "status": "supported",
                         "memory_role": "current_state",
@@ -3384,11 +3811,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                             }
                         ],
                         "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
-                        "retrieval_trace": {"trace_id": "mem-trace-legacy"},
+                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
                     }
                 raise AssertionError(f"unexpected subject {subject}")
 
-        fake_client = _LegacyLookupMemoryClient()
+        fake_client = _CanonicalLookupMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
             result = lookup_current_state_in_memory(
                 config_manager=self.config_manager,
@@ -3403,7 +3830,50 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
         self.assertEqual(
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
-            ["human:telegram:8319079055", "human:human:telegram:8319079055"],
+            ["human:telegram:8319079055"],
+        )
+
+    def test_lookup_current_state_canonicalizes_repeated_channel_subject(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        class _CanonicalLookupMemoryClient:
+            def __init__(self) -> None:
+                self.current_state_calls: list[dict[str, object]] = []
+
+            def get_current_state(self, **payload):
+                self.current_state_calls.append(payload)
+                subject = str(payload.get("subject") or "")
+                if subject == "human:telegram:8319079055":
+                    return {
+                        "status": "supported",
+                        "memory_role": "current_state",
+                        "records": [
+                            {
+                                "subject": subject,
+                                "predicate": "profile.startup_name",
+                                "value": "Seedify",
+                            }
+                        ],
+                        "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
+                    }
+                raise AssertionError(f"unexpected subject {subject}")
+
+        fake_client = _CanonicalLookupMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = lookup_current_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:telegram:human:telegram:8319079055",
+                predicate="profile.startup_name",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(
+            [str(call.get("subject") or "") for call in fake_client.current_state_calls],
+            ["human:telegram:8319079055"],
         )
 
     def test_profile_timezone_detection_normalizes_structured_fact(self) -> None:
@@ -3426,6 +3896,22 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIsNotNone(query)
         assert query is not None
         self.assertEqual(query.predicate, "profile.timezone")
+
+    def test_profile_timezone_detection_treats_known_abbreviation_as_timezone_not_city(self) -> None:
+        detected = detect_profile_fact_observation(
+            "I am in GST, and tonight my real focus window starts after 10:40pm."
+        )
+
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.timezone")
+        self.assertEqual(detected.value, "GST")
+
+        city = detect_profile_fact_observation("I'm in Abu Dhabi now.")
+        self.assertIsNotNone(city)
+        assert city is not None
+        self.assertEqual(city.predicate, "profile.city")
+        self.assertEqual(city.value, "Abu Dhabi")
 
     def test_profile_home_country_detection_normalizes_structured_fact(self) -> None:
         detected = detect_profile_fact_observation("My country is UAE.")
@@ -4701,6 +5187,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("personality.preference.", str(first_call["predicate"]))
         events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=10)
         self.assertTrue(events)
+
+    def test_decisive_first_pick_preference_writes_structured_memory_observation(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _FakeMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            deltas = detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="For replies tonight, I usually want one brave pick before options.",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write",
+                channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-decisive-first-pick-preference",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
+            )
+
+        self.assertIsNotNone(deltas)
+        assert deltas is not None
+        self.assertGreater(deltas.get("assertiveness", 0), 0)
+        self.assertGreater(deltas.get("directness", 0), 0)
+        self.assertTrue(fake_client.observation_calls)
 
     def test_personality_reset_deletes_memory_preferences(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

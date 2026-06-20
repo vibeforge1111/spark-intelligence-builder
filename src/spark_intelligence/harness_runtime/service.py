@@ -20,6 +20,12 @@ _VOICE_SPEAK_RE = re.compile(
     r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+_VOICE_AUDIO_BASE64_RE = re.compile(
+    r"(?P<prefix>\baudio_base64\s*[:=]\s*)(?P<audio>[^\s]+)",
+    re.IGNORECASE,
+)
+_VOICE_MIME_TYPE_RE = re.compile(r"\bmime_type\s*[:=]\s*(?P<mime>[A-Za-z0-9.+/-]+)", re.IGNORECASE)
+_VOICE_FILENAME_RE = re.compile(r"\bfilename\s*[:=]\s*(?P<filename>[^\s]+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -45,7 +51,7 @@ class HarnessTaskEnvelope:
     def to_payload(self) -> dict[str, Any]:
         return {
             "envelope_id": self.envelope_id,
-            "task": self.task,
+            "task": _redact_harness_task_payload(self.task),
             "harness_id": self.harness_id,
             "owner_system": self.owner_system,
             "backend_kind": self.backend_kind,
@@ -189,6 +195,72 @@ def build_harness_task_envelope(
 
 
 def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
+    if envelope.harness_id == "builder.direct":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="builder.direct",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            intent_summary="Local operator explicitly requested governed Builder direct execution through the harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
+    if envelope.harness_id == "researcher.advisory":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="researcher.advisory",
+            owner_system="spark-researcher",
+            mutation_class="external_network",
+            external_network=True,
+            intent_summary="Local operator explicitly requested governed researcher advisory execution through the Builder harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
+    if envelope.harness_id == "browser.grounded":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="browser.navigate",
+            owner_system="spark-browser",
+            mutation_class="external_network",
+            external_network=True,
+            intent_summary="Local operator explicitly requested governed browser navigation through the harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator browser task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
+    if envelope.harness_id == "swarm.escalation":
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name="swarm.sync.dry_run",
+            owner_system="spark-swarm",
+            mutation_class="writes_files",
+            intent_summary="Local operator explicitly requested governed Swarm dry-run payload preparation through the Builder harness runtime.",
+            raw_turn_summary=f"Builder harness runtime summarized local operator Swarm task {envelope.envelope_id}; raw task stays offloaded.",
+            confidence=0.95,
+        )
+
     if envelope.harness_id != "voice.io":
         return None
 
@@ -282,26 +354,24 @@ def execute_harness_task(
     )
     try:
         if envelope.harness_id == "builder.direct":
-            summary = "Task retained in Builder direct harness."
-            artifacts = {
-                "execution_contract": {
-                    "reply_mode": "builder_local_runtime",
-                    "owner_system": envelope.owner_system,
-                    "prompt_strategy": envelope.prompt_strategy,
-                    "required_capabilities": envelope.required_capabilities,
-                }
-            }
-            status = "prepared"
+            artifacts, summary, status = _execute_builder_direct_harness(
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run.run_id,
+            )
         elif envelope.harness_id == "researcher.advisory":
             artifacts, summary, status = _execute_researcher_advisory_harness(
                 config_manager=config_manager,
                 state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
                 config_manager=config_manager,
+                state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
@@ -503,7 +573,9 @@ def build_harness_runtime_snapshot(
 def _execute_browser_grounded_harness(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
 
@@ -520,15 +592,206 @@ def _execute_browser_grounded_harness(
             "Browser grounded harness needs an explicit URL before it can prepare a navigate payload.",
             "needs_input",
         )
+
+    authority = _authorize_harness_browser_navigate(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="browser.navigate"),
+            },
+            "Browser grounded harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
+    navigate_payload = build_browser_navigate_payload(
+        config_manager=config_manager,
+        url=url,
+        agent_id=envelope.agent_id,
+        request_id=envelope.envelope_id,
+    )
+    if isinstance(authority.governor_decision, dict):
+        navigate_payload["governor_decision"] = authority.governor_decision
+    if isinstance(envelope.turn_intent_payload, dict):
+        navigate_payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
+    _record_harness_browser_navigate_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="partial",
+        summary="Browser grounded harness prepared a governed navigate payload.",
+    )
     return (
         {
-            "browser_navigate_payload": build_browser_navigate_payload(
-                config_manager=config_manager,
-                url=url,
-            )
+            "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="browser.navigate"),
+            "browser_navigate_payload": navigate_payload,
         },
         f"Prepared a governed browser navigate payload for {url}.",
         "prepared",
+    )
+
+
+def _authorize_harness_browser_navigate(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="browser.navigate",
+        owner_system="spark-browser",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_browser_navigate_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
+def _execute_builder_direct_harness(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    authority = _authorize_harness_builder_direct(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="builder.direct"),
+            },
+            "Builder direct harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
+    _record_harness_builder_direct_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="success",
+        summary="Builder direct harness prepared.",
+    )
+    return (
+        {
+            "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="builder.direct"),
+            "execution_contract": {
+                "reply_mode": "builder_local_runtime",
+                "owner_system": envelope.owner_system,
+                "prompt_strategy": envelope.prompt_strategy,
+                "required_capabilities": envelope.required_capabilities,
+            },
+        },
+        "Task retained in Builder direct harness.",
+        "prepared",
+    )
+
+
+def _authorize_harness_builder_direct(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="builder.direct",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_builder_direct_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
     )
 
 
@@ -537,7 +800,22 @@ def _execute_researcher_advisory_harness(
     config_manager: ConfigManager,
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
+    authority = _authorize_harness_researcher_advisory(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        return (
+            {
+                "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="researcher.advisory"),
+            },
+            "Researcher advisory harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
+
     result = _run_researcher_bridge_reply(
         config_manager=config_manager,
         state_db=state_db,
@@ -553,12 +831,94 @@ def _execute_researcher_advisory_harness(
         "provider_transport": result.provider_execution_transport,
         "routing_decision": result.routing_decision,
         "active_chip_key": result.active_chip_key,
+        "harness_authority": _harness_authority_artifact(authority, fallback_tool_name="researcher.advisory"),
     }
+    _record_harness_researcher_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="success",
+        summary="Researcher advisory harness completed.",
+    )
     return (
         artifacts,
         "Executed the researcher advisory harness and captured the reply/result trace.",
         "completed",
     )
+
+
+def _authorize_harness_researcher_advisory(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="researcher.advisory",
+        owner_system="spark-researcher",
+        mutation_class="external_network",
+        external_network=True,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_researcher_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
+def _harness_authority_artifact(verdict: Any, *, fallback_tool_name: str = "researcher.advisory") -> dict[str, Any]:
+    ledger = verdict.tool_call_ledger if isinstance(getattr(verdict, "tool_call_ledger", None), dict) else {}
+    governor = verdict.governor_decision if isinstance(getattr(verdict, "governor_decision", None), dict) else {}
+    return {
+        "allowed": bool(getattr(verdict, "allowed", False)),
+        "reason_codes": list(getattr(verdict, "reason_codes", ()) or ()),
+        "decision_id": governor.get("decision_id"),
+        "turn_id": ledger.get("turn_id") or governor.get("turn_id"),
+        "ledger_id": ledger.get("ledger_id"),
+        "tool_name": ledger.get("tool_name") or fallback_tool_name,
+        "ledger_event_id": getattr(verdict, "ledger_event_id", None),
+    }
 
 
 def _bridge_result_reply_text(result: Any) -> str:
@@ -699,6 +1059,122 @@ def _execute_voice_io_harness(
             "completed",
         )
 
+    if task_mode == "transcribe":
+        if not ready:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_status_repair",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness is not ready to transcribe audio yet.",
+                "blocked",
+            )
+        if not task_payload:
+            artifacts["needs_input"] = {
+                "reason": "Voice transcription requires an explicit audio_base64 payload.",
+                "mode": task_mode,
+                "task": _redact_harness_task_payload(envelope.task),
+            }
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_input_required",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness is ready but needs explicit audio bytes before transcription can continue.",
+                "needs_input",
+            )
+        try:
+            audio_bytes = _decode_voice_audio_base64(task_payload)
+        except ValueError as exc:
+            artifacts["needs_input"] = {
+                "reason": str(exc),
+                "mode": task_mode,
+                "task": _redact_harness_task_payload(envelope.task),
+            }
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_input_required",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness received invalid transcription audio input.",
+                "needs_input",
+            )
+        try:
+            transcribe_output, transcribe_chip_key = _run_voice_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+                hook="voice.transcribe",
+                payload=_build_voice_hook_payload(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    envelope=envelope,
+                    audio_base64=task_payload,
+                    mime_type=_extract_voice_mime_type(envelope.task),
+                    filename=_extract_voice_filename(envelope.task),
+                ),
+                run_id=run_id,
+            )
+        except Exception as exc:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_transcribe_retry",
+            )
+            artifacts["retry_token"] = {
+                "retry_command": (
+                    f"python -m spark_intelligence.cli harness execute "
+                    f"{json.dumps(_redact_harness_task_payload(envelope.task))} "
+                    f"--home {config_manager.paths.home} --harness-id voice.io"
+                ),
+                "reason": str(exc),
+            }
+            return (
+                artifacts,
+                "Voice I/O harness could not transcribe audio with the current provider/hook state.",
+                "blocked",
+            )
+        transcribe_result = transcribe_output.get("result") if isinstance(transcribe_output.get("result"), dict) else {}
+        transcript_text = str(transcribe_result.get("transcript_text") or transcribe_result.get("text") or "").strip()
+        if not transcript_text:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_transcribe_retry",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness completed the transcription hook but received no transcript text.",
+                "blocked",
+            )
+        artifacts["transcription"] = {
+            "chip_key": transcribe_chip_key,
+            "provider_id": str(transcribe_result.get("provider_id") or ""),
+            "model": str(transcribe_result.get("model") or transcribe_result.get("model_id") or ""),
+            "mode": str(transcribe_result.get("mode") or ""),
+            "mime_type": _extract_voice_mime_type(envelope.task),
+            "filename": _extract_voice_filename(envelope.task),
+            "audio_bytes": len(audio_bytes),
+            "audio_sha256": hashlib.sha256(audio_bytes).hexdigest(),
+            "transcript_text": transcript_text,
+        }
+        artifacts["resume_token"] = _build_harness_resume_token(
+            config_manager=config_manager,
+            envelope=envelope,
+            step="voice_transcribe_repeat",
+        )
+        return (
+            artifacts,
+            "Executed the voice harness and transcribed audio through the active voice chip.",
+            "completed",
+        )
+
     artifacts["needs_input"] = {
         "reason": (
             "Voice I/O harness needs explicit speech text for synthesis or real audio bytes for transcription."
@@ -768,6 +1244,21 @@ def _execute_swarm_escalation_harness(
             "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
             "needs_input",
         )
+    authority = _authorize_harness_swarm_sync_dry_run(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    if not authority.allowed:
+        artifacts["harness_authority"] = _harness_authority_artifact(
+            authority,
+            fallback_tool_name="swarm.sync.dry_run",
+        )
+        return (
+            artifacts,
+            "Swarm escalation harness is blocked because no executable Harness authority was present.",
+            "blocked",
+        )
     sync_result = _run_swarm_sync_dry_run(
         config_manager=config_manager,
         state_db=state_db,
@@ -784,6 +1275,22 @@ def _execute_swarm_escalation_harness(
         "accepted": sync_result.accepted,
         "response_body": sync_result.response_body,
     }
+    artifacts["harness_authority"] = _harness_authority_artifact(
+        authority,
+        fallback_tool_name="swarm.sync.dry_run",
+    )
+    _record_harness_swarm_sync_result_ledger(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        status="partial" if sync_result.ok else "failure",
+        summary=(
+            "Swarm escalation dry-run prepared a collective payload."
+            if sync_result.ok
+            else "Swarm escalation dry-run could not prepare a collective payload."
+        ),
+    )
     artifacts["resume_token"] = {
         "resume_kind": "swarm_dispatch",
         "resume_command": f"python -m spark_intelligence.cli swarm sync --home {config_manager.paths.home}",
@@ -806,12 +1313,73 @@ def _execute_swarm_escalation_harness(
     )
 
 
+def _authorize_harness_swarm_sync_dry_run(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name="swarm.sync.dry_run",
+        owner_system="spark-swarm",
+        mutation_class="writes_files",
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if not verdict.allowed:
+        return verdict
+    if not isinstance(verdict.governor_decision, dict):
+        return replace(verdict, allowed=False, reason_codes=(*verdict.reason_codes, "missing_governor_decision"))
+    return verdict
+
+
+def _record_harness_swarm_sync_result_ledger(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    status: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status=status,
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=getattr(verdict, "ledger_event_id", None),
+    )
+
+
 def _build_voice_hook_payload(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
     text: str | None = None,
+    audio_base64: str | None = None,
+    mime_type: str | None = None,
+    filename: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": envelope.channel_kind or "cli",
@@ -826,6 +1394,12 @@ def _build_voice_hook_payload(
         payload["turn_intent_envelope_vnext"] = envelope.turn_intent_payload
     if text is not None:
         payload["text"] = text
+    if audio_base64 is not None:
+        payload["audio_base64"] = audio_base64
+    if mime_type:
+        payload["mime_type"] = mime_type
+    if filename:
+        payload["filename"] = filename
     return payload
 
 
@@ -839,19 +1413,39 @@ def _run_voice_hook(
     run_id: str,
 ) -> tuple[dict[str, Any], str]:
     authorization = _authorize_harness_voice_hook(envelope=envelope, hook=hook)
-    if authorization is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
-        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, build_governor_decision_from_bridge_authority
+    authority = None
+    if authorization is not None:
+        from spark_intelligence.bridge_authority import BridgeAuthorityVerdict, record_bridge_tool_call_ledger
+
+        authority = BridgeAuthorityVerdict(
+            allowed=True,
+            reason_codes=authorization.reason_codes,
+            envelope=None,
+            harness_core_envelope=authorization.turn_intent_envelope_vnext,
+            proposed_action=authorization.proposed_action,
+            authorization_decision=authorization.authorization_decision,
+            tool_call_ledger=authorization.tool_call_ledger,
+        )
+        ledger_event_id = record_bridge_tool_call_ledger(
+            state_db,
+            authority,
+            component="harness_runtime",
+            request_id=envelope.envelope_id,
+            run_id=run_id,
+            channel_id=envelope.channel_kind,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+        )
+        if ledger_event_id is not None:
+            authority = replace(authority, ledger_event_id=ledger_event_id)
+
+    if authority is not None and hook in {"voice.install", "voice.speak", "voice.transcribe"}:
+        from spark_intelligence.bridge_authority import build_governor_decision_from_bridge_authority
 
         governor_decision = build_governor_decision_from_bridge_authority(
-            BridgeAuthorityVerdict(
-                allowed=True,
-                reason_codes=authorization.reason_codes,
-                envelope=None,
-                harness_core_envelope=authorization.turn_intent_envelope_vnext,
-                proposed_action=authorization.proposed_action,
-                authorization_decision=authorization.authorization_decision,
-                tool_call_ledger=authorization.tool_call_ledger,
-            ),
+            authority,
             reply_instruction=f"Execute authorized Harness Runtime voice hook {hook}.",
         )
         if isinstance(governor_decision, dict):
@@ -886,6 +1480,24 @@ def _run_voice_hook(
         human_id=envelope.human_id,
         agent_id=envelope.agent_id,
     )
+    if authority is not None:
+        from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            authority,
+            status="success",
+            summary=f"Voice hook {hook} completed through chip {execution.chip_key}.",
+            component="harness_runtime",
+            request_id=envelope.envelope_id,
+            run_id=run_id,
+            channel_id=envelope.channel_kind,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            initial_ledger_event_id=getattr(authority, "ledger_event_id", None),
+        )
     output = execution.output if isinstance(execution.output, dict) else {}
     return output, execution.chip_key
 
@@ -970,8 +1582,46 @@ def _classify_voice_task(task: str) -> tuple[str, str | None]:
         spoken_text = str(match.group("text") or "").strip()
         return ("speak", spoken_text or None)
     if "transcribe" in lowered or "transcription" in lowered:
-        return ("transcribe", None)
+        return ("transcribe", _extract_voice_audio_base64(stripped))
     return ("unspecified", None)
+
+
+def _extract_voice_audio_base64(task: str) -> str | None:
+    match = _VOICE_AUDIO_BASE64_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("audio") or "").strip() or None
+
+
+def _extract_voice_mime_type(task: str) -> str | None:
+    match = _VOICE_MIME_TYPE_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("mime") or "").strip() or None
+
+
+def _extract_voice_filename(task: str) -> str | None:
+    match = _VOICE_FILENAME_RE.search(str(task or ""))
+    if not match:
+        return None
+    return str(match.group("filename") or "").strip() or None
+
+
+def _decode_voice_audio_base64(audio_base64: str) -> bytes:
+    try:
+        audio_bytes = base64.b64decode(str(audio_base64).encode("ascii"), validate=True)
+    except Exception as exc:
+        raise ValueError("Voice transcription audio_base64 is not valid base64.") from exc
+    if not audio_bytes:
+        raise ValueError("Voice transcription audio_base64 is empty.")
+    return audio_bytes
+
+
+def _redact_harness_task_payload(task: str) -> str:
+    return _VOICE_AUDIO_BASE64_RE.sub(
+        lambda match: f"{match.group('prefix')}<audio_base64:redacted>",
+        str(task or "").strip(),
+    )
 
 
 def _build_harness_resume_token(
@@ -981,7 +1631,7 @@ def _build_harness_resume_token(
     step: str,
 ) -> dict[str, Any]:
     command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
+        f"python -m spark_intelligence.cli harness execute {json.dumps(_redact_harness_task_payload(envelope.task))} "
         f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
     )
     if envelope.channel_kind:

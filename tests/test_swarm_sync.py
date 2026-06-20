@@ -111,7 +111,7 @@ class SwarmSyncTests(SparkTestCase):
             + "\n",
             encoding="utf-8",
         )
-        self.config_manager.set_path("spark.swarm.runtime_root", str(runtime_root))
+        self.config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", str(runtime_root))
 
         self.assertEqual(
             _read_local_swarm_env_map(self.config_manager),
@@ -123,6 +123,13 @@ class SwarmSyncTests(SparkTestCase):
                 "INNER_QUOTES": 'prefix"inner"suffix',
             },
         )
+
+    @patch.dict("os.environ", {"SPARK_SWARM_RUNTIME_ROOT": ""})
+    def test_swarm_status_requires_runtime_root_env_for_local_bridge(self) -> None:
+        status = swarm_status(self.config_manager, self.state_db)
+
+        self.assertFalse(status.configured)
+        self.assertIsNone(status.runtime_root)
 
     def test_normalize_runtime_source_preserves_existing_values(self) -> None:
         payload = {
@@ -235,11 +242,12 @@ class SwarmSyncTests(SparkTestCase):
         self.assertIn("long_task", result.triggers)
 
     def test_evaluate_swarm_escalation_holds_local_when_payload_not_ready(self) -> None:
-        result = evaluate_swarm_escalation(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="Please delegate this as parallel multi-agent work and research deeply.",
-        )
+        with patch("spark_intelligence.swarm_bridge.sync.discover_researcher_runtime_root", return_value=(None, "missing")):
+            result = evaluate_swarm_escalation(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Please delegate this as parallel multi-agent work and research deeply.",
+            )
 
         self.assertTrue(result.ok)
         self.assertFalse(result.escalate)

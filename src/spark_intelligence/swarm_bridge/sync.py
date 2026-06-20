@@ -22,6 +22,9 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
 
+SWARM_RUNTIME_ROOT_ENV = "SPARK_SWARM_RUNTIME_ROOT"
+
+
 @dataclass
 class SwarmStatus:
     enabled: bool
@@ -496,8 +499,8 @@ def swarm_sync_upgrade_delivery_status(
 
 
 def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmStatus:
-    enabled = bool(config_manager.get_path("spark.swarm.enabled", default=True))
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
+    enabled = bool(config_manager.get_path("spark.swarm.enabled", default=True))
     researcher_root, _ = discover_researcher_runtime_root(config_manager)
     researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root) if researcher_root else None
     api_url = _resolve_swarm_api_url(config_manager)
@@ -1429,14 +1432,18 @@ def evaluate_swarm_escalation(
 
 
 def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
-    configured_root = config_manager.get_path("spark.swarm.runtime_root")
+    configured_root = _resolve_swarm_runtime_root_env(config_manager)
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root)
-        return (path, "configured")
-    autodetect = Path.home() / "Desktop" / "spark-swarm"
-    if autodetect.exists():
-        return autodetect, "autodiscovered"
+        return (path, "env")
     return None, "missing"
+
+
+def _resolve_swarm_runtime_root_env(config_manager: ConfigManager) -> str | None:
+    env_value = str(os.environ.get(SWARM_RUNTIME_ROOT_ENV) or "").strip()
+    if env_value:
+        return env_value
+    return str(config_manager.read_env_map().get(SWARM_RUNTIME_ROOT_ENV) or "").strip() or None
 
 
 def _resolve_swarm_api_url(config_manager: ConfigManager) -> str | None:
