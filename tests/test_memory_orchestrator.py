@@ -4774,6 +4774,108 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertFalse(constraint_result.read_result.abstained)
         self.assertEqual(constraint_result.read_result.records[0]["value"], "budget for one engineer")
 
+    def test_domain_chip_persistence_preserves_same_turn_current_state_slots(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        subject = "human:merge:test:same-turn"
+        session_id = "session:merge:test:same-turn"
+        turn_id = "turn:merge:test:same-turn"
+        timestamp = "2026-04-21T10:00:02+00:00"
+        focus_governor = _memory_write_governor_decision(
+            request_id="req-merge-same-turn-focus",
+            session_id=session_id,
+            human_id=subject,
+            user_message="Remember that my current focus is CopperBridge.",
+        )
+        constraint_governor = _memory_write_governor_decision(
+            request_id="req-merge-same-turn-constraint",
+            session_id=session_id,
+            human_id=subject,
+            user_message="Remember that my current constraint is one response at a time.",
+        )
+
+        client = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client)
+        client.write_observation(
+            operation="update",
+            subject=subject,
+            predicate="profile.current_focus",
+            value="CopperBridge",
+            text="My current focus is CopperBridge.",
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+            retention_class="active_state",
+            governor_decision=focus_governor,
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_focus",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_focus",
+                "normalized_value": "CopperBridge",
+            },
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        client = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client)
+        client.write_observation(
+            operation="update",
+            subject=subject,
+            predicate="profile.current_constraint",
+            value="one response at a time",
+            text="My current constraint is one response at a time.",
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+            retention_class="active_state",
+            governor_decision=constraint_governor,
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_constraint",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_constraint",
+                "normalized_value": "one response at a time",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        focus_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject=subject,
+            predicate="profile.current_focus",
+            sdk_module="domain_chip_memory",
+        )
+        constraint_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject=subject,
+            predicate="profile.current_constraint",
+            sdk_module="domain_chip_memory",
+        )
+        payload_path = memory_orchestrator._domain_chip_memory_persistence_path(self.config_manager.paths.home)
+        persisted = json.loads(payload_path.read_text(encoding="utf-8"))
+        persisted_slots = {
+            entry.get("predicate"): (entry.get("metadata") or {}).get("value")
+            for entry in persisted.get("manual_observations", [])
+            if entry.get("subject") == subject
+        }
+
+        self.assertFalse(focus_result.read_result.abstained)
+        self.assertEqual(focus_result.read_result.records[0]["value"], "CopperBridge")
+        self.assertFalse(constraint_result.read_result.abstained)
+        self.assertEqual(constraint_result.read_result.records[0]["value"], "one response at a time")
+        self.assertEqual(persisted_slots["profile.current_focus"], "CopperBridge")
+        self.assertEqual(persisted_slots["profile.current_constraint"], "one response at a time")
+
     def test_domain_chip_persistence_merges_concurrent_current_state_and_event_writes(self) -> None:
         memory_orchestrator._SDK_CLIENT_CACHE.clear()
         client_a = memory_orchestrator._load_sdk_client_for_module(

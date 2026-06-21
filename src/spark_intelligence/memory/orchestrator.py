@@ -5506,12 +5506,47 @@ def _merge_domain_entry_payloads(existing_entries: Any, new_entries: Any) -> lis
 
 
 def _domain_entry_payload_key(entry: dict[str, Any]) -> str:
+    metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+    subject = _optional_string(entry.get("subject")) or ""
+    predicate = _optional_string(entry.get("predicate")) or ""
+    entity_key = _optional_string(metadata.get("entity_key")) or ""
+    target_predicate = _optional_string(metadata.get("target_predicate")) or ""
+    value = (
+        _optional_string(metadata.get("value"))
+        or _optional_string(metadata.get("deleted_value"))
+        or _optional_string(entry.get("text"))
+        or ""
+    )
     observation_id = _optional_string(entry.get("observation_id"))
     if observation_id:
-        return f"observation:{observation_id}"
+        return json.dumps(
+            {
+                "kind": "observation",
+                "id": observation_id,
+                "subject": subject,
+                "predicate": predicate,
+                "entity_key": entity_key,
+                "target_predicate": target_predicate,
+                "value": value,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
     event_id = _optional_string(entry.get("event_id"))
     if event_id:
-        return f"event:{event_id}"
+        return json.dumps(
+            {
+                "kind": "event",
+                "id": event_id,
+                "subject": subject,
+                "predicate": predicate,
+                "value": value,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
     return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
