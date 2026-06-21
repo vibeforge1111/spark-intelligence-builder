@@ -5709,10 +5709,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
             return_value=fake_execute_with_research,
         ):
+            canonical_request_id = "turn:telegram:plain_chat:telegram-update:452999321"
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                request_id="req-1",
+                request_id=canonical_request_id,
                 agent_id="agent-1",
                 human_id="human-1",
                 session_id="session-1",
@@ -5737,7 +5738,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIsInstance(governor, dict)
         self.assertEqual(governor["schema_version"], "governor-decision-v1")
         self.assertEqual(governor["outcome"], "execute")
+        self.assertEqual(governor["turn_id"], canonical_request_id)
         self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "researcher.advisory.execute")
+        self.assertEqual(governor["tool_ledgers"][0]["turn_id"], canonical_request_id)
         self.assertEqual(governor["authorizations"][0]["capability_id"], "capability:spark-researcher:researcher.advisory.execute")
         self.assertIsNone(captured_execution["memory_governor_decision"])
         self.assertEqual(captured_execution["generic_adapter_enabled"], "1")

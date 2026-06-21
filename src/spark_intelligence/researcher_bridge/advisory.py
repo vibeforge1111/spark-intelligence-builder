@@ -4458,6 +4458,7 @@ def _build_researcher_advisory_execution_governor_decision(
             tool_name="researcher.advisory.execute",
             owner_system="spark-researcher",
             mutation_class="external_network",
+            turn_id=request_id,
             intent_summary="SIB researcher bridge selected governed spark-researcher advisory execution.",
             raw_turn_summary=(
                 f"Researcher bridge request {request_id} selected governed advisory execution. "
