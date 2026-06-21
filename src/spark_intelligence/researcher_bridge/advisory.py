@@ -15961,6 +15961,33 @@ def _resolve_bridge_provider(
     state_db: StateDB,
 ) -> ResearcherProviderSelection:
     provider_records = config_manager.load().get("providers", {}).get("records", {}) or {}
+    runtime_provider = _spark_runtime_provider_request()
+    if runtime_provider:
+        requested_provider = _builder_provider_id_for_runtime_provider(runtime_provider)
+        if requested_provider == "openai-codex":
+            return ResearcherProviderSelection(
+                provider=_codex_provider_from_runtime_env(),
+                model_family="codex",
+            )
+        if requested_provider and requested_provider in provider_records:
+            try:
+                provider = resolve_runtime_provider(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    requested_provider=requested_provider,
+                )
+            except RuntimeError as exc:
+                return ResearcherProviderSelection(provider=None, model_family="generic", error=str(exc))
+            return ResearcherProviderSelection(
+                provider=provider,
+                model_family=_model_family_for_provider(provider),
+            )
+        if requested_provider:
+            return ResearcherProviderSelection(
+                provider=None,
+                model_family="generic",
+                error=f"Spark runtime provider '{runtime_provider}' is not configured in Builder auth.",
+            )
     if not provider_records:
         return ResearcherProviderSelection(provider=None, model_family="generic")
     try:
@@ -15970,6 +15997,55 @@ def _resolve_bridge_provider(
     return ResearcherProviderSelection(
         provider=provider,
         model_family=_model_family_for_provider(provider),
+    )
+
+
+def _spark_runtime_provider_request(env: dict[str, str] | None = None) -> str | None:
+    source = env if env is not None else os.environ
+    for key in (
+        "SPARK_BUILDER_LLM_PROVIDER",
+        "SPARK_CHAT_LLM_PROVIDER",
+        "SPARK_LLM_PROVIDER",
+        "LLM_PROVIDER",
+        "BOT_DEFAULT_PROVIDER",
+        "SPARK_BOT_DEFAULT_PROVIDER",
+    ):
+        value = str(source.get(key) or "").strip().lower()
+        if value:
+            return value
+    return None
+
+
+def _builder_provider_id_for_runtime_provider(provider_id: str) -> str | None:
+    normalized = provider_id.strip().lower()
+    if normalized == "codex":
+        return "openai-codex"
+    if normalized == "glm":
+        return "zai"
+    return normalized or None
+
+
+def _codex_provider_from_runtime_env(env: dict[str, str] | None = None) -> RuntimeProviderResolution:
+    source = env if env is not None else os.environ
+    model = (
+        str(source.get("SPARK_BUILDER_LLM_MODEL") or "").strip()
+        or str(source.get("SPARK_CHAT_LLM_MODEL") or "").strip()
+        or str(source.get("SPARK_CODEX_MODEL") or "").strip()
+        or str(source.get("CODEX_MODEL") or "").strip()
+        or "gpt-5.5"
+    )
+    return RuntimeProviderResolution(
+        provider_id="openai-codex",
+        provider_kind="openai-codex",
+        auth_profile_id="spark-runtime-env:codex",
+        auth_method="codex_cli",
+        api_mode="codex_responses",
+        execution_transport="external_cli_wrapper",
+        base_url=None,
+        default_model=model,
+        secret_ref=None,
+        secret_value="",
+        source="spark_runtime_env",
     )
 
 

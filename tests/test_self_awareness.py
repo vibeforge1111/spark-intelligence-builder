@@ -760,11 +760,15 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
                 self.state_db,
                 capability_key="spark_memory",
                 actor_id="operator:test",
+                request_id="turn:route-probe-memory-smoke",
+                session_id="session:route-probe",
             )
 
         self.assertEqual(result.status, "success")
         self.assertIn("memory smoke", result.probe_summary)
         smoke.assert_called_once()
+        self.assertEqual(smoke.call_args.kwargs["event_session_id"], "session:route-probe")
+        self.assertEqual(smoke.call_args.kwargs["event_turn_id"], "turn:route-probe-memory-smoke")
 
     def test_spawner_route_probe_succeeds_when_unrelated_mission_control_surfaces_are_degraded(self) -> None:
         mission_payload = {

@@ -75,7 +75,13 @@ def run_route_probe_and_record(
     normalized_key = _normalize_capability_key(capability_key)
     started = perf_counter()
     try:
-        probe = _run_route_probe(config_manager, state_db, capability_key=normalized_key)
+        probe = _run_route_probe(
+            config_manager,
+            state_db,
+            capability_key=normalized_key,
+            request_id=request_id,
+            session_id=session_id,
+        )
     except Exception as exc:
         return record_route_probe_evidence(
             state_db,
@@ -111,13 +117,20 @@ def _run_route_probe(
     state_db: StateDB,
     *,
     capability_key: str,
+    request_id: str = "",
+    session_id: str = "",
 ) -> dict[str, Any]:
     if capability_key == "spark_intelligence_builder":
         return _run_builder_status_probe(config_manager, state_db)
     if capability_key == "spark_spawner":
         return _run_spawner_status_probe(config_manager, state_db)
     if capability_key == "spark_memory":
-        return _run_memory_smoke_probe(config_manager, state_db)
+        return _run_memory_smoke_probe(
+            config_manager,
+            state_db,
+            request_id=request_id,
+            session_id=session_id,
+        )
     if capability_key == "spark_researcher":
         return _run_researcher_status_probe(config_manager, state_db)
     if capability_key == "spark_swarm":
@@ -278,7 +291,13 @@ def _spawner_probe_failure_reason(
     return f"mission status={mission_status} drift={drift_status}"
 
 
-def _run_memory_smoke_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+def _run_memory_smoke_probe(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    request_id: str = "",
+    session_id: str = "",
+) -> dict[str, Any]:
     from spark_intelligence.memory import run_memory_sdk_smoke_test
 
     result = run_memory_sdk_smoke_test(
@@ -289,6 +308,8 @@ def _run_memory_smoke_probe(config_manager: ConfigManager, state_db: StateDB) ->
         value="ok",
         cleanup=True,
         actor_id="route_probe",
+        event_session_id=session_id,
+        event_turn_id=request_id,
     )
     cleanup_ok = result.cleanup_result is None or result.cleanup_result.accepted_count > 0
     ok = result.write_result.accepted_count > 0 and not result.read_result.abstained and bool(result.read_result.records) and cleanup_ok

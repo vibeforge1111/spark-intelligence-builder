@@ -4,7 +4,6 @@ import json
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -1661,12 +1660,6 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
         self.assertTrue(issues["stop_ship_memory_contract"].ok)
 
-    @unittest.skip(
-        "Phase 2 deploy: researcher_bridge chip-hook test passes in isolation and in its own full "
-        "file (104 passed) but fails under the CI 6-shard cross-file test pollution. Out of memory/T1 "
-        "scope and pre-existing at branch-tip. TODO: fix cross-file chip-state isolation with the "
-        "researcher_bridge work."
-    )
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -1748,12 +1741,6 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertTrue(issues["stop_ship_environment_parity"].ok)
 
-    @unittest.skip(
-        "Phase 2 deploy: researcher_bridge chip-hook test passes in isolation and in its own full "
-        "file (104 passed) but fails under the CI 6-shard cross-file test pollution. Out of memory/T1 "
-        "scope and pre-existing at branch-tip. TODO: fix cross-file chip-state isolation with the "
-        "researcher_bridge work."
-    )
     def test_build_researcher_reply_records_chip_hook_result_classification(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

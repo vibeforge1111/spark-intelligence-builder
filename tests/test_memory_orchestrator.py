@@ -1404,6 +1404,80 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(graph_candidates[0].source_class, "graphiti_temporal_graph")
         self.assertEqual(graph_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
 
+    def test_disabled_graphiti_lane_does_not_inherit_global_provider_truth(self) -> None:
+        from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarRetrievalResult
+
+        class FakeGraphSidecar:
+            mode = "disabled"
+
+            def upsert_episode(self, episode):
+                return SimpleNamespace(trace={"mode": "disabled", "persisted": False})
+
+            def retrieve(self, request):
+                return MemorySidecarRetrievalResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    hits=[],
+                    trace={"operation": "graphiti_retrieve", "mode": "disabled", "status": "disabled"},
+                )
+
+            def health(self):
+                return MemorySidecarHealthResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    status="disabled",
+                    enabled=False,
+                    mode="disabled",
+                    details={"runtime_effect": "none", "authority": "not_authoritative"},
+                )
+
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", False)
+        self.config_manager.set_path("providers.default_provider", "openai")
+        self.config_manager.set_path(
+            "providers.records.openai",
+            {
+                "provider_kind": "openai",
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url": "https://api.openai.com/v1",
+                "default_model": "gpt-5.4",
+            },
+        )
+        self.config_manager.upsert_env_secret("OPENAI_API_KEY", "test-secret")
+        fake_client = _HybridRetrievalMemoryClient()
+
+        def fake_build_sidecars(**kwargs):
+            self.assertIsNone(kwargs.get("graphiti_llm_api_key_env"))
+            self.assertIsNone(kwargs.get("graphiti_llm_api_key"))
+            self.assertIsNone(kwargs.get("graphiti_llm_base_url"))
+            self.assertIsNone(kwargs.get("graphiti_llm_model"))
+            return {"graphiti_temporal_graph": FakeGraphSidecar()}
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ), patch("domain_chip_memory.build_default_memory_sidecars", side_effect=fake_build_sidecars):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is the current launch constraint?",
+                subject="human:test",
+                predicate="profile.current_constraint",
+                limit=5,
+                actor_id="test",
+            )
+
+        graph_lane = next(
+            lane
+            for lane in result.read_result.retrieval_trace["hybrid_memory_retrieve"]["lane_summaries"]
+            if lane["lane"] == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane["status"], "disabled")
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_disabled")
+        self.assertEqual(graph_lane["llm_provider"]["provider_id"], None)
+        self.assertEqual(graph_lane["llm_provider"]["model"], None)
+        self.assertEqual(graph_lane["llm_provider"]["small_model"], None)
+        self.assertFalse(graph_lane["llm_provider"]["api_key_configured"])
+        self.assertNotIn("gpt-5.4", str(graph_lane))
+        self.assertNotIn("test-secret", str(graph_lane))
+
     def test_hybrid_memory_retrieve_skips_graphiti_retrieve_after_upsert_error(self) -> None:
         from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarUpsertResult
 
@@ -5213,6 +5287,29 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert deltas is not None
         self.assertGreater(deltas.get("assertiveness", 0), 0)
         self.assertGreater(deltas.get("directness", 0), 0)
+        self.assertTrue(fake_client.observation_calls)
+        fake_client.observation_calls.clear()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            unseen_deltas = detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="Start with your strongest recommendation before alternatives.",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write-unseen",
+                channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-strongest-recommendation-preference",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
+            )
+
+        self.assertIsNotNone(unseen_deltas)
+        assert unseen_deltas is not None
+        self.assertGreater(unseen_deltas.get("assertiveness", 0), 0)
+        self.assertGreater(unseen_deltas.get("directness", 0), 0)
         self.assertTrue(fake_client.observation_calls)
 
     def test_personality_reset_deletes_memory_preferences(self) -> None:

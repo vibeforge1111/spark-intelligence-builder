@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -734,8 +736,48 @@ def create_fake_researcher_runtime(root: Path) -> Path:
     return runtime_root
 
 
+def _reset_leaked_process_globals() -> None:
+    """Reset module-level mutable globals that a prior test in the same process
+    (and thus the same CI shard) may have left populated.
+
+    - ``bridge_authority._BRIDGE_LEDGER_CONTEXT`` is a ContextVar set by the
+      Telegram/gateway runtimes and by ``set_bridge_authority_ledger_context``;
+      a sharded run can execute a setter without its paired reset.
+    - ``memory.orchestrator._SDK_CLIENT_CACHE`` caches memory SDK clients (only
+      populated when ``domain_chip_memory`` is importable, i.e. on CI) whose
+      construction performs process-global ``sys.path`` side effects.
+
+    Imported lazily and defensively so this stays a no-op if a module is absent.
+    """
+    try:
+        from spark_intelligence import bridge_authority
+
+        bridge_authority._BRIDGE_LEDGER_CONTEXT.set({})
+    except Exception:
+        pass
+    try:
+        from spark_intelligence.memory import orchestrator as _memory_orchestrator
+
+        _memory_orchestrator._SDK_CLIENT_CACHE.clear()
+    except Exception:
+        pass
+
+
 class SparkTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        # Hermetic process-global isolation. The CI suite is sharded by global
+        # test index (`index % shards`), so a file's state-mutating test and the
+        # test that would normally reset that state can land in different shards.
+        # Per-file balancing then no longer protects later tests, and a co-located
+        # test can leave leaked process-global state (an env var, a sys.path entry,
+        # the bridge-authority ledger ContextVar, or a cached memory SDK client)
+        # set when an unrelated test runs. Snapshot the mutable process globals on
+        # entry and reset the known module-level globals so each test starts clean
+        # regardless of what ran before it; tearDown restores the snapshot.
+        self._env_snapshot = dict(os.environ)
+        self._sys_path_snapshot = list(sys.path)
+        _reset_leaked_process_globals()
+
         self._tempdir = tempfile.TemporaryDirectory()
         self.home = Path(self._tempdir.name)
         self.config_manager = ConfigManager.from_home(str(self.home))
@@ -746,7 +788,17 @@ class SparkTestCase(unittest.TestCase):
         self.config_manager.set_path("spark.testing.allow_researcher_memory_adapter", True)
 
     def tearDown(self) -> None:
-        self._tempdir.cleanup()
+        tempdir = getattr(self, "_tempdir", None)
+        if tempdir is not None:
+            tempdir.cleanup()
+        _reset_leaked_process_globals()
+        sys_path_snapshot = getattr(self, "_sys_path_snapshot", None)
+        if sys_path_snapshot is not None:
+            sys.path[:] = sys_path_snapshot
+        env_snapshot = getattr(self, "_env_snapshot", None)
+        if env_snapshot is not None:
+            os.environ.clear()
+            os.environ.update(env_snapshot)
 
     def add_telegram_channel(
         self,

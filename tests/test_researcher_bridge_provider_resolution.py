@@ -29,6 +29,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _should_collect_browser_search_context,
     _render_direct_provider_chat_fallback,
     _rewrite_browser_search_capability_denial,
+    _resolve_bridge_provider,
     _sanitize_browser_search_reply,
     _select_search_result_candidate_from_interactives_result,
     _select_search_result_candidate_from_text_result,
@@ -40,6 +41,85 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def test_bridge_provider_prefers_explicit_spark_codex_runtime_role_over_stale_builder_default(self) -> None:
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "openai-secret",
+            "--model",
+            "gpt-5.4",
+            "--base-url",
+            "https://api.openai.com/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        with patch.dict(
+            os.environ,
+            {
+                "SPARK_BUILDER_LLM_PROVIDER": "codex",
+                "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+                "SPARK_CODEX_REASONING_EFFORT": "low",
+                "SPARK_CODEX_SERVICE_TIER": "fast",
+            },
+            clear=False,
+        ):
+            selection = _resolve_bridge_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertIsNone(selection.error)
+        self.assertIsNotNone(selection.provider)
+        self.assertEqual(selection.provider.provider_id, "openai-codex")
+        self.assertEqual(selection.provider.default_model, "gpt-5.5")
+        self.assertEqual(selection.provider.execution_transport, "external_cli_wrapper")
+        self.assertEqual(selection.provider.auth_method, "codex_cli")
+        self.assertEqual(selection.provider.source, "spark_runtime_env")
+        self.assertEqual(selection.model_family, "codex")
+
+    def test_bridge_provider_keeps_builder_default_when_no_spark_runtime_role_is_declared(self) -> None:
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "openai-secret",
+            "--model",
+            "gpt-5.4",
+            "--base-url",
+            "https://api.openai.com/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        with patch.dict(
+            os.environ,
+            {
+                "SPARK_BUILDER_LLM_PROVIDER": "",
+                "SPARK_CHAT_LLM_PROVIDER": "",
+                "SPARK_LLM_PROVIDER": "",
+                "LLM_PROVIDER": "",
+                "BOT_DEFAULT_PROVIDER": "",
+                "SPARK_BOT_DEFAULT_PROVIDER": "",
+            },
+            clear=False,
+        ):
+            selection = _resolve_bridge_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertIsNone(selection.error)
+        self.assertIsNotNone(selection.provider)
+        self.assertEqual(selection.provider.provider_id, "openai")
+        self.assertEqual(selection.provider.default_model, "gpt-5.4")
+        self.assertEqual(selection.provider.source, "config+env")
+
     def _browser_turn_intent(self, *, allowed_tools: list[str] | None = None) -> object:
         from spark_intelligence.harness_contract import parse_turn_intent_envelope
 

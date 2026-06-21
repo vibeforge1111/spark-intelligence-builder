@@ -1386,6 +1386,8 @@ def run_memory_sdk_smoke_test(
     actor_id: str = "memory_cli",
     governor_decision: dict[str, Any] | None = None,
     cleanup_governor_decision: dict[str, Any] | None = None,
+    event_session_id: str | None = None,
+    event_turn_id: str | None = None,
 ) -> MemorySdkSmokeResult:
     module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
@@ -1405,7 +1407,13 @@ def run_memory_sdk_smoke_test(
             read_result=read_result,
             cleanup_result=cleanup_result,
         )
-        _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+        _record_memory_smoke_event(
+            state_db=state_db,
+            result=result,
+            actor_id=actor_id,
+            session_id=event_session_id,
+            turn_id=event_turn_id,
+        )
         return result
     smoke_token = re.sub(r"[^a-z0-9]+", "_", f"{subject}:{predicate}".lower()).strip("_") or "default"
     session_id = f"memory-smoke:{actor_id}:{smoke_token}"
@@ -1498,7 +1506,13 @@ def run_memory_sdk_smoke_test(
         read_result=read_result,
         cleanup_result=cleanup_result,
     )
-    _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+    _record_memory_smoke_event(
+        state_db=state_db,
+        result=result,
+        actor_id=actor_id,
+        session_id=event_session_id,
+        turn_id=event_turn_id,
+    )
     return result
 
 
@@ -7378,7 +7392,7 @@ def _build_graph_sidecar_shadow_lane(
             config_manager.get_path("spark.memory.sidecars.graphiti.call_timeout_seconds", default=6.0),
             default=6.0,
         )
-        graphiti_llm = _graphiti_sidecar_llm_settings(config_manager)
+        graphiti_llm = _graphiti_sidecar_llm_settings(config_manager, enabled=enabled)
         try:
             sidecars = build_sidecars(
                 enable_graphiti=enabled,
@@ -7516,10 +7530,16 @@ def _graphiti_sidecar_db_path(config_manager: ConfigManager) -> str | None:
     return configured.replace("{home}", home).replace("$SPARK_HOME", home)
 
 
-def _graphiti_sidecar_llm_settings(config_manager: ConfigManager) -> dict[str, Any]:
-    provider_id = _optional_string(
+def _graphiti_sidecar_llm_settings(config_manager: ConfigManager, *, enabled: bool = True) -> dict[str, Any]:
+    explicit_provider_id = _optional_string(
         config_manager.get_path("spark.memory.sidecars.graphiti.llm.provider", default=None)
-    ) or _optional_string(config_manager.get_path("providers.default_provider", default=None))
+    )
+    explicit_model = _optional_string(
+        config_manager.get_path("spark.memory.sidecars.graphiti.llm.model", default=None)
+    )
+    provider_id = explicit_provider_id or (
+        _optional_string(config_manager.get_path("providers.default_provider", default=None)) if enabled else None
+    )
     provider_record = {}
     if provider_id:
         raw_record = config_manager.get_path(f"providers.records.{provider_id}", default={})
@@ -7543,10 +7563,7 @@ def _graphiti_sidecar_llm_settings(config_manager: ConfigManager) -> dict[str, A
             config_manager.get_path("spark.memory.sidecars.graphiti.llm.base_url", default=None)
         )
         or _optional_string(provider_record.get("base_url")),
-        "model": _optional_string(
-            config_manager.get_path("spark.memory.sidecars.graphiti.llm.model", default=None)
-        )
-        or _optional_string(provider_record.get("default_model")),
+        "model": explicit_model or _optional_string(provider_record.get("default_model")),
         "small_model": _optional_string(
             config_manager.get_path("spark.memory.sidecars.graphiti.llm.small_model", default=None)
         ),
@@ -8956,6 +8973,8 @@ def _record_memory_smoke_event(
     state_db: StateDB,
     result: MemorySdkSmokeResult,
     actor_id: str,
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> None:
     succeeded = (
         result.write_result.accepted_count > 0
@@ -8979,6 +8998,8 @@ def _record_memory_smoke_event(
         component="memory_orchestrator",
         summary="Spark direct memory smoke completed." if succeeded else "Spark direct memory smoke failed.",
         request_id=request_id,
+        session_id=str(session_id or "").strip() or None,
+        turn_id=str(turn_id or "").strip() or None,
         trace_ref=f"trace:{request_id}",
         actor_id=actor_id,
         status="recorded" if succeeded else "abstained",

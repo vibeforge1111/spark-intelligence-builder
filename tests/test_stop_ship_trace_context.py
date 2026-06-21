@@ -78,6 +78,8 @@ class StopShipTraceContextTests(SparkTestCase):
         _record_memory_smoke_event(
             state_db=self.state_db,
             actor_id="memory_cli",
+            session_id="session:memory-smoke-trace",
+            turn_id="turn:memory-smoke-trace",
             result=MemorySdkSmokeResult(
                 sdk_module="domain_chip_memory",
                 subject="human:smoke:test",
@@ -110,6 +112,8 @@ class StopShipTraceContextTests(SparkTestCase):
         )
         smoke_events = latest_events_by_type(self.state_db, event_type="memory_smoke_succeeded", limit=1)
         self.assertTrue(smoke_events[0]["request_id"].startswith("memory_smoke:"))
+        self.assertEqual(smoke_events[0]["session_id"], "session:memory-smoke-trace")
+        self.assertEqual(smoke_events[0]["turn_id"], "turn:memory-smoke-trace")
         self.assertEqual(smoke_events[0]["trace_ref"], f"trace:{smoke_events[0]['request_id']}")
 
         run_memory_doctor(
