@@ -362,7 +362,8 @@ def _build_recent_conversation_lines(
 def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:
     try:
         payload = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return []
     lines: list[str] = []
     workspace_id = str(payload.get("workspace_id") or "").strip()
