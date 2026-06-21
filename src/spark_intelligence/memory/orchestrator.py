@@ -2571,9 +2571,11 @@ def hybrid_memory_retrieve(
     superseded_record_ids = _hybrid_memory_superseded_record_ids(ranked_entries)
     source_recall_requires_overlap = _hybrid_memory_source_recall_requires_overlap(normalized_query)
     required_answer_tokens = _hybrid_memory_required_answer_tokens(normalized_query)
+    requested_current_state_predicates = _hybrid_memory_query_current_state_predicate_targets(normalized_query)
     for entry in ranked_entries:
         record = entry["record"]
         record_key = str(entry["record_key"])
+        record_predicate = str(record.get("predicate") or "").strip()
         stale = entry["lane"] != "historical_state" and _memory_kernel_record_is_stale(record)
         superseded = (
             entry["lane"] != "historical_state"
@@ -2593,6 +2595,11 @@ def hybrid_memory_retrieve(
             bool(required_answer_tokens)
             and not _hybrid_memory_entry_has_required_answer_overlap(entry, required_answer_tokens)
         )
+        missing_requested_current_state_slot = (
+            bool(requested_current_state_predicates)
+            and entry["lane"] == "current_state_scan"
+            and record_predicate not in requested_current_state_predicates
+        )
         selected = False
         reason_selected = None
         reason_discarded = None
@@ -2606,6 +2613,9 @@ def hybrid_memory_retrieve(
             seen_keys.add(record_key)
         elif current_state_scan_query_miss:
             reason_discarded = "current_state_query_miss"
+            seen_keys.add(record_key)
+        elif missing_requested_current_state_slot:
+            reason_discarded = "current_state_slot_query_miss"
             seen_keys.add(record_key)
         elif missing_required_answer_slot:
             reason_discarded = "required_answer_slot_query_miss"
@@ -8130,6 +8140,45 @@ def _hybrid_memory_current_state_scan_min_overlap(query: str) -> int:
     return 2 if len(_hybrid_memory_query_tokens(query)) >= 2 else 1
 
 
+_CURRENT_STATE_SLOT_QUERY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("profile.current_project", ("current project", "project")),
+    ("profile.current_mission", ("current mission", "mission")),
+    ("profile.current_focus", ("current focus", "focus", "priority")),
+    ("profile.current_plan", ("current plan", "plan")),
+    (
+        "profile.current_low_stakes_test_fact",
+        ("low-stakes test fact", "low stakes test fact", "pocket phrase", "code word", "probe label", "test label"),
+    ),
+    ("profile.current_decision", ("current decision", "decision")),
+    ("profile.current_blocker", ("current blocker", "blocker", "bottleneck")),
+    ("profile.current_status", ("current status", "status", "marker")),
+    ("profile.current_commitment", ("current commitment", "commitment")),
+    ("profile.current_milestone", ("current milestone", "milestone")),
+    ("profile.current_risk", ("current risk", "risk")),
+    ("profile.current_dependency", ("current dependency", "dependency")),
+    ("profile.current_constraint", ("current constraint", "constraint", "limit", "boundary")),
+    ("profile.current_assumption", ("current assumption", "assumption")),
+    ("profile.current_owner", ("current owner", "owner")),
+)
+
+
+def _hybrid_memory_query_current_state_predicate_targets(query: str) -> set[str]:
+    lowered = str(query or "").casefold()
+    if not lowered.strip():
+        return set()
+    tokens = _hybrid_memory_query_tokens(lowered)
+    if not tokens and not re.search(r"\b(?:current|saved|remember|recall|memory|memories)\b", lowered):
+        return set()
+
+    targets: set[str] = set()
+    for predicate, aliases in _CURRENT_STATE_SLOT_QUERY_ALIASES:
+        for alias in aliases:
+            if re.search(rf"\b{re.escape(alias)}\b", lowered):
+                targets.add(predicate)
+                break
+    return targets
+
+
 def _score_hybrid_memory_record(
     *,
     lane: str,
@@ -8168,6 +8217,10 @@ def _score_hybrid_memory_record(
     if entity_key and str(metadata.get("entity_key") or "").strip() == entity_key:
         score += 18.0
         reasons.append("entity_match")
+    requested_current_state_predicates = _hybrid_memory_query_current_state_predicate_targets(query)
+    if lane == "current_state_scan" and record_predicate in requested_current_state_predicates:
+        score += 24.0
+        reasons.append("requested_current_state_slot")
     query_tokens = _hybrid_memory_query_tokens(query)
     if query_tokens:
         text = _hybrid_memory_record_relevance_text(record).casefold()

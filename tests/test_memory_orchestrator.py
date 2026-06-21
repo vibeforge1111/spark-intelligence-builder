@@ -640,6 +640,75 @@ class _OpenRecallCurrentStateScanMemoryClient(_HybridRetrievalMemoryClient):
         }
 
 
+class _SlotTargetCurrentStateScanMemoryClient(_HybridRetrievalMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        if payload.get("predicate"):
+            return super().get_current_state(**payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_plan",
+                    "value": "Owner review plan for Spark readiness",
+                    "text": "human:test profile.current_plan Owner review plan for Spark readiness.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_decision",
+                    "value": "All agents should ask clarifying questions before missions.",
+                    "text": "human:test profile.current_decision All agents should ask clarifying questions before missions.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_status",
+                    "value": "Review marker Copper Harbor",
+                    "text": "human:test profile.current_status Review marker Copper Harbor.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_constraint",
+                    "value": "quiet two-sentence replies",
+                    "text": "human:test profile.current_constraint quiet two-sentence replies.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-slot-target-scan"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "structured_evidence",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence-empty"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "event",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-events-empty"},
+        }
+
+
 class _SupportingOnlyHybridRetrievalMemoryClient(_HybridRetrievalMemoryClient):
     def get_current_state(self, **payload):
         self.current_state_calls.append(payload)
@@ -1219,6 +1288,78 @@ class MemoryOrchestratorTests(SparkTestCase):
         scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
         self.assertTrue(scan_candidates)
         self.assertTrue(any(candidate["reason_discarded"] == "required_answer_slot_query_miss" for candidate in scan_candidates))
+        packet = trace["context_packet"]
+        self.assertEqual(packet["source_mix"], {})
+        self.assertEqual(packet["sections"], [])
+
+    def test_hybrid_memory_retrieve_prefers_requested_current_state_slots(self) -> None:
+        fake_client = _SlotTargetCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is my current review marker and current constraint?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        selected_predicates = [str(record.get("predicate") or "") for record in result.read_result.records]
+        self.assertEqual(selected_predicates, ["profile.current_status", "profile.current_constraint"])
+        selected_values = [str(record.get("value") or "") for record in result.read_result.records]
+        self.assertIn("Review marker Copper Harbor", selected_values)
+        self.assertIn("quiet two-sentence replies", selected_values)
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(any(candidate["reason_selected"] and "requested_current_state_slot" in candidate["reason_selected"] for candidate in scan_candidates))
+        discarded_by_slot = {
+            str(candidate["predicate"] or "")
+            for candidate in scan_candidates
+            if candidate["reason_discarded"] == "current_state_slot_query_miss"
+        }
+        self.assertIn("profile.current_plan", discarded_by_slot)
+        unselected_predicates = {
+            str(candidate["predicate"] or "")
+            for candidate in scan_candidates
+            if not candidate["selected"]
+        }
+        self.assertIn("profile.current_decision", unselected_predicates)
+        packet = trace["context_packet"]
+        self.assertEqual(packet["sections"][0]["section"], "active_current_state")
+        self.assertEqual(
+            [item["predicate"] for item in packet["sections"][0]["items"]],
+            ["profile.current_status", "profile.current_constraint"],
+        )
+
+    def test_hybrid_memory_retrieve_abstains_when_requested_current_state_slot_is_missing(self) -> None:
+        fake_client = _SlotTargetCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is my current owner?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertTrue(result.read_result.abstained)
+        self.assertEqual(result.read_result.records, [])
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(scan_candidates)
+        self.assertFalse(any(candidate["selected"] for candidate in scan_candidates))
+        self.assertIn(
+            "current_state_slot_query_miss",
+            {candidate["reason_discarded"] for candidate in scan_candidates},
+        )
         packet = trace["context_packet"]
         self.assertEqual(packet["source_mix"], {})
         self.assertEqual(packet["sections"], [])
