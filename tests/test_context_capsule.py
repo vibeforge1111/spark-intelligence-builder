@@ -890,12 +890,14 @@ class ContextCapsuleTests(SparkTestCase):
     def test_open_ended_next_step_detector_requires_request_shape(self) -> None:
         self.assertTrue(_detect_open_ended_memory_next_step_query("What should we focus on next?"))
         self.assertTrue(_detect_open_ended_memory_next_step_query("Give me the next step."))
+        self.assertTrue(_detect_open_ended_memory_next_step_query("Can you give me the next step?"))
         self.assertFalse(
             _detect_open_ended_memory_next_step_query(
                 "For tonight, I work best when Spark gives me one steady next step first, then one tiny fallback."
             )
         )
         self.assertFalse(_detect_open_ended_memory_next_step_query("I prefer one next step first, then a fallback."))
+        self.assertFalse(_detect_open_ended_memory_next_step_query("The next step should be smaller than the first one."))
 
     def test_context_status_recent_closure_matches_canonical_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

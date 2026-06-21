@@ -208,6 +208,62 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(execution.governor_verification["allowed"], True)
         self.assertIn("Startup YC doctrine", execution.output["result"]["analysis"])
 
+    def test_run_chip_hook_accepts_canonical_bridge_governor_when_core_schema_lags(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        governor_decision = self._governor_decision_for_hook(request_id="req-chip-hook-bridge-valid")
+
+        with patch(
+            "spark_intelligence.attachments.hooks.verify_governor_tool_authority",
+            return_value={
+                "schema_version": "governor-consumer-verification-v1",
+                "allowed": False,
+                "reason_codes": ["invalid_governor_decision"],
+                "source_kind": "governor_decision",
+            },
+        ):
+            execution = run_chip_hook(
+                self.config_manager,
+                chip_key="startup-yc",
+                hook="evaluate",
+                payload={"situation": "Retention is weak but the founder has usage."},
+                governor_decision=governor_decision,
+            )
+
+        self.assertTrue(execution.ok)
+        self.assertEqual(execution.governor_verification["allowed"], True)
+        self.assertEqual(execution.governor_verification["source_kind"], "builder_bridge_governor_decision")
+        self.assertIn("Startup YC doctrine", execution.output["result"]["analysis"])
+
+    def test_run_chip_hook_rejects_bridge_governor_with_mismatched_ledger(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        governor_decision = json.loads(
+            json.dumps(self._governor_decision_for_hook(request_id="req-chip-hook-bridge-trap"))
+        )
+        governor_decision["tool_ledgers"][0]["capability_id"] = "capability:spark-intelligence-builder:chip.other"
+
+        with patch(
+            "spark_intelligence.attachments.hooks.verify_governor_tool_authority",
+            return_value={
+                "schema_version": "governor-consumer-verification-v1",
+                "allowed": False,
+                "reason_codes": ["invalid_governor_decision"],
+                "source_kind": "governor_decision",
+            },
+        ), patch("spark_intelligence.attachments.hooks.run_governed_command") as run_mock:
+            with self.assertRaises(RuntimeError) as blocked:
+                run_chip_hook(
+                    self.config_manager,
+                    chip_key="startup-yc",
+                    hook="evaluate",
+                    payload={"situation": "This should not execute."},
+                    governor_decision=governor_decision,
+                )
+
+        run_mock.assert_not_called()
+        self.assertIn("bridge_governor_missing_matching_tool_ledger", str(blocked.exception))
+
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

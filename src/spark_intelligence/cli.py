@@ -34,7 +34,12 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
-from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
+from spark_intelligence.bridge_authority import (
+    BridgeAuthorityVerdict,
+    DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+    authorize_builder_bridge_action,
+    record_bridge_tool_call_result_ledger,
+)
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -143,6 +148,7 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
     write_memory_movement_status_export,
+    write_profile_fact_to_memory,
     write_structured_evidence_to_memory,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
@@ -2618,6 +2624,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not write a memory-read event for this inspection",
     )
+    memory_inspect_capsule_parser.add_argument(
+        "--governed-read-request-id",
+        help="Telegram request/turn id that authorizes this read as an audited governed memory read",
+    )
+    memory_inspect_capsule_parser.add_argument(
+        "--governed-read-session-id",
+        help="Telegram session id to bind the audited governed memory read to",
+    )
+    memory_inspect_capsule_parser.add_argument(
+        "--governed-read-human-id",
+        help="Builder human id to record for the audited governed memory read",
+    )
+    memory_inspect_capsule_parser.add_argument(
+        "--governed-read-source-kind",
+        help="Detected memory-read authority source kind for the audited governed memory read",
+    )
+    memory_inspect_capsule_parser.add_argument(
+        "--governed-read-user-message",
+        help="Raw user message that triggered the audited governed memory read",
+    )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_write_telegram_note_parser = memory_subparsers.add_parser(
         "write-telegram-note",
@@ -2640,6 +2666,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--governor-decision-file",
         required=True,
         help="JSON file containing the Harness Core Governor decision authorizing this memory write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--memory-role",
+        help="Optional proposer-typed memory role; 'current_state' triggers an additional typed durable write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--predicate",
+        help="Optional typed current_state predicate (e.g. profile.current_blocker) for the typed durable write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--value",
+        help="Optional typed current_state value for the typed durable write",
+    )
+    memory_write_telegram_note_parser.add_argument(
+        "--fact-name",
+        help="Optional typed current_state fact name for the typed durable write",
     )
     memory_write_telegram_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
@@ -2814,6 +2856,8 @@ def build_parser() -> argparse.ArgumentParser:
     memory_direct_smoke_parser.add_argument("--subject", default="human:smoke:test", help="Structured memory subject to write and read")
     memory_direct_smoke_parser.add_argument("--predicate", default="system.memory.smoke", help="Structured memory predicate to write and read")
     memory_direct_smoke_parser.add_argument("--value", default="ok", help="Structured memory value to write and read")
+    memory_direct_smoke_parser.add_argument("--session-id", help="Optional owning session id for the recorded smoke event")
+    memory_direct_smoke_parser.add_argument("--turn-id", help="Optional owning turn id for the recorded smoke event")
     memory_direct_smoke_parser.add_argument("--no-cleanup", action="store_true", help="Leave the smoke key in memory instead of deleting it after the read")
     memory_direct_smoke_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
@@ -7586,11 +7630,127 @@ def handle_memory_inspect_human(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_telegram_memory_governed_read(
+    *,
+    state_db: StateDB,
+    request_id: str,
+    session_id: str,
+    human_id: str,
+    source_kind: str,
+    user_message: str,
+) -> tuple[dict[str, Any], BridgeAuthorityVerdict | None]:
+    """Stamp a Harness Core read_only authority for an explicit Telegram memory recall.
+
+    Mirrors the write path's governed materialization: a fresh memory.read tool-intent
+    envelope is authorized through the bridge, which records the audited tool-call ledger
+    entry. The read itself always proceeds; this only adds the governed-read audit trail.
+    """
+    envelope = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=human_id,
+        request_id=request_id,
+        turn_id=request_id,
+        source_kind=source_kind,
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+        intent_summary="Fresh Telegram turn explicitly asked Spark to inspect bounded saved memory.",
+        raw_turn_summary=(
+            f"Telegram memory read intent matched {source_kind}; "
+            f"request={request_id} session={session_id}. Raw user message remains offloaded."
+        ),
+        args_path=f"builder://telegram-memory/{request_id}/domain-chip-memory-read",
+    )
+    if not isinstance(envelope, dict):
+        return {
+            "recorded": False,
+            "allowed": False,
+            "reason_codes": ["spark_harness_core_unavailable"],
+            "tool_name": "memory.read",
+            "owner_system": "domain-chip-memory",
+            "mutation_class": "read_only",
+            "source_kind": source_kind,
+            "request_id": request_id,
+            "session_id": session_id,
+            "human_id": human_id,
+            "trace_id": None,
+            "ledger_event_id": None,
+            "outcome": None,
+        }, None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="memory.read",
+        owner_system="domain-chip-memory",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        actor_id="telegram_memory_direct_adapter",
+        component="telegram_memory_read_cli",
+    )
+    governor_decision = authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+    return {
+        "recorded": bool(authority.allowed),
+        "allowed": bool(authority.allowed),
+        "reason_codes": list(authority.reason_codes or ()),
+        "tool_name": "memory.read",
+        "owner_system": "domain-chip-memory",
+        "mutation_class": "read_only",
+        "source_kind": source_kind,
+        "request_id": request_id,
+        "session_id": session_id,
+        "human_id": human_id,
+        "trace_id": _trace_id_from_governor_decision(governor_decision),
+        "ledger_event_id": authority.ledger_event_id,
+        "outcome": (governor_decision.get("outcome") if governor_decision else None),
+    }, authority
+
+
 def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+
+    governed_read_request_id = str(getattr(args, "governed_read_request_id", "") or "").strip()
+    governed_read_audit: dict[str, Any] | None = None
+    governed_read_authority: BridgeAuthorityVerdict | None = None
+    retrieve_actor_id = "memory_cli"
+    retrieve_source_surface = "memory_cli_inspect_capsule"
+    retrieve_session_id: str | None = None
+    retrieve_turn_id: str | None = None
+    if governed_read_request_id:
+        governed_read_human_id = (
+            str(getattr(args, "governed_read_human_id", "") or "").strip()
+            or str(args.subject or "").strip()
+        )
+        governed_read_session_id = (
+            str(getattr(args, "governed_read_session_id", "") or "").strip()
+            or f"telegram-memory-read:{governed_read_request_id}"
+        )
+        governed_read_source_kind = (
+            str(getattr(args, "governed_read_source_kind", "") or "").strip()
+            or "telegram_runtime_memory_recall"
+        )
+        governed_read_user_message = (
+            str(getattr(args, "governed_read_user_message", "") or "").strip()
+            or str(args.query or "").strip()
+        )
+        governed_read_audit, governed_read_authority = _record_telegram_memory_governed_read(
+            state_db=state_db,
+            request_id=governed_read_request_id,
+            session_id=governed_read_session_id,
+            human_id=governed_read_human_id,
+            source_kind=governed_read_source_kind,
+            user_message=governed_read_user_message,
+        )
+        retrieve_actor_id = "telegram_memory_direct_adapter"
+        retrieve_source_surface = "telegram_runtime_memory_recall"
+        retrieve_session_id = governed_read_session_id
+        retrieve_turn_id = governed_read_request_id
+
     result = hybrid_memory_retrieve(
         config_manager=config_manager,
         state_db=state_db,
@@ -7601,10 +7761,32 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
         as_of=args.as_of,
         limit=args.limit,
         sdk_module=args.sdk_module,
-        actor_id="memory_cli",
-        source_surface="memory_cli_inspect_capsule",
+        actor_id=retrieve_actor_id,
+        session_id=retrieve_session_id,
+        turn_id=retrieve_turn_id,
+        source_surface=retrieve_source_surface,
         record_activity=not getattr(args, "no_record_activity", False),
     )
+    if governed_read_authority is not None and governed_read_authority.allowed:
+        selected_count = len([candidate for candidate in result.candidates if candidate.selected])
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            governed_read_authority,
+            status="success",
+            summary=f"Telegram memory read completed with selected_count={selected_count}.",
+            output_path=f"builder://telegram-memory/{governed_read_request_id}/domain-chip-memory-read/result",
+            component="telegram_memory_read_cli",
+            owner_system="domain-chip-memory",
+            mutation_class="read_only",
+            request_id=governed_read_request_id,
+            channel_id="telegram",
+            session_id=retrieve_session_id,
+            human_id=governed_read_authority.envelope.session_scope.user_ref
+            if governed_read_authority.envelope is not None
+            else None,
+            actor_id="telegram_memory_direct_adapter",
+            initial_ledger_event_id=governed_read_authority.ledger_event_id,
+        )
     context_packet = result.context_packet.to_payload() if result.context_packet is not None else None
     context_packet_trace = context_packet.get("trace") if isinstance(context_packet, dict) else {}
     promotion_gates = (
@@ -7632,6 +7814,8 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
             limit=6,
         ),
     }
+    if governed_read_audit is not None:
+        payload["governed_read"] = governed_read_audit
     inspection = MemoryCapsuleInspection(payload=payload)
     print(inspection.to_json() if args.json else inspection.to_text())
     return 0
@@ -7665,7 +7849,7 @@ def _derive_telegram_memory_materialization_governor(
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], BridgeAuthorityVerdict]:
     upstream_verification = verify_governor_tool_authority(
         upstream_governor_decision,
         tool_name="memory.write",
@@ -7684,6 +7868,7 @@ def _derive_telegram_memory_materialization_governor(
         surface="telegram",
         actor_id_ref=human_id,
         request_id=request_id,
+        turn_id=request_id,
         source_kind="telegram_memory_direct_adapter",
         tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
         owner_system="domain-chip-memory",
@@ -7713,11 +7898,79 @@ def _derive_telegram_memory_materialization_governor(
         component="telegram_memory_write_cli",
     )
     if authority.allowed and isinstance(authority.governor_decision, dict):
-        return authority.governor_decision
+        return authority.governor_decision, authority
 
     reasons = tuple(authority.reason_codes or ("downstream_memory_materialization_not_authorized",))
     reason_text = ", ".join(str(reason) for reason in reasons if str(reason))
     raise ValueError(f"downstream memory materialization authority is invalid: {reason_text}")
+
+
+def _maybe_write_typed_current_state(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    args: argparse.Namespace,
+    governor_decision: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Perform the proposer-typed current_state write when the gateway supplies typed fields.
+
+    The base structured-evidence write always preserves the exact note. When the Telegram
+    memory proposer has already typed the turn as a durable current_state fact (memory_role
+    plus a predicate and value), this performs the explicit typed write through the same
+    governed authority instead of relying on the Builder's regex auto-classification.
+    """
+    memory_role = str(getattr(args, "memory_role", "") or "").strip()
+    predicate = str(getattr(args, "predicate", "") or "").strip()
+    value = str(getattr(args, "value", "") or "").strip()
+    if memory_role != "current_state" or not predicate or not value:
+        return None
+    derived_fact_name = predicate[len("profile.") :] if predicate.startswith("profile.") else predicate
+    fact_name = str(getattr(args, "fact_name", "") or "").strip() or derived_fact_name.replace(".", "_")
+    typed_payload: dict[str, Any] = {
+        "attempted": True,
+        "memory_role": "current_state",
+        "predicate": predicate,
+        "fact_name": fact_name,
+        "status": "skipped",
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "skipped_count": 0,
+        "abstained": False,
+        "reason": None,
+    }
+    try:
+        typed_result = write_profile_fact_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=args.human_id,
+            predicate=predicate,
+            value=value,
+            evidence_text=args.text,
+            fact_name=fact_name,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            channel_kind="telegram",
+            actor_id=f"{args.actor_id}_current_state",
+            governor_decision=governor_decision,
+        )
+    except (OSError, ValueError) as exc:
+        typed_payload["status"] = "failed"
+        typed_payload["reason"] = str(exc)
+        return typed_payload
+    typed_payload.update(
+        {
+            "status": typed_result.status,
+            "accepted_count": typed_result.accepted_count,
+            "rejected_count": typed_result.rejected_count,
+            "skipped_count": typed_result.skipped_count,
+            "abstained": typed_result.abstained,
+            "reason": typed_result.reason,
+            "operation": typed_result.operation,
+            "method": typed_result.method,
+            "memory_role": typed_result.memory_role,
+        }
+    )
+    return typed_payload
 
 
 def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
@@ -7727,9 +7980,10 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
     state_db.initialize()
     if args.sdk_module:
         config_manager.set_path("spark.memory.sdk_module", args.sdk_module)
+    typed_current_state_payload: dict[str, Any] | None = None
     try:
         upstream_governor_decision = _load_governor_decision_file(args.governor_decision_file)
-        governor_decision = _derive_telegram_memory_materialization_governor(
+        governor_decision, memory_write_authority = _derive_telegram_memory_materialization_governor(
             upstream_governor_decision=upstream_governor_decision,
             state_db=state_db,
             human_id=args.human_id,
@@ -7749,6 +8003,39 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
             channel_kind="telegram",
             actor_id=args.actor_id,
             governor_decision=governor_decision,
+        )
+        typed_current_state_payload = _maybe_write_typed_current_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            args=args,
+            governor_decision=governor_decision,
+        )
+        typed_status = (
+            str(typed_current_state_payload.get("status") or "")
+            if typed_current_state_payload is not None
+            else "not_attempted"
+        )
+        base_succeeded = result.status in {"success", "succeeded"}
+        typed_succeeded = typed_current_state_payload is None or typed_status in {"success", "succeeded"}
+        ledger_status = "success" if base_succeeded and typed_succeeded else "partial"
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            memory_write_authority,
+            status=ledger_status,
+            summary=(
+                "Telegram memory write completed "
+                f"status={result.status} accepted_count={result.accepted_count} typed_status={typed_status}."
+            ),
+            output_path=f"builder://telegram-memory/{args.turn_id or args.session_id or args.human_id}/domain-chip-memory-write/result",
+            component="telegram_memory_write_cli",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            request_id=args.turn_id,
+            channel_id="telegram",
+            session_id=args.session_id,
+            human_id=args.human_id,
+            actor_id=args.actor_id,
+            initial_ledger_event_id=memory_write_authority.ledger_event_id,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         payload = {
@@ -7795,6 +8082,8 @@ def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
         "retrieval_trace": result_payload.get("retrieval_trace"),
         "provenance": result_payload.get("provenance") or [],
     }
+    if typed_current_state_payload is not None:
+        payload["typed_current_state"] = typed_current_state_payload
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -8116,7 +8405,7 @@ def _build_memory_direct_smoke_governor_decision(
     predicate: str,
     operation: str,
     actor_id: str = "memory_cli",
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, BridgeAuthorityVerdict | None, str | None]:
     request_id = f"memory-direct-smoke:{operation}:{uuid4().hex}"
     envelope = build_vnext_tool_intent_envelope(
         surface="cli",
@@ -8136,7 +8425,7 @@ def _build_memory_direct_smoke_governor_decision(
         args_path=f"builder://memory-direct-smoke/{request_id}/{operation}",
     )
     if not isinstance(envelope, dict):
-        return None
+        return None, None, None
     authority = authorize_builder_bridge_action(
         {"turn_intent_envelope_vnext": envelope},
         tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
@@ -8147,7 +8436,8 @@ def _build_memory_direct_smoke_governor_decision(
         actor_id=actor_id,
         component="memory_direct_smoke_cli",
     )
-    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+    governor_decision = authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+    return governor_decision, authority if authority.allowed else None, request_id
 
 
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
@@ -8155,22 +8445,24 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    governor_decision = _build_memory_direct_smoke_governor_decision(
+    governor_decision, governor_authority, governor_request_id = _build_memory_direct_smoke_governor_decision(
         state_db=state_db,
         subject=args.subject,
         predicate=args.predicate,
         operation="update",
     )
-    cleanup_governor_decision = (
+    cleanup_governor_decision: dict[str, Any] | None = None
+    cleanup_governor_authority: BridgeAuthorityVerdict | None = None
+    cleanup_governor_request_id: str | None = None
+    if not bool(args.no_cleanup):
+        cleanup_governor_decision, cleanup_governor_authority, cleanup_governor_request_id = (
         _build_memory_direct_smoke_governor_decision(
             state_db=state_db,
             subject=args.subject,
             predicate=args.predicate,
             operation="delete",
         )
-        if not bool(args.no_cleanup)
-        else None
-    )
+        )
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -8181,7 +8473,39 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         cleanup=not bool(args.no_cleanup),
         governor_decision=governor_decision,
         cleanup_governor_decision=cleanup_governor_decision,
+        event_session_id=getattr(args, "session_id", None),
+        event_turn_id=getattr(args, "turn_id", None),
     )
+    if governor_authority is not None and result.write_result.accepted_count > 0:
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            governor_authority,
+            status="success",
+            summary=f"Direct memory smoke update completed accepted_count={result.write_result.accepted_count}.",
+            output_path=f"builder://memory-direct-smoke/{result.subject}/{result.predicate}/update/result",
+            component="memory_direct_smoke_cli",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            request_id=governor_request_id,
+            session_id=getattr(args, "session_id", None),
+            actor_id="memory_cli",
+            initial_ledger_event_id=governor_authority.ledger_event_id,
+        )
+    if cleanup_governor_authority is not None and result.cleanup_result is not None and result.cleanup_result.accepted_count > 0:
+        record_bridge_tool_call_result_ledger(
+            state_db,
+            cleanup_governor_authority,
+            status="success",
+            summary=f"Direct memory smoke cleanup completed accepted_count={result.cleanup_result.accepted_count}.",
+            output_path=f"builder://memory-direct-smoke/{result.subject}/{result.predicate}/delete/result",
+            component="memory_direct_smoke_cli",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            request_id=cleanup_governor_request_id,
+            session_id=getattr(args, "session_id", None),
+            actor_id="memory_cli",
+            initial_ledger_event_id=cleanup_governor_authority.ledger_event_id,
+        )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
         return 1

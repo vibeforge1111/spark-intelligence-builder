@@ -17,6 +17,7 @@ from spark_intelligence.execution.governed import (
     run_governed_command,
     screen_governed_tool_text,
 )
+from spark_intelligence.bridge_authority import bridge_governor_decision_has_canonical_binding
 from spark_intelligence.harness_contract import MutationClass, verify_governor_tool_authority
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
@@ -233,12 +234,165 @@ def _verify_chip_hook_governor_authority(
     if verification.get("allowed") is True:
         return verification
     reasons = [str(reason) for reason in verification.get("reason_codes") or [] if str(reason)]
+    if "invalid_governor_decision" in reasons:
+        bridge_verification = _verify_bridge_packaged_chip_hook_authority(
+            governor_decision,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+        )
+        if bridge_verification.get("allowed") is True:
+            return bridge_verification
+        bridge_reasons = [
+            str(reason)
+            for reason in bridge_verification.get("reason_codes") or []
+            if str(reason)
+        ]
+        if bridge_reasons:
+            reasons = bridge_reasons
     reason_text = ", ".join(reasons) if reasons else "governor_consumer_verification_failed"
     raise RuntimeError(
         "Chip hook execution requires Harness Core Governor authority "
         f"for {owner_system}:{tool_name} before running {record.key}.{hook}. "
         f"Reason: {reason_text}."
     )
+
+
+def _verify_bridge_packaged_chip_hook_authority(
+    governor_decision: dict[str, Any] | None,
+    *,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: MutationClass,
+    external_network: bool,
+) -> dict[str, Any]:
+    expected_capability_id = f"capability:{owner_system}:{tool_name}"
+    expected_action_type = _chip_hook_action_type(
+        mutation_class,
+        external_network=external_network,
+    )
+    base = {
+        "schema_version": "governor-consumer-verification-v1",
+        "allowed": False,
+        "source_kind": "builder_bridge_governor_decision",
+        "decision_id": None,
+        "turn_id": None,
+        "outcome": None,
+        "expected_capability_id": expected_capability_id,
+        "expected_action_type": expected_action_type,
+        "tool_name": tool_name,
+        "action_id": None,
+        "capability_id": None,
+        "authorization_decision_id": None,
+        "ledger_id": None,
+    }
+    if not isinstance(governor_decision, dict):
+        return {**base, "reason_codes": ["missing_governor_decision"]}
+
+    turn_id = str(governor_decision.get("turn_id") or "").strip()
+    outcome = str(governor_decision.get("outcome") or "").strip()
+    base.update(
+        {
+            "decision_id": str(governor_decision.get("decision_id") or "").strip() or None,
+            "turn_id": turn_id or None,
+            "outcome": outcome or None,
+        }
+    )
+    reasons: list[str] = []
+    if governor_decision.get("schema_version") != "governor-decision-v1":
+        reasons.append("bridge_governor_schema_mismatch")
+    if outcome not in {"execute"} and not (
+        outcome == "read_only" and mutation_class in {"none", "read_only"}
+    ):
+        reasons.append(f"bridge_governor_outcome_{outcome or 'missing'}")
+    boundary = governor_decision.get("execution_boundary")
+    if outcome == "execute" and not (
+        isinstance(boundary, dict) and boundary.get("action_authorized") is True
+    ):
+        reasons.append("bridge_governor_action_not_authorized")
+    if not bridge_governor_decision_has_canonical_binding(governor_decision):
+        reasons.append("bridge_governor_canonical_binding_missing")
+
+    authorizations = [
+        item
+        for item in governor_decision.get("authorizations") or []
+        if isinstance(item, dict)
+        and str(item.get("turn_id") or "").strip() == turn_id
+        and str(item.get("capability_id") or "").strip() == expected_capability_id
+        and str(item.get("verdict") or "").strip() == "allow"
+    ]
+    authorization = authorizations[0] if authorizations else None
+    if authorization is None:
+        reasons.append("bridge_governor_missing_matching_authorization")
+
+    action_id = str((authorization or {}).get("action_id") or "").strip()
+    authorization_decision_id = str((authorization or {}).get("decision_id") or "").strip()
+    if authorization is not None:
+        base.update(
+            {
+                "action_id": action_id or None,
+                "capability_id": expected_capability_id,
+                "authorization_decision_id": authorization_decision_id or None,
+            }
+        )
+
+    envelope = governor_decision.get("envelope") if isinstance(governor_decision.get("envelope"), dict) else {}
+    actions = [
+        item
+        for item in envelope.get("proposed_actions") or []
+        if isinstance(item, dict)
+        and str(item.get("action_id") or "").strip() == action_id
+        and str(item.get("capability_id") or "").strip() == expected_capability_id
+        and str(item.get("action_type") or "").strip() == expected_action_type
+    ]
+    if authorization is not None and not actions:
+        reasons.append("bridge_governor_missing_matching_proposed_action")
+
+    ledgers = [
+        item
+        for item in governor_decision.get("tool_ledgers") or []
+        if isinstance(item, dict)
+        and str(item.get("turn_id") or "").strip() == turn_id
+        and str(item.get("action_id") or "").strip() == action_id
+        and str(item.get("capability_id") or "").strip() == expected_capability_id
+        and str(item.get("tool_name") or "").strip() == tool_name
+    ]
+    ledger = ledgers[0] if ledgers else None
+    if authorization is not None and ledger is None:
+        reasons.append("bridge_governor_missing_matching_tool_ledger")
+    if ledger is not None:
+        base["ledger_id"] = str(ledger.get("ledger_id") or "").strip() or None
+        result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
+        if str(result.get("status") or "").strip() != "not_started":
+            reasons.append("bridge_governor_tool_ledger_not_pre_execution")
+        ledger_authorization = ledger.get("authorization") if isinstance(ledger.get("authorization"), dict) else {}
+        if str(ledger_authorization.get("decision_id") or "").strip() != authorization_decision_id:
+            reasons.append("bridge_governor_ledger_authorization_decision_mismatch")
+        if str(ledger_authorization.get("action_id") or "").strip() != action_id:
+            reasons.append("bridge_governor_ledger_authorization_action_mismatch")
+        if str(ledger_authorization.get("capability_id") or "").strip() != expected_capability_id:
+            reasons.append("bridge_governor_ledger_authorization_capability_mismatch")
+
+    if reasons:
+        return {**base, "reason_codes": reasons}
+    return {**base, "allowed": True, "reason_codes": []}
+
+
+def _chip_hook_action_type(mutation_class: MutationClass, *, external_network: bool) -> str:
+    if external_network or mutation_class == "external_network":
+        return "external_network"
+    if mutation_class in {"none", "read_only"}:
+        return "read"
+    return {
+        "writes_memory": "memory.write",
+        "writes_files": "edit_file",
+        "launches_mission": "launch_mission",
+        "creates_schedule": "schedule.create",
+        "deletes_schedule": "schedule.delete",
+        "creates_chip": "chip.create",
+        "publishes": "publish",
+    }.get(mutation_class, "run_command")
 
 
 def chip_hook_authority_contract(hook: str) -> tuple[str, str, MutationClass, bool]:

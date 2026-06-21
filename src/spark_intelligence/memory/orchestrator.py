@@ -1386,6 +1386,8 @@ def run_memory_sdk_smoke_test(
     actor_id: str = "memory_cli",
     governor_decision: dict[str, Any] | None = None,
     cleanup_governor_decision: dict[str, Any] | None = None,
+    event_session_id: str | None = None,
+    event_turn_id: str | None = None,
 ) -> MemorySdkSmokeResult:
     module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
@@ -1405,7 +1407,13 @@ def run_memory_sdk_smoke_test(
             read_result=read_result,
             cleanup_result=cleanup_result,
         )
-        _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+        _record_memory_smoke_event(
+            state_db=state_db,
+            result=result,
+            actor_id=actor_id,
+            session_id=event_session_id,
+            turn_id=event_turn_id,
+        )
         return result
     smoke_token = re.sub(r"[^a-z0-9]+", "_", f"{subject}:{predicate}".lower()).strip("_") or "default"
     session_id = f"memory-smoke:{actor_id}:{smoke_token}"
@@ -1498,7 +1506,13 @@ def run_memory_sdk_smoke_test(
         read_result=read_result,
         cleanup_result=cleanup_result,
     )
-    _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+    _record_memory_smoke_event(
+        state_db=state_db,
+        result=result,
+        actor_id=actor_id,
+        session_id=event_session_id,
+        turn_id=event_turn_id,
+    )
     return result
 
 
@@ -2557,9 +2571,11 @@ def hybrid_memory_retrieve(
     superseded_record_ids = _hybrid_memory_superseded_record_ids(ranked_entries)
     source_recall_requires_overlap = _hybrid_memory_source_recall_requires_overlap(normalized_query)
     required_answer_tokens = _hybrid_memory_required_answer_tokens(normalized_query)
+    requested_current_state_predicates = _hybrid_memory_query_current_state_predicate_targets(normalized_query)
     for entry in ranked_entries:
         record = entry["record"]
         record_key = str(entry["record_key"])
+        record_predicate = str(record.get("predicate") or "").strip()
         stale = entry["lane"] != "historical_state" and _memory_kernel_record_is_stale(record)
         superseded = (
             entry["lane"] != "historical_state"
@@ -2579,6 +2595,11 @@ def hybrid_memory_retrieve(
             bool(required_answer_tokens)
             and not _hybrid_memory_entry_has_required_answer_overlap(entry, required_answer_tokens)
         )
+        missing_requested_current_state_slot = (
+            bool(requested_current_state_predicates)
+            and entry["lane"] == "current_state_scan"
+            and record_predicate not in requested_current_state_predicates
+        )
         selected = False
         reason_selected = None
         reason_discarded = None
@@ -2592,6 +2613,9 @@ def hybrid_memory_retrieve(
             seen_keys.add(record_key)
         elif current_state_scan_query_miss:
             reason_discarded = "current_state_query_miss"
+            seen_keys.add(record_key)
+        elif missing_requested_current_state_slot:
+            reason_discarded = "current_state_slot_query_miss"
             seen_keys.add(record_key)
         elif missing_required_answer_slot:
             reason_discarded = "required_answer_slot_query_miss"
@@ -5492,12 +5516,47 @@ def _merge_domain_entry_payloads(existing_entries: Any, new_entries: Any) -> lis
 
 
 def _domain_entry_payload_key(entry: dict[str, Any]) -> str:
+    metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+    subject = _optional_string(entry.get("subject")) or ""
+    predicate = _optional_string(entry.get("predicate")) or ""
+    entity_key = _optional_string(metadata.get("entity_key")) or ""
+    target_predicate = _optional_string(metadata.get("target_predicate")) or ""
+    value = (
+        _optional_string(metadata.get("value"))
+        or _optional_string(metadata.get("deleted_value"))
+        or _optional_string(entry.get("text"))
+        or ""
+    )
     observation_id = _optional_string(entry.get("observation_id"))
     if observation_id:
-        return f"observation:{observation_id}"
+        return json.dumps(
+            {
+                "kind": "observation",
+                "id": observation_id,
+                "subject": subject,
+                "predicate": predicate,
+                "entity_key": entity_key,
+                "target_predicate": target_predicate,
+                "value": value,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
     event_id = _optional_string(entry.get("event_id"))
     if event_id:
-        return f"event:{event_id}"
+        return json.dumps(
+            {
+                "kind": "event",
+                "id": event_id,
+                "subject": subject,
+                "predicate": predicate,
+                "value": value,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
     return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
@@ -7378,7 +7437,7 @@ def _build_graph_sidecar_shadow_lane(
             config_manager.get_path("spark.memory.sidecars.graphiti.call_timeout_seconds", default=6.0),
             default=6.0,
         )
-        graphiti_llm = _graphiti_sidecar_llm_settings(config_manager)
+        graphiti_llm = _graphiti_sidecar_llm_settings(config_manager, enabled=enabled)
         try:
             sidecars = build_sidecars(
                 enable_graphiti=enabled,
@@ -7516,10 +7575,16 @@ def _graphiti_sidecar_db_path(config_manager: ConfigManager) -> str | None:
     return configured.replace("{home}", home).replace("$SPARK_HOME", home)
 
 
-def _graphiti_sidecar_llm_settings(config_manager: ConfigManager) -> dict[str, Any]:
-    provider_id = _optional_string(
+def _graphiti_sidecar_llm_settings(config_manager: ConfigManager, *, enabled: bool = True) -> dict[str, Any]:
+    explicit_provider_id = _optional_string(
         config_manager.get_path("spark.memory.sidecars.graphiti.llm.provider", default=None)
-    ) or _optional_string(config_manager.get_path("providers.default_provider", default=None))
+    )
+    explicit_model = _optional_string(
+        config_manager.get_path("spark.memory.sidecars.graphiti.llm.model", default=None)
+    )
+    provider_id = explicit_provider_id or (
+        _optional_string(config_manager.get_path("providers.default_provider", default=None)) if enabled else None
+    )
     provider_record = {}
     if provider_id:
         raw_record = config_manager.get_path(f"providers.records.{provider_id}", default={})
@@ -7543,10 +7608,7 @@ def _graphiti_sidecar_llm_settings(config_manager: ConfigManager) -> dict[str, A
             config_manager.get_path("spark.memory.sidecars.graphiti.llm.base_url", default=None)
         )
         or _optional_string(provider_record.get("base_url")),
-        "model": _optional_string(
-            config_manager.get_path("spark.memory.sidecars.graphiti.llm.model", default=None)
-        )
-        or _optional_string(provider_record.get("default_model")),
+        "model": explicit_model or _optional_string(provider_record.get("default_model")),
         "small_model": _optional_string(
             config_manager.get_path("spark.memory.sidecars.graphiti.llm.small_model", default=None)
         ),
@@ -8078,6 +8140,45 @@ def _hybrid_memory_current_state_scan_min_overlap(query: str) -> int:
     return 2 if len(_hybrid_memory_query_tokens(query)) >= 2 else 1
 
 
+_CURRENT_STATE_SLOT_QUERY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("profile.current_project", ("current project", "project")),
+    ("profile.current_mission", ("current mission", "mission")),
+    ("profile.current_focus", ("current focus", "focus", "priority")),
+    ("profile.current_plan", ("current plan", "plan")),
+    (
+        "profile.current_low_stakes_test_fact",
+        ("low-stakes test fact", "low stakes test fact", "pocket phrase", "code word", "probe label", "test label"),
+    ),
+    ("profile.current_decision", ("current decision", "decision")),
+    ("profile.current_blocker", ("current blocker", "blocker", "bottleneck")),
+    ("profile.current_status", ("current status", "status", "marker")),
+    ("profile.current_commitment", ("current commitment", "commitment")),
+    ("profile.current_milestone", ("current milestone", "milestone")),
+    ("profile.current_risk", ("current risk", "risk")),
+    ("profile.current_dependency", ("current dependency", "dependency")),
+    ("profile.current_constraint", ("current constraint", "constraint", "limit", "boundary")),
+    ("profile.current_assumption", ("current assumption", "assumption")),
+    ("profile.current_owner", ("current owner", "owner")),
+)
+
+
+def _hybrid_memory_query_current_state_predicate_targets(query: str) -> set[str]:
+    lowered = str(query or "").casefold()
+    if not lowered.strip():
+        return set()
+    tokens = _hybrid_memory_query_tokens(lowered)
+    if not tokens and not re.search(r"\b(?:current|saved|remember|recall|memory|memories)\b", lowered):
+        return set()
+
+    targets: set[str] = set()
+    for predicate, aliases in _CURRENT_STATE_SLOT_QUERY_ALIASES:
+        for alias in aliases:
+            if re.search(rf"\b{re.escape(alias)}\b", lowered):
+                targets.add(predicate)
+                break
+    return targets
+
+
 def _score_hybrid_memory_record(
     *,
     lane: str,
@@ -8116,6 +8217,10 @@ def _score_hybrid_memory_record(
     if entity_key and str(metadata.get("entity_key") or "").strip() == entity_key:
         score += 18.0
         reasons.append("entity_match")
+    requested_current_state_predicates = _hybrid_memory_query_current_state_predicate_targets(query)
+    if lane == "current_state_scan" and record_predicate in requested_current_state_predicates:
+        score += 24.0
+        reasons.append("requested_current_state_slot")
     query_tokens = _hybrid_memory_query_tokens(query)
     if query_tokens:
         text = _hybrid_memory_record_relevance_text(record).casefold()
@@ -8956,6 +9061,8 @@ def _record_memory_smoke_event(
     state_db: StateDB,
     result: MemorySdkSmokeResult,
     actor_id: str,
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> None:
     succeeded = (
         result.write_result.accepted_count > 0
@@ -8979,6 +9086,8 @@ def _record_memory_smoke_event(
         component="memory_orchestrator",
         summary="Spark direct memory smoke completed." if succeeded else "Spark direct memory smoke failed.",
         request_id=request_id,
+        session_id=str(session_id or "").strip() or None,
+        turn_id=str(turn_id or "").strip() or None,
         trace_ref=f"trace:{request_id}",
         actor_id=actor_id,
         status="recorded" if succeeded else "abstained",
