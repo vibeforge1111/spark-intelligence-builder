@@ -293,7 +293,8 @@ def retrieve_domain_chip_cold_context(
         return direct_items[: max(1, int(limit or 1))]
     try:
         from domain_chip_memory.builder_read_adapter import BuilderMemoryReadRequest, execute_builder_memory_read
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return []
 
     items: list[ColdContextItem] = []
