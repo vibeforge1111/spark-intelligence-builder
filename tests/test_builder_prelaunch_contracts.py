@@ -2833,14 +2833,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
         self._write_builder_install_fixture(
             release,
             commit="b" * 40,
-            license_name="MIT",
+            license_name="AGPL-3.0-only",
             needs_modules=[],
             dependencies=["PyNaCl>=1.6.2", "PyYAML>=6.0"],
         )
@@ -2852,7 +2852,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("builder-source-truth", checks)
         self.assertFalse(checks["builder-source-truth"].ok)
         self.assertIn("commit_drift", checks["builder-source-truth"].detail)
-        self.assertIn("license_mismatch=spark-intelligence-builder-release:MIT", checks["builder-source-truth"].detail)
+        self.assertIn("license_mismatch=spark-intelligence-builder-release:AGPL-3.0-only", checks["builder-source-truth"].detail)
         self.assertIn("missing_harness_dep=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
         self.assertIn("missing_python_deps=spark-intelligence-builder-release:jsonschema+referencing", checks["builder-source-truth"].detail)
 
@@ -2863,14 +2863,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
         self._write_builder_install_fixture(
             release,
             commit="b" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=[],
             dependencies=[],
             source_truth_canonical=False,
@@ -2898,7 +2898,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -2923,7 +2923,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -2943,14 +2943,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
         self._write_builder_install_fixture(
             desktop,
             commit="b" * 40,
-            license_name="MIT",
+            license_name="AGPL-3.0-only",
             needs_modules=[],
             dependencies=[],
         )
@@ -2964,7 +2964,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("installs=spark-intelligence-builder", checks["builder-source-truth"].detail)
         self.assertIn("desktop_backlog_unmarked=spark-intelligence-builder", checks["builder-source-truth"].detail)
         self.assertIn("commit_drift", checks["builder-source-truth"].detail)
-        self.assertIn("license=MIT", checks["builder-source-truth"].detail)
+        self.assertIn("license=AGPL-3.0-only", checks["builder-source-truth"].detail)
         self.assertIn("missing_harness_dep", checks["builder-source-truth"].detail)
 
     def test_doctor_marks_desktop_builder_backlog_with_external_marker(self) -> None:
@@ -2974,7 +2974,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -3015,7 +3015,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )

@@ -174,7 +174,7 @@ class ContextCapsuleTests(SparkTestCase):
             capsule = build_spark_context_capsule(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                human_id="human:telegram:8319079055",
+                human_id="human:telegram:1000000001",
                 session_id="session-1",
                 channel_kind="telegram",
                 request_id="req-now",
@@ -184,7 +184,7 @@ class ContextCapsuleTests(SparkTestCase):
         rendered = capsule.render()
         self.assertIn("current_focus: automatic memory maintenance verification", rendered)
         self.assertEqual(inspect_mock.call_count, 1)
-        self.assertEqual(inspect_mock.call_args.kwargs["human_id"], "human:telegram:8319079055")
+        self.assertEqual(inspect_mock.call_args.kwargs["human_id"], "human:telegram:1000000001")
 
     def test_context_capsule_does_not_project_project_state_slots_before_latest_project(self) -> None:
         inspection = SimpleNamespace(
@@ -618,8 +618,8 @@ class ContextCapsuleTests(SparkTestCase):
                 rendered = build_spark_context_capsule(
                     config_manager=self.config_manager,
                     state_db=self.state_db,
-                    human_id="human:telegram:8319079055",
-                    session_id="session:telegram:dm:8319079055",
+                    human_id="human:telegram:1000000001",
+                    session_id="session:telegram:dm:1000000001",
                     channel_kind="telegram",
                     request_id="telegram-regression",
                     user_message=prompt,
@@ -695,9 +695,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-active-context-status",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="Based on those sources, what is my current focus and what is still open?",
             )
@@ -769,9 +769,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-active-context-next",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="What should we work on next, based on my current focus and what is still open?",
             )
@@ -865,9 +865,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-memory-kernel-next",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="What should we focus on next?",
             )
@@ -879,7 +879,7 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual([call.get("method") for call in kernel_calls], ["get_current_state", "get_current_state", "retrieve_evidence"])
         self.assertEqual(len(hybrid_calls), 1)
         self.assertTrue(hybrid_calls[0].get("record_activity"))
-        self.assertEqual(hybrid_calls[0].get("session_id"), "session:telegram:dm:8319079055")
+        self.assertEqual(hybrid_calls[0].get("session_id"), "session:telegram:dm:1000000001")
         self.assertEqual(hybrid_calls[0].get("turn_id"), "req-memory-kernel-next:graph-shadow-gate")
         bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=1)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_kernel_next_step")
@@ -904,8 +904,8 @@ class ContextCapsuleTests(SparkTestCase):
             event_type="tool_result_received",
             component="researcher_bridge",
             summary="Researcher bridge closed an old focus label and set a new current focus.",
-            human_id="telegram:8319079055",
-            agent_id="agent:human:telegram:8319079055",
+            human_id="telegram:1000000001",
+            agent_id="agent:human:telegram:1000000001",
             request_id="req-transition-raw-human-id",
             actor_id="researcher_bridge",
             reason_code="current_focus_transition",
@@ -934,9 +934,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-transition-canonical-human-query",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="What is my current focus, what did we just close, and what should we evaluate next?",
             )
@@ -953,8 +953,8 @@ class ContextCapsuleTests(SparkTestCase):
             event_type="tool_result_received",
             component="researcher_bridge",
             summary="Researcher bridge closed an old focus label and set a new current focus.",
-            human_id="human:telegram:8319079055",
-            agent_id="agent:human:telegram:8319079055",
+            human_id="human:telegram:1000000001",
+            agent_id="agent:human:telegram:1000000001",
             request_id="req-transition-new-focus",
             actor_id="researcher_bridge",
             reason_code="current_focus_transition",
@@ -983,9 +983,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-transition-next-step",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="What is my current focus, what did we just close, and what should we evaluate next?",
             )
@@ -1016,9 +1016,9 @@ class ContextCapsuleTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             request_id="req-cleanup-sample-missing",
-            agent_id="agent:human:telegram:8319079055",
-            human_id="human:telegram:8319079055",
-            session_id="session:telegram:dm:8319079055",
+            agent_id="agent:human:telegram:1000000001",
+            human_id="human:telegram:1000000001",
+            session_id="session:telegram:dm:1000000001",
             channel_kind="telegram",
             user_message="Show me a small sample of archived, deleted, and still-current memories from the cleanup.",
         )
@@ -1048,7 +1048,7 @@ class ContextCapsuleTests(SparkTestCase):
                                 "observation_id": "memory_cli:write:smoke",
                             },
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "current_focus",
                                 "value": "old diagnostics plan",
                                 "reason": "deleted_by_later_state_deletion",
@@ -1064,7 +1064,7 @@ class ContextCapsuleTests(SparkTestCase):
                                 "observation_id": "sim:1",
                             },
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "current_plan",
                                 "value": "old plan",
                                 "reason": "current_snapshot",
@@ -1080,7 +1080,7 @@ class ContextCapsuleTests(SparkTestCase):
                                 "observation_id": "sim:2",
                             },
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "current_focus",
                                 "value": "context capsule verification",
                                 "reason": "current_snapshot",
@@ -1096,9 +1096,9 @@ class ContextCapsuleTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             request_id="req-cleanup-sample-present",
-            agent_id="agent:human:telegram:8319079055",
-            human_id="human:telegram:8319079055",
-            session_id="session:telegram:dm:8319079055",
+            agent_id="agent:human:telegram:1000000001",
+            human_id="human:telegram:1000000001",
+            session_id="session:telegram:dm:1000000001",
             channel_kind="telegram",
             user_message="Show me a small sample of archived, deleted, and still-current memories from the cleanup.",
         )
@@ -1162,7 +1162,7 @@ class ContextCapsuleTests(SparkTestCase):
                     "audit_samples": {
                         "archived": [
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "profile.current_focus",
                                 "value": "diagnostics scan verification",
                                 "reason": "deleted_by_later_state_deletion",
@@ -1170,7 +1170,7 @@ class ContextCapsuleTests(SparkTestCase):
                         ],
                         "deleted": [
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "profile.current_owner",
                                 "value": "delete profile.current_owner",
                                 "reason": "current_snapshot",
@@ -1178,13 +1178,13 @@ class ContextCapsuleTests(SparkTestCase):
                         ],
                         "still_current": [
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "profile.current_focus",
                                 "value": "context capsule verification",
                                 "reason": "current_snapshot",
                             },
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "profile.current_plan",
                                 "value": "verify scheduled memory cleanup",
                                 "reason": "current_snapshot",
@@ -1221,9 +1221,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-cleanup-closure-evidence",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message="What exact evidence are you using to say it is ready to close?",
             )
@@ -1257,9 +1257,9 @@ class ContextCapsuleTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 request_id="req-memory-quality-plan",
-                agent_id="agent:human:telegram:8319079055",
-                human_id="human:telegram:8319079055",
-                session_id="session:telegram:dm:8319079055",
+                agent_id="agent:human:telegram:1000000001",
+                human_id="human:telegram:1000000001",
+                session_id="session:telegram:dm:1000000001",
                 channel_kind="telegram",
                 user_message=(
                     "Good. Give me a concrete evaluation plan for persistent memory quality in Telegram. "
@@ -1293,7 +1293,7 @@ class ContextCapsuleTests(SparkTestCase):
                     "audit_samples": {
                         "still_current": [
                             {
-                                "subject": "human:telegram:8319079055",
+                                "subject": "human:telegram:1000000001",
                                 "predicate": "profile.current_focus",
                                 "value": "context capsule verification",
                             }
@@ -1307,9 +1307,9 @@ class ContextCapsuleTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             request_id="req-cleanup-ready-close",
-            agent_id="agent:human:telegram:8319079055",
-            human_id="human:telegram:8319079055",
-            session_id="session:telegram:dm:8319079055",
+            agent_id="agent:human:telegram:1000000001",
+            human_id="human:telegram:1000000001",
+            session_id="session:telegram:dm:1000000001",
             channel_kind="telegram",
             user_message="Based on the cleanup samples, is my current focus ready to close? What should only I decide?",
         )

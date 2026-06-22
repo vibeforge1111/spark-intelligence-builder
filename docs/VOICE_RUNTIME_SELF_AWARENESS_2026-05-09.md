@@ -2,7 +2,7 @@
 
 This is the current source-of-truth map for voice inside Spark. It reflects the stable Telegram path tested on May 9, 2026.
 
-License: AGPL-3.0-or-later.
+License: MIT.
 
 ## Stable Runtime Path
 

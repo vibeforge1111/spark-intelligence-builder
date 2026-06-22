@@ -3687,7 +3687,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             result = write_profile_fact_to_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                human_id="human:telegram:8319079055",
+                human_id="human:telegram:1000000001",
                 predicate="profile.startup_name",
                 value="Seedify",
                 evidence_text="My startup is Seedify.",
@@ -3700,7 +3700,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(len(fake_client.observation_calls), 1)
         call = fake_client.observation_calls[0]
-        self.assertEqual(call["subject"], "human:telegram:8319079055")
+        self.assertEqual(call["subject"], "human:telegram:1000000001")
 
     def test_inspect_human_memory_does_not_double_prefix_prefixed_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3713,7 +3713,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             def get_current_state(self, **payload):
                 self.current_state_calls.append(payload)
                 subject = str(payload.get("subject") or "")
-                if subject == "human:telegram:8319079055":
+                if subject == "human:telegram:1000000001":
                     return {
                         "status": "supported",
                         "memory_role": "current_state",
@@ -3734,7 +3734,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             result = inspect_human_memory_in_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                human_id="human:telegram:8319079055",
+                human_id="human:telegram:1000000001",
                 sdk_module="domain_chip_memory",
             )
 
@@ -3743,7 +3743,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
         self.assertEqual(
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
-            ["human:telegram:8319079055"],
+            ["human:telegram:1000000001"],
         )
 
     def test_inspect_memory_sdk_runtime_falls_back_to_local_domain_chip_memory_src(self) -> None:
@@ -3799,7 +3799,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             def get_current_state(self, **payload):
                 self.current_state_calls.append(payload)
                 subject = str(payload.get("subject") or "")
-                if subject == "human:telegram:8319079055":
+                if subject == "human:telegram:1000000001":
                     return {
                         "status": "supported",
                         "memory_role": "current_state",
@@ -3820,7 +3820,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             result = lookup_current_state_in_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                subject="human:telegram:8319079055",
+                subject="human:telegram:1000000001",
                 predicate="profile.startup_name",
                 sdk_module="domain_chip_memory",
             )
@@ -3830,7 +3830,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
         self.assertEqual(
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
-            ["human:telegram:8319079055"],
+            ["human:telegram:1000000001"],
         )
 
     def test_lookup_current_state_canonicalizes_repeated_channel_subject(self) -> None:
@@ -3844,7 +3844,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             def get_current_state(self, **payload):
                 self.current_state_calls.append(payload)
                 subject = str(payload.get("subject") or "")
-                if subject == "human:telegram:8319079055":
+                if subject == "human:telegram:1000000001":
                     return {
                         "status": "supported",
                         "memory_role": "current_state",
@@ -3865,7 +3865,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             result = lookup_current_state_in_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                subject="human:telegram:human:telegram:8319079055",
+                subject="human:telegram:human:telegram:1000000001",
                 predicate="profile.startup_name",
                 sdk_module="domain_chip_memory",
             )
@@ -3873,7 +3873,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertFalse(result.read_result.abstained)
         self.assertEqual(
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
-            ["human:telegram:8319079055"],
+            ["human:telegram:1000000001"],
         )
 
     def test_profile_timezone_detection_normalizes_structured_fact(self) -> None:

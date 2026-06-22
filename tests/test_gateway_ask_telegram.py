@@ -126,7 +126,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
     def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
-        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["1000000001"], bot_token="test-token")
         with self.state_db.connect() as conn:
             conn.executemany(
                 "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES ('telegram', ?, 'paired_user')",

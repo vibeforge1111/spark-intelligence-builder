@@ -65,13 +65,13 @@ Before merge/publish:
 2. Confirm PR checks are green or intentionally absent.
 3. Confirm GitHub merge state is clean or review-blocked only.
 4. Run the repo-specific proof for touched repos.
-5. Run `/Users/alchemistab/.spark/bin/spark verify --registry-pins --json`.
-6. Run `/Users/alchemistab/.spark/bin/spark os compile --json`.
+5. Run `~/.spark/bin/spark verify --registry-pins --json`.
+6. Run `~/.spark/bin/spark os compile --json`.
 7. Require `contract_coverage.release_blocker_count=0`.
 8. Require patched runtime repos to be clean.
 9. Merge in owner-safe order: Spark CLI contract, Builder, Spawner, Telegram, supporting evidence/proposal repos.
 10. Update registry pins after source owner PRs land.
-11. Run final `/Users/alchemistab/.spark/bin/spark status --json`.
+11. Run final `~/.spark/bin/spark status --json`.
 
 Never publish a high-agency Spark action surface if it is only protected by raw keyword checks or stale local gates.
 ```
@@ -248,9 +248,9 @@ Required proof:
 
 - `PYTHONPATH=src python3 -m unittest tests.test_system_map -v`
 - `python3 -m compileall src tests`
-- `/Users/alchemistab/.spark/bin/spark verify --registry-pins --json`
-- `/Users/alchemistab/.spark/bin/spark os compile --json`
-- `/Users/alchemistab/.spark/bin/spark status --json`
+- `~/.spark/bin/spark verify --registry-pins --json`
+- `~/.spark/bin/spark os compile --json`
+- `~/.spark/bin/spark status --json`
 ```
 
 ## New Spark Repo Template

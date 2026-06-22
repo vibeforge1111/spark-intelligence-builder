@@ -2783,7 +2783,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             return {"raw_response": "The dashboard is the thing on your plate."}
 
         def fake_inspect(*, human_id: str, **kwargs):
-            if human_id == "telegram:8319079055":
+            if human_id == "telegram:1000000001":
                 return SimpleNamespace(
                     read_result=SimpleNamespace(
                         records=[
@@ -2822,7 +2822,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 attachment_context={},
                 request_id="req-direct-l1-state",
                 session_id="session-direct-l1-state",
-                human_id="8319079055",
+                human_id="1000000001",
             )
 
         self.assertEqual(reply, "The dashboard is the thing on your plate.")

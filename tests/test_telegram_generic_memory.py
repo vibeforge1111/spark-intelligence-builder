@@ -106,9 +106,9 @@ class TelegramGenericMemoryTests(SparkTestCase):
         records = [
             {
                 "observation_id": "telegram:plant-location:1",
-                "subject": "human:telegram:8319079055",
+                "subject": "human:telegram:1000000001",
                 "predicate": "entity.location",
-                "text": "human:telegram:8319079055 entity.location the windowsill",
+                "text": "human:telegram:1000000001 entity.location the windowsill",
                 "metadata": {
                     "memory_role": "current_state",
                     "entity_type": "named_object",

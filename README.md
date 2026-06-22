@@ -183,7 +183,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_validated_full_cyc
 
 ## License
 
-AGPL-3.0-only. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
 
 Other Spark repos may use different licenses; always trust each repo's
 own `LICENSE`, `pyproject.toml`, and `spark.toml`. Spark Pro hosted services,

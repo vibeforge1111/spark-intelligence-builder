@@ -366,7 +366,7 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
     bad_license = [
         f"{record['name']}:{record['license'] or 'missing'}"
         for record in records
-        if record["license"] != "AGPL-3.0-only"
+        if record["license"] != "MIT"
     ]
     if bad_license:
         issues.append("license_mismatch=" + ",".join(bad_license))
@@ -598,7 +598,7 @@ def _builder_desktop_backlog_summary(
         commit = str(record.get("commit") or "unknown")
         if install_commits and commit not in install_commits:
             flags.append("commit_drift")
-        if record.get("license") != "AGPL-3.0-only":
+        if record.get("license") != "MIT":
             flags.append(f"license={record.get('license') or 'missing'}")
         if "spark-harness-core" not in record.get("needs_modules", ()):
             flags.append("missing_harness_dep")

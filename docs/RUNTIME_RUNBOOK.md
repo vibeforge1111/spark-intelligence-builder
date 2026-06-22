@@ -253,7 +253,7 @@ Before pushing Builder changes that affect production behavior:
 1. Run the focused CI slice locally.
 2. Run `uv lock --check` if dependencies changed.
 3. Confirm no `.env`, `.tmp-*`, token, key, JWT, local-home files, or private JSONL rivers are staged.
-4. Confirm `spark.toml`, `pyproject.toml`, and `LICENSE` agree on `AGPL-3.0-only`, and `spark.toml` declares `spark-harness-core` in `[needs].modules`.
+4. Confirm `spark.toml`, `pyproject.toml`, and `LICENSE` agree on `MIT`, and `spark.toml` declares `spark-harness-core` in `[needs].modules`.
 5. Push Builder.
 6. Update the Builder commit pin in `spark-cli/registry.json`.
 7. Run `spark verify --registry-pins` and `spark verify --provenance` from `spark-cli`.

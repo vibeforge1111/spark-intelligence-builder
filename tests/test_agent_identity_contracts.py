@@ -712,14 +712,14 @@ class AgentIdentityContractTests(SparkTestCase):
         alias = link_identity_alias(
             state_db=self.state_db,
             primary_channel="telegram",
-            primary_external_user="8319079055",
+            primary_external_user="1000000001",
             alias_channel="tui",
             alias_external_user="local-operator",
             created_by="test-suite",
         )
 
-        self.assertEqual(alias.primary_human_id, "human:telegram:8319079055")
-        self.assertEqual(alias.primary_agent_id, "agent:human:telegram:8319079055")
+        self.assertEqual(alias.primary_human_id, "human:telegram:1000000001")
+        self.assertEqual(alias.primary_agent_id, "agent:human:telegram:1000000001")
 
         with self.state_db.connect() as conn:
             row = conn.execute(
@@ -732,7 +732,7 @@ class AgentIdentityContractTests(SparkTestCase):
                 ("session:tui:dm:local-operator",),
             ).fetchone()
         self.assertIsNotNone(row)
-        self.assertEqual(row["agent_id"], "agent:human:telegram:8319079055")
+        self.assertEqual(row["agent_id"], "agent:human:telegram:1000000001")
 
     def test_swarm_linked_agent_persona_stays_on_builder_local_agent_id(self) -> None:
         approve_pairing(
