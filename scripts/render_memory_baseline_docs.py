@@ -16,7 +16,12 @@ HANDOFF_PATH = ROOT / "docs" / "MEMORY_BENCHMARK_HANDOFF_2026-04-11.md"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, FileNotFoundError) as exc:
+        raise SystemExit(f"Cannot read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
 
 def _fmt_seconds(value: Any) -> str:
