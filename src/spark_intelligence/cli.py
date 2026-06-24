@@ -1222,6 +1222,25 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
     return RoutingContractStatus(payload=payload)
 
 
+def _positive_int(value: str) -> int:
+    """argparse type for an int that must be > 0.
+
+    Used by --limit on the wiki subcommands (inventory, candidates,
+    scan-candidates, query, answer). The default `type=int` accepts
+    0 and negative values, which then propagate into downstream
+    SQL LIMIT / slice calls and either silently emit zero rows or
+    surface as a less actionable error than the argparse failure
+    surfaced here.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {parsed}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1763,7 +1782,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_inventory_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_inventory_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_inventory_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before listing")
-    wiki_inventory_parser.add_argument("--limit", type=int, default=40, help="Maximum page records to emit")
+    wiki_inventory_parser.add_argument("--limit", type=_positive_int, default=40, help="Maximum page records to emit")
     wiki_inventory_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_inbox_parser = wiki_subparsers.add_parser(
         "candidates",
@@ -1777,7 +1796,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="candidate",
         help="Which improvement notes to show",
     )
-    wiki_inbox_parser.add_argument("--limit", type=int, default=40, help="Maximum candidate records to emit")
+    wiki_inbox_parser.add_argument("--limit", type=_positive_int, default=40, help="Maximum candidate records to emit")
     wiki_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_scan_candidates_parser = wiki_subparsers.add_parser(
         "scan-candidates",
@@ -1791,7 +1810,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Which improvement notes to scan",
     )
-    wiki_scan_candidates_parser.add_argument("--limit", type=int, default=80, help="Maximum note records to scan")
+    wiki_scan_candidates_parser.add_argument("--limit", type=_positive_int, default=80, help="Maximum note records to scan")
     wiki_scan_candidates_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_query_parser = wiki_subparsers.add_parser(
         "query",
@@ -1801,7 +1820,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_query_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_query_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_query_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before querying")
-    wiki_query_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to emit")
+    wiki_query_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to emit")
     wiki_query_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_answer_parser = wiki_subparsers.add_parser(
         "answer",
@@ -1811,7 +1830,7 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_answer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_answer_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_answer_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before answering")
-    wiki_answer_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    wiki_answer_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to use")
     wiki_answer_parser.add_argument("--human-id", default="", help="Optional human id for live self-awareness context")
     wiki_answer_parser.add_argument("--session-id", default="", help="Optional session id for live self-awareness context")
     wiki_answer_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
