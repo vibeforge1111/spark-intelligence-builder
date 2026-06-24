@@ -125,6 +125,36 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertNotIn("1234567890:AA", serialized)
         self.assertNotIn("sk-proj-secretvalue", serialized)
 
+    def test_gateway_trace_replaces_raw_ids_paths_and_policy_reasons(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "chat_id": "8319079055",
+                "user_id": "8319079055",
+                "detail": {
+                    "path": "/Users/alchemistab/private/workspace",
+                    "reason": "tool_not_allowed_by_policy",
+                    "safe": "keep this",
+                },
+            },
+        )
+
+        payload = json.loads(gateway_trace_view(self.config_manager, limit=1, as_json=True))[0]
+        serialized = json.dumps(payload)
+
+        self.assertNotIn("chat_id", payload)
+        self.assertNotIn("user_id", payload)
+        self.assertRegex(payload["chat_ref"], r"^chat:sha256:[a-f0-9]{16}$")
+        self.assertRegex(payload["user_ref"], r"^user:sha256:[a-f0-9]{16}$")
+        self.assertEqual(payload["detail"]["path"], "<path>")
+        self.assertEqual(payload["detail"]["reason"], "internal policy reason")
+        self.assertEqual(payload["detail"]["safe"], "keep this")
+        self.assertNotIn("8319079055", serialized)
+        self.assertNotIn("/Users/alchemistab", serialized)
+        self.assertNotIn("tool_not_allowed_by_policy", serialized)
+
     def test_review_pairings_filters_status_and_limit(self) -> None:
         self.add_telegram_channel()
         for update_id, user_id in ((401, "111"), (402, "222")):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,25 @@ SENSITIVE_TEXT_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._\-]{16,})"),
 ]
 SENSITIVE_KEY_PATTERN = re.compile(r"(?i)(api[_-]?key|bot[_-]?token|token|secret|password|authorization)")
+RAW_ID_KEY_REPLACEMENTS = {
+    "chat_id": "chat_ref",
+    "chatId": "chat_ref",
+    "user_id": "user_ref",
+    "userId": "user_ref",
+    "from_id": "from_ref",
+    "fromId": "from_ref",
+}
+PATH_LIKE_PATTERNS = [
+    re.compile(r"/Users/\S+"),
+    re.compile(r"/var/folders/\S+"),
+    re.compile(r"file://\S+"),
+    re.compile(r"[A-Za-z]:\\\S+"),
+]
+POLICY_REASON_PATTERN = re.compile(
+    r"\b(?:tool_not_allowed_by_policy|owner_mismatch|route_not_selected_by_turn_envelope|"
+    r"governor_outcome_deny|harness_core:[A-Za-z0-9_-]+)\b",
+    re.IGNORECASE,
+)
 
 
 def trace_log_path(config_manager: ConfigManager) -> Path:
@@ -102,6 +122,11 @@ def redact_trace_payload(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
+            replacement_key = RAW_ID_KEY_REPLACEMENTS.get(key_text)
+            if replacement_key is not None:
+                if item not in (None, "", [], {}):
+                    result[replacement_key] = _stable_trace_ref(replacement_key.replace("_ref", ""), item)
+                continue
             if SENSITIVE_KEY_PATTERN.search(key_text) and item not in (None, "", [], {}):
                 result[key_text] = "[REDACTED]"
             else:
@@ -118,5 +143,13 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
+        for pattern in PATH_LIKE_PATTERNS:
+            redacted = pattern.sub("<path>", redacted)
+        redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
         return redacted
     return value
+
+
+def _stable_trace_ref(label: str, value: Any) -> str:
+    digest = sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
+    return f"{label}:sha256:{digest}"
