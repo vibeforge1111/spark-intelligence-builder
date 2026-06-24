@@ -173,7 +173,9 @@ def connect_provider(
         "api_key_env": env_key,
         "default_auth_profile_id": profile_id,
     }
-    if not config["providers"].get("default_provider"):
+    env_map = config_manager.read_env_map()
+    profile_status = "active" if env_map.get(env_key) else "pending_secret"
+    if not config["providers"].get("default_provider") and profile_status == "active":
         config["providers"]["default_provider"] = provider
     config_manager.save(
         config,
@@ -183,9 +185,6 @@ def connect_provider(
         target_path=f"providers.records.{provider}",
         request_source="auth.service.connect_provider",
     )
-
-    env_map = config_manager.read_env_map()
-    profile_status = "active" if env_map.get(env_key) else "pending_secret"
     with state_db.connect() as conn:
         conn.execute(
             """

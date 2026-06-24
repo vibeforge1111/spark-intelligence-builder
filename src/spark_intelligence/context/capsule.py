@@ -659,11 +659,11 @@ def _extract_diagnostic_summary(text: str) -> dict[str, str]:
 def _diagnostic_status(summary: dict[str, str]) -> str:
     failure_lines = _parse_int(summary.get("failure_lines"))
     finding_signatures = _parse_int(summary.get("finding_signatures"))
-    if failure_lines == 0 and finding_signatures == 0:
+    has_failures = failure_lines is not None and failure_lines > 0
+    has_findings = finding_signatures is not None and finding_signatures > 0
+    if not has_failures and not has_findings:
         return "clean_latest_scan_no_failures_or_findings"
-    if failure_lines is not None or finding_signatures is not None:
-        return "latest_scan_has_findings"
-    return ""
+    return "latest_scan_has_findings"
 
 
 def _extract_connector_health_counts(text: str) -> dict[str, int]:
