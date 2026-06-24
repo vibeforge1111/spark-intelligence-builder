@@ -18,7 +18,12 @@ WATCHLIST_BUCKETS: dict[str, str] = {
 
 
 def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, FileNotFoundError) as exc:
+        raise SystemExit(f"Cannot read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
 
 def _render_list(items: list[str], indent: str = "- ") -> list[str]:
