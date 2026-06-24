@@ -1,8 +1,9 @@
 import json
+from pathlib import Path
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.gateway.runtime import gateway_outbound_view, gateway_trace_view
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, trace_log_path
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, redact_gateway_trace_log, trace_log_path
 from spark_intelligence.identity.service import hold_pairing, review_pairings
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.ops.service import list_operator_events, log_operator_event
@@ -170,6 +171,62 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertNotIn("8319079055", raw_log)
         self.assertNotIn("/Users/alchemistab", raw_log)
         self.assertNotIn("tool_not_allowed_by_policy", raw_log)
+
+    def test_gateway_trace_redaction_repair_rewrites_live_row_shape(self) -> None:
+        trace_path = trace_log_path(self.config_manager)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "recorded_at": "2026-06-24T10:07:28+00:00",
+                    "event": "telegram_update_processed",
+                    "channel_id": "telegram",
+                    "update_id": 749543762,
+                    "telegram_user_id": "1278511160",
+                    "chat_id": "1278511160",
+                    "session_id": "session:telegram:dm:1278511160",
+                    "trace_ref": "/Users/alchemistab/.spark/modules/spark-researcher/source/artifacts/traces/private.jsonl",
+                    "routing_decision": "researcher_advisory",
+                    "attachment_context": {
+                        "attached_chip_records": [
+                            {
+                                "key": "domain-chip-memory",
+                                "repo_root": "/Users/alchemistab/.spark/modules/domain-chip-memory/source",
+                            }
+                        ],
+                        "snapshot_path": "/Users/alchemistab/.spark/state/spark-intelligence/attachments.snapshot.json",
+                    },
+                    "response_preview": "tool_not_allowed_by_policy",
+                    "harnessProofRef": "turn:sha256:acb315f0302a6a2b",
+                    "request_id": "telegram:749543762",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = redact_gateway_trace_log(self.config_manager)
+        raw_log = trace_path.read_text(encoding="utf-8")
+        payload = json.loads(raw_log)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rows_read"], 1)
+        self.assertEqual(result["rows_written"], 1)
+        self.assertTrue(result["backup_path"])
+        self.assertNotIn("telegram_user_id", payload)
+        self.assertNotIn("chat_id", payload)
+        self.assertRegex(payload["telegram_user_ref"], r"^telegram_user:sha256:[a-f0-9]{16}$")
+        self.assertRegex(payload["chat_ref"], r"^chat:sha256:[a-f0-9]{16}$")
+        self.assertRegex(payload["session_id"], r"^session:telegram:dm:telegram_session:sha256:[a-f0-9]{16}$")
+        self.assertEqual(payload["trace_ref"], "<path>")
+        self.assertEqual(payload["attachment_context"]["attached_chip_records"][0]["repo_root"], "<path>")
+        self.assertEqual(payload["attachment_context"]["snapshot_path"], "<path>")
+        self.assertEqual(payload["response_preview"], "internal policy reason")
+        self.assertEqual(payload["harnessProofRef"], "turn:sha256:acb315f0302a6a2b")
+        self.assertNotIn("1278511160", raw_log)
+        self.assertNotIn("/Users/alchemistab", raw_log)
+        self.assertNotIn("tool_not_allowed_by_policy", raw_log)
+        self.assertIn("1278511160", Path(str(result["backup_path"])).read_text(encoding="utf-8"))
 
     def test_review_pairings_filters_status_and_limit(self) -> None:
         self.add_telegram_channel()

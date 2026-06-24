@@ -64,7 +64,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
-from spark_intelligence.gateway.tracing import read_gateway_traces
+from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.identity.service import (
     agent_inspect,
@@ -2218,6 +2218,13 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_traces_parser.add_argument("--user", help="Filter trace events by user id or chat id")
     gateway_traces_parser.add_argument("--decision", help="Filter trace events by decision")
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_redact_traces_parser = gateway_subparsers.add_parser(
+        "redact-traces",
+        help="Rewrite the gateway trace log through the metadata redactor",
+    )
+    gateway_redact_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_redact_traces_parser.add_argument("--no-backup", action="store_true", help="Do not keep a raw backup copy")
+    gateway_redact_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
@@ -5702,6 +5709,20 @@ def handle_gateway_traces(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_gateway_redact_traces(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = redact_gateway_trace_log(config_manager, backup=not args.no_backup)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif result.get("ok"):
+        backup = f" Backup: {result.get('backup_path')}" if result.get("backup_path") else ""
+        print(f"Redacted {result.get('rows_written')} gateway trace row(s).{backup}")
+    else:
+        print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") or result.get("error") == "trace_log_missing" else 1
+
+
 def handle_gateway_outbound(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -9168,6 +9189,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_whatsapp_message(args)
     if args.command == "gateway" and args.gateway_command == "traces":
         return handle_gateway_traces(args)
+    if args.command == "gateway" and args.gateway_command == "redact-traces":
+        return handle_gateway_redact_traces(args)
     if args.command == "gateway" and args.gateway_command == "outbound":
         return handle_gateway_outbound(args)
     if args.command == "channel" and args.channel_command == "add":

@@ -39,6 +39,7 @@ POLICY_REASON_PATTERN = re.compile(
     r"governor_outcome_deny|harness_core:[A-Za-z0-9_-]+)\b",
     re.IGNORECASE,
 )
+TELEGRAM_SESSION_ID_PATTERN = re.compile(r"^(session:telegram:[^:]+:)(.+)$")
 
 
 def trace_log_path(config_manager: ConfigManager) -> Path:
@@ -95,6 +96,49 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
     return records
 
 
+def redact_gateway_trace_log(
+    config_manager: ConfigManager,
+    *,
+    backup: bool = True,
+) -> dict[str, Any]:
+    path = trace_log_path(config_manager)
+    result: dict[str, Any] = {
+        "ok": True,
+        "path": str(path),
+        "backup_path": None,
+        "rows_read": 0,
+        "rows_written": 0,
+        "parse_errors": 0,
+    }
+    if not path.exists():
+        result["ok"] = False
+        result["error"] = "trace_log_missing"
+        return result
+
+    original = path.read_text(encoding="utf-8")
+    redacted_lines: list[str] = []
+    for line in original.splitlines():
+        if not line.strip():
+            continue
+        result["rows_read"] = int(result["rows_read"]) + 1
+        try:
+            payload = redact_trace_payload(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            result["parse_errors"] = int(result["parse_errors"]) + 1
+            continue
+        redacted_lines.append(json.dumps(payload, ensure_ascii=True))
+
+    if backup:
+        backup_path = path.with_name(f"{path.name}.raw-backup")
+        backup_path.write_text(original, encoding="utf-8")
+        result["backup_path"] = str(backup_path)
+
+    path.write_text(("\n".join(redacted_lines) + "\n") if redacted_lines else "", encoding="utf-8")
+    result["rows_written"] = len(redacted_lines)
+    result["ok"] = int(result["parse_errors"]) == 0
+    return result
+
+
 def _tail_lines(path: Path, n: int) -> list[str]:
     """Read the last *n* lines from a file without loading it entirely into memory."""
     if n <= 0:
@@ -131,6 +175,9 @@ def redact_trace_payload(value: Any) -> Any:
                 if item not in (None, "", [], {}):
                     result[replacement_key] = trace_identity_ref(replacement_key.replace("_ref", ""), item)
                 continue
+            if key_text == "session_id" and isinstance(item, str):
+                result[key_text] = redact_session_id(item)
+                continue
             if SENSITIVE_KEY_PATTERN.search(key_text) and item not in (None, "", [], {}):
                 result[key_text] = "[REDACTED]"
             else:
@@ -152,6 +199,13 @@ def redact_trace_payload(value: Any) -> Any:
         redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
         return redacted
     return value
+
+
+def redact_session_id(value: str) -> str:
+    match = TELEGRAM_SESSION_ID_PATTERN.match(str(value or ""))
+    if not match:
+        return value
+    return f"{match.group(1)}{trace_identity_ref('telegram_session', match.group(2))}"
 
 
 def _stable_trace_ref(label: str, value: Any) -> str:
