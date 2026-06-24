@@ -2296,6 +2296,8 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    if normalized.media_turn is not None:
+        detail["media_turn"] = normalized.media_turn
     if harness_proof_ref is not None:
         detail["harnessProofRef"] = harness_proof_ref
     if runtime_command_metadata is not None:
@@ -2344,6 +2346,8 @@ def simulate_telegram_update(
             "origin_surface": origin_surface,
             "request_id": request_id,
         }
+        if normalized.media_turn is not None:
+            trace_payload["media_turn"] = normalized.media_turn
         if harness_proof_ref is not None:
             trace_payload["harnessProofRef"] = harness_proof_ref
         if runtime_command_metadata is not None:

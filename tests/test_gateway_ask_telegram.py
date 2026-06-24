@@ -332,6 +332,69 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotIn("harnessProofRef", trace)
         self.assertNotIn(raw_ref, json.dumps(trace))
 
+    def test_simulate_telegram_update_preserves_redacted_media_turn_envelope(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        media_turn = {
+            "schema": "spark.media_turn.v1",
+            "media_kind": "photo",
+            "chat_surface": "telegram",
+            "turn_ref": "media:sha256:0123456789abcdef",
+            "caption_text": "Describe this screenshot only.",
+            "analysis_policy": {
+                "can_read": True,
+                "can_store": False,
+                "can_execute": False,
+            },
+            "authority": {
+                "requires_turn_intent": True,
+                "mutation_allowed": False,
+            },
+            "source": {
+                "has_caption": True,
+                "has_photo": True,
+                "has_document": False,
+                "has_voice": False,
+                "has_audio": False,
+                "mime_family": "image",
+                "filename_present": True,
+            },
+            "file_id": "private-raw-file-id",
+            "filename": "private-screenshot.png",
+        }
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98713,
+                "spark_media_turn": media_turn,
+                "message": {
+                    "message_id": 113,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "caption": "Describe this screenshot only.",
+                    "photo": [{"file_id": "private-raw-file-id"}],
+                    "spark_media_turn": media_turn,
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["message_kind"], "photo")
+        self.assertEqual(result.detail["message_text"], "Describe this screenshot only.")
+        self.assertEqual(result.detail["media_turn"]["schema"], "spark.media_turn.v1")
+        self.assertEqual(result.detail["media_turn"]["media_kind"], "photo")
+        self.assertFalse(result.detail["media_turn"]["analysis_policy"]["can_execute"])
+        self.assertNotIn("file_id", result.detail["media_turn"])
+        self.assertNotIn("filename", result.detail["media_turn"])
+        self.assertNotIn("private-raw-file-id", json.dumps(result.detail["media_turn"]))
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98713)
+        self.assertEqual(trace["media_turn"]["schema"], "spark.media_turn.v1")
+        self.assertEqual(trace["media_turn"]["media_kind"], "photo")
+        self.assertNotIn("private-raw-file-id", json.dumps(trace["media_turn"]))
+        self.assertNotIn("private-screenshot.png", json.dumps(trace["media_turn"]))
+
     def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
