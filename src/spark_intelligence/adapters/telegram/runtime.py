@@ -278,6 +278,8 @@ _PROMPT_INJECTION_INTENT_PATTERN = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 
+_HARNESS_PROOF_REF_PATTERN = re.compile(r"^turn:sha256:[a-f0-9]{16}$")
+
 
 def _looks_like_score_request(message: str) -> bool:
     if not message:
@@ -290,6 +292,41 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
         return False
     compact = " ".join(str(message).split())
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
+
+
+def _extract_harness_proof_ref(update_payload: dict[str, Any]) -> str | None:
+    if not isinstance(update_payload, dict):
+        return None
+
+    def valid_ref(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()
+        return candidate if _HARNESS_PROOF_REF_PATTERN.fullmatch(candidate) else None
+
+    containers: list[dict[str, Any]] = [update_payload]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        containers.append(message)
+
+    direct_keys = ("harnessProofRef", "harness_proof_ref")
+    nested_keys = ("spark_harness", "sparkProof", "spark_proof", "harnessProof")
+    nested_ref_keys = ("harnessProofRef", "harness_proof_ref", "proofRef", "proof_ref")
+
+    for container in containers:
+        for key in direct_keys:
+            candidate = valid_ref(container.get(key))
+            if candidate is not None:
+                return candidate
+        for nested_key in nested_keys:
+            nested = container.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in nested_ref_keys:
+                candidate = valid_ref(nested.get(key))
+                if candidate is not None:
+                    return candidate
+    return None
 
 
 def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
@@ -1421,6 +1458,7 @@ def simulate_telegram_update(
     request_prefix = "sim" if simulation else "telegram"
     request_id = f"{request_prefix}:{normalized.update_id}"
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
+    harness_proof_ref = _extract_harness_proof_ref(update_payload)
     if not normalized.is_dm:
         return TelegramSimulationResult(
             ok=False,
@@ -2258,6 +2296,8 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    if harness_proof_ref is not None:
+        detail["harnessProofRef"] = harness_proof_ref
     if runtime_command_metadata is not None:
         detail["runtime_command_metadata"] = runtime_command_metadata
     voice_timing = (
@@ -2304,6 +2344,8 @@ def simulate_telegram_update(
             "origin_surface": origin_surface,
             "request_id": request_id,
         }
+        if harness_proof_ref is not None:
+            trace_payload["harnessProofRef"] = harness_proof_ref
         if runtime_command_metadata is not None:
             trace_payload["runtime_command_metadata"] = runtime_command_metadata
         append_gateway_trace(config_manager, trace_payload)

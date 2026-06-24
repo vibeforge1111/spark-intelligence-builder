@@ -16,7 +16,7 @@ from spark_intelligence.bridge_authority import (
     extract_turn_intent_envelope_vnext,
 )
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
-from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.gateway.tracing import append_gateway_trace, read_gateway_traces
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -279,6 +279,58 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(latest_result["facts_json"]["tool_name"], "memory.diagnose")
         self.assertEqual(latest_result["facts_json"]["result_status"], "success")
         self.assertEqual(latest_result["facts_json"]["tool_call_ledger"]["result"]["status"], "success")
+
+    def test_simulate_telegram_update_preserves_redacted_harness_proof_ref_in_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        proof_ref = "turn:sha256:0123456789abcdef"
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98711,
+                "message": {
+                    "message_id": 111,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "hello from proof ref trace",
+                    "spark_harness": {"proofRef": proof_ref},
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["harnessProofRef"], proof_ref)
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98711)
+        self.assertEqual(trace["harnessProofRef"], proof_ref)
+
+    def test_simulate_telegram_update_rejects_raw_harness_proof_ref_in_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        raw_ref = "trace:telegram:98712:raw-secret"
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98712,
+                "harnessProofRef": raw_ref,
+                "message": {
+                    "message_id": 112,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "hello from invalid proof ref trace",
+                    "spark_harness": {"proofRef": raw_ref},
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("harnessProofRef", result.detail)
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98712)
+        self.assertNotIn("harnessProofRef", trace)
+        self.assertNotIn(raw_ref, json.dumps(trace))
 
     def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
