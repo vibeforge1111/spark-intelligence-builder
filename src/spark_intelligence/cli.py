@@ -3126,7 +3126,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     identity_parser = subparsers.add_parser(
         "identity",
-        help="Manage cross-surface identity aliases (one agent across telegram + tui + Ã¢â‚¬Â¦)",
+        help="Manage cross-surface identity aliases (one agent across telegram + tui + ...)",
     )
     identity_subparsers = identity_parser.add_subparsers(dest="identity_command", required=True)
 
