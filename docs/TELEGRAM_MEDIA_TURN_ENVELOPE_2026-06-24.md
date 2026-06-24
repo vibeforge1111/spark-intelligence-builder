@@ -17,14 +17,13 @@ The gateway keeps only:
 - `media_kind`
 - `chat_surface`
 - valid redacted `turn_ref`
-- bounded `caption_text`
 - `analysis_policy`
 - `authority`
 - safe source booleans such as `has_photo`, `has_voice`, `has_audio`, `has_document`
 - `mime_family`
 - `filename_present`
 
-It does not preserve raw `file_id`, raw filenames, audio bytes, transcript bodies, or executable instructions from media.
+It does not preserve raw `file_id`, raw filenames, caption bodies, audio bytes, transcript bodies, or executable instructions from media. The normal Telegram `message.caption` may still become the effective user message for captioned media; that caption is not duplicated into `media_turn` trace metadata.
 
 ## Current Behavior
 

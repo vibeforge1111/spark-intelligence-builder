@@ -59,9 +59,6 @@ def _clean_media_turn(value: Any) -> dict[str, Any] | None:
     turn_ref = str(value.get("turn_ref") or "").strip()
     if turn_ref.startswith("media:sha256:") and len(turn_ref) <= 32:
         cleaned["turn_ref"] = turn_ref
-    caption = str(value.get("caption_text") or "").strip()
-    if caption:
-        cleaned["caption_text"] = " ".join(caption.split())[:500]
     mime_family = str(source.get("mime_family") or "").strip().lower()
     if mime_family in {"image", "audio", "video", "application", "text"}:
         cleaned["source"]["mime_family"] = mime_family
