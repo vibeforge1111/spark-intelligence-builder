@@ -5308,7 +5308,7 @@ def handle_self_improve(args: argparse.Namespace) -> int:
         record_ledger=bool(getattr(args, "record_ledger", False)),
     )
     print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("priority_actions") else 1
+    return 0
 
 
 def handle_self_ledger(args: argparse.Namespace) -> int:
@@ -7397,12 +7397,16 @@ def handle_auth_login(args: argparse.Namespace) -> int:
         return 2
 
     if args.callback_url:
-        result = complete_oauth_login(
-            config_manager=config_manager,
-            state_db=state_db,
-            provider=args.provider,
-            callback_url=args.callback_url,
-        )
+        try:
+            result = complete_oauth_login(
+                config_manager=config_manager,
+                state_db=state_db,
+                provider=args.provider,
+                callback_url=args.callback_url,
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(result.to_json() if args.json else result.to_text())
         return 0
 
@@ -7484,7 +7488,7 @@ def handle_auth_refresh(args: argparse.Namespace) -> int:
             state_db=state_db,
             provider=args.provider,
         )
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     print(result.to_json() if args.json else result.to_text())
