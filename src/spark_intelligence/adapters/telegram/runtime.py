@@ -4,6 +4,7 @@ import base64
 import logging
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -668,7 +669,12 @@ def _telegram_user_instruction_governor_decision_for_message(
 ) -> dict[str, Any] | None:
     try:
         from spark_intelligence.user_instructions import detect_instruction_intent
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Suppressed import error resolving detect_instruction_intent: %s",
+            exc,
+            exc_info=True,
+        )
         return None
     intent = detect_instruction_intent(user_message)
     if not intent:
