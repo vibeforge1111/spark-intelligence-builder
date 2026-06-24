@@ -19,10 +19,14 @@ SENSITIVE_KEY_PATTERN = re.compile(r"(?i)(api[_-]?key|bot[_-]?token|token|secret
 RAW_ID_KEY_REPLACEMENTS = {
     "chat_id": "chat_ref",
     "chatId": "chat_ref",
+    "external_user_id": "external_user_ref",
+    "externalUserId": "external_user_ref",
     "user_id": "user_ref",
     "userId": "user_ref",
     "from_id": "from_ref",
     "fromId": "from_ref",
+    "telegram_user_id": "telegram_user_ref",
+    "telegramUserId": "telegram_user_ref",
 }
 PATH_LIKE_PATTERNS = [
     re.compile(r"/Users/\S+"),
@@ -70,7 +74,7 @@ def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            traces.append(json.loads(line))
+            traces.append(redact_trace_payload(json.loads(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return traces
@@ -85,7 +89,7 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            records.append(json.loads(line))
+            records.append(redact_trace_payload(json.loads(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return records
@@ -125,7 +129,7 @@ def redact_trace_payload(value: Any) -> Any:
             replacement_key = RAW_ID_KEY_REPLACEMENTS.get(key_text)
             if replacement_key is not None:
                 if item not in (None, "", [], {}):
-                    result[replacement_key] = _stable_trace_ref(replacement_key.replace("_ref", ""), item)
+                    result[replacement_key] = trace_identity_ref(replacement_key.replace("_ref", ""), item)
                 continue
             if SENSITIVE_KEY_PATTERN.search(key_text) and item not in (None, "", [], {}):
                 result[key_text] = "[REDACTED]"
@@ -153,3 +157,7 @@ def redact_trace_payload(value: Any) -> Any:
 def _stable_trace_ref(label: str, value: Any) -> str:
     digest = sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
     return f"{label}:sha256:{digest}"
+
+
+def trace_identity_ref(label: str, value: Any) -> str:
+    return _stable_trace_ref(label, value)

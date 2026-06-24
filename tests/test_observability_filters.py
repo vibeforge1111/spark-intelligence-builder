@@ -2,7 +2,7 @@ import json
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.gateway.runtime import gateway_outbound_view, gateway_trace_view
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, trace_log_path
 from spark_intelligence.identity.service import hold_pairing, review_pairings
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.ops.service import list_operator_events, log_operator_event
@@ -57,7 +57,9 @@ class ObservabilityFilterTests(SparkTestCase):
 
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["update_id"], 202)
-        self.assertEqual(payload[0]["telegram_user_id"], "222")
+        self.assertNotIn("telegram_user_id", payload[0])
+        self.assertRegex(payload[0]["telegram_user_ref"], r"^telegram_user:sha256:[a-f0-9]{16}$")
+        self.assertNotIn('"222"', json.dumps(payload))
 
     def test_gateway_outbound_view_filters_by_user_delivery_and_contains(self) -> None:
         append_outbound_audit(
@@ -100,6 +102,8 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["update_id"], 301)
         self.assertFalse(payload[0]["delivery_ok"])
+        self.assertNotIn("telegram_user_id", payload[0])
+        self.assertRegex(payload[0]["telegram_user_ref"], r"^telegram_user:sha256:[a-f0-9]{16}$")
 
     def test_gateway_trace_redacts_secret_values_before_logging(self) -> None:
         append_gateway_trace(
@@ -117,11 +121,13 @@ class ObservabilityFilterTests(SparkTestCase):
 
         payload = json.loads(gateway_trace_view(self.config_manager, limit=1, as_json=True))[0]
 
-        self.assertEqual(payload["telegram_user_id"], "111")
+        self.assertNotIn("telegram_user_id", payload)
+        self.assertRegex(payload["telegram_user_ref"], r"^telegram_user:sha256:[a-f0-9]{16}$")
         self.assertEqual(payload["bot_token"], "[REDACTED]")
         self.assertEqual(payload["detail"]["message"], "Authorization: [REDACTED] [REDACTED]")
         self.assertEqual(payload["detail"]["safe"], "keep this")
         serialized = json.dumps(payload)
+        self.assertNotIn('"111"', serialized)
         self.assertNotIn("1234567890:AA", serialized)
         self.assertNotIn("sk-proj-secretvalue", serialized)
 
@@ -132,6 +138,7 @@ class ObservabilityFilterTests(SparkTestCase):
                 "event": "telegram_update_processed",
                 "channel_id": "telegram",
                 "chat_id": "8319079055",
+                "external_user_id": "8319079055",
                 "user_id": "8319079055",
                 "detail": {
                     "path": "/Users/alchemistab/private/workspace",
@@ -145,8 +152,10 @@ class ObservabilityFilterTests(SparkTestCase):
         serialized = json.dumps(payload)
 
         self.assertNotIn("chat_id", payload)
+        self.assertNotIn("external_user_id", payload)
         self.assertNotIn("user_id", payload)
         self.assertRegex(payload["chat_ref"], r"^chat:sha256:[a-f0-9]{16}$")
+        self.assertRegex(payload["external_user_ref"], r"^external_user:sha256:[a-f0-9]{16}$")
         self.assertRegex(payload["user_ref"], r"^user:sha256:[a-f0-9]{16}$")
         self.assertEqual(payload["detail"]["path"], "<path>")
         self.assertEqual(payload["detail"]["reason"], "internal policy reason")
@@ -154,6 +163,13 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertNotIn("8319079055", serialized)
         self.assertNotIn("/Users/alchemistab", serialized)
         self.assertNotIn("tool_not_allowed_by_policy", serialized)
+        raw_log = trace_log_path(self.config_manager).read_text(encoding="utf-8")
+        self.assertNotIn('"chat_id"', raw_log)
+        self.assertNotIn('"external_user_id"', raw_log)
+        self.assertNotIn('"user_id"', raw_log)
+        self.assertNotIn("8319079055", raw_log)
+        self.assertNotIn("/Users/alchemistab", raw_log)
+        self.assertNotIn("tool_not_allowed_by_policy", raw_log)
 
     def test_review_pairings_filters_status_and_limit(self) -> None:
         self.add_telegram_channel()

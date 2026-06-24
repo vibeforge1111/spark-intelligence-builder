@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import json
 import urllib.error
@@ -25,7 +26,14 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
-from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
+from spark_intelligence.gateway.tracing import (
+    append_gateway_trace,
+    outbound_log_path,
+    read_gateway_traces,
+    read_outbound_audit,
+    trace_identity_ref,
+    trace_log_path,
+)
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.observability.store import record_environment_snapshot
 from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -652,7 +660,8 @@ def _filter_log_records(
     if event:
         filtered = [record for record in filtered if str(record.get("event") or "") == event]
     if user:
-        filtered = [record for record in filtered if _record_user_ref(record) == user]
+        user_refs = _user_filter_refs(user)
+        filtered = [record for record in filtered if _record_user_ref(record) in user_refs]
     if decision:
         filtered = [record for record in filtered if str(record.get("decision") or "") == decision]
     if delivery:
@@ -719,15 +728,15 @@ def _latest_gateway_telegram_user_id(config_manager: ConfigManager) -> str | Non
     for record in read_gateway_traces(config_manager, limit=20):
         if _record_channel_id(record) != "telegram":
             continue
-        user_ref = _record_user_ref(record)
-        if user_ref != "unknown":
-            return user_ref
+        user_id = _record_raw_user_id(record)
+        if user_id:
+            return user_id
     for record in read_outbound_audit(config_manager, limit=20):
         if _record_channel_id(record) != "telegram":
             continue
-        user_ref = _record_user_ref(record)
-        if user_ref != "unknown":
-            return user_ref
+        user_id = _record_raw_user_id(record)
+        if user_id:
+            return user_id
     return None
 
 
@@ -754,11 +763,47 @@ def _record_channel_id(record: dict[str, Any]) -> str:
 
 
 def _record_user_ref(record: dict[str, Any]) -> str:
-    for key in ("telegram_user_id", "external_user_id", "user_id", "chat_id"):
+    for key in (
+        "telegram_user_ref",
+        "external_user_ref",
+        "user_ref",
+        "chat_ref",
+        "from_ref",
+        "telegram_user_id",
+        "external_user_id",
+        "user_id",
+        "chat_id",
+    ):
         value = record.get(key)
         if value not in {None, ""}:
             return str(value)
     return "unknown"
+
+
+def _record_raw_user_id(record: dict[str, Any]) -> str | None:
+    for key in ("telegram_user_id", "external_user_id", "user_id", "chat_id"):
+        value = str(record.get(key) or "").strip()
+        if value and not _is_trace_identity_ref(value):
+            return value
+    return None
+
+
+def _user_filter_refs(user: str) -> set[str]:
+    normalized = str(user or "").strip()
+    if not normalized:
+        return set()
+    return {
+        normalized,
+        trace_identity_ref("telegram_user", normalized),
+        trace_identity_ref("external_user", normalized),
+        trace_identity_ref("user", normalized),
+        trace_identity_ref("chat", normalized),
+        trace_identity_ref("from", normalized),
+    }
+
+
+def _is_trace_identity_ref(value: str) -> bool:
+    return bool(re.match(r"^[a-z_]+:sha256:[a-f0-9]{16}$", value))
 
 
 def _classify_telegram_failure(exc: Exception) -> str:

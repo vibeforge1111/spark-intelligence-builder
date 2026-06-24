@@ -14,8 +14,32 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_deletions,
     parse_entity_state_deletion,
 )
+from spark_intelligence.gateway.tracing import trace_identity_ref
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type, payload_hash, record_event
 from spark_intelligence.state.db import StateDB
+
+_GATEWAY_CHAT_IDENTITY_KEYS: tuple[tuple[str, str], ...] = (
+    ("chat_ref", "chat"),
+    ("chat_id", "chat"),
+)
+_GATEWAY_USER_IDENTITY_KEYS: tuple[tuple[str, str], ...] = (
+    ("telegram_user_ref", "telegram_user"),
+    ("telegram_user_id", "telegram_user"),
+    ("external_user_ref", "external_user"),
+    ("external_user_id", "external_user"),
+    ("user_ref", "user"),
+    ("user_id", "user"),
+)
+_GATEWAY_SCOPE_IDENTITY_KEYS = (
+    "telegram_user_ref",
+    "external_user_ref",
+    "user_ref",
+    "human_id",
+    "chat_ref",
+    "telegram_user_id",
+    "external_user_id",
+    "chat_id",
+)
 
 
 @dataclass(frozen=True)
@@ -1049,8 +1073,8 @@ def _build_gateway_trace_audit(
 
     target = traces[target_index]
     session_id = str(target.get("session_id") or "").strip()
-    chat_id = str(target.get("chat_id") or "").strip()
-    telegram_user_id = str(target.get("telegram_user_id") or "").strip()
+    target_chat_refs = _gateway_trace_identity_values(target, _GATEWAY_CHAT_IDENTITY_KEYS)
+    target_user_refs = _gateway_trace_identity_values(target, _GATEWAY_USER_IDENTITY_KEYS)
     target_user_preview = str(target.get("user_message_preview") or "").strip()
     target_response_preview = str(target.get("response_preview") or "").strip()
     target_routing_decision = str(target.get("routing_decision") or "").strip()
@@ -1064,9 +1088,13 @@ def _build_gateway_trace_audit(
             continue
         if session_id and str(record.get("session_id") or "") != session_id:
             continue
-        if chat_id and str(record.get("chat_id") or "") != chat_id:
+        if target_chat_refs and not target_chat_refs.intersection(
+            _gateway_trace_identity_values(record, _GATEWAY_CHAT_IDENTITY_KEYS)
+        ):
             continue
-        if telegram_user_id and str(record.get("telegram_user_id") or "") != telegram_user_id:
+        if target_user_refs and not target_user_refs.intersection(
+            _gateway_trace_identity_values(record, _GATEWAY_USER_IDENTITY_KEYS)
+        ):
             continue
         preview = str(record.get("user_message_preview") or "").strip()
         if not preview:
@@ -1199,8 +1227,8 @@ def _build_delivery_trace_audit(
 
     target_update_id = str(target.get("update_id") or "").strip()
     target_session_id = str(target.get("session_id") or "").strip()
-    target_chat_id = str(target.get("chat_id") or "").strip()
-    target_user_id = str(target.get("telegram_user_id") or "").strip()
+    target_chat_refs = _gateway_trace_identity_values(target, _GATEWAY_CHAT_IDENTITY_KEYS)
+    target_user_refs = _gateway_trace_identity_values(target, _GATEWAY_USER_IDENTITY_KEYS)
     target_user_preview = str(target.get("user_message_preview") or "").strip()
     best: tuple[int, dict[str, object]] | None = None
     for record in reversed(outbound_records):
@@ -1220,13 +1248,17 @@ def _build_delivery_trace_audit(
             score += 3
         elif target_session_id:
             continue
-        if target_chat_id and str(record.get("chat_id") or "").strip() == target_chat_id:
+        if target_chat_refs and target_chat_refs.intersection(
+            _gateway_trace_identity_values(record, _GATEWAY_CHAT_IDENTITY_KEYS)
+        ):
             score += 2
-        elif target_chat_id:
+        elif target_chat_refs:
             continue
-        if target_user_id and str(record.get("telegram_user_id") or "").strip() == target_user_id:
+        if target_user_refs and target_user_refs.intersection(
+            _gateway_trace_identity_values(record, _GATEWAY_USER_IDENTITY_KEYS)
+        ):
             score += 2
-        elif target_user_id:
+        elif target_user_refs:
             continue
         if best is None or score > best[0]:
             best = (score, record)
@@ -1366,11 +1398,23 @@ def _build_cross_scope_lineage_summary(
 
 
 def _gateway_identity_scope(record: dict[str, object]) -> tuple[str | None, str | None]:
-    for key in ("telegram_user_id", "human_id", "chat_id"):
+    for key in _GATEWAY_SCOPE_IDENTITY_KEYS:
         value = str(record.get(key) or "").strip()
         if value:
             return key, value
     return None, None
+
+
+def _gateway_trace_identity_values(record: dict[str, object], keys: tuple[tuple[str, str], ...]) -> set[str]:
+    values: set[str] = set()
+    for key, label in keys:
+        value = str(record.get(key) or "").strip()
+        if not value:
+            continue
+        values.add(value)
+        if ":sha256:" not in value:
+            values.add(trace_identity_ref(label, value))
+    return values
 
 
 def _looks_like_close_turn_recall_question(text: str) -> bool:

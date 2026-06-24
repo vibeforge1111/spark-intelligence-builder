@@ -56,7 +56,7 @@ from spark_intelligence.gateway.guardrails import (
     prepare_outbound_text,
     set_runtime_state_value,
 )
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, trace_identity_ref
 from spark_intelligence.identity.service import (
     consume_pairing_welcome,
     pairing_welcome_pending,
@@ -7503,7 +7503,7 @@ def _memory_doctor_previous_gateway_record(
         traces = read_gateway_traces(config_manager, limit=80)
     except Exception:
         return None
-    normalized_user_id = str(external_user_id or "").strip()
+    normalized_user_refs = _gateway_trace_user_filter_refs(external_user_id)
     normalized_session_id = str(session_id or "").strip()
     normalized_current_request_id = str(current_request_id or "").strip()
     failed_diagnostic_request_ids: set[str] = set()
@@ -7513,7 +7513,7 @@ def _memory_doctor_previous_gateway_record(
         request_id = str(record.get("request_id") or "").strip()
         if not request_id or request_id == normalized_current_request_id:
             continue
-        if normalized_user_id and str(record.get("telegram_user_id") or "").strip() != normalized_user_id:
+        if normalized_user_refs and not normalized_user_refs.intersection(_gateway_trace_record_user_refs(record)):
             continue
         if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
             continue
@@ -7549,6 +7549,40 @@ def _memory_doctor_previous_gateway_record(
             return enriched
         return record
     return None
+
+
+def _gateway_trace_user_filter_refs(value: str) -> set[str]:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return set()
+    return {
+        normalized,
+        trace_identity_ref("telegram_user", normalized),
+        trace_identity_ref("external_user", normalized),
+        trace_identity_ref("user", normalized),
+        trace_identity_ref("chat", normalized),
+    }
+
+
+def _gateway_trace_record_user_refs(record: dict[str, object]) -> set[str]:
+    refs: set[str] = set()
+    for key, label in (
+        ("telegram_user_ref", "telegram_user"),
+        ("telegram_user_id", "telegram_user"),
+        ("external_user_ref", "external_user"),
+        ("external_user_id", "external_user"),
+        ("user_ref", "user"),
+        ("user_id", "user"),
+        ("chat_ref", "chat"),
+        ("chat_id", "chat"),
+    ):
+        value = str(record.get(key) or "").strip()
+        if not value:
+            continue
+        refs.add(value)
+        if ":sha256:" not in value:
+            refs.add(trace_identity_ref(label, value))
+    return refs
 
 
 def _clean_memory_doctor_request_id(value: str) -> str:

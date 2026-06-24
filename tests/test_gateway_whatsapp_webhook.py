@@ -273,7 +273,9 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         )
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], "wamid-1")
-        self.assertEqual(traces[0]["external_user_id"], "wa-user-1")
+        self.assertNotIn("external_user_id", traces[0])
+        self.assertRegex(traces[0]["external_user_ref"], r"^external_user:sha256:[a-f0-9]{16}$")
+        self.assertNotIn("wa-user-1", json.dumps(traces))
         with self.state_db.connect() as conn:
             run_row = conn.execute(
                 """
