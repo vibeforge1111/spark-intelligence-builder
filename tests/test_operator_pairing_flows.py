@@ -7,6 +7,7 @@ from unittest.mock import patch
 from spark_intelligence.adapters.telegram.runtime import (
     _apply_telegram_voice_effect_from_env,
     _match_natural_voice_command,
+    _prepare_telegram_media_input,
     _prepare_voice_reply_text,
     _rank_elevenlabs_voices,
     _select_elevenlabs_voice_for_telegram_dm,
@@ -17,6 +18,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     poll_telegram_updates_once,
     simulate_telegram_update,
 )
+from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
 from spark_intelligence.execution import GovernedCommandExecution
 from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.identity.service import (
@@ -114,6 +116,7 @@ def _with_voice_turn_intent(
     update: dict,
     *,
     tool_name: str,
+    owner_system: str = "spark-voice-comms",
     extra_allowed_tools: list[str] | None = None,
     mutation_class: str = "writes_files",
     external_network: bool = True,
@@ -143,7 +146,7 @@ def _with_voice_turn_intent(
         },
         "selectedIntent": {
             "kind": "voice_action",
-            "ownerSystem": "spark-voice-comms",
+            "ownerSystem": owner_system,
             "action": tool_name,
             "confidence": "explicit",
             "requiresConfirmation": False,
@@ -161,7 +164,7 @@ def _with_voice_turn_intent(
         "toolPolicy": {
             "allowedTools": allowed_tools,
             "deniedTools": [],
-            "enabledToolsets": ["telegram.reply", "spark-voice-comms"],
+            "enabledToolsets": ["telegram.reply", owner_system],
             "mutationClassesAllowed": mutation_classes,
             "requiresApprovalFor": [],
             "networkPolicy": "external" if external_network else "none",
@@ -9165,6 +9168,68 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.detail["message_kind"], "voice")
         self.assertEqual(result.detail["transcript_text"], "/voice plan")
         self.assertIn("Telegram voice plan:", result.detail["response_text"])
+
+    def test_audio_file_uses_media_audio_turn_intent_authority(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        class FakeAudioClient:
+            def get_file(self, *, file_id: str) -> dict[str, object]:
+                return {"file_path": "audio/file_1.m4a"}
+
+            def download_file(self, *, file_path: str) -> bytes:
+                return b"fake-m4a-bytes"
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook == "voice.transcribe":
+                self.assertEqual(payload["message_kind"], "audio")
+                governor = payload["governor_decision"]
+                self.assertEqual(governor["tool_ledgers"][0]["tool_name"], "media.audio.transcribe")
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="/voice plan",
+                    stderr="",
+                    output={"result": {"transcript_text": "/voice plan", "provider_id": "openai", "model": "whisper-1"}},
+                )
+            if hook == "voice.plan":
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="voice plan ready",
+                    stderr="",
+                    output={"result": {"reply_text": "Telegram voice plan: audio upload path is authorized."}},
+                )
+            raise AssertionError(f"Unexpected voice hook: {hook}")
+
+        update_payload = _with_voice_turn_intent(
+            make_telegram_update(
+                update_id=11821,
+                user_id="111",
+                username="alice",
+                text=None,
+                audio={"file_id": "audio-1", "duration": 3, "mime_type": "audio/mp4"},
+            ),
+            tool_name="media.audio.transcribe",
+            owner_system="spark-intelligence-builder",
+            mutation_class="external_network",
+            external_network=True,
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = _prepare_telegram_media_input(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                normalized=normalize_telegram_update(update_payload, channel_id="telegram"),
+                update_payload=update_payload,
+                client=FakeAudioClient(),
+            )
+
+        self.assertEqual(result["routing_decision"], "voice_transcribed")
+        self.assertEqual(result["transcript_text"], "/voice plan")
+        self.assertIsNone(result["reply_text"])
 
     def test_voice_message_poll_trace_records_bounded_transcript_telemetry(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")

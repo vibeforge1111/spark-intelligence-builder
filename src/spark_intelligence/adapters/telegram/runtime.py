@@ -1223,16 +1223,17 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
     return audio_bytes, filename
 
 
-def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...]) -> dict[str, Any]:
+def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...], *, message_kind: str = "voice") -> dict[str, Any]:
     reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    media_label = "audio file" if message_kind == "audio" else "voice message"
     return {
         "effective_text": None,
         "transcript_text": None,
         "routing_decision": "voice_transcription_authority_blocked",
         "reply_text": (
-            "I can transcribe that voice message, but this turn is missing Spark authority for voice transcription.\n"
+            f"I can transcribe that {media_label}, but this turn is missing Spark authority for transcription.\n"
             f"Reason: {reason_text}.\n"
-            "Send the voice note as a fresh authorized Spark media turn and I will process it."
+            f"Send the {media_label} as a fresh authorized Spark media turn and I will process it."
         ),
         "error": reason_text,
     }
@@ -1345,10 +1346,12 @@ def _prepare_telegram_media_input(
             "transcript_text": None,
             "routing_decision": None,
         }
+    message_kind = str(normalized.message_kind or "voice")
+    media_tool_name = "media.audio.transcribe" if message_kind == "audio" else "media.voice.transcribe"
     authority = authorize_builder_bridge_action(
         update_payload,
-        tool_name="voice.transcribe",
-        owner_system="spark-voice-comms",
+        tool_name=media_tool_name,
+        owner_system="spark-intelligence-builder",
         mutation_class="external_network",
         external_network=True,
         state_db=state_db,
@@ -1357,7 +1360,20 @@ def _prepare_telegram_media_input(
         component="telegram_runtime",
     )
     if not authority.allowed:
-        return _voice_transcription_authority_blocked_input(authority.reason_codes)
+        legacy_authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="voice.transcribe",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+            state_db=state_db,
+            request_id=f"telegram:{normalized.update_id}",
+            channel_id="telegram",
+            component="telegram_runtime",
+        )
+        if not legacy_authority.allowed:
+            return _voice_transcription_authority_blocked_input(authority.reason_codes, message_kind=message_kind)
+        authority = legacy_authority
     governor_decision = authority.governor_decision
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
