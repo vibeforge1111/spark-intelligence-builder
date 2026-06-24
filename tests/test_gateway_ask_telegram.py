@@ -329,7 +329,12 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotIn("harnessProofRef", result.detail)
         traces = read_gateway_traces(self.config_manager, limit=10)
         trace = next(record for record in traces if record.get("update_id") == 98712)
-        self.assertNotIn("harnessProofRef", trace)
+        self.assertRegex(trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertNotEqual(trace["harnessProofRef"], raw_ref)
+        self.assertEqual(trace["proofStatus"], "missing_harness_authority")
+        self.assertEqual(trace["proofStorage"], "source_gap_capsule")
+        self.assertEqual(trace["proofCapsule"]["authority"]["contract"], "none")
+        self.assertEqual(trace["proofCapsule"]["governor"]["verified"], False)
         self.assertNotIn(raw_ref, json.dumps(trace))
 
     def test_simulate_telegram_update_preserves_redacted_media_turn_envelope(self) -> None:

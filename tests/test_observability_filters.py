@@ -3,7 +3,13 @@ from pathlib import Path
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.gateway.runtime import gateway_outbound_view, gateway_trace_view
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, redact_gateway_trace_log, trace_log_path
+from spark_intelligence.gateway.tracing import (
+    append_gateway_trace,
+    append_outbound_audit,
+    redact_gateway_trace_log,
+    repair_gateway_trace_proof_continuity,
+    trace_log_path,
+)
 from spark_intelligence.identity.service import hold_pairing, review_pairings
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.ops.service import list_operator_events, log_operator_event
@@ -172,6 +178,36 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertNotIn("/Users/alchemistab", raw_log)
         self.assertNotIn("tool_not_allowed_by_policy", raw_log)
 
+    def test_gateway_trace_adds_source_gap_capsule_for_processed_turn_without_proof(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "update_id": 98721,
+                "request_id": "telegram:98721",
+                "trace_ref": "trace:telegram:98721",
+                "routing_decision": "plain_chat",
+                "response_length": 42,
+                "delivery_ok": True,
+            },
+        )
+
+        payload = json.loads(gateway_trace_view(self.config_manager, limit=1, as_json=True))[0]
+
+        self.assertRegex(payload["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(payload["proofStatus"], "missing_harness_authority")
+        self.assertEqual(payload["proofStorage"], "source_gap_capsule")
+        self.assertEqual(payload["proofJoinSource"], "builder_gateway_trace_writer")
+        self.assertEqual(payload["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(payload["proofCapsule"]["authority"]["contract"], "none")
+        self.assertEqual(payload["proofCapsule"]["governor"]["verified"], False)
+        self.assertEqual(payload["proofCapsule"]["execution"]["tool"], "builder.gateway_trace")
+        self.assertEqual(payload["proofCapsule"]["reply"]["delivered"], True)
+        self.assertEqual(payload["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(payload["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertNotIn("/Users/", json.dumps(payload))
+
     def test_gateway_trace_redaction_repair_rewrites_live_row_shape(self) -> None:
         trace_path = trace_log_path(self.config_manager)
         trace_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +263,93 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertNotIn("/Users/alchemistab", raw_log)
         self.assertNotIn("tool_not_allowed_by_policy", raw_log)
         self.assertIn("1278511160", Path(str(result["backup_path"])).read_text(encoding="utf-8"))
+
+    def test_gateway_trace_proof_repair_marks_legacy_gaps_without_overwriting_real_refs(self) -> None:
+        trace_path = trace_log_path(self.config_manager)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "recorded_at": "2026-06-24T10:07:28+00:00",
+                            "event": "telegram_update_processed",
+                            "channel_id": "telegram",
+                            "update_id": 749543762,
+                            "request_id": "telegram:749543762",
+                            "trace_ref": "/Users/alchemistab/private/trace.jsonl",
+                            "routing_decision": "plain_chat",
+                            "response_length": 20,
+                            "delivery_ok": True,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "recorded_at": "2026-06-24T10:07:29+00:00",
+                            "event": "telegram_update_processed",
+                            "channel_id": "telegram",
+                            "update_id": 749543763,
+                            "request_id": "telegram:749543763",
+                            "trace_ref": "trace:telegram:749543763",
+                            "routing_decision": "plain_chat",
+                            "response_length": 20,
+                            "delivery_ok": True,
+                            "harnessProofRef": "turn:sha256:acb315f0302a6a2b",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = repair_gateway_trace_proof_continuity(self.config_manager)
+        rows = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rows_read"], 2)
+        self.assertEqual(result["rows_written"], 2)
+        self.assertEqual(result["parse_errors"], 0)
+        self.assertEqual(result["gap_capsules_added"], 1)
+        self.assertEqual(result["already_had_proof"], 1)
+        self.assertEqual(result["changed_rows"], 1)
+        self.assertTrue(result["backup_path"])
+        self.assertRegex(rows[0]["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(rows[0]["proofStatus"], "missing_harness_authority")
+        self.assertEqual(rows[0]["proofStorage"], "legacy_gap_capsule")
+        self.assertEqual(rows[0]["proofJoinSource"], "builder_gateway_trace_legacy_repair")
+        self.assertEqual(rows[0]["proofCapsule"]["authority"]["contract"], "none")
+        self.assertEqual(rows[0]["proofCapsule"]["governor"]["verified"], False)
+        self.assertEqual(rows[0]["trace_ref"], "<path>")
+        self.assertEqual(rows[1]["harnessProofRef"], "turn:sha256:acb315f0302a6a2b")
+        self.assertNotIn("/Users/alchemistab", json.dumps(rows))
+        self.assertIn("/Users/alchemistab", Path(str(result["backup_path"])).read_text(encoding="utf-8"))
+
+    def test_gateway_trace_proof_repair_dry_run_leaves_trace_file_unchanged(self) -> None:
+        trace_path = trace_log_path(self.config_manager)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "event": "telegram_update_processed",
+                    "request_id": "telegram:dry-run",
+                    "trace_ref": "trace:telegram:dry-run",
+                    "routing_decision": "plain_chat",
+                    "delivery_ok": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        before = trace_path.read_text(encoding="utf-8")
+
+        result = repair_gateway_trace_proof_continuity(self.config_manager, dry_run=True, backup=False)
+        after = trace_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["gap_capsules_added"], 1)
+        self.assertEqual(result["changed_rows"], 1)
+        self.assertEqual(after, before)
 
     def test_review_pairings_filters_status_and_limit(self) -> None:
         self.add_telegram_channel()

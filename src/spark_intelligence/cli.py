@@ -64,7 +64,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
-from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log
+from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log, repair_gateway_trace_proof_continuity
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.identity.service import (
     agent_inspect,
@@ -2225,6 +2225,14 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_redact_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_redact_traces_parser.add_argument("--no-backup", action="store_true", help="Do not keep a raw backup copy")
     gateway_redact_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_repair_proof_parser = gateway_subparsers.add_parser(
+        "repair-proof",
+        help="Rewrite the gateway trace log with proof-continuity gap markers",
+    )
+    gateway_repair_proof_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_repair_proof_parser.add_argument("--dry-run", action="store_true", help="Report changes without rewriting the trace log")
+    gateway_repair_proof_parser.add_argument("--no-backup", action="store_true", help="Do not keep a proof repair backup")
+    gateway_repair_proof_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
@@ -5723,6 +5731,30 @@ def handle_gateway_redact_traces(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") or result.get("error") == "trace_log_missing" else 1
 
 
+def handle_gateway_repair_proof(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = repair_gateway_trace_proof_continuity(
+        config_manager,
+        backup=not args.no_backup,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif result.get("ok"):
+        backup = f" Backup: {result.get('backup_path')}" if result.get("backup_path") else ""
+        dry_run = " Dry run." if result.get("dry_run") else ""
+        print(
+            "Repaired "
+            f"{result.get('rows_written')} gateway trace row(s); "
+            f"gap capsules added={result.get('gap_capsules_added')}; "
+            f"not execution={result.get('not_execution_marked')}.{backup}{dry_run}"
+        )
+    else:
+        print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") or result.get("error") == "trace_log_missing" else 1
+
+
 def handle_gateway_outbound(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -9191,6 +9223,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_traces(args)
     if args.command == "gateway" and args.gateway_command == "redact-traces":
         return handle_gateway_redact_traces(args)
+    if args.command == "gateway" and args.gateway_command == "repair-proof":
+        return handle_gateway_repair_proof(args)
     if args.command == "gateway" and args.gateway_command == "outbound":
         return handle_gateway_outbound(args)
     if args.command == "channel" and args.channel_command == "add":

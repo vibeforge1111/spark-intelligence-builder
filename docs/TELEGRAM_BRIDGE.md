@@ -88,6 +88,16 @@ Builder should not require:
 - Public denial text should not reveal whether the issue was unknown device, missing scope, bad pairing, or held approval.
 - Logs may include trace ids and normalized ids, but not bot tokens or provider keys.
 
+## Gateway Trace Proof Continuity
+
+Every Builder gateway trace row is redacted before it is written. Processed Telegram rows with request and trace continuity also carry proof-continuity metadata.
+
+- If Telegram supplies a valid `harnessProofRef`, Builder preserves it.
+- If no fresh Harness proof is available, Builder writes a compact `spark.harness_proof.v1` gap capsule with `proofStatus: missing_harness_authority`, `proofStorage: source_gap_capsule`, `authority.contract: none`, and `governor.verified: false`.
+- Historical gateway traces can be repaired with `spark-intelligence gateway repair-proof --home <spark-intelligence-state-home> --json`. The repair keeps redaction intact, writes `proofStorage: legacy_gap_capsule`, and creates a `.proof-backup`.
+
+Gap capsules are traceability, not authorization. They make Builder gateway rows inspectable while keeping missing authority visible to the control-proof audit.
+
 ## Local Verification
 
 Use offline or controlled checks where possible:
