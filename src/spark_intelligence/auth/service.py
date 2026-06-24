@@ -224,7 +224,6 @@ def connect_provider(
         target_path=f"providers.records.{provider}",
         request_source="auth.service.connect_provider",
     )
-
     with state_db.connect() as conn:
         conn.execute(
             """

@@ -667,7 +667,15 @@ class ConfigManager:
                 error_message=error_message,
                 summary=summary,
             )
-        except Exception:
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Failed to record config mutation for %s/%s: %s",
+                target_document,
+                target_path,
+                exc,
+            )
             return
 
     @staticmethod
