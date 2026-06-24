@@ -208,6 +208,42 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertEqual(payload["proofCapsule"]["joins"]["builder"], "joined")
         self.assertNotIn("/Users/", json.dumps(payload))
 
+    def test_gateway_trace_preserves_real_proof_capsule_without_gap_marker(self) -> None:
+        proof_ref = "turn:sha256:0123456789abcdef"
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "update_id": 98722,
+                "request_id": "telegram:98722",
+                "trace_ref": "trace:telegram:98722",
+                "routing_decision": "plain_chat",
+                "response_length": 42,
+                "delivery_ok": True,
+                "harnessProofRef": proof_ref,
+                "proofCapsule": {
+                    "schema": "spark.harness_proof.v1",
+                    "turnRef": proof_ref,
+                    "route": "builder_gateway.plain_chat",
+                    "owner": "spark-intelligence-builder",
+                    "intent": {"kind": "plain_chat", "confidence": "high", "noExecution": True},
+                    "authority": {"decision": "downgraded", "contract": "spark.turn_intent.v1", "riskTier": "read", "reasonSummary": "Authorized from /Users/example/private before redaction."},
+                    "governor": {"decision": "read_only", "verified": True},
+                    "execution": {"status": "completed", "tool": "answer.compose", "mutationClass": "read_only"},
+                    "reply": {"delivered": True, "shape": "natural", "rawReasonsHidden": True},
+                    "joins": {"telegram": "joined", "builder": "joined", "spawner": "not_applicable", "provider": "not_applicable", "memory": "not_applicable", "voice": "not_applicable"},
+                },
+            },
+        )
+
+        payload = json.loads(gateway_trace_view(self.config_manager, limit=1, as_json=True))[0]
+
+        self.assertEqual(payload["harnessProofRef"], proof_ref)
+        self.assertEqual(payload["proofCapsule"]["turnRef"], proof_ref)
+        self.assertNotIn("proofStatus", payload)
+        self.assertNotIn("/Users/example/private", json.dumps(payload["proofCapsule"]))
+
     def test_gateway_trace_redaction_repair_rewrites_live_row_shape(self) -> None:
         trace_path = trace_log_path(self.config_manager)
         trace_path.parent.mkdir(parents=True, exist_ok=True)

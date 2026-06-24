@@ -56,7 +56,7 @@ from spark_intelligence.gateway.guardrails import (
     prepare_outbound_text,
     set_runtime_state_value,
 )
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, trace_identity_ref
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, redact_trace_payload, trace_identity_ref
 from spark_intelligence.identity.service import (
     consume_pairing_welcome,
     pairing_welcome_pending,
@@ -327,6 +327,49 @@ def _extract_harness_proof_ref(update_payload: dict[str, Any]) -> str | None:
                 if candidate is not None:
                     return candidate
     return None
+
+
+def _extract_harness_proof_capsule(update_payload: dict[str, Any], proof_ref: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return None
+
+    containers: list[dict[str, Any]] = [update_payload]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        containers.append(message)
+
+    for container in containers:
+        for key in ("harnessProofCapsule", "proofCapsule", "proof_capsule"):
+            candidate = _normalize_harness_proof_capsule(container.get(key), proof_ref)
+            if candidate is not None:
+                return candidate
+        for nested_key in ("spark_harness", "sparkProof", "spark_proof", "harnessProof"):
+            nested = container.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in ("harnessProofCapsule", "proofCapsule", "proof_capsule"):
+                candidate = _normalize_harness_proof_capsule(nested.get(key), proof_ref)
+                if candidate is not None:
+                    return candidate
+    return None
+
+
+def _normalize_harness_proof_capsule(value: Any, proof_ref: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or value.get("schema") != "spark.harness_proof.v1":
+        return None
+    turn_ref = value.get("turnRef")
+    if not isinstance(turn_ref, str) or _HARNESS_PROOF_REF_PATTERN.fullmatch(turn_ref.strip()) is None:
+        return None
+    turn_ref = turn_ref.strip()
+    if proof_ref is not None and proof_ref != turn_ref:
+        return None
+    for key in ("route", "owner", "intent", "authority", "governor", "execution", "reply", "joins"):
+        if key not in value:
+            return None
+    redacted = redact_trace_payload(value)
+    if not isinstance(redacted, dict) or redacted.get("turnRef") != turn_ref:
+        return None
+    return redacted
 
 
 def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
@@ -1506,6 +1549,9 @@ def simulate_telegram_update(
     request_id = f"{request_prefix}:{normalized.update_id}"
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
     harness_proof_ref = _extract_harness_proof_ref(update_payload)
+    harness_proof_capsule = _extract_harness_proof_capsule(update_payload, harness_proof_ref)
+    if harness_proof_ref is None and harness_proof_capsule is not None:
+        harness_proof_ref = str(harness_proof_capsule.get("turnRef") or "")
     if not normalized.is_dm:
         return TelegramSimulationResult(
             ok=False,
@@ -2352,6 +2398,8 @@ def simulate_telegram_update(
         detail["media_turn"] = normalized.media_turn
     if harness_proof_ref is not None:
         detail["harnessProofRef"] = harness_proof_ref
+    if harness_proof_capsule is not None:
+        detail["proofCapsule"] = harness_proof_capsule
     if runtime_command_metadata is not None:
         detail["runtime_command_metadata"] = runtime_command_metadata
     voice_timing = (
@@ -2402,6 +2450,8 @@ def simulate_telegram_update(
             trace_payload["media_turn"] = normalized.media_turn
         if harness_proof_ref is not None:
             trace_payload["harnessProofRef"] = harness_proof_ref
+        if harness_proof_capsule is not None:
+            trace_payload["proofCapsule"] = harness_proof_capsule
         if runtime_command_metadata is not None:
             trace_payload["runtime_command_metadata"] = runtime_command_metadata
         append_gateway_trace(config_manager, trace_payload)
