@@ -1462,6 +1462,37 @@ def _build_voice_trace_fields(
     }
 
 
+def _is_low_information_media_reply(text: str | None) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return True
+    compact = normalized.lower().strip(" .!`")
+    return compact in {
+        "working memory",
+        "ok",
+        "okay",
+        "done",
+        "got it",
+        "received",
+    }
+
+
+def _maybe_use_media_transcript_fallback(
+    *,
+    normalized: Any,
+    transcript_text: str | None,
+    reply_text: str | None,
+) -> str | None:
+    transcript = re.sub(r"\s+", " ", str(transcript_text or "")).strip()
+    if normalized.message_kind not in {"voice", "audio"} or not transcript:
+        return reply_text
+    if not _is_low_information_media_reply(reply_text):
+        return reply_text
+    media_label = "audio file" if normalized.message_kind == "audio" else "voice message"
+    bounded_transcript = _preview_text(transcript, limit=700)
+    return f"I transcribed the {media_label}. I heard: \"{bounded_transcript}\""
+
+
 def simulate_telegram_update(
     *,
     config_manager: ConfigManager,
@@ -2197,6 +2228,11 @@ def simulate_telegram_update(
                         reply_text=outbound_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
+                    )
+                    outbound_text = _maybe_use_media_transcript_fallback(
+                        normalized=normalized,
+                        transcript_text=transcript_text,
+                        reply_text=outbound_text,
                     )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
@@ -3098,6 +3134,11 @@ def poll_telegram_updates_once(
             reply_text=outbound_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
+        )
+        outbound_text = _maybe_use_media_transcript_fallback(
+            normalized=normalized,
+            transcript_text=transcript_text,
+            reply_text=outbound_text,
         )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
