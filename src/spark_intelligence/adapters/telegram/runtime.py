@@ -10694,13 +10694,10 @@ def _normalize_telegram_voice_provider_id(value: str) -> str | None:
 
 
 def _render_telegram_voice_transcription_unavailable_reply(*, reason: str) -> str:
-    cleaned_reason = " ".join(str(reason or "").strip().split())
-    lines = [
-        "Voice transcription is unavailable right now.",
-        f"Reason: {cleaned_reason or 'the runtime could not transcribe this Telegram audio message.'}",
-        "Next: send the instruction as text for now, or finish the `spark-voice-comms` setup.",
-    ]
-    return "\n".join(lines)
+    return (
+        "I received the voice note, but I could not transcribe it from this Spark runtime yet. "
+        "Please send the instruction as text for this turn, or run `/voice doctor` when you want to check the voice setup."
+    )
 
 
 def _render_telegram_voice_not_ready_reply(*, message_kind: str) -> str:

@@ -9727,8 +9727,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Voice transcription is unavailable right now.", result.detail["response_text"])
-        self.assertIn("Active provider 'anthropic' does not support direct voice transcription", result.detail["response_text"])
+        self.assertIn("I received the voice note", result.detail["response_text"])
+        self.assertIn("run `/voice doctor`", result.detail["response_text"])
+        self.assertNotIn("Active provider", result.detail["response_text"])
+        self.assertNotIn("anthropic", result.detail["response_text"])
 
     def test_voice_message_returns_bounded_transcription_unavailable_reply_without_bot_token(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -9751,5 +9753,6 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertIn("Voice transcription is unavailable right now.", result.detail["response_text"])
-        self.assertIn("Telegram bot token is not available", result.detail["response_text"])
+        self.assertIn("I received the voice note", result.detail["response_text"])
+        self.assertIn("run `/voice doctor`", result.detail["response_text"])
+        self.assertNotIn("Telegram bot token", result.detail["response_text"])
