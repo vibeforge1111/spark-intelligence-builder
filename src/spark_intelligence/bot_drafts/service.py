@@ -110,7 +110,8 @@ def _topic_hint_from_content(content: str) -> str | None:
     text = (content or "").strip()
     if not text:
         return None
-    first_line = text.splitlines()[0].strip()
+    _lines = text.splitlines()
+    first_line = (_lines[0].strip() if _lines else "")
     cleaned = re.sub(r"^[\(\[]?\d+/\d+[\)\]]?\s*", "", first_line)
     cleaned = re.sub(r"^[#>\-*\s]+", "", cleaned)
     if not cleaned:
