@@ -564,7 +564,8 @@ def _telegram_user_instruction_governor_decision_for_message(
 ) -> dict[str, Any] | None:
     try:
         from spark_intelligence.user_instructions import detect_instruction_intent
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return None
     intent = detect_instruction_intent(user_message)
     if not intent:
