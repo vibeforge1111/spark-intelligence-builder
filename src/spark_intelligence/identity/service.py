@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import hmac
 import re
 import secrets
 from dataclasses import dataclass
@@ -1425,7 +1426,7 @@ def issue_pairing_code(
         if len(active_codes) >= PAIRING_CODE_MAX_PENDING_PER_USER:
             raise RuntimeError("Too many pending pairing codes for this channel user.")
         code = _new_pairing_code()
-        while any(row.get("code_hash") == _pairing_code_hash(code) for row in active_codes):
+        while any(hmac.compare_digest(row.get("code_hash", ""), _pairing_code_hash(code)) for row in active_codes):
             code = _new_pairing_code()
         expires_at = current + PAIRING_CODE_TTL
         _write_runtime_state_json(
@@ -1484,7 +1485,7 @@ def consume_pairing_code(
                 message=f"Pairing code attempts are locked until {lockout['locked_until']}.",
             )
         active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-        matched = next((row for row in active_codes if row.get("code_hash") == code_hash), None)
+        matched = next((row for row in active_codes if hmac.compare_digest(row.get("code_hash", ""), code_hash)), None)
         if matched is None:
             _record_pairing_code_failure(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
             conn.commit()

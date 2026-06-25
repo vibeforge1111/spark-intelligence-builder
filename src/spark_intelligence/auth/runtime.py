@@ -169,7 +169,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
             ).fetchone()
             oauth_row = conn.execute(
                 """
-                SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
+                SELECT access_token, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
                 FROM oauth_credentials
                 WHERE auth_profile_id = ?
                 LIMIT 1
@@ -262,7 +262,7 @@ def resolve_runtime_provider(
         ).fetchone()
         oauth_row = conn.execute(
             """
-            SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
+            SELECT access_token, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
             FROM oauth_credentials
             WHERE auth_profile_id = ?
             LIMIT 1
@@ -396,7 +396,7 @@ def _has_resolved_secret(
     if auth_method == "oauth":
         return bool(
             oauth_row
-            and oauth_row["access_token_ciphertext"]
+            and oauth_row["access_token"]
             and str(oauth_row["status"]) == "active"
             and not _oauth_token_expired(oauth_row)
         )
@@ -414,11 +414,11 @@ def _resolve_secret_value(
     env_map: dict[str, str],
 ) -> str:
     if auth_method == "oauth":
-        if not oauth_row or not oauth_row["access_token_ciphertext"] or str(oauth_row["status"]) != "active":
+        if not oauth_row or not oauth_row["access_token"] or str(oauth_row["status"]) != "active":
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
         if _oauth_token_expired(oauth_row):
             raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
-        return str(oauth_row["access_token_ciphertext"])
+        return str(oauth_row["access_token"])
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
     if secret_ref.source != "env":

@@ -309,7 +309,7 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT issuer, scope, access_token_ciphertext, refresh_token_ciphertext, status, access_expires_at, refresh_expires_at
+                SELECT issuer, scope, access_token, refresh_token, status, access_expires_at, refresh_expires_at
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
@@ -327,8 +327,8 @@ class AuthProfileTests(SparkTestCase):
 
         self.assertEqual(oauth_row["issuer"], "https://auth.openai.com")
         self.assertEqual(oauth_row["scope"], "openid profile")
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token")
+        self.assertEqual(oauth_row["access_token"], "oauth-access-token")
+        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token")
         self.assertEqual(oauth_row["status"], "active")
         self.assertTrue(oauth_row["access_expires_at"])
         self.assertTrue(oauth_row["refresh_expires_at"])
@@ -575,15 +575,15 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT access_token_ciphertext, refresh_token_ciphertext, last_refresh_at, last_refresh_error
+                SELECT access_token, refresh_token, last_refresh_at, last_refresh_error
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertEqual(oauth_row["access_token"], "oauth-access-token-refreshed")
+        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token-rotated")
         self.assertTrue(oauth_row["last_refresh_at"])
         self.assertEqual(oauth_row["last_refresh_error"], None)
 
@@ -949,7 +949,7 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT access_token_ciphertext, refresh_token_ciphertext
+                SELECT access_token, refresh_token
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
@@ -973,8 +973,8 @@ class AuthProfileTests(SparkTestCase):
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertEqual(oauth_row["access_token"], "oauth-access-token-refreshed")
+        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token-rotated")
         self.assertEqual(event_row["event_kind"], "oauth_refresh_completed")
         self.assertIn('"trigger": "job"', event_row["detail"])
         self.assertTrue(job_row["last_run_at"])
