@@ -1115,6 +1115,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("outcome"), "drop")
         self.assertEqual(facts.get("promotion_stage"), "drop")
         self.assertEqual(facts.get("keepability"), "not_keepable")
+        expected_trace_ref = "trace:agent-1:human-1:req-rejected-generic-memory"
+        assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
+        self.assertTrue(assessment_events)
+        self.assertEqual(assessment_events[0]["trace_ref"], expected_trace_ref)
+        policy_events = latest_events_by_type(self.state_db, event_type="policy_gate_blocked", limit=10)
+        self.assertTrue(policy_events)
+        self.assertEqual(policy_events[0]["trace_ref"], expected_trace_ref)
         lane_records = recent_memory_lane_records(self.state_db, limit=10)
         self.assertTrue(any(record.get("artifact_lane") == "rejected_memory_candidates" for record in lane_records))
 
@@ -1242,6 +1249,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("promotion_stage"), "structured_evidence")
         self.assertEqual(facts.get("keepability"), "durable_intelligence_memory")
         self.assertEqual(facts.get("promotion_disposition"), "promote_structured_evidence")
+        self.assertEqual(
+            assessment_events[0]["trace_ref"],
+            "trace:agent-1:human-1:req-generic-candidate-assessment",
+        )
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         write_facts = write_events[0]["facts_json"] or {}
