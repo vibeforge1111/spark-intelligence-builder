@@ -180,7 +180,9 @@ def promote_llm_wiki_improvement(
         invalidation_trigger=_compact(invalidation_trigger) or "Invalidate or downgrade if a newer live trace, test, or source contradicts this note.",
         warnings=warnings,
     )
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
     payload = {
         "output_dir": str(root),
         "relative_path": relative_path,
