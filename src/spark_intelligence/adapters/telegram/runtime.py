@@ -11707,7 +11707,17 @@ def _render_swarm_bridge_failure(action: str, result: Any) -> str:
     stdout = str(getattr(result, "stdout", "") or "").strip()
     stderr = str(getattr(result, "stderr", "") or "").strip()
     detail = "Command failed — see server logs for details."
-    _ = stderr or stdout  # kept for future structured logging
+    raw_detail = stderr or stdout
+    if raw_detail:
+        # Retain the raw subprocess output server-side for diagnosis; it is
+        # deliberately not forwarded to the Telegram reply (can leak paths,
+        # tokens and other internal detail).
+        logging.getLogger(__name__).debug(
+            "swarm bridge %s failed (exit_code=%s): %s",
+            action,
+            int(getattr(result, "exit_code", 1) or 1),
+            raw_detail,
+        )
     lines = [
         f"Swarm {action} failed.",
         f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
