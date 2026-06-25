@@ -160,9 +160,9 @@ _MINIMAL_ENV_KEYS = {
 }
 
 
-def _build_minimal_chip_env(record, repo_root: "Path") -> dict[str, str]:
+def _build_minimal_chip_env(record: AttachmentRecord, repo_root: Path) -> dict[str, str]:
     """Build minimal environment for chip hook subprocesses.
-    
+
     Only passes variables needed for execution, preventing
     credential leakage to potentially untrusted chip code.
     """
