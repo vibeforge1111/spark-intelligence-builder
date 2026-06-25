@@ -622,9 +622,13 @@ def write_diagnostic_markdown(report: DiagnosticReport, *, output_dir: Path) -> 
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = report.generated_at.replace(":", "-")
     output_path = output_dir / f"spark-diagnostic-{stamp}.md"
-    output_path.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    tmp = output_path.with_suffix(output_path.suffix + ".tmp")
+    tmp.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    tmp.replace(output_path)
     latest_path = output_dir / "Spark Diagnostics.md"
-    latest_path.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    tmp2 = latest_path.with_suffix(latest_path.suffix + ".tmp")
+    tmp2.write_text(render_diagnostic_markdown(report), encoding="utf-8")
+    tmp2.replace(latest_path)
     return output_path
 
 

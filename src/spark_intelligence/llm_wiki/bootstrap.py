@@ -80,7 +80,9 @@ def bootstrap_llm_wiki(
             preserved.append(relative)
             continue
         existed = path.exists()
-        path.write_text(_render_page(page=page, generated_at=generated_at), encoding="utf-8")
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(_render_page(page=page, generated_at=generated_at), encoding="utf-8")
+        tmp.replace(path)
         if existed:
             overwritten.append(relative)
         else:
