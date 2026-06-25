@@ -168,7 +168,19 @@ def _looks_like_trace_ref(value: str | None) -> bool:
     return normalized.startswith(("trace:", "trace-"))
 
 
-def _infer_trace_ref_from_agent_event(event: AgentEvent, explicit_trace_ref: str | None) -> str | None:
+def _trace_ref_from_request_id(prefix: str, request_id: str | None) -> str | None:
+    normalized = str(request_id or "").strip()
+    if not normalized:
+        return None
+    safe_request = "".join(ch if ch.isalnum() or ch in (":", "-", "_", ".") else "-" for ch in normalized)
+    return f"trace:{prefix}:{safe_request}"
+
+
+def _infer_trace_ref_from_agent_event(
+    event: AgentEvent,
+    explicit_trace_ref: str | None,
+    request_id: str | None,
+) -> str | None:
     normalized = str(explicit_trace_ref or "").strip()
     if normalized:
         return normalized
@@ -178,6 +190,8 @@ def _infer_trace_ref_from_agent_event(event: AgentEvent, explicit_trace_ref: str
     for source in event.sources:
         if _looks_like_trace_ref(source.source_ref):
             return str(source.source_ref).strip()
+    if event.event_type == "source_used":
+        return _trace_ref_from_request_id("agent-event", request_id)
     return None
 
 
@@ -195,7 +209,7 @@ def record_agent_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
 ) -> str:
-    normalized_trace_ref = _infer_trace_ref_from_agent_event(event, trace_ref)
+    normalized_trace_ref = _infer_trace_ref_from_agent_event(event, trace_ref, request_id)
     return record_event(
         state_db,
         event_type=event.event_type,

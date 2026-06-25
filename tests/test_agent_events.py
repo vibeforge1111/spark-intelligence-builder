@@ -50,6 +50,7 @@ class AgentEventModelTests(SparkTestCase):
 
         self.assertEqual(rows[0]["event_id"], event_id)
         self.assertEqual(rows[0]["component"], "agent_event_model")
+        self.assertEqual(rows[0]["trace_ref"], "trace:agent-event:req-source")
         self.assertEqual(rows[0]["facts_json"]["schema_version"], "spark.agent_event.v1")
         self.assertEqual(rows[0]["facts_json"]["sources"][0]["freshness"], "live_probed")
         self.assertEqual(rows[0]["provenance_json"]["source_refs"][0]["source_ref"], "diag-1")
