@@ -2908,6 +2908,27 @@ def _typed_legacy_request_id(
             contradiction_key=contradiction_key,
             contradiction_id=contradiction_id,
         )
+    if component == "attachment_snapshot" and event_type == "plugin_or_chip_influence_recorded":
+        source_kind = str(provenance.get("source_kind") or "").strip()
+        source_ref = str(provenance.get("source_ref") or "").strip()
+        active_path_key = str(facts.get("active_path_key") or "").strip()
+        active_chip_keys = facts.get("active_chip_keys")
+        normalized_chip_keys = (
+            sorted(str(chip).strip() for chip in active_chip_keys if str(chip).strip())
+            if isinstance(active_chip_keys, list)
+            else []
+        )
+        if not source_kind and not source_ref and not active_path_key and not normalized_chip_keys:
+            return None
+        trace_key = payload_hash(
+            {
+                "source_kind": source_kind,
+                "source_ref": source_ref,
+                "active_path_key": active_path_key,
+                "active_chip_keys": normalized_chip_keys,
+            }
+        )[:12]
+        return f"attachment_snapshot:legacy:{trace_key}"
     return None
 
 
