@@ -2741,8 +2741,101 @@ def repair_missing_event_trace_refs(state_db: StateDB, *, limit: int = 50000) ->
                 (trace_ref, event_id),
             )
             repaired += 1
+        remaining = max(limit - repaired, 0)
+        if remaining:
+            repaired += _repair_source_used_missing_trace_refs(conn, limit=remaining)
         conn.commit()
     return repaired
+
+
+def _repair_source_used_missing_trace_refs(conn: Any, *, limit: int) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_id, facts_json
+        FROM builder_events
+        WHERE component = 'agent_event_model'
+          AND event_type = 'source_used'
+          AND (trace_ref IS NULL OR trim(trace_ref) = '')
+        ORDER BY created_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        facts = _json_dict(row["facts_json"])
+        trace_ref = _source_used_trace_ref_from_facts(facts)
+        if not trace_ref:
+            continue
+        event_id = str(row["event_id"])
+        trace_kind = (
+            "explicit_or_source"
+            if str(facts.get("trace_ref") or facts.get("source_ref") or "").strip().startswith(("trace:", "trace-"))
+            else "source_ledger_source"
+        )
+        facts["trace_ref"] = trace_ref
+        facts["trace_ref_kind"] = trace_kind
+        conn.execute(
+            """
+            UPDATE builder_events
+            SET trace_ref = ?,
+                facts_json = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (trace_ref, _json_or_none(facts), event_id),
+        )
+        _repair_event_log_trace_ref_and_facts(conn, event_id=event_id, trace_ref=trace_ref, facts=facts)
+        repaired += 1
+    return repaired
+
+
+def _source_used_trace_ref_from_facts(facts: dict[str, Any]) -> str | None:
+    explicit = str(facts.get("trace_ref") or "").strip()
+    if explicit:
+        return explicit
+    source_ref = str(facts.get("source_ref") or "").strip()
+    if source_ref.startswith(("trace:", "trace-")):
+        return source_ref
+    source = str(facts.get("source") or "").strip()
+    role = str(facts.get("role") or "").strip()
+    seed = "|".join([source, role, source_ref])
+    if not seed.strip("|"):
+        return None
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"trace:source-ledger-source:{digest}"
+
+
+def _repair_event_log_trace_ref_and_facts(
+    conn: Any,
+    *,
+    event_id: str,
+    trace_ref: str,
+    facts: dict[str, Any],
+) -> None:
+    row = conn.execute("SELECT payload_json FROM event_log WHERE event_id = ? LIMIT 1", (event_id,)).fetchone()
+    if not row:
+        return
+    payload = _json_dict(row["payload_json"])
+    payload["facts"] = facts
+    conn.execute(
+        """
+        UPDATE event_log
+        SET trace_ref = ?,
+            payload_json = ?
+        WHERE event_id = ?
+          AND (trace_ref IS NULL OR trim(trace_ref) = '')
+        """,
+        (trace_ref, json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str), event_id),
+    )
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(str(value)) if value else {}
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def repair_memory_lane_artifact_lanes(state_db: StateDB, *, limit: int = 50000) -> int:
