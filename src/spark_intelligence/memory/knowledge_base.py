@@ -14,7 +14,7 @@ from spark_intelligence.execution import run_governed_command
 from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
-DEFAULT_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_VALIDATOR_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST = (
     Path(__file__).resolve().parents[3] / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"
 )

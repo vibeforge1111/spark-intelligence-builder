@@ -15,7 +15,7 @@ from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 
 
-DEFAULT_MAINTENANCE_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_MAINTENANCE_VALIDATOR_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 DEFAULT_EVENT_LIMIT = 2000
 
 

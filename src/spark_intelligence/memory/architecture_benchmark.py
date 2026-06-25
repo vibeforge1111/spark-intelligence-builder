@@ -13,7 +13,7 @@ from spark_intelligence.memory.orchestrator import inspect_memory_sdk_runtime
 from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
-DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 DEFAULT_FRONTIER_STATUS_DOC = "CURRENT_STATUS_BENCHMARKS_AND_KB_2026-04-09.md"
 DEFAULT_VARIATION_LOOP_DOC = "ARCHITECTURE_VARIATION_LOOP_2026-03-29.md"
 PRODUCT_MEMORY_BASELINES: tuple[str, ...] = (
