@@ -35,6 +35,7 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 
 - `conversation_frame.py`: task intent, current mode, allowed actions, disallowed actions, option-reference resolution, action gate, final-answer drift check.
 - `agent_events.py`: shared event model and black-box report over `builder_events`.
+- `observability/store.py`: central `builder_events` recorder; request-scoped events get a deterministic trace ref when producers do not provide one, while explicit trace refs still win.
 - `event_producers.py`: producer helpers for route selection, capability probes, mission state changes, and user overrides.
 - `turn_recorder.py`: records a meaningful turn as frame, action gate, drift check, and optional memory candidate events.
 - `source_hierarchy.py`: resolves conflicting claims by authority and freshness.

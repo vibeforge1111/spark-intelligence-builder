@@ -208,7 +208,11 @@ Recommended core tables:
 - personality preference deltas, interaction observations, and evolution history
 - quarantine outcomes for blocked material
 
-### 6.3 What Does Not Belong In Either
+### 6.3 Builder Event Trace Contract
+
+`builder_events` rows are observability evidence and should be trace-joinable whenever a request scope exists. Producers should call `spark_intelligence.observability.store.record_event` instead of writing `builder_events` directly; the recorder preserves explicit `trace_ref` values and derives `trace:<request_id>` when a row has `request_id` but no explicit trace. Context-free events may leave `trace_ref` empty, but request-scoped rows should not add new missing-trace debt.
+
+### 6.4 What Does Not Belong In Either
 
 - duplicated secret copies
 - adapter-owned shadow allowlists
