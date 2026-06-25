@@ -466,7 +466,7 @@ def record_event(
         event_type=event_type,
         component=component,
         request_id=request_id,
-        trace_ref=trace_ref,
+        trace_ref=normalized_trace_ref,
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
@@ -2687,6 +2687,60 @@ def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) 
             ).fetchone()
             if lane_row:
                 repaired += 1
+        conn.commit()
+    return repaired
+
+
+def repair_missing_event_trace_refs(state_db: StateDB, *, limit: int = 50000) -> int:
+    repaired = 0
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT event_id, request_id
+            FROM builder_events
+            WHERE request_id IS NOT NULL
+              AND trim(request_id) != ''
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            ORDER BY created_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"])
+            trace_ref = _event_trace_ref(trace_ref=None, request_id=str(row["request_id"]))
+            if not trace_ref:
+                continue
+            conn.execute(
+                """
+                UPDATE builder_events
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            conn.execute(
+                """
+                UPDATE event_log
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            conn.execute(
+                """
+                UPDATE memory_lane_records
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND request_id IS NOT NULL
+                  AND trim(request_id) != ''
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            repaired += 1
         conn.commit()
     return repaired
 
