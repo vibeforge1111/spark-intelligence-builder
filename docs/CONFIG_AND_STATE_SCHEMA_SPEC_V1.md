@@ -210,7 +210,7 @@ Recommended core tables:
 
 ### 6.3 Builder Event Trace Contract
 
-`builder_events` rows are observability evidence and should be trace-joinable whenever a request scope exists. Producers should call `spark_intelligence.observability.store.record_event` instead of writing `builder_events` directly; the recorder preserves explicit `trace_ref` values and derives `trace:<request_id>` when a row has `request_id` but no explicit trace. Context-free events may leave `trace_ref` empty, but request-scoped rows should not add new missing-trace debt.
+`builder_events` rows are observability evidence and should be trace-joinable whenever a request scope exists. Producers should call `spark_intelligence.observability.store.record_event` instead of writing `builder_events` directly; the recorder preserves explicit `trace_ref` values and derives `trace:<request_id>` when a row has `request_id` but no explicit trace. Context-free events may leave `trace_ref` empty, but request-scoped rows should not add new missing-trace debt. Doctor repair runs also backfill the same derived trace ref into existing request-scoped `builder_events`, `event_log`, and `memory_lane_records` rows when those rows already have `request_id` but lack `trace_ref`.
 
 ### 6.4 What Does Not Belong In Either
 
