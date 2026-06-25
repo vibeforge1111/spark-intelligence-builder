@@ -78,7 +78,7 @@ class MemoryApprovalInboxTests(SparkTestCase):
         )
 
     def test_inbox_accepts_existing_assessed_candidates_but_not_drops(self) -> None:
-        record_event(
+        assessed_event_id = record_event(
             self.state_db,
             event_type="memory_candidate_assessed",
             component="researcher_bridge",
@@ -96,7 +96,7 @@ class MemoryApprovalInboxTests(SparkTestCase):
                 ]
             },
         )
-        record_event(
+        dropped_event_id = record_event(
             self.state_db,
             event_type="memory_candidate_assessed",
             component="researcher_bridge",
@@ -116,6 +116,50 @@ class MemoryApprovalInboxTests(SparkTestCase):
         self.assertEqual(inbox.items[0].target_scope, "spark_doctrine")
         self.assertEqual(inbox.items[0].recommended_action, "save_as_spark_doctrine")
         self.assertIn("shared read-model", inbox.items[0].proposed_text)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, trace_ref
+                FROM builder_events
+                WHERE event_id IN (?, ?)
+                ORDER BY event_id
+                """,
+                (assessed_event_id, dropped_event_id),
+            ).fetchall()
+        trace_refs = {row["event_id"]: row["trace_ref"] for row in rows}
+        self.assertEqual(trace_refs[assessed_event_id], "trace:req-assessed")
+        self.assertEqual(trace_refs[dropped_event_id], "trace:req-dropped")
+
+    def test_policy_gate_block_with_request_gets_trace_ref(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="policy_gate_blocked",
+            component="researcher_bridge",
+            summary="Policy blocked a memory candidate.",
+            request_id="req-policy-block",
+            status="blocked",
+            severity="low",
+            reason_code="memory_candidate_blocked",
+            facts={
+                "policy_domain": "researcher_bridge",
+                "gate_name": "memory_candidate_gate",
+                "source_kind": "memory_candidate",
+                "action": "save_memory_candidate",
+            },
+        )
+
+        with self.state_db.connect() as conn:
+            builder_row = conn.execute(
+                "SELECT trace_ref FROM builder_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            event_log_row = conn.execute(
+                "SELECT trace_ref FROM event_log WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+
+        self.assertEqual(builder_row["trace_ref"], "trace:req-policy-block")
+        self.assertEqual(event_log_row["trace_ref"], "trace:req-policy-block")
 
     def test_inbox_keeps_plain_memory_write_logs_out_unless_approval_gated(self) -> None:
         record_event(

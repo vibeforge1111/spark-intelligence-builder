@@ -285,6 +285,7 @@ def record_event(
     recorded_at = utc_now_iso()
     normalized_facts = dict(facts or {})
     normalized_provenance = dict(provenance or {})
+    normalized_trace_ref = _event_trace_ref(trace_ref=trace_ref, request_id=request_id)
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -324,7 +325,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
-                trace_ref,
+                normalized_trace_ref,
                 channel_id,
                 session_id,
                 human_id,
@@ -365,7 +366,7 @@ def record_event(
                 event_type,
                 recorded_at,
                 None,
-                trace_ref,
+                normalized_trace_ref,
                 request_id,
                 run_id,
                 session_id,
@@ -397,7 +398,7 @@ def record_event(
             event_id=event_id,
             event_type=event_type,
             recorded_at=recorded_at,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             run_id=run_id,
             request_id=request_id,
             session_id=session_id,
@@ -410,7 +411,7 @@ def record_event(
             event_type=event_type,
             recorded_at=recorded_at,
             component=component,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             request_id=request_id,
             run_id=run_id,
             actor_id=actor_id,
@@ -437,7 +438,7 @@ def record_event(
             component=component,
             run_id=run_id,
             request_id=request_id,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             reason_code=reason_code,
             facts=normalized_facts,
             provenance=normalized_provenance,
@@ -449,7 +450,7 @@ def record_event(
         event_type=event_type,
         component=component,
         request_id=request_id,
-        trace_ref=trace_ref,
+        trace_ref=normalized_trace_ref,
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
@@ -476,6 +477,18 @@ def record_event(
         facts=normalized_facts,
     )
     return event_id
+
+
+def _event_trace_ref(*, trace_ref: str | None, request_id: str | None) -> str | None:
+    normalized_trace_ref = str(trace_ref or "").strip()
+    if normalized_trace_ref:
+        return normalized_trace_ref
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return None
+    if normalized_request_id.startswith(("trace:", "trace-")):
+        return normalized_request_id
+    return f"trace:{_trace_token(normalized_request_id)}"
 
 
 def record_policy_gate_block(
