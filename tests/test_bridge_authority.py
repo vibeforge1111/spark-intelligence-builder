@@ -671,6 +671,74 @@ def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
     assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 
+def test_expected_guardrail_denial_records_medium_lifecycle_proof(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_read_turn_intent_payload_vnext(
+        request_id="req-guardrail-proof",
+        channel_kind="telegram",
+        session_id="session-guardrail-proof",
+        human_id="human-guardrail-proof",
+        user_message="What is my current plan?",
+        source_kind="telegram_runtime_current_plan_read",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
+
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req:guardrail-proof",
+        component="telegram_bridge",
+    )
+
+    assert verdict.allowed is False
+    assert verdict.ledger_event_id
+    events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(events) == 1
+    event = events[0]
+    assert event["status"] == "recorded"
+    assert event["severity"] == "medium"
+    assert event["facts_json"]["authorization_verdict"] == "deny"
+    assert event["facts_json"]["result_status"] == "not_started"
+
+
+def test_integrity_denial_remains_high_blocked_lifecycle_proof(tmp_path) -> None:
+    state_db = StateDB(tmp_path / "state.sqlite")
+    state_db.initialize()
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-owner-mismatch-proof",
+        channel_kind="telegram",
+        session_id="session-owner-mismatch-proof",
+        human_id="human-owner-mismatch-proof",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    update = {"message": {"turn_intent_envelope_vnext": payload}}
+
+    verdict = authorize_builder_bridge_action(
+        update,
+        tool_name="memory.write",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id="req:owner-mismatch-proof",
+        component="telegram_bridge",
+    )
+
+    assert verdict.allowed is False
+    assert "owner_mismatch" in verdict.reason_codes
+    events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(events) == 1
+    event = events[0]
+    assert event["status"] == "blocked"
+    assert event["severity"] == "high"
+
+
 def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
     state_db = StateDB(tmp_path / "state.sqlite")
     state_db.initialize()

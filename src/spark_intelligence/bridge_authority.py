@@ -30,6 +30,25 @@ _VNEXT_ENVELOPE_KEYS = (
     "sparkTurnIntentVNext",
 )
 _BRIDGE_LEDGER_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("spark_bridge_ledger_context", default={})
+_EXPECTED_GUARDRAIL_DENIAL_REASONS = {
+    "external_network_not_authorized",
+    "mutation_class_not_authorized",
+    "no_execution_boundary",
+    "no_publish_boundary",
+    "proposed_action_not_authorized",
+    "tool_denied_by_policy",
+    "tool_not_allowed_by_policy",
+}
+_INTEGRITY_DENIAL_REASONS = {
+    "ledger_action_id_mismatch",
+    "ledger_authorization_decision_id_mismatch",
+    "ledger_capability_id_mismatch",
+    "ledger_result_started_before_execution",
+    "ledger_turn_id_mismatch",
+    "missing_or_invalid_envelope",
+    "owner_mismatch",
+    "spark_harness_core_unavailable",
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +67,27 @@ class BridgeAuthorityVerdict:
 def _append_reason(reasons: list[str], reason: str) -> None:
     if reason not in reasons:
         reasons.append(reason)
+
+
+def _tool_call_ledger_event_lifecycle(verdict: BridgeAuthorityVerdict, result: dict[str, Any]) -> tuple[str, str]:
+    if verdict.allowed:
+        return "authorized", "medium"
+
+    reasons = {str(reason) for reason in verdict.reason_codes}
+    authorization = verdict.authorization_decision or {}
+    authorization_verdict = str(authorization.get("verdict") or "").lower()
+    result_status = str(result.get("status") or "").lower()
+    expected_guardrail_denial = (
+        authorization_verdict in {"deny", "denied", "blocked"}
+        and result_status in {"", "not_started"}
+        and bool(reasons)
+        and reasons.issubset(_EXPECTED_GUARDRAIL_DENIAL_REASONS)
+    )
+    if expected_guardrail_denial:
+        return "recorded", "medium"
+    if reasons & _INTEGRITY_DENIAL_REASONS:
+        return "blocked", "high"
+    return "blocked", "high"
 
 
 def _ledger_binding_reasons(
@@ -837,6 +877,7 @@ def record_bridge_tool_call_ledger(
         if verdict.reason_codes
         else str(authorization.get("verdict") or "harness_core_authorized")
     )
+    event_status, event_severity = _tool_call_ledger_event_lifecycle(verdict, result)
 
     event_id = record_event(
         state_db,
@@ -852,8 +893,8 @@ def record_bridge_tool_call_ledger(
         agent_id=agent_id,
         actor_id=resolved_actor_id,
         reason_code=reason_code,
-        severity="high" if not verdict.allowed else "medium",
-        status="authorized" if verdict.allowed else "blocked",
+        severity=event_severity,
+        status=event_status,
         provenance={
             "source_kind": "spark_harness_core_tool_call_ledger",
             "source_ref": ledger_id,
