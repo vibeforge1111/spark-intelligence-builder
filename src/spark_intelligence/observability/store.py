@@ -1657,13 +1657,18 @@ def record_contradiction(
                 ),
             )
         conn.commit()
+    normalized_request_id = str(request_id or "").strip() or _contradiction_request_id(
+        contradiction_key=contradiction_key,
+        contradiction_id=contradiction_id,
+    )
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     event_id = record_event(
         state_db,
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
-        request_id=request_id,
-        trace_ref=trace_ref,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         reason_code=reason_code,
         severity=severity,
         status="open",
@@ -1745,13 +1750,18 @@ def resolve_contradiction(
             ),
         )
         conn.commit()
+    normalized_request_id = str(request_id or "").strip() or _contradiction_request_id(
+        contradiction_key=contradiction_key,
+        contradiction_id=contradiction_id,
+    )
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     event_id = record_event(
         state_db,
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
-        request_id=request_id,
-        trace_ref=trace_ref,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         reason_code=reason_code,
         severity="low",
         status="resolved",
@@ -2889,7 +2899,26 @@ def _typed_legacy_request_id(
             }
         )[:12]
         return f"memory_smoke:{trace_key}"
+    if event_type == "contradiction_recorded":
+        contradiction_id = str(facts.get("contradiction_id") or "").strip()
+        contradiction_key = str(facts.get("contradiction_key") or "").strip()
+        if not contradiction_id and not contradiction_key:
+            return None
+        return _contradiction_request_id(
+            contradiction_key=contradiction_key,
+            contradiction_id=contradiction_id,
+        )
     return None
+
+
+def _contradiction_request_id(*, contradiction_key: str, contradiction_id: str) -> str:
+    normalized_key = str(contradiction_key or "").strip()
+    if normalized_key.startswith("stop_ship:"):
+        return normalized_key
+    normalized_id = str(contradiction_id or "").strip()
+    if normalized_id:
+        return f"contradiction:{normalized_id}"
+    return f"contradiction:{_trace_token(normalized_key or 'unknown')}"
 
 
 def _source_used_trace_ref_from_facts(facts: dict[str, Any]) -> str | None:

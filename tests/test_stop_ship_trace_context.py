@@ -9,12 +9,28 @@ from spark_intelligence.memory.orchestrator import (
     _record_memory_smoke_event,
 )
 from spark_intelligence.observability.checks import StopShipIssue, _reconcile_stop_ship_contradictions
-from spark_intelligence.observability.store import latest_events_by_type, record_environment_snapshot
+from spark_intelligence.observability.store import latest_events_by_type, record_contradiction, record_environment_snapshot
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class StopShipTraceContextTests(SparkTestCase):
+    def test_contradiction_recorder_derives_trace_ref_from_key(self) -> None:
+        record_contradiction(
+            self.state_db,
+            contradiction_key="stop_ship:direct_trace_context",
+            component="stop_ship_checks",
+            reason_code="direct_trace_context",
+            summary="Direct contradiction recorded.",
+            detail="direct path",
+            severity="high",
+        )
+
+        events = latest_events_by_type(self.state_db, event_type="contradiction_recorded", limit=1)
+
+        self.assertEqual(events[0]["request_id"], "stop_ship:direct_trace_context")
+        self.assertEqual(events[0]["trace_ref"], "trace:stop_ship:direct_trace_context")
+
     def test_stop_ship_contradiction_events_emit_trace_ref(self) -> None:
         _reconcile_stop_ship_contradictions(
             state_db=self.state_db,

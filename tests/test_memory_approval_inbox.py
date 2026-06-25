@@ -259,19 +259,32 @@ class MemoryApprovalInboxTests(SparkTestCase):
                 "shadow_only_eval": False,
             },
         )
+        contradiction_event_id = record_event(
+            self.state_db,
+            event_type="contradiction_recorded",
+            component="stop_ship_checks",
+            summary="Legacy stop-ship contradiction recorded.",
+            severity="high",
+            status="open",
+            facts={
+                "contradiction_id": "ctr-legacy",
+                "contradiction_key": "stop_ship:legacy_trace_context",
+                "occurrence_count": 1,
+            },
+        )
 
         repaired = repair_missing_event_trace_refs(self.state_db)
 
-        self.assertEqual(repaired, 3)
+        self.assertEqual(repaired, 4)
         with self.state_db.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT be.event_id, be.request_id, be.trace_ref, el.request_id AS log_request_id, el.trace_ref AS log_trace_ref
                 FROM builder_events AS be
                 JOIN event_log AS el ON el.event_id = be.event_id
-                WHERE be.event_id IN (?, ?, ?)
+                WHERE be.event_id IN (?, ?, ?, ?)
                 """,
-                (config_event_id, env_event_id, smoke_event_id),
+                (config_event_id, env_event_id, smoke_event_id, contradiction_event_id),
             ).fetchall()
 
         by_event = {row["event_id"]: row for row in rows}
@@ -280,6 +293,8 @@ class MemoryApprovalInboxTests(SparkTestCase):
         self.assertEqual(by_event[env_event_id]["request_id"], "doctor_cli:environment_snapshot:abcdef123456")
         self.assertEqual(by_event[env_event_id]["trace_ref"], "trace:doctor_cli:environment_snapshot:abcdef123456")
         self.assertTrue(str(by_event[smoke_event_id]["request_id"]).startswith("memory_smoke:"))
+        self.assertEqual(by_event[contradiction_event_id]["request_id"], "stop_ship:legacy_trace_context")
+        self.assertEqual(by_event[contradiction_event_id]["trace_ref"], "trace:stop_ship:legacy_trace_context")
         for row in by_event.values():
             self.assertEqual(row["log_request_id"], row["request_id"])
             self.assertEqual(row["log_trace_ref"], row["trace_ref"])
