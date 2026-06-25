@@ -63,7 +63,7 @@ _ALLOWED_SDK_MODULE_ROOTS: frozenset[str] = frozenset({
     "domain_chip_memory",
 })
 
-DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
