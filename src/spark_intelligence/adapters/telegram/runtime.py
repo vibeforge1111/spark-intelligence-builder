@@ -11706,7 +11706,8 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
 def _render_swarm_bridge_failure(action: str, result: Any) -> str:
     stdout = str(getattr(result, "stdout", "") or "").strip()
     stderr = str(getattr(result, "stderr", "") or "").strip()
-    detail = stderr or stdout or "Command failed without stdout or stderr."
+    detail = "Command failed — see server logs for details."
+    _ = stderr or stdout  # kept for future structured logging
     lines = [
         f"Swarm {action} failed.",
         f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
