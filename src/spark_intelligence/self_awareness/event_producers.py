@@ -9,6 +9,20 @@ from spark_intelligence.state.db import StateDB
 SOURCE_FRESHNESS_VALUES = {"fresh", "stale", "contradicted", "unknown", "live_probed"}
 
 
+def _source_ledger_trace_ref(request_id: str, trace_ref: str, source_ref: str) -> str | None:
+    explicit = str(trace_ref or "").strip()
+    if explicit:
+        return explicit
+    normalized_source_ref = str(source_ref or "").strip()
+    if normalized_source_ref.startswith(("trace:", "trace-")):
+        return normalized_source_ref
+    normalized_request = str(request_id or "").strip()
+    if not normalized_request:
+        return None
+    safe_request = "".join(ch if ch.isalnum() or ch in (":", "-", "_", ".") else "-" for ch in normalized_request)
+    return f"trace:source-ledger:{safe_request}"
+
+
 def record_source_used_agent_event(
     state_db: StateDB,
     *,
@@ -30,11 +44,21 @@ def record_source_used_agent_event(
     normalized_role = str(role or "").strip() or "supporting_evidence"
     normalized_freshness = _normalize_source_freshness(freshness)
     normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
+    normalized_trace_ref = _source_ledger_trace_ref(request_id, trace_ref, source_ref)
+    trace_ref_kind = None
+    if normalized_trace_ref:
+        trace_ref_kind = (
+            "explicit_or_source"
+            if str(trace_ref or source_ref or "").strip().startswith(("trace:", "trace-"))
+            else "source_ledger_request"
+        )
     facts: dict[str, Any] = {
         "source": normalized_source,
         "role": normalized_role,
         "freshness": normalized_freshness,
         "source_ref": str(source_ref or "").strip() or None,
+        "trace_ref": normalized_trace_ref,
+        "trace_ref_kind": trace_ref_kind,
     }
     if normalized_source == "memory_preflight" or normalized_role == "memory_boundary":
         facts.update(
@@ -76,7 +100,7 @@ def record_source_used_agent_event(
             changed=["source_ledger_updated"],
         ),
         request_id=str(request_id or "").strip() or None,
-        trace_ref=str(trace_ref or "").strip() or None,
+        trace_ref=normalized_trace_ref,
         session_id=str(session_id or "").strip() or None,
         human_id=str(human_id or "").strip() or None,
         actor_id=str(actor_id or "").strip() or None,

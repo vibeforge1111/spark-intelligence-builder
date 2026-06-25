@@ -9,9 +9,14 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.paths import wiki_root
 from spark_intelligence.memory import inspect_memory_sdk_runtime
-from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
+
+
+def _build_self_awareness_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
+
+    return build_self_awareness_capsule(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -61,7 +66,7 @@ def compile_system_wiki(
     root = wiki_root(config_manager, output_dir)
     generated_at = _utc_timestamp()
     registry = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
-    self_capsule = build_self_awareness_capsule(config_manager=config_manager, state_db=state_db).to_payload()
+    self_capsule = _build_self_awareness_capsule(config_manager=config_manager, state_db=state_db).to_payload()
     memory_runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
     records = [record for record in registry.get("records") or [] if isinstance(record, dict)]
     lacks = [item for item in self_capsule.get("lacks") or [] if isinstance(item, dict)]

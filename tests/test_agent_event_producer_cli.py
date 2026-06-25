@@ -53,6 +53,13 @@ class AgentEventProducerCliTests(SparkTestCase):
         self.assertEqual(entry["event_type"], "source_used")
         self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
         self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE request_id = ?",
+                ("req-cli-source-used",),
+            ).fetchone()
+        self.assertEqual(row["trace_ref"], "trace:source-ledger:req-cli-source-used")
+        self.assertEqual(json.loads(row["facts_json"])["trace_ref_kind"], "source_ledger_request")
 
     def test_memory_preflight_cli_feeds_memory_lane_trace(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

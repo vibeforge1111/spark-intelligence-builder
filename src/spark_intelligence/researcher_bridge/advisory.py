@@ -42,7 +42,6 @@ from spark_intelligence.build_quality_review import (
     looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
@@ -150,7 +149,6 @@ from spark_intelligence.personality.loader import (
     build_telegram_persona_reply_contract,
 )
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
-from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 from spark_intelligence.system_registry import (
@@ -163,6 +161,18 @@ from spark_intelligence.user_instructions import list_active_instructions
 from spark_intelligence.bot_drafts import find_draft_for_iteration
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
+
+
+def _build_spark_context_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.context.capsule import build_spark_context_capsule
+
+    return build_spark_context_capsule(*args, **kwargs)
+
+
+def _build_self_awareness_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
+
+    return build_self_awareness_capsule(*args, **kwargs)
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
 _ATTACHMENT_PROMPT_CHIP_LIMIT = 12
@@ -3833,7 +3843,7 @@ def _render_direct_provider_chat_fallback(
         human_id=human_id,
         channel_kind=channel_kind,
     )
-    context_capsule_obj = build_spark_context_capsule(
+    context_capsule_obj = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -8464,7 +8474,7 @@ def _build_active_context_status_reply(
     request_id: str,
     user_message: str,
 ) -> tuple[str, dict[str, Any]]:
-    capsule = build_spark_context_capsule(
+    capsule = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -9016,7 +9026,7 @@ def _build_memory_cleanup_closure_reply(
     request_id: str,
     user_message: str,
 ) -> tuple[str, dict[str, Any]]:
-    capsule = build_spark_context_capsule(
+    capsule = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -10842,7 +10852,7 @@ def build_researcher_reply(
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
         if self_awareness_query:
-            capsule = build_self_awareness_capsule(
+            capsule = _build_self_awareness_capsule(
                 config_manager=config_manager,
                 state_db=state_db,
                 human_id=human_id,
@@ -14482,7 +14492,7 @@ def build_researcher_reply(
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
     raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
-    context_capsule_obj = build_spark_context_capsule(
+    context_capsule_obj = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,

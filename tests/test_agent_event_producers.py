@@ -113,6 +113,38 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
         self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
         self.assertEqual(entry["changed"], ["source_ledger_updated"])
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE request_id = ?",
+                ("req-source-used",),
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(row["trace_ref"], "trace:source-ledger:req-source-used")
+        self.assertEqual(facts["trace_ref"], "trace:source-ledger:req-source-used")
+        self.assertEqual(facts["trace_ref_kind"], "source_ledger_request")
+
+    def test_source_used_event_preserves_explicit_trace_ref(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="trace_index",
+            role="trace_evidence",
+            freshness="live_probed",
+            source_ref="trace:existing-source",
+            summary="Trace source was inspected.",
+            request_id="req-source-trace",
+            trace_ref="trace:explicit-source",
+            actor_id="operator:test",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE request_id = ?",
+                ("req-source-trace",),
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(row["trace_ref"], "trace:explicit-source")
+        self.assertEqual(facts["trace_ref"], "trace:explicit-source")
+        self.assertEqual(facts["trace_ref_kind"], "explicit_or_source")
 
     def test_memory_preflight_source_used_event_feeds_memory_lane_without_payload(self) -> None:
         record_source_used_agent_event(
