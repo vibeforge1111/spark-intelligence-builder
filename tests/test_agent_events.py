@@ -78,6 +78,28 @@ class AgentEventModelTests(SparkTestCase):
         self.assertEqual(rows[0]["event_id"], event_id)
         self.assertEqual(rows[0]["trace_ref"], "trace:req-source-inferred")
 
+    def test_record_source_used_event_without_request_gets_redacted_source_trace_ref(self) -> None:
+        record_agent_event(
+            self.state_db,
+            AgentEvent(
+                event_type="source_used",
+                summary="AOC used diagnostics without a request id.",
+                sources=[
+                    AgentSourceRef(
+                        source="diagnostics",
+                        role="live_state",
+                        freshness="live_probed",
+                        source_ref="diag-without-request",
+                    )
+                ],
+            ),
+        )
+
+        rows = latest_events_by_type(self.state_db, event_type="source_used", limit=1)
+
+        self.assertTrue(rows[0]["trace_ref"].startswith("trace:agent-event-source:"))
+        self.assertNotIn("diag-without-request", rows[0]["trace_ref"])
+
     def test_conversation_frame_event_records_intent_as_black_box_entry(self) -> None:
         frame = build_conversation_operating_frame(
             user_message="How would AOC connect to existing Spark systems?",

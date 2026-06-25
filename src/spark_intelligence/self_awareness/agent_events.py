@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -176,6 +177,23 @@ def _trace_ref_from_request_id(prefix: str, request_id: str | None) -> str | Non
     return f"trace:{prefix}:{safe_request}"
 
 
+def _trace_ref_from_source_metadata(prefix: str, event: AgentEvent) -> str | None:
+    source = next((entry for entry in event.sources if entry.source or entry.role or entry.source_ref), None)
+    if not source:
+        return None
+    seed = "|".join(
+        [
+            event.event_type,
+            str(source.source or "").strip(),
+            str(source.role or "").strip(),
+            str(source.freshness or "").strip(),
+            str(source.source_ref or "").strip(),
+        ]
+    )
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"trace:{prefix}:{digest}"
+
+
 def _infer_trace_ref_from_agent_event(
     event: AgentEvent,
     explicit_trace_ref: str | None,
@@ -191,7 +209,10 @@ def _infer_trace_ref_from_agent_event(
         if _looks_like_trace_ref(source.source_ref):
             return str(source.source_ref).strip()
     if event.event_type == "source_used":
-        return _trace_ref_from_request_id("agent-event", request_id)
+        return _trace_ref_from_request_id("agent-event", request_id) or _trace_ref_from_source_metadata(
+            "agent-event-source",
+            event,
+        )
     return None
 
 

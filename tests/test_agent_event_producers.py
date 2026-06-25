@@ -146,6 +146,26 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(facts["trace_ref"], "trace:explicit-source")
         self.assertEqual(facts["trace_ref_kind"], "explicit_or_source")
 
+    def test_source_used_event_without_request_gets_redacted_source_trace_ref(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="current_diagnostics",
+            role="health_truth",
+            freshness="live_probed",
+            source_ref="diagnostics:without-request",
+            summary="Builder healthy.",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE event_type = 'source_used'",
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertTrue(row["trace_ref"].startswith("trace:source-ledger-source:"))
+        self.assertEqual(row["trace_ref"], facts["trace_ref"])
+        self.assertEqual(facts["trace_ref_kind"], "source_ledger_source")
+        self.assertNotIn("diagnostics:without-request", row["trace_ref"])
+
     def test_memory_preflight_source_used_event_feeds_memory_lane_without_payload(self) -> None:
         record_source_used_agent_event(
             self.state_db,

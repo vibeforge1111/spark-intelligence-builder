@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from spark_intelligence.self_awareness.agent_events import AgentEvent, AgentSourceRef, record_agent_event
@@ -9,7 +10,13 @@ from spark_intelligence.state.db import StateDB
 SOURCE_FRESHNESS_VALUES = {"fresh", "stale", "contradicted", "unknown", "live_probed"}
 
 
-def _source_ledger_trace_ref(request_id: str, trace_ref: str, source_ref: str) -> str | None:
+def _source_ledger_trace_ref(
+    request_id: str,
+    trace_ref: str,
+    source_ref: str,
+    source: str = "",
+    role: str = "",
+) -> str | None:
     explicit = str(trace_ref or "").strip()
     if explicit:
         return explicit
@@ -17,10 +24,14 @@ def _source_ledger_trace_ref(request_id: str, trace_ref: str, source_ref: str) -
     if normalized_source_ref.startswith(("trace:", "trace-")):
         return normalized_source_ref
     normalized_request = str(request_id or "").strip()
-    if not normalized_request:
+    if normalized_request:
+        safe_request = "".join(ch if ch.isalnum() or ch in (":", "-", "_", ".") else "-" for ch in normalized_request)
+        return f"trace:source-ledger:{safe_request}"
+    seed = "|".join([str(source or "").strip(), str(role or "").strip(), normalized_source_ref])
+    if not seed.strip("|"):
         return None
-    safe_request = "".join(ch if ch.isalnum() or ch in (":", "-", "_", ".") else "-" for ch in normalized_request)
-    return f"trace:source-ledger:{safe_request}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"trace:source-ledger-source:{digest}"
 
 
 def record_source_used_agent_event(
@@ -44,13 +55,21 @@ def record_source_used_agent_event(
     normalized_role = str(role or "").strip() or "supporting_evidence"
     normalized_freshness = _normalize_source_freshness(freshness)
     normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
-    normalized_trace_ref = _source_ledger_trace_ref(request_id, trace_ref, source_ref)
+    normalized_trace_ref = _source_ledger_trace_ref(
+        request_id,
+        trace_ref,
+        source_ref,
+        normalized_source,
+        normalized_role,
+    )
     trace_ref_kind = None
     if normalized_trace_ref:
         trace_ref_kind = (
             "explicit_or_source"
             if str(trace_ref or source_ref or "").strip().startswith(("trace:", "trace-"))
             else "source_ledger_request"
+            if str(request_id or "").strip()
+            else "source_ledger_source"
         )
     facts: dict[str, Any] = {
         "source": normalized_source,
