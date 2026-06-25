@@ -2744,6 +2744,9 @@ def repair_missing_event_trace_refs(state_db: StateDB, *, limit: int = 50000) ->
         remaining = max(limit - repaired, 0)
         if remaining:
             repaired += _repair_source_used_missing_trace_refs(conn, limit=remaining)
+        remaining = max(limit - repaired, 0)
+        if remaining:
+            repaired += _repair_typed_legacy_missing_trace_refs(conn, limit=remaining)
         conn.commit()
     return repaired
 
@@ -2790,6 +2793,105 @@ def _repair_source_used_missing_trace_refs(conn: Any, *, limit: int) -> int:
     return repaired
 
 
+def _repair_typed_legacy_missing_trace_refs(conn: Any, *, limit: int) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_id, event_type, component, actor_id, facts_json, provenance_json
+        FROM builder_events
+        WHERE trace_ref IS NULL OR trim(trace_ref) = ''
+        ORDER BY created_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        facts = _json_dict(row["facts_json"])
+        provenance = _json_dict(row["provenance_json"])
+        request_id = _typed_legacy_request_id(
+            component=str(row["component"] or ""),
+            event_type=str(row["event_type"] or ""),
+            actor_id=str(row["actor_id"] or ""),
+            facts=facts,
+            provenance=provenance,
+        )
+        if not request_id:
+            continue
+        trace_ref = f"trace:{request_id}"
+        event_id = str(row["event_id"])
+        facts.setdefault("trace_ref", trace_ref)
+        facts.setdefault("trace_ref_kind", "typed_legacy_repair")
+        conn.execute(
+            """
+            UPDATE builder_events
+            SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+                trace_ref = ?,
+                facts_json = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (request_id, trace_ref, _json_or_none(facts), event_id),
+        )
+        _repair_event_log_trace_ref_and_facts(
+            conn,
+            event_id=event_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            facts=facts,
+        )
+        conn.execute(
+            """
+            UPDATE memory_lane_records
+            SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+                trace_ref = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (request_id, trace_ref, event_id),
+        )
+        repaired += 1
+    return repaired
+
+
+def _typed_legacy_request_id(
+    *,
+    component: str,
+    event_type: str,
+    actor_id: str,
+    facts: dict[str, Any],
+    provenance: dict[str, Any],
+) -> str | None:
+    if component == "config_manager" and event_type in {
+        "config_mutation_requested",
+        "config_mutation_applied",
+        "config_mutation_rejected",
+    }:
+        mutation_id = str(facts.get("mutation_id") or "").strip()
+        if not mutation_id:
+            rollback_ref = str(facts.get("rollback_ref") or "").strip()
+            if rollback_ref.startswith("rollback:"):
+                mutation_id = rollback_ref.removeprefix("rollback:")
+        return f"config_mutation:{mutation_id}" if mutation_id else None
+    if event_type == "runtime_environment_snapshot":
+        surface = _trace_token(str(facts.get("surface") or component or "environment"))
+        config_hash = str(facts.get("config_hash") or "").strip()
+        if not config_hash:
+            return None
+        return f"{surface}:environment_snapshot:{config_hash[:12]}"
+    if component == "memory_orchestrator" and event_type in {"memory_smoke_succeeded", "memory_smoke_failed"}:
+        trace_key = payload_hash(
+            {
+                "actor_id": actor_id,
+                "sdk_module": facts.get("sdk_module"),
+                "subject": facts.get("subject"),
+                "predicate": facts.get("predicate"),
+                "shadow_only_eval": facts.get("shadow_only_eval"),
+            }
+        )[:12]
+        return f"memory_smoke:{trace_key}"
+    return None
+
+
 def _source_used_trace_ref_from_facts(facts: dict[str, Any]) -> str | None:
     explicit = str(facts.get("trace_ref") or "").strip()
     if explicit:
@@ -2810,6 +2912,7 @@ def _repair_event_log_trace_ref_and_facts(
     conn: Any,
     *,
     event_id: str,
+    request_id: str | None = None,
     trace_ref: str,
     facts: dict[str, Any],
 ) -> None:
@@ -2821,12 +2924,13 @@ def _repair_event_log_trace_ref_and_facts(
     conn.execute(
         """
         UPDATE event_log
-        SET trace_ref = ?,
+        SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+            trace_ref = ?,
             payload_json = ?
         WHERE event_id = ?
           AND (trace_ref IS NULL OR trim(trace_ref) = '')
         """,
-        (trace_ref, json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str), event_id),
+        (request_id, trace_ref, json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str), event_id),
     )
 
 

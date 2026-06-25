@@ -226,6 +226,64 @@ class MemoryApprovalInboxTests(SparkTestCase):
         self.assertEqual(event_log_row["trace_ref"], "trace:req-repair-trace")
         self.assertEqual(lane_row["trace_ref"], "trace:req-repair-trace")
 
+    def test_repair_missing_event_trace_refs_backfills_typed_legacy_rows(self) -> None:
+        config_event_id = record_event(
+            self.state_db,
+            event_type="config_mutation_requested",
+            component="config_manager",
+            summary="Legacy config mutation requested.",
+            facts={
+                "target_document": "config.yaml",
+                "target_path": "telegram.enabled",
+                "rollback_ref": "rollback:cfg-legacy",
+                "validation_verdict": "requested",
+            },
+        )
+        env_event_id = record_event(
+            self.state_db,
+            event_type="runtime_environment_snapshot",
+            component="doctor_cli",
+            summary="Legacy environment snapshot recorded.",
+            facts={"surface": "doctor_cli", "config_hash": "abcdef1234567890"},
+        )
+        smoke_event_id = record_event(
+            self.state_db,
+            event_type="memory_smoke_succeeded",
+            component="memory_orchestrator",
+            summary="Legacy memory smoke completed.",
+            actor_id="operator:test",
+            facts={
+                "sdk_module": "domain_memory_sdk",
+                "subject": "spark",
+                "predicate": "memory_smoke",
+                "shadow_only_eval": False,
+            },
+        )
+
+        repaired = repair_missing_event_trace_refs(self.state_db)
+
+        self.assertEqual(repaired, 3)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT be.event_id, be.request_id, be.trace_ref, el.request_id AS log_request_id, el.trace_ref AS log_trace_ref
+                FROM builder_events AS be
+                JOIN event_log AS el ON el.event_id = be.event_id
+                WHERE be.event_id IN (?, ?, ?)
+                """,
+                (config_event_id, env_event_id, smoke_event_id),
+            ).fetchall()
+
+        by_event = {row["event_id"]: row for row in rows}
+        self.assertEqual(by_event[config_event_id]["request_id"], "config_mutation:cfg-legacy")
+        self.assertEqual(by_event[config_event_id]["trace_ref"], "trace:config_mutation:cfg-legacy")
+        self.assertEqual(by_event[env_event_id]["request_id"], "doctor_cli:environment_snapshot:abcdef123456")
+        self.assertEqual(by_event[env_event_id]["trace_ref"], "trace:doctor_cli:environment_snapshot:abcdef123456")
+        self.assertTrue(str(by_event[smoke_event_id]["request_id"]).startswith("memory_smoke:"))
+        for row in by_event.values():
+            self.assertEqual(row["log_request_id"], row["request_id"])
+            self.assertEqual(row["log_trace_ref"], row["trace_ref"])
+
     def test_inbox_keeps_plain_memory_write_logs_out_unless_approval_gated(self) -> None:
         record_event(
             self.state_db,
