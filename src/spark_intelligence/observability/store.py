@@ -2058,11 +2058,11 @@ def build_watchtower_snapshot(
 def _safe_watchtower_panel(panel_name: str, factory: Any) -> dict[str, Any]:
     try:
         return factory()
-    except sqlite3.Error as exc:
+    except Exception as exc:
         return {
             "status": "degraded",
             "panel": panel_name,
-            "error": f"SQLite error while building watchtower panel: {exc}",
+            "error": f"Error building watchtower panel: {exc}",
         }
 
 
