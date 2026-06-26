@@ -607,6 +607,42 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_classify_voice_task_recognizes_speak_transcribe_and_unspecified(self) -> None:
+        from spark_intelligence.harness_runtime.service import _classify_voice_task
+
+        self.assertEqual(
+            _classify_voice_task("Say: Hello from Spark."),
+            ("speak", "Hello from Spark."),
+        )
+        self.assertEqual(
+            _classify_voice_task("voice: standby for ops"),
+            ("speak", "standby for ops"),
+        )
+        self.assertEqual(
+            _classify_voice_task("Reply with voice: standby."),
+            ("speak", "standby."),
+        )
+        self.assertEqual(
+            _classify_voice_task("send this as voice: hello there"),
+            ("speak", "hello there"),
+        )
+        self.assertEqual(
+            _classify_voice_task("Please transcribe this audio note."),
+            ("transcribe", None),
+        )
+        self.assertEqual(
+            _classify_voice_task("run transcription on this clip"),
+            ("transcribe", None),
+        )
+        self.assertEqual(
+            _classify_voice_task("Hold the line for the operator."),
+            ("unspecified", None),
+        )
+        self.assertEqual(
+            _classify_voice_task(""),
+            ("unspecified", None),
+        )
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
