@@ -422,9 +422,17 @@ def _normalize_command(command: list[str]) -> list[str]:
 def _load_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
+    # The chip hook output file is written by an external chip subprocess in
+    # a temp dir; it can fail to read with OSError (race with cleanup,
+    # permission flip) or UnicodeDecodeError (chip emitted a BOM, mojibake,
+    # or binary). Treat unreadable output identically to a missing file —
+    # the run is reported with exit_code/stderr already and an empty output
+    # dict preserves the existing contract used by run_chip_autoloop and
+    # the dispatch consumers (loops/runner._extract_best treats empty dict
+    # as no metric extracted).
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
