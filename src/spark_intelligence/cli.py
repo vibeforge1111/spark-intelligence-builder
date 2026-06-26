@@ -10358,7 +10358,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sessions" and args.sessions_command == "revoke":
         return handle_sessions_revoke(args)
 
-    parser.error("Unknown command")
+    subcommand_attr = f"{args.command.replace('-', '_')}_command"
+    sub = getattr(args, subcommand_attr, None)
+    detail = f"{args.command} {sub}".strip() if sub else args.command
+    parser.error(
+        f"Unknown command: {detail!r} is parsed but not wired in main(). This is an internal routing gap; please file an issue with the command you ran."
+    )
     return 2
 
 
