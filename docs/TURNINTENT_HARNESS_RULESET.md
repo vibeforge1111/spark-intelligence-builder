@@ -187,6 +187,8 @@ Route-matrix simulations are useful guardrails, but they are not live release pr
 
 Rows that fail this contract should be counted as proof or trace-join gaps, not quietly treated as passing release evidence. Backed legacy gap capsules can explain history, but they do not authorize new readiness claims.
 
+The older `ops/natural-language-live-commands.json` matrix is a Harness promotion source, not a release gate. Its `harness_core_contract` must keep `claim_scope: legacy_route_shape`, `release_gate: none`, and `simulation_cases_are_release_proof: false`. Promote representative prompts into the control-proof canary pack only after adding explicit authority, mutation class, side-effect, proof-join, trace-join, and reply-shape expectations.
+
 ## Memory Availability Contract
 
 Durable memory writes and recalls require owner proof and a usable memory SDK. Builder resolves the default `domain_chip_memory` module through normal import first, then local development fallbacks:
