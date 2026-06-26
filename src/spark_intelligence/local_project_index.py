@@ -58,14 +58,29 @@ class LocalProjectIndex:
     records: list[LocalProjectRecord]
 
     def to_payload(self) -> dict[str, Any]:
+        # Single pass collects all four projections instead of walking
+        # self.records four times. With dozens of project roots in a
+        # busy workspace this drops the per-call cost from 4N to N and
+        # avoids three throwaway lists for the count totals.
+        records_dicts: list[dict[str, Any]] = []
+        repo_keys: list[str] = []
+        git_repo_count = 0
+        dirty_repo_count = 0
+        for record in self.records:
+            records_dicts.append(record.to_dict())
+            repo_keys.append(record.key)
+            if record.is_git:
+                git_repo_count += 1
+            if record.dirty is True:
+                dirty_repo_count += 1
         return {
             "record_count": len(self.records),
-            "records": [record.to_dict() for record in self.records],
+            "records": records_dicts,
             "summary": {
                 "known_repo_count": len(self.records),
-                "git_repo_count": len([record for record in self.records if record.is_git]),
-                "dirty_repo_count": len([record for record in self.records if record.dirty is True]),
-                "known_repo_keys": [record.key for record in self.records],
+                "git_repo_count": git_repo_count,
+                "dirty_repo_count": dirty_repo_count,
+                "known_repo_keys": repo_keys,
             },
         }
 
