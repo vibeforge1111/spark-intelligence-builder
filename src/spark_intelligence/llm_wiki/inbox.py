@@ -240,7 +240,10 @@ def _list_value(value: Any) -> list[str]:
 def _normalize_status(value: str) -> str:
     status = str(value or "candidate").strip().casefold()
     if status not in VALID_INBOX_STATUSES:
-        raise ValueError("candidate inbox status must be one of: candidate, verified, all")
+        allowed = ", ".join(sorted(VALID_INBOX_STATUSES))
+        raise ValueError(
+            f"candidate inbox status '{status}' is not recognized. Must be one of: {allowed}."
+        )
     return status
 
 
