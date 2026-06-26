@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import yaml
 
+from spark_intelligence import __version__
 from spark_intelligence.attachments import (
     activate_chip,
     add_attachment_root,
@@ -1243,6 +1244,7 @@ def _positive_int(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
+    parser.add_argument("--version", action="version", version=f"spark-intelligence {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_parser = subparsers.add_parser("setup", help="Bootstrap config and state")
