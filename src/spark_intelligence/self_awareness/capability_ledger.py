@@ -180,6 +180,19 @@ def capability_ledger_path(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "capability-ledger" / "capability-ledger.json"
 
 
+def _unknown_capability_ledger_key_message(capability_ledger_key: str, entries: dict[str, Any]) -> str:
+    known = sorted(name for name, value in entries.items() if isinstance(value, dict))
+    if known:
+        return (
+            f"Unknown capability ledger key: {capability_ledger_key}. "
+            f"Known keys: {', '.join(known)}."
+        )
+    return (
+        f"Unknown capability ledger key: {capability_ledger_key}. "
+        "The capability ledger has no entries yet -- propose a capability first."
+    )
+
+
 def load_capability_ledger(config_manager: ConfigManager) -> CapabilityLedgerResult:
     path = capability_ledger_path(config_manager)
     ledger = _read_ledger(path)
@@ -197,7 +210,7 @@ def build_capability_activation_preflight(
     entries = ledger.setdefault("entries", {})
     entry = entries.get(capability_ledger_key)
     if not isinstance(entry, dict):
-        raise ValueError(f"Unknown capability ledger key: {capability_ledger_key}")
+        raise ValueError(_unknown_capability_ledger_key_message(capability_ledger_key, entries))
 
     status = str(entry.get("status") or "proposed")
     evidence_records = [item for item in (entry.get("activation_evidence") or []) if isinstance(item, dict)]
@@ -265,7 +278,7 @@ def build_capability_activation_dry_run(
     entries = ledger.setdefault("entries", {})
     entry = entries.get(capability_ledger_key)
     if not isinstance(entry, dict):
-        raise ValueError(f"Unknown capability ledger key: {capability_ledger_key}")
+        raise ValueError(_unknown_capability_ledger_key_message(capability_ledger_key, entries))
 
     status = str(entry.get("status") or "proposed")
     evidence_payload = dict(evidence or {})
@@ -365,7 +378,7 @@ def record_capability_ledger_event(
     entries = ledger.setdefault("entries", {})
     entry = entries.get(capability_ledger_key)
     if not isinstance(entry, dict):
-        raise ValueError(f"Unknown capability ledger key: {capability_ledger_key}")
+        raise ValueError(_unknown_capability_ledger_key_message(capability_ledger_key, entries))
     previous = str(entry.get("status") or "proposed")
     if status != previous and status not in _FORWARD_TRANSITIONS.get(previous, set()):
         raise ValueError(f"Invalid capability lifecycle transition: {previous} -> {status}")
