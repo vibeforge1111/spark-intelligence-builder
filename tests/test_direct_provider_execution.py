@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 from unittest.mock import patch
 
 from spark_intelligence.llm.direct_provider import (
@@ -282,3 +283,45 @@ class DirectProviderExecutionTests(SparkTestCase):
         with self.state_db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM quarantine_records").fetchone()
         self.assertGreaterEqual(int(row["count"]), 1)
+
+    def test_http_error_redacts_secret_in_re_raised_exception(self) -> None:
+        """Re-raised RuntimeError must not leak provider secret_value."""
+        import io
+        secret = "sk-tes...2345"
+
+        def fake_urlopen(request, timeout: int = 30):
+            body = json.dumps({"error": f"Invalid API key: {secret}"}).encode("utf-8")
+            exc = urllib.error.HTTPError(
+                url="https://api.example.com/v1/chat/completions",
+                code=401,
+                msg="Unauthorized",
+                hdrs={},  # type: ignore[arg-type]
+                fp=io.BytesIO(body),
+            )
+            raise exc
+
+        provider = DirectProviderRequest(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            secret_value=secret,
+        )
+
+        with patch(
+            "spark_intelligence.llm.direct_provider.urllib.request.urlopen",
+            side_effect=fake_urlopen,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                execute_direct_provider_prompt(
+                    provider=provider,
+                    system_prompt="test",
+                    user_prompt="test",
+                )
+
+        message = str(ctx.exception)
+        self.assertNotIn(secret, message)
+        self.assertIn("[REDACTED]", message)
+        self.assertIn("Provider HTTP 401", message)

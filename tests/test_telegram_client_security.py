@@ -81,3 +81,77 @@ def test_telegram_api_error_description_is_redacted() -> None:
     message = str(exc_info.value)
     assert "sk-proj-" not in message
     assert "<redacted api key>" in message
+
+
+def test_download_file_rejects_path_traversal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_file must reject file_path that doesn't start with documents/ or photos/."""
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    with pytest.raises(RuntimeError, match="rejected untrusted file_path"):
+        client.download_file(file_path="../etc/passwd")
+
+
+def test_download_file_rejects_absolute_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_file must reject absolute-style paths."""
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    with pytest.raises(RuntimeError, match="rejected untrusted file_path"):
+        client.download_file(file_path="/etc/passwd")
+
+
+def test_download_file_rejects_arbitrary_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_file must reject paths with unexpected prefixes."""
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    with pytest.raises(RuntimeError, match="rejected untrusted file_path"):
+        client.download_file(file_path="secrets/token.txt")
+
+
+def test_download_file_accepts_valid_documents_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_file must accept paths starting with documents/."""
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    def fake_urlopen(req, timeout):
+        assert "/file/bot123456:secret-token/documents/file_123.bin" in req.full_url
+
+        class FakeResp:
+            def read(self):
+                return b"content"
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        return FakeResp()
+
+    monkeypatch.setattr(
+        "spark_intelligence.adapters.telegram.client.request.urlopen",
+        fake_urlopen,
+    )
+    result = client.download_file(file_path="documents/file_123.bin")
+    assert result == b"content"
+
+
+def test_download_file_accepts_valid_photos_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_file must accept paths starting with photos/."""
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    def fake_urlopen(req, timeout):
+        assert "/file/bot123456:secret-token/photos/photo_456.jpg" in req.full_url
+
+        class FakeResp:
+            def read(self):
+                return b"image-data"
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        return FakeResp()
+
+    monkeypatch.setattr(
+        "spark_intelligence.adapters.telegram.client.request.urlopen",
+        fake_urlopen,
+    )
+    result = client.download_file(file_path="photos/photo_456.jpg")
+    assert result == b"image-data"

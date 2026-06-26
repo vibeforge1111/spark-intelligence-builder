@@ -129,7 +129,12 @@ class TelegramBotApiClient:
         return result
 
     def download_file(self, *, file_path: str) -> bytes:
-        url = f"{self.api_root}/file/bot{self.token}/{str(file_path).lstrip('/')}"
+        normalized = str(file_path).lstrip("/")
+        if not (normalized.startswith("documents/") or normalized.startswith("photos/")):
+            raise RuntimeError(
+                f"Telegram download_file rejected untrusted file_path: {normalized!r}"
+            )
+        url = f"{self.api_root}/file/bot{self.token}/{normalized}"
         req = request.Request(url, method="GET")
         with self._urlopen(req, timeout=30) as response:
             return response.read()
