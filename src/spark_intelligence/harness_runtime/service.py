@@ -540,6 +540,20 @@ def build_harness_runtime_snapshot(
             """,
             (limit,),
         ).fetchall()
+        total_open_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM builder_runs
+            WHERE run_kind LIKE 'harness:%' AND status = 'open'
+            """
+        ).fetchone()
+        total_failed_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM builder_runs
+            WHERE run_kind LIKE 'harness:%' AND status = 'failed'
+            """
+        ).fetchone()
     recent_runs: list[dict[str, Any]] = []
     for row in rows:
         run_kind = str(row["run_kind"] or "")
@@ -556,10 +570,12 @@ def build_harness_runtime_snapshot(
                 "summary_json": json.loads(str(row["summary_json"])) if row["summary_json"] else {},
             }
         )
+    total_open = int(total_open_row["total"]) if total_open_row and total_open_row["total"] is not None else 0
+    total_failed = int(total_failed_row["total"]) if total_failed_row and total_failed_row["total"] is not None else 0
     summary = {
         "recent_run_count": len(recent_runs),
-        "open_run_count": len([item for item in recent_runs if item.get("status") == "open"]),
-        "failed_run_count": len([item for item in recent_runs if item.get("status") == "failed"]),
+        "open_run_count": total_open,
+        "failed_run_count": total_failed,
         "last_harness_id": recent_runs[0]["harness_id"] if recent_runs else None,
     }
     return HarnessRuntimeSnapshot(
