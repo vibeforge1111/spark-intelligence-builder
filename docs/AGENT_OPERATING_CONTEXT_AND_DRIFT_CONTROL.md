@@ -61,6 +61,31 @@ Wiki doctrine guides behavior, but it does not override live state. Mission trac
 - Route-changing actions must pass the conversation action gate.
 - Final answers should be checked against the latest user turn before sending.
 
+## Trace Health Contract
+
+The operating panel consumes `spark os compile` trace-health evidence as a
+proof surface, not as permission or task outcome. It must preserve the split
+between current repair work and historical publish handoffs:
+
+- `missing_trace_ref_count`, `current_unresolved_high_severity_open_count`, and
+  `orphan_parent_event_id_count` make the trace repair queue `needs_repair`.
+- `unresolved_high_severity_open_count` with
+  `current_unresolved_high_severity_open_count = 0` makes the queue
+  `historical_handoff`, not `needs_repair`.
+- `unresolved_high_severity_source_group_count` and
+  `latest_unresolved_high_severity_event_created_at` should remain visible so a
+  publish handoff can be joined to the historical evidence without turning it
+  into a fresh live-trace failure.
+- If compact summary counts are missing, the read model may derive unresolved
+  source-group count and latest timestamp from the redacted
+  `high_severity_open_sources` groups. Do not read raw event bodies to make this
+  distinction.
+
+This matters because old high-severity integrity rows can be real and still not
+mean the current 1h or 24h trace window is broken. Agents should repair current
+producer boundaries first, while historical integrity families stay explicit
+publish handoffs until an owner-approved lifecycle resolution exists.
+
 ## Key Drift Evals
 
 The default eval suite covers:
