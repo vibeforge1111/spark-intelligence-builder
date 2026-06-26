@@ -94,7 +94,9 @@ def export_sdk_maintenance_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    output_tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    output_tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    output_tmp_path.replace(output_path)
     report = None
     resolved_report_path = Path(report_write_path) if report_write_path else None
     if run_report:
