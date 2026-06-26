@@ -23,6 +23,17 @@ _DIRECT_SECRET_PATTERNS = [
     r"\bAKIA[0-9A-Z]{16}\b",
     r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    # Credential families the canonical SECRET_PATTERNS (security/redaction.py)
+    # already strip but this boundary detector was missing, so they bypassed the
+    # outbound secret-boundary guardrail and the connector probe redactor:
+    r"(?i)\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis)://[^\s'\"<>]+",  # DB connection strings
+    r"\bAIza[0-9A-Za-z_-]{20,}\b",                 # Google API key
+    r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}\b",  # Stripe key (underscore form)
+    r"\bhf_[A-Za-z0-9]{20,}\b",                     # HuggingFace token
+    r"\bnpm_[A-Za-z0-9]{20,}\b",                    # npm token
+    r"\bpypi-[A-Za-z0-9_-]{20,}\b",                 # PyPI token
+    r"\bdop_v1_[A-Za-z0-9_-]{20,}\b",              # Doppler token
+    r"\bgAAAA[A-Za-z0-9_-]{20,}\b",                # Fernet-encrypted secret
 ]
 
 _SECRET_KEY_PARTS = {
