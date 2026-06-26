@@ -607,6 +607,103 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_derive_follow_up_task_routes_per_target_harness(self) -> None:
+        from spark_intelligence.harness_runtime.service import (
+            HarnessExecutionResult,
+            HarnessTaskEnvelope,
+            _derive_follow_up_task,
+        )
+
+        def _make_envelope() -> HarnessTaskEnvelope:
+            return HarnessTaskEnvelope(
+                envelope_id="htask:derive-test",
+                task="Original operator task.",
+                harness_id="researcher.advisory",
+                owner_system="researcher",
+                backend_kind="researcher",
+                session_scope="task",
+                prompt_strategy="direct",
+                route_mode="router",
+                required_capabilities=[],
+                artifacts_expected=[],
+                next_actions=[],
+                limitations=[],
+                channel_kind=None,
+                session_id=None,
+                human_id=None,
+                agent_id=None,
+            )
+
+        result_with_reply = HarnessExecutionResult(
+            envelope=_make_envelope(),
+            run_id="run:derive-with-reply",
+            status="completed",
+            summary="Summary text only.",
+            artifacts={"reply_text": "Upstream reply text."},
+            next_actions=[],
+        )
+        result_without_reply = HarnessExecutionResult(
+            envelope=_make_envelope(),
+            run_id="run:derive-without-reply",
+            status="prepared",
+            summary="Summary text only.",
+            artifacts={},
+            next_actions=[],
+        )
+
+        self.assertEqual(
+            _derive_follow_up_task(current_result=result_with_reply, target_harness_id="voice.io"),
+            "Say: Upstream reply text.",
+        )
+        self.assertEqual(
+            _derive_follow_up_task(current_result=result_without_reply, target_harness_id="voice.io"),
+            "Say: Summary text only.",
+        )
+
+        swarm_task = _derive_follow_up_task(
+            current_result=result_with_reply, target_harness_id="swarm.escalation"
+        )
+        self.assertIn("Coordinate this through Swarm.", swarm_task)
+        self.assertIn("Original harness: researcher.advisory", swarm_task)
+        self.assertIn("Upstream reply: Upstream reply text.", swarm_task)
+        swarm_task_no_reply = _derive_follow_up_task(
+            current_result=result_without_reply, target_harness_id="swarm.escalation"
+        )
+        self.assertIn("Upstream summary: Summary text only.", swarm_task_no_reply)
+
+        self.assertEqual(
+            _derive_follow_up_task(
+                current_result=result_with_reply, target_harness_id="researcher.advisory"
+            ),
+            "Upstream reply text.",
+        )
+        self.assertEqual(
+            _derive_follow_up_task(
+                current_result=result_without_reply, target_harness_id="researcher.advisory"
+            ),
+            "Original operator task.",
+        )
+
+        self.assertEqual(
+            _derive_follow_up_task(
+                current_result=result_with_reply, target_harness_id="builder.direct"
+            ),
+            "Upstream reply text.",
+        )
+        self.assertEqual(
+            _derive_follow_up_task(
+                current_result=result_without_reply, target_harness_id="builder.direct"
+            ),
+            "Summary text only.",
+        )
+
+        self.assertEqual(
+            _derive_follow_up_task(
+                current_result=result_with_reply, target_harness_id="future.workflow"
+            ),
+            "Original operator task.",
+        )
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
