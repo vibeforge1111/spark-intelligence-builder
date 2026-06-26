@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import re
+import tempfile
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -209,7 +210,24 @@ class ConfigManager:
                 summary=f"Config mutation rejected as semantic no-op for {target_path}.",
             )
             return
-        self.paths.config_yaml.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.paths.config_yaml.parent,
+            prefix=f"{self.paths.config_yaml.stem}.",
+            suffix=".tmp",
+        )
+        try:
+            os.write(fd, yaml.safe_dump(data, sort_keys=False).encode("utf-8"))
+            os.close(fd)
+            fd = -1
+            os.replace(tmp_path, self.paths.config_yaml)
+        except Exception:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         self._record_config_mutation(
             target_document="config_yaml",
             target_path=target_path,
