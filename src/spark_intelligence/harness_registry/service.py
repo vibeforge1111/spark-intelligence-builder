@@ -67,11 +67,18 @@ class HarnessRegistrySnapshot:
                 "available_contract_count": len([item for item in self.contracts if item.available]),
                 "degraded_contract_count": len([item for item in self.contracts if item.degraded]),
                 "available_harnesses": [item.harness_id for item in self.contracts if item.available],
+                "degraded_harnesses": [item.harness_id for item in self.contracts if item.degraded],
+                "unavailable_harnesses": [item.harness_id for item in self.contracts if not item.available],
                 "recipe_count": len(self.recipes),
                 "available_recipes": [
                     str(item.get("recipe_id") or "")
                     for item in self.recipes
                     if bool(item.get("available"))
+                ],
+                "unavailable_recipes": [
+                    str(item.get("recipe_id") or "")
+                    for item in self.recipes
+                    if not bool(item.get("available"))
                 ],
             },
         }
