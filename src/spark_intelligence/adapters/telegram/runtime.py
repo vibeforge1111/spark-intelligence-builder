@@ -2557,6 +2557,8 @@ def poll_telegram_updates_once(
                 {
                     "event": "telegram_update_duplicate",
                     "channel_id": "telegram",
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_type": normalized.chat_type,
@@ -2570,6 +2572,8 @@ def poll_telegram_updates_once(
                 {
                     "event": "telegram_update_ignored",
                     "channel_id": "telegram",
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "reason": "non_dm_surface",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,

@@ -165,6 +165,51 @@ class TelegramFailurePathTests(SparkTestCase):
         self.assertEqual(result.ignored_count, 1)
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], 501)
+        self.assertEqual(traces[0]["request_id"], "telegram:501")
+        self.assertEqual(traces[0]["trace_ref"], "trace:telegram:501")
+        self.assertEqual(traces[0]["proofStatus"], "not_execution_proof")
+        self.assertEqual(traces[0]["proofStorage"], "not_applicable")
+
+    def test_poll_telegram_updates_once_ignored_non_dm_carries_trace_join(self) -> None:
+        self.add_telegram_channel()
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=551,
+                    user_id="111",
+                    username="alice",
+                    chat_type="group",
+                    chat_id="-100551",
+                    text="hello from a group",
+                )
+            ]
+        )
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                event="telegram_update_ignored",
+                as_json=True,
+            )
+        )
+
+        self.assertEqual(result.fetched_update_count, 1)
+        self.assertEqual(result.ignored_count, 1)
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "non_dm_surface")
+        self.assertEqual(traces[0]["update_id"], 551)
+        self.assertEqual(traces[0]["request_id"], "telegram:551")
+        self.assertEqual(traces[0]["trace_ref"], "trace:telegram:551")
+        self.assertEqual(traces[0]["proofStatus"], "not_execution_proof")
+        self.assertEqual(traces[0]["proofStorage"], "not_applicable")
 
     def test_poll_telegram_updates_once_rate_limits_repeated_sender(self) -> None:
         self.add_telegram_channel()
