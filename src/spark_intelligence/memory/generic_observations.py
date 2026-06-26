@@ -9,6 +9,18 @@ from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_
 
 
 _CORRECTION_PREFIX_PATTERN = re.compile(r"^(?:actually|update|correction)[:,]?\s+", re.IGNORECASE)
+# Additional hot-path compiled patterns. _clean_text, parse_entity_state_fact,
+# parse_entity_state_deletion, _entity_key, _clean_entity_label, and
+# _is_memoryworthy_text are all called once per inbound user message. Moving
+# their inline regex to module scope eliminates per-call recompilation.
+_WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
+_FOR_LATER_PREFIX_PATTERN = re.compile(r"^(?:for\s+later[:,]?\s*)", re.IGNORECASE)
+_REMEMBER_THAT_PREFIX_PATTERN = re.compile(r"^(?:remember\s+that\s+)", re.IGNORECASE)
+_PLEASE_PREFIX_PATTERN = re.compile(r"^(?:please\s+)", re.IGNORECASE)
+_ENTITY_KEY_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+_MY_THE_PREFIX_PATTERN = re.compile(r"^(?:my|the)\s+", re.IGNORECASE)
+_LOWER_TOKEN_PATTERN = re.compile(r"[a-z']+")
+_MEMORYWORTHY_TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[-'][a-z0-9]+)?")
 _HYPOTHETICAL_PREFIX_PATTERN = re.compile(
     r"^(?:maybe|perhaps|what if|if|hopefully|i might|i may|i could|i should)\b",
     re.IGNORECASE,
@@ -1007,7 +1019,7 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
 
 
 def _clean_text(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip())
+    return _WHITESPACE_RUN_PATTERN.sub(" ", str(value or "").strip())
 
 
 def _entity_state_observation_answer(fact: EntityStateFact) -> str:
@@ -1043,8 +1055,8 @@ def _entity_state_observation_answer(fact: EntityStateFact) -> str:
 
 def parse_entity_state_fact(value: str) -> EntityStateFact | None:
     normalized = _strip_correction_prefix(_clean_text(value))
-    normalized = re.sub(r"^(?:for\s+later[:,]?\s*)", "", normalized, flags=re.IGNORECASE).strip()
-    normalized = re.sub(r"^(?:remember\s+that\s+)", "", normalized, flags=re.IGNORECASE).strip()
+    normalized = _FOR_LATER_PREFIX_PATTERN.sub("", normalized).strip()
+    normalized = _REMEMBER_THAT_PREFIX_PATTERN.sub("", normalized).strip()
     if not normalized:
         return None
     for parser in (
@@ -1070,7 +1082,7 @@ def parse_entity_state_fact(value: str) -> EntityStateFact | None:
 
 def parse_entity_state_deletion(value: str) -> EntityStateDeletion | None:
     normalized = _strip_correction_prefix(_clean_text(value))
-    normalized = re.sub(r"^(?:please\s+)", "", normalized, flags=re.IGNORECASE).strip()
+    normalized = _PLEASE_PREFIX_PATTERN.sub("", normalized).strip()
     if not normalized:
         return None
     for parser in (
@@ -1086,7 +1098,7 @@ def parse_entity_state_deletion(value: str) -> EntityStateDeletion | None:
 
 
 def _entity_key(entity_label: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", _clean_text(entity_label).lower()).strip("-")
+    slug = _ENTITY_KEY_SLUG_PATTERN.sub("-", _clean_text(entity_label).lower()).strip("-")
     return f"named-object:{slug or 'unknown'}"
 
 
@@ -1124,7 +1136,7 @@ def _entity_fact(
 
 def _clean_entity_label(value: str) -> str:
     normalized = _clean_text(value)
-    normalized = re.sub(r"^(?:my|the)\s+", "", normalized, flags=re.IGNORECASE).strip()
+    normalized = _MY_THE_PREFIX_PATTERN.sub("", normalized).strip()
     return normalized
 
 
@@ -1492,7 +1504,7 @@ def _current_plan_value_clause(value: str) -> str:
     lowered = normalized.lower()
     if lowered.startswith("to "):
         return normalized
-    first_word_match = re.match(r"[a-z']+", lowered)
+    first_word_match = _LOWER_TOKEN_PATTERN.match(lowered)
     first_word = first_word_match.group(0) if first_word_match else ""
     if first_word in _CURRENT_PLAN_VERB_STARTERS:
         return f"to {normalized}"
@@ -1510,7 +1522,7 @@ def _is_memoryworthy_text(text: str) -> bool:
         return False
     if len(text) < 8 or len(text) > 600:
         return False
-    tokens = re.findall(r"[a-z0-9]+(?:[-'][a-z0-9]+)?", text.casefold())
+    tokens = _MEMORYWORTHY_TOKEN_PATTERN.findall(text.casefold())
     if len(tokens) <= 2 and not (_BELIEF_PREFIX_PATTERN.search(text) or _STRUCTURED_EVIDENCE_PATTERN.search(text)):
         return False
     if "http://" in text or "https://" in text:
