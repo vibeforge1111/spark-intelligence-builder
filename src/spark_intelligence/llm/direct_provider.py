@@ -337,6 +337,23 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404:
+            raise RuntimeError(
+                f"Provider HTTP 404 (not found): {body}. "
+                "The configured base URL or model name does not exist at the provider. "
+                "Check the provider base URL and model name in the active Builder profile."
+            ) from exc
+        if exc.code in {401, 403}:
+            raise RuntimeError(
+                f"Provider HTTP {exc.code} ({exc.reason}): {body}. "
+                "The provider rejected the API key. "
+                "Rotate the provider secret in the Builder profile and retry."
+            ) from exc
+        if exc.code == 429:
+            raise RuntimeError(
+                f"Provider HTTP 429 (rate limited): {body}. "
+                "The provider throttled the request. Retry after a short delay, or switch to a less-loaded provider in the Builder profile."
+            ) from exc
         raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Provider network error: {exc.reason}") from exc
