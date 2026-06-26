@@ -87,7 +87,12 @@ def inspect_telegram_bot_token(
     result = payload.get("result")
     if not isinstance(result, dict):
         raise RuntimeError("Telegram auth succeeded but returned no bot profile.")
-    if not result.get("is_bot", True):
+    # Strict bot-flag validation: Telegram's getMe always returns `is_bot`
+    # for legitimate bot tokens. The previous default of True meant a
+    # response missing the field silently passed the non-bot check; with
+    # the strict default False, a missing or non-True flag is rejected
+    # with the same operator-readable error as an explicit false value.
+    if not bool(result.get("is_bot", False)):
         raise RuntimeError("Telegram token resolved to a non-bot account.")
     bot_id = result.get("id")
     if bot_id is None:
