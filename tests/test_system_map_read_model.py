@@ -46,6 +46,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["latest_spawner_job"]["model"], "gpt-test")
         self.assertEqual(context["trace_health"]["missing_trace_ref_count"], 8)
         self.assertEqual(context["trace_health"]["high_severity_open_count"], 1)
+        self.assertEqual(context["trace_health"]["current_unresolved_high_severity_open_count"], 1)
         self.assertEqual(context["trace_health"]["orphan_parent_event_id_count"], 1)
         self.assertEqual(context["trace_health"]["missing_trace_ref_sources"]["row_count"], 2)
         self.assertEqual(
@@ -61,6 +62,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(context["trace_topology"]["groups"][0]["topology"]["edge_sample"][0]["child_event_id"], "evt-2")
         self.assertEqual(context["trace_health"]["recent_windows"][0]["window"], "24h")
         self.assertEqual(context["trace_health"]["recent_windows"][0]["missing_trace_ref_ratio"], 0.25)
+        self.assertEqual(context["trace_health"]["recent_windows"][0]["high_severity_open_count"], 1)
         self.assertEqual(context["memory_movement"]["status"], "supported")
         self.assertEqual(context["memory_movement"]["row_count"], 42)
         self.assertEqual(context["memory_movement"]["movement_counts"]["saved"], 7)
@@ -134,6 +136,7 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(capability_garden["proof_state_counts"]["schema_only"], 1)
         self.assertEqual(capability_garden["top_missing_proof"], "normalized gate verdict")
         self.assertEqual(panel["trace_repair_queue"]["counts"]["missing_trace_ref_count"], 8)
+        self.assertEqual(panel["trace_repair_queue"]["counts"]["current_unresolved_high_severity_open_count"], 1)
         self.assertEqual(panel["trace_repair_queue"]["counts"]["orphan_parent_event_id_count"], 1)
         self.assertEqual(panel["trace_repair_queue"]["trace_topology"]["group_count"], 2)
         self.assertEqual(
@@ -184,7 +187,93 @@ class SystemMapReadModelTests(SparkTestCase):
             )
         )
 
-    def _write_compiled_system_map(self, *, raw_sentinel: str = "") -> Path:
+    def test_panel_separates_historical_high_severity_handoff_from_current_repair(self) -> None:
+        self._write_compiled_system_map(
+            trace_health_override={
+                "health_flags": ["historical_open_high_severity_events"],
+                "missing_trace_ref_count": 0,
+                "high_severity_open_count": 46,
+                "unresolved_high_severity_open_count": 1,
+                "current_unresolved_high_severity_open_count": 0,
+                "high_severity_open_sources": {
+                    "group_by": [
+                        "component",
+                        "event_type",
+                        "reason_code",
+                        "status",
+                        "severity",
+                        "target_surface",
+                        "evidence_lane",
+                    ],
+                    "rows": [
+                        {
+                            "component": "telegram_runtime",
+                            "event_type": "tool_call_ledger_recorded",
+                            "status": "blocked",
+                            "severity": "high",
+                            "target_surface": "spark_intelligence_builder",
+                            "evidence_lane": "realworld_validated",
+                            "event_count": 1,
+                            "latest_lifecycle_state": "latest_open_high_severity",
+                            "latest_event_created_at": "2026-06-02 09:03:25",
+                        },
+                        {
+                            "component": "telegram_bridge",
+                            "event_type": "tool_call_ledger_recorded",
+                            "status": "blocked",
+                            "severity": "high",
+                            "target_surface": "spark_intelligence_builder",
+                            "evidence_lane": "realworld_validated",
+                            "event_count": 11,
+                            "latest_lifecycle_state": "latest_resolved",
+                            "latest_event_created_at": "2026-06-25 16:02:49",
+                        },
+                    ],
+                },
+                "orphan_parent_event_id_count": 0,
+                "trace_group_count": 2,
+                "missing_trace_ref_sources": {"group_by": [], "rows": []},
+                "orphan_parent_event_sources": {"group_by": [], "rows": []},
+                "recent_windows": [
+                    {
+                        "window": "24h",
+                        "threshold": "2026-06-25T06:02:19Z",
+                        "row_count": 7668,
+                        "missing_trace_ref_count": 0,
+                        "missing_trace_ref_ratio": 0.0,
+                        "high_severity_open_count": 0,
+                        "high_severity_open_ratio": 0.0,
+                    }
+                ],
+            }
+        )
+
+        panel = build_agent_operating_panel(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-historical-trace-health",
+            user_message="show the operating panel",
+        ).to_payload()
+
+        queue = panel["trace_repair_queue"]
+        sections = {section["section_id"]: section for section in panel["sections"]["sections"]}
+        self.assertEqual(queue["status"], "historical_handoff")
+        self.assertEqual(sections["trace_repair_queue"]["status"], "historical_handoff")
+        self.assertEqual(queue["counts"]["current_unresolved_high_severity_open_count"], 0)
+        self.assertEqual(queue["counts"]["unresolved_high_severity_open_count"], 1)
+        self.assertEqual(queue["counts"]["unresolved_high_severity_source_group_count"], 1)
+        self.assertEqual(queue["latest_unresolved_high_severity_event_created_at"], "2026-06-02 09:03:25")
+        self.assertIn(
+            "Keep historical high-severity integrity evidence as an explicit publish handoff.",
+            queue["next_actions"],
+        )
+
+    def _write_compiled_system_map(
+        self,
+        *,
+        raw_sentinel: str = "",
+        trace_health_override: dict[str, object] | None = None,
+    ) -> Path:
         system_map_dir = self.home / "system-map"
         system_map_dir.mkdir(parents=True)
         self.config_manager.set_path("spark.system_map.output_dir", str(system_map_dir))
@@ -357,7 +446,7 @@ class SystemMapReadModelTests(SparkTestCase):
                             }
                         ],
                     },
-                    "builder_trace_health": {
+                    "builder_trace_health": trace_health_override or {
                         "health_flags": [
                             "missing_trace_refs",
                             "open_high_severity_events",
@@ -365,6 +454,10 @@ class SystemMapReadModelTests(SparkTestCase):
                         ],
                         "missing_trace_ref_count": 8,
                         "high_severity_open_count": 1,
+                        "unresolved_high_severity_open_count": 1,
+                        "current_unresolved_high_severity_open_count": 1,
+                        "unresolved_high_severity_source_group_count": 1,
+                        "latest_unresolved_high_severity_event_created_at": "2026-05-10T13:00:00Z",
                         "orphan_parent_event_id_count": 1,
                         "trace_group_count": 2,
                         "missing_trace_ref_sources": {
@@ -425,6 +518,8 @@ class SystemMapReadModelTests(SparkTestCase):
                                 "row_count": 4,
                                 "missing_trace_ref_count": 1,
                                 "missing_trace_ref_ratio": 0.25,
+                                "high_severity_open_count": 1,
+                                "high_severity_open_ratio": 0.25,
                             }
                         ],
                     },

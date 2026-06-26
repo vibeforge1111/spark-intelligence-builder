@@ -283,6 +283,12 @@ def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "health_flags": _list(trace_health.get("health_flags")),
         "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
         "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+        "unresolved_high_severity_open_count": _int(trace_health.get("unresolved_high_severity_open_count")),
+        "current_unresolved_high_severity_open_count": _int(
+            trace_health.get("current_unresolved_high_severity_open_count")
+        ),
+        "unresolved_high_severity_source_group_count": _unresolved_high_severity_source_group_count(trace_health),
+        "latest_unresolved_high_severity_event_created_at": _latest_unresolved_high_severity_created_at(trace_health),
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
@@ -576,6 +582,37 @@ def _orphan_parent_event_sources(trace_health: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _unresolved_high_severity_source_group_count(trace_health: dict[str, Any]) -> int:
+    explicit = _int(trace_health.get("unresolved_high_severity_source_group_count"))
+    if explicit:
+        return explicit
+    sources = _dict(trace_health.get("high_severity_open_sources"))
+    rows = [_dict(row) for row in _list(sources.get("rows"))]
+    return sum(1 for row in rows if _is_unresolved_high_severity_source(row))
+
+
+def _latest_unresolved_high_severity_created_at(trace_health: dict[str, Any]) -> str:
+    explicit = str(trace_health.get("latest_unresolved_high_severity_event_created_at") or "").strip()
+    if explicit:
+        return explicit
+    sources = _dict(trace_health.get("high_severity_open_sources"))
+    candidates = [
+        str(row.get("latest_event_created_at") or "").strip()
+        for row in (_dict(raw_row) for raw_row in _list(sources.get("rows")))
+        if _is_unresolved_high_severity_source(row)
+    ]
+    return max((candidate for candidate in candidates if candidate), default="")
+
+
+def _is_unresolved_high_severity_source(row: dict[str, Any]) -> bool:
+    latest = str(row.get("latest_lifecycle_state") or row.get("lifecycle_temporal_state") or "").strip().lower()
+    if latest:
+        return latest == "latest_open_high_severity"
+    return str(row.get("status") or "").strip().lower() in {"open", "failed", "error", "blocked"} and str(
+        row.get("severity") or ""
+    ).strip().lower() in {"high", "critical"}
+
+
 def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for raw_row in _list(trace_health.get("recent_windows")):
@@ -587,6 +624,8 @@ def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str,
                 "row_count": _int(row.get("row_count")),
                 "missing_trace_ref_count": _int(row.get("missing_trace_ref_count")),
                 "missing_trace_ref_ratio": _float(row.get("missing_trace_ref_ratio")),
+                "high_severity_open_count": _int(row.get("high_severity_open_count")),
+                "high_severity_open_ratio": _float(row.get("high_severity_open_ratio")),
             }
         )
     return rows

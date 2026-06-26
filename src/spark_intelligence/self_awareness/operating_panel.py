@@ -226,6 +226,11 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
         "health_flags": len(health_flags),
         "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
         "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+        "unresolved_high_severity_open_count": _int(trace_health.get("unresolved_high_severity_open_count")),
+        "current_unresolved_high_severity_open_count": _current_high_severity_count(trace_health),
+        "unresolved_high_severity_source_group_count": _int(
+            trace_health.get("unresolved_high_severity_source_group_count")
+        ),
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "top_missing_source_count": len(rows),
@@ -245,6 +250,9 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
         "source_ref": spark_system_map.get("source_ref") or "spark os compile",
         "health_flags": health_flags,
         "counts": counts,
+        "latest_unresolved_high_severity_event_created_at": trace_health.get(
+            "latest_unresolved_high_severity_event_created_at"
+        ),
         "top_missing_trace_ref_sources": rows,
         "top_orphan_parent_sources": orphan_rows,
         "trace_topology": {
@@ -277,10 +285,12 @@ def _trace_repair_status(*, present: bool, counts: dict[str, int]) -> str:
         return "missing"
     if (
         int(counts.get("missing_trace_ref_count") or 0)
-        or int(counts.get("high_severity_open_count") or 0)
+        or int(counts.get("current_unresolved_high_severity_open_count") or 0)
         or int(counts.get("orphan_parent_event_id_count") or 0)
     ):
         return "needs_repair"
+    if int(counts.get("unresolved_high_severity_open_count") or 0) or int(counts.get("high_severity_open_count") or 0):
+        return "historical_handoff"
     return "healthy"
 
 
@@ -305,8 +315,10 @@ def _trace_repair_next_actions(
             )
         else:
             actions.append("Repair missing trace propagation in builder event producers.")
-    if int(counts.get("high_severity_open_count") or 0):
-        actions.append("Resolve open high-severity events before treating black-box health as launch evidence.")
+    if int(counts.get("current_unresolved_high_severity_open_count") or 0):
+        actions.append("Resolve current open high-severity events before treating black-box health as launch evidence.")
+    elif int(counts.get("unresolved_high_severity_open_count") or 0) or int(counts.get("high_severity_open_count") or 0):
+        actions.append("Keep historical high-severity integrity evidence as an explicit publish handoff.")
     if int(counts.get("orphan_parent_event_id_count") or 0):
         if orphan_sources:
             first_orphan = orphan_sources[0]
@@ -321,6 +333,12 @@ def _trace_repair_next_actions(
     if not actions:
         actions.append("Keep trace propagation checks in the operating panel during new producer work.")
     return actions
+
+
+def _current_high_severity_count(trace_health: dict[str, Any]) -> int:
+    if "current_unresolved_high_severity_open_count" in trace_health:
+        return _int(trace_health.get("current_unresolved_high_severity_open_count"))
+    return _int(trace_health.get("high_severity_open_count"))
 
 
 def _trace_repair_text(trace_repair_queue: dict[str, Any]) -> str:
@@ -342,7 +360,8 @@ def _trace_repair_text(trace_repair_queue: dict[str, Any]) -> str:
         "Trace repair: "
         f"{trace_repair_queue.get('status') or 'unknown'}, "
         f"missing refs={int(counts.get('missing_trace_ref_count') or 0)}, "
-        f"high severity={int(counts.get('high_severity_open_count') or 0)}, "
+        f"current high severity={int(counts.get('current_unresolved_high_severity_open_count') or 0)}, "
+        f"historical high severity={int(counts.get('unresolved_high_severity_open_count') or counts.get('high_severity_open_count') or 0)}, "
         f"orphan parents={int(counts.get('orphan_parent_event_id_count') or 0)}"
         f"{top_text}{window_text}"
     )
