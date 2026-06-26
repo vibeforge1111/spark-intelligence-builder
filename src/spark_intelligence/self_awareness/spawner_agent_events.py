@@ -60,7 +60,7 @@ def read_spawner_black_box_entries(
         if entry:
             entries.append(entry)
 
-    entries.sort(key=lambda entry: entry.created_at or "", reverse=True)
+    entries.sort(key=lambda entry: (entry.created_at or "", entry.event_id or ""), reverse=True)
     return entries[: max(1, int(limit))]
 
 
