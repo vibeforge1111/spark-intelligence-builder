@@ -219,6 +219,28 @@ def test_cold_context_retrieval_is_optional_when_domain_chip_memory_is_unavailab
     assert retrieve_domain_chip_cold_context(sdk=None, subject="human:telegram:1", query="what do you know?") == []
 
 
+def test_cold_context_retrieval_lets_non_import_errors_from_adapter_propagate(monkeypatch) -> None:
+    """The except clauses around `from domain_chip_memory...` should catch
+    ImportError only, so a RuntimeError raised by the adapter's module-level
+    side effects surfaces to the caller instead of being folded into `[]`."""
+
+    class _BoomingModule(types.ModuleType):
+        def __getattr__(self, name: str):
+            raise RuntimeError(f"intentional non-import-side fault on attribute {name!r}")
+
+    booming = _BoomingModule("domain_chip_memory.builder_read_adapter")
+    parent = sys.modules.get("domain_chip_memory") or types.ModuleType("domain_chip_memory")
+    monkeypatch.setitem(sys.modules, "domain_chip_memory", parent)
+    monkeypatch.setitem(sys.modules, "domain_chip_memory.builder_read_adapter", booming)
+
+    try:
+        retrieve_domain_chip_cold_context(sdk=object(), subject="human:telegram:1", query="x")
+    except RuntimeError as exc:
+        assert "intentional non-import-side fault" in str(exc)
+    else:  # pragma: no cover - the fault must propagate, not be swallowed
+        raise AssertionError("RuntimeError from the adapter module was swallowed by the narrowed except clause")
+
+
 def test_cold_context_retrieval_can_inject_domain_chip_evidence(monkeypatch) -> None:
     module = types.ModuleType("domain_chip_memory.builder_read_adapter")
 
