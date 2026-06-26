@@ -207,9 +207,33 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
 
 
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    serialized = json.dumps(payload, indent=2)
+    # Atomic temp+replace so a crash mid-write cannot leave the timestamped
+    # report or the latest.json pointer truncated. The handoff freshness
+    # gate downstream reads latest.json to decide whether the most recent
+    # check passed; a torn latest.json reads as either invalid JSON or a
+    # half-written object, both of which silently downgrade the gate to
+    # an unparseable state on the next observability sweep.
+    _atomic_write_text(report_path, serialized)
     latest_path = config_manager.paths.home / "artifacts" / "handoff-freshness" / "latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_text(latest_path, serialized)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(text, encoding="utf-8")
+        tmp_path.replace(path)
+    finally:
+        # If tmp.replace() failed mid-flight (e.g. cross-device or
+        # permission denied), drop the half-written temp so it cannot
+        # accumulate and confuse the next handoff-freshness write.
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _mtime_iso(path: Path) -> str:
