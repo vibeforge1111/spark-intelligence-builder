@@ -476,6 +476,123 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["needs_input"]["mode"], "unspecified")
         self.assertIn("resume_command", result.artifacts["resume_token"])
 
+    def test_execute_voice_io_harness_treats_runtime_error_from_status_hook_as_blocked(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=RuntimeError("voice.status hook is offline"),
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.artifacts["voice_status"]["ready"], False)
+        self.assertIn("voice.status hook is offline", result.artifacts["voice_status"]["reason"])
+
+    def test_execute_voice_io_harness_lets_programming_errors_in_status_hook_propagate(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=AttributeError("typo in attachments helper"),
+        ):
+            with self.assertRaises(AttributeError):
+                execute_harness_task(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    envelope=envelope,
+                )
+
+    def test_execute_voice_io_harness_treats_runtime_error_from_speak_hook_as_blocked(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+
+        call_count = {"n": 0}
+
+        def fake_voice_hook(*, hook, **_kwargs):
+            call_count["n"] += 1
+            if hook == "voice.status":
+                return (
+                    {
+                        "result": {
+                            "ready": True,
+                            "reason": "voice ready",
+                            "reply_text": "Voice chip is ready.",
+                        }
+                    },
+                    "domain-chip-voice-comms",
+                )
+            raise RuntimeError("voice.speak provider rejected the request")
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=fake_voice_hook,
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(call_count["n"], 2)
+        self.assertIn("retry_token", result.artifacts)
+        self.assertIn(
+            "voice.speak provider rejected the request",
+            result.artifacts["retry_token"]["reason"],
+        )
+
+    def test_execute_voice_io_harness_lets_programming_errors_in_speak_hook_propagate(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+
+        def fake_voice_hook(*, hook, **_kwargs):
+            if hook == "voice.status":
+                return (
+                    {
+                        "result": {
+                            "ready": True,
+                            "reason": "voice ready",
+                            "reply_text": "Voice chip is ready.",
+                        }
+                    },
+                    "domain-chip-voice-comms",
+                )
+            raise AttributeError("typo in voice.speak helper")
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=fake_voice_hook,
+        ):
+            with self.assertRaises(AttributeError):
+                execute_harness_task(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    envelope=envelope,
+                )
+
     def test_execute_swarm_escalation_harness_builds_dry_run_payload(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
