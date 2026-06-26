@@ -101,8 +101,9 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
-def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
+def _parse_brief_via_llm(prompt: str, *, provider, state_db=None) -> dict:
     from spark_intelligence.llm.direct_provider import (
+        DirectProviderGovernance,
         DirectProviderRequest,
         execute_direct_provider_prompt,
     )
@@ -116,10 +117,23 @@ def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
         model=provider.default_model,
         secret_value=provider.secret_value,
     )
+    governance = None
+    if state_db is not None:
+        governance = DirectProviderGovernance(
+            state_db_path=str(state_db.path),
+            source_kind="chip_create_brief_prompt",
+            source_ref=provider.provider_id,
+            summary="Builder blocked chip-create brief prompt before model dispatch.",
+            reason_code="chip_create_brief_prompt_secret_like",
+            policy_domain="chip_create",
+            blocked_stage="pre_model",
+            provenance={"source": "chip_create_pipeline"},
+        )
     result = execute_direct_provider_prompt(
         provider=req,
         system_prompt=_BRIEF_SYSTEM,
         user_prompt=f"User request:\n{prompt}\n\nReturn the JSON brief.",
+        governance=governance,
     )
     raw = str(result.get("raw_response") or "")
     cleaned = _strip_code_fences(raw)
@@ -343,7 +357,7 @@ def create_chip_from_prompt(
 
     # 1) Parse brief
     try:
-        brief = _parse_brief_via_llm(prompt, provider=provider)
+        brief = _parse_brief_via_llm(prompt, provider=provider, state_db=state_db)
     except Exception as exc:
         return ChipCreateResult(
             ok=False,
