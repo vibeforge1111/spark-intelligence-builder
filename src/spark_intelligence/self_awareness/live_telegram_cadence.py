@@ -113,6 +113,7 @@ def build_live_telegram_regression_cadence(
                 if bool(case.get("archived"))
             ],
             "guardrails": list(matrix_payload.get("guardrails") or []),
+            "harness_core_contract": dict(matrix_payload.get("harness_core_contract") or {}),
         },
         "suites": suites,
         "prompt_pack": {

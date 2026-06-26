@@ -24,6 +24,32 @@
     "verifier": "scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -OutputDir artifacts/live-telegram-regression -Json",
     "evidence_boundary": "Only real Telegram runtime traces with simulation=false count as live evidence."
   },
+  "harness_core_contract": {
+    "schema_version": "spark.nl_harness_contract.v1",
+    "claim_scope": "legacy_route_shape",
+    "release_gate": "none",
+    "simulation_cases_are_release_proof": false,
+    "default_case_expectations": {
+      "simulation_expected": true,
+      "origin_surface_expected": "simulation_cli",
+      "request_id_prefix_expected": "sim:",
+      "proof_join_expected": "not_release_proof",
+      "trace_join_expected": "not_release_proof",
+      "reply_shape_expected": "route_matrix_fixture"
+    },
+    "promotion_target": "control_proof_canary",
+    "promotion_requires": [
+      "simulation=false",
+      "origin_surface=telegram_runtime",
+      "request_id starts with telegram:",
+      "trace_ref is present",
+      "harnessProofRef plus proofCapsule or proofStatus is present",
+      "authority expectation is explicit",
+      "mutation class is explicit",
+      "side-effect expectation is explicit",
+      "reply shape expectation is explicit"
+    ]
+  },
   "cases": [
     {
       "id": "telegram_slash_self",

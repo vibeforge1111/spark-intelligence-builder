@@ -77,6 +77,28 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             matrix["release_cadence"]["evidence_boundary"],
             "Only real Telegram runtime traces with simulation=false count as live evidence.",
         )
+        contract = matrix["harness_core_contract"]
+        self.assertEqual(contract["schema_version"], "spark.nl_harness_contract.v1")
+        self.assertEqual(contract["claim_scope"], "legacy_route_shape")
+        self.assertEqual(contract["release_gate"], "none")
+        self.assertEqual(contract["simulation_cases_are_release_proof"], False)
+        self.assertEqual(contract["promotion_target"], "control_proof_canary")
+        defaults = contract["default_case_expectations"]
+        self.assertEqual(defaults["simulation_expected"], True)
+        self.assertEqual(defaults["origin_surface_expected"], "simulation_cli")
+        self.assertEqual(defaults["request_id_prefix_expected"], "sim:")
+        self.assertEqual(defaults["proof_join_expected"], "not_release_proof")
+        self.assertEqual(defaults["trace_join_expected"], "not_release_proof")
+        promotion_requirements = set(contract["promotion_requires"])
+        self.assertIn("simulation=false", promotion_requirements)
+        self.assertIn("origin_surface=telegram_runtime", promotion_requirements)
+        self.assertIn("request_id starts with telegram:", promotion_requirements)
+        self.assertIn("trace_ref is present", promotion_requirements)
+        self.assertIn("harnessProofRef plus proofCapsule or proofStatus is present", promotion_requirements)
+        self.assertIn("authority expectation is explicit", promotion_requirements)
+        self.assertIn("mutation class is explicit", promotion_requirements)
+        self.assertIn("side-effect expectation is explicit", promotion_requirements)
+        self.assertIn("reply shape expectation is explicit", promotion_requirements)
         suites = {str(case.get("suite") or "") for case in matrix["cases"]}
         self.assertIn("self_awareness", suites)
         self.assertIn("llm_wiki", suites)
@@ -112,6 +134,12 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertEqual(payload["summary"]["archived_case_count"], 0)
         self.assertEqual(payload["matrix"]["archived_case_count"], 0)
         self.assertEqual(payload["matrix"]["archived_cases"], [])
+        self.assertEqual(payload["matrix"]["harness_core_contract"]["claim_scope"], "legacy_route_shape")
+        self.assertEqual(payload["matrix"]["harness_core_contract"]["release_gate"], "none")
+        self.assertEqual(
+            payload["matrix"]["harness_core_contract"]["promotion_target"],
+            "control_proof_canary",
+        )
         suite_ids = {row["suite"] for row in payload["suites"]}
         self.assertIn("self_awareness", suite_ids)
         self.assertIn("llm_wiki", suite_ids)
