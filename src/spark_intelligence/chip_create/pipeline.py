@@ -123,7 +123,13 @@ def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
     )
     raw = str(result.get("raw_response") or "")
     cleaned = _strip_code_fences(raw)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        preview = cleaned[:200].replace("\n", " ") if cleaned else "(empty)"
+        raise json.JSONDecodeError(
+            f"{exc.msg} — LLM returned: {preview!r}", exc.doc, exc.pos
+        ) from exc
 
 
 def _validate_brief(brief: dict) -> list[str]:
