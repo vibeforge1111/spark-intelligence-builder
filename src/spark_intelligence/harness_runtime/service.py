@@ -408,6 +408,7 @@ def execute_harness_task(
                 "harness_id": envelope.harness_id,
                 "execution_status": status,
                 "artifact_keys": sorted(artifacts.keys()),
+                "artifacts_expected": list(envelope.artifacts_expected),
             },
         )
         record_event(
@@ -426,6 +427,7 @@ def execute_harness_task(
                 "harness_id": envelope.harness_id,
                 "execution_status": status,
                 "artifact_keys": sorted(artifacts.keys()),
+                "artifacts_expected": list(envelope.artifacts_expected),
             },
         )
         return HarnessExecutionResult(
