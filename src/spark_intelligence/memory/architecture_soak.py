@@ -60,6 +60,14 @@ class _BenchmarkRunSpec:
     categories: tuple[str, ...] = ()
 
 
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Temp + os.replace so a crash mid-write cannot truncate the soak summary
+    file consumed by Telegram/board readers and the next regression iteration."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def run_telegram_memory_architecture_soak(
     *,
     config_manager: ConfigManager,
@@ -126,7 +134,7 @@ def run_telegram_memory_architecture_soak(
                 "summary_json": str(resolved_write_path),
             },
         }
-        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_json(resolved_write_path, payload)
         return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
     benchmark_pack_rows = [_run_spec_payload(spec) for spec in run_specs]
     baseline_aggregate: dict[str, dict[str, Any]] = {}
@@ -273,7 +281,7 @@ def run_telegram_memory_architecture_soak(
             baseline_names=resolved_baseline_names,
             per_run_timeout_seconds=run_timeout_seconds,
         )
-        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_json(resolved_write_path, payload)
         if sleep_seconds > 0 and index < requested_runs:
             time.sleep(float(sleep_seconds))
 
@@ -291,7 +299,7 @@ def run_telegram_memory_architecture_soak(
         baseline_names=resolved_baseline_names,
         per_run_timeout_seconds=run_timeout_seconds,
     )
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_json(resolved_write_path, payload)
     return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
 
 
