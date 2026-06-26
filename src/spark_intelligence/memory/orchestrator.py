@@ -1073,7 +1073,8 @@ class _DomainChipMemoryClientAdapter:
         try:
             request = self._module.CurrentStateRequest(**request_kwargs)
         except TypeError:
-            request_kwargs.pop("entity_key", None)
+            if "entity_key" in request_kwargs:
+                request_kwargs.pop("entity_key")
             request = self._module.CurrentStateRequest(**request_kwargs)
         result = self._sdk.get_current_state(request)
         self._persist_manual_state()
