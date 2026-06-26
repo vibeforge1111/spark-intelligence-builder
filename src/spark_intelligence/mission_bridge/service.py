@@ -50,10 +50,16 @@ def fetch_board(spawner_url: str | None = None, *, timeout: float = 5.0) -> dict
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return {"ok": False, "board": {}}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "board": {}, "error": f"HTTP {exc.code} from {base}/api/mission-control/board"}
+    except urllib.error.URLError as exc:
+        return {"ok": False, "board": {}, "error": f"could not reach {base}: {exc.reason}"}
+    except (TimeoutError, OSError) as exc:
+        return {"ok": False, "board": {}, "error": f"could not reach {base}: {exc}"}
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "board": {}, "error": f"board response was not JSON: {exc.msg}"}
     if not isinstance(data, dict):
-        return {"ok": False, "board": {}}
+        return {"ok": False, "board": {}, "error": "board response was not a JSON object"}
     return data
 
 
@@ -112,5 +118,8 @@ def format_board(board_payload: dict[str, Any]) -> str:
 def format_board_from_spawner(spawner_url: str | None = None) -> str:
     data = fetch_board(spawner_url)
     if not data.get("ok", True):
+        reason = str(data.get("error") or "").strip()
+        if reason:
+            return f"Couldn't reach mission board right now ({reason}). Try /board directly."
         return "Couldn't reach mission board right now. Try /board directly."
     return format_board(data)
