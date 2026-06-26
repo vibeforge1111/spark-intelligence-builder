@@ -1039,6 +1039,7 @@ def _execute_voice_io_harness(
         audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
         artifacts["spoken_audio"] = {
             "chip_key": speak_chip_key,
+            "text": task_payload or "",
             "provider_id": str(speak_result.get("provider_id") or ""),
             "voice_id": str(speak_result.get("voice_id") or ""),
             "model_id": str(speak_result.get("model_id") or ""),
