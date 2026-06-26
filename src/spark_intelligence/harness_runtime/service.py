@@ -1580,7 +1580,10 @@ def _classify_voice_task(task: str) -> tuple[str, str | None]:
     match = _VOICE_SPEAK_RE.match(stripped)
     if match:
         spoken_text = str(match.group("text") or "").strip()
-        return ("speak", spoken_text or None)
+        if spoken_text:
+            return ("speak", spoken_text)
+        # Empty text after a speak prefix (e.g. operator typed "Say:" with nothing) falls
+        # through to needs_input so voice.speak is not invoked with no text payload.
     if "transcribe" in lowered or "transcription" in lowered:
         return ("transcribe", _extract_voice_audio_base64(stripped))
     return ("unspecified", None)
