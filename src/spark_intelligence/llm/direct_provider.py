@@ -293,16 +293,36 @@ def _execute_anthropic_messages(
     user_prompt: str,
     tools: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    system_text = system_prompt.strip()
+    user_text = user_prompt.strip()
     payload: dict[str, object] = {
         "model": provider.model,
         "max_tokens": 1024,
         "messages": [
             {
                 "role": "user",
-                "content": _merge_prompts(system_prompt=system_prompt, user_prompt=user_prompt),
+                "content": user_text,
             }
         ],
     }
+    if system_text:
+        # Send the system prompt in the dedicated `system` field with an
+        # ephemeral cache breakpoint. The researcher-bridge fallback path
+        # builds a multi-kilobyte system prompt (base instructions +
+        # personality directive + Telegram persona contract + system
+        # registry + mission control + capability router + harness
+        # context) and resends it every turn. Without cache_control the
+        # full prefix is rebilled at the model input rate on each call;
+        # the dedicated system field with cache_control: ephemeral lets
+        # the second turn within ~5 minutes reuse the cached prefix at
+        # roughly one tenth of the per-token cost.
+        payload["system"] = [
+            {
+                "type": "text",
+                "text": system_text,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
     if tools:
         payload["tools"] = tools
     response = _post_json(
