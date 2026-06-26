@@ -224,12 +224,32 @@ def validate_creator_mission_status(payload: Mapping[str, Any] | Any) -> list[Va
             issues,
             source_key="evidence_tier",
         )
-        automation = _require_mapping(canonical, "canonical.automation", issues, source_key="automation")
-        if automation is not None:
-            _require_bool(automation, "canonical.automation.blocked", issues, source_key="blocked")
+        # Two canonical shapes are emitted in the wild. spark-domain-chip-labs
+        # `chip_labs.creator_mission_adapter._build_mission` (line 86-104)
+        # writes the flat shape used by the spawner-ui consumer at
+        # `vibeship-spawner-ui/src/lib/server/creator-mission.ts:1290-1300`
+        # (canonical.automation_blocked + canonical.recommended_next_command at
+        # the top of canonical). The legacy nested shape
+        # (canonical.automation.{blocked, recommended_next_command,
+        # ci_exit_code}) is still exercised in this repo's own tests and is
+        # accepted here for back-compat. Producers may emit either; the
+        # validator must accept both so the labs adapter does not crash
+        # through `summarize_creator_mission_status` on every real packet.
+        if "automation" in canonical:
+            automation = _require_mapping(canonical, "canonical.automation", issues, source_key="automation")
+            if automation is not None:
+                _require_bool(automation, "canonical.automation.blocked", issues, source_key="blocked")
+                _require_non_empty_string(
+                    automation,
+                    "canonical.automation.recommended_next_command",
+                    issues,
+                    source_key="recommended_next_command",
+                )
+        else:
+            _require_bool(canonical, "canonical.automation_blocked", issues, source_key="automation_blocked")
             _require_non_empty_string(
-                automation,
-                "canonical.automation.recommended_next_command",
+                canonical,
+                "canonical.recommended_next_command",
                 issues,
                 source_key="recommended_next_command",
             )
@@ -277,15 +297,23 @@ def summarize_creator_mission_status(payload: Mapping[str, Any] | Any) -> Creato
     if data is None:
         raise ValueError("invalid creator mission status packet")
     canonical = data["canonical"]
-    automation = canonical["automation"]
     publication = data["publication"]
     adapters = data["surface_adapters"]
+    # See note in validate_creator_mission_status: both nested
+    # canonical.automation.{blocked, recommended_next_command} and flat
+    # canonical.{automation_blocked, recommended_next_command} are valid.
+    if "automation" in canonical:
+        blocked = bool(canonical["automation"]["blocked"])
+        recommended_next_command = str(canonical["automation"]["recommended_next_command"])
+    else:
+        blocked = bool(canonical["automation_blocked"])
+        recommended_next_command = str(canonical["recommended_next_command"])
     return CreatorMissionStatusSummary(
         mission_id=str(data["mission_id"]),
         canonical_verdict=str(canonical["verdict"]),
         evidence_tier=str(canonical["evidence_tier"]),
-        blocked=bool(automation["blocked"]),
-        recommended_next_command=str(automation["recommended_next_command"]),
+        blocked=blocked,
+        recommended_next_command=recommended_next_command,
         publish_mode=str(publication["publish_mode"]),
         swarm_shared_allowed=bool(publication["swarm_shared_allowed"]),
         network_absorbable=bool(publication["network_absorbable"]),
