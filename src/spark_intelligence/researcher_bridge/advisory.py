@@ -3377,7 +3377,7 @@ def _is_fast_greeting(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", user_message.strip().lower()).rstrip("!.?")
     if not lowered or len(lowered) > 60:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     return lowered in _FAST_GREETING_PHRASES
 
@@ -3415,7 +3415,7 @@ def _is_conversational_fallback_candidate(
         return False
     if len(lowered) > fallback_max_chars:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     blocked_terms = (
         "http://",
