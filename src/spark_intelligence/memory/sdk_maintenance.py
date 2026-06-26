@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,7 +95,33 @@ def export_sdk_maintenance_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    # Write the SDK-maintenance replay payload via temp + os.replace so a
+    # crash mid-write cannot truncate the canonical replay artifact that
+    # run_sdk_maintenance_report immediately reads back (line ~99). Without
+    # atomicity the report stage can fail with JSONDecodeError on a torn
+    # blob even though the maintenance run succeeded. Sister-pattern: PR
+    # #252 (memory architecture_soak atomic), #254 (llm_wiki heartbeat).
+    serialized = json.dumps(payload, indent=2, ensure_ascii=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=str(output_path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_name, output_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     report = None
     resolved_report_path = Path(report_write_path) if report_write_path else None
     if run_report:
