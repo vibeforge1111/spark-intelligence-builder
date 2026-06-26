@@ -8325,7 +8325,11 @@ def handle_config_show(args: argparse.Namespace) -> int:
 def handle_config_set(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    parsed_value = yaml.safe_load(args.value)
+    try:
+        parsed_value = yaml.safe_load(args.value)
+    except yaml.YAMLError as exc:
+        print(f"Invalid --value for {args.path}: {exc}", file=sys.stderr)
+        return 2
     config_manager.set_path(args.path, parsed_value)
     print(f"Set {args.path} = {json.dumps(parsed_value)}")
     return 0
