@@ -5403,12 +5403,18 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
 def _call_sdk_method(client: Any, method_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     target = getattr(client, method_name, None)
     if callable(target):
-        result = target(**payload)
+        try:
+            result = target(**payload)
+        except Exception as exc:
+            return {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
     elif isinstance(client, ModuleType):
         target = getattr(client, method_name, None)
         if not callable(target):
             return {"status": "abstained", "reason": "method_missing"}
-        result = target(**payload)
+        try:
+            result = target(**payload)
+        except Exception as exc:
+            return {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
     else:
         return {"status": "abstained", "reason": "method_missing"}
     if isinstance(result, dict):
