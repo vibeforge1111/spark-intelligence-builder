@@ -5134,9 +5134,12 @@ def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
     text = str(raw or "").strip()
     if not text:
         return None
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{arg_name} must be valid JSON: {exc}") from exc
     if not isinstance(value, dict):
-        raise SystemExit("--memory-candidate-json must be a JSON object")
+        raise SystemExit(f"{arg_name} must be a JSON object")
     return value
 
 
@@ -5836,7 +5839,7 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
                 {
                     "ingress_owner": "spark-telegram-bot",
                     "migration_status": "builder_shadow_validation_only",
-                    "result": json.loads(result),
+                    "result": _safe_json_loads(result, {}),
                 },
                 indent=2,
             )
@@ -8325,7 +8328,12 @@ def handle_config_show(args: argparse.Namespace) -> int:
 def handle_config_set(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    parsed_value = yaml.safe_load(args.value)
+    try:
+        parsed_value = yaml.safe_load(args.value)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"Invalid YAML value: {exc}") from exc
+    if parsed_value is None:
+        raise SystemExit(f"Value for {args.path} cannot be empty or null")
     config_manager.set_path(args.path, parsed_value)
     print(f"Set {args.path} = {json.dumps(parsed_value)}")
     return 0
