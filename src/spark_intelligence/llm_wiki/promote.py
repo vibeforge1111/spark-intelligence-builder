@@ -376,7 +376,10 @@ def _relative_note_path(*, title: str, generated_at: str, root: Path, overwrite:
 def _normalize_status(value: str) -> str:
     status = str(value or "candidate").strip().casefold()
     if status not in VALID_PROMOTION_STATUSES:
-        raise ValueError("promotion status must be one of: candidate, verified")
+        allowed = ", ".join(sorted(VALID_PROMOTION_STATUSES))
+        raise ValueError(
+            f"promotion status '{status}' is not recognized. Must be one of: {allowed}."
+        )
     return status
 
 
@@ -510,7 +513,10 @@ def _looks_like_eval_ref(value: str) -> bool:
 def _normalize_eval_coverage_status(value: str) -> str:
     status = str(value or "missing").strip().casefold()
     if status not in VALID_EVAL_COVERAGE_STATUSES:
-        raise ValueError("eval coverage status must be one of: missing, observed, covered")
+        allowed = ", ".join(sorted(VALID_EVAL_COVERAGE_STATUSES))
+        raise ValueError(
+            f"eval coverage status '{status}' is not recognized. Must be one of: {allowed}."
+        )
     return status
 
 
@@ -522,7 +528,10 @@ def _gate_payload(value: str, *, default: str, reason: str) -> dict[str, str]:
 def _normalize_gate_status(value: str) -> str:
     status = str(value or "pass").strip().casefold()
     if status not in VALID_GATE_STATUSES:
-        raise ValueError("promotion gate status must be one of: pass, warn, fail")
+        allowed = ", ".join(sorted(VALID_GATE_STATUSES))
+        raise ValueError(
+            f"promotion gate status '{status}' is not recognized. Must be one of: {allowed}."
+        )
     return status
 
 
