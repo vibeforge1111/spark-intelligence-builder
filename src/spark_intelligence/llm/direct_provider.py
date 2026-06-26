@@ -188,6 +188,7 @@ def execute_direct_provider_prompt(
         summary=f"Direct provider {provider.provider_id} produced a response.",
         route_latency_ms=_elapsed_ms(started),
         failure_reason=None,
+        token_usage=payload.get("token_usage") if isinstance(payload, dict) else None,
     )
     return payload
 
@@ -201,6 +202,7 @@ def _record_provider_execution_event(
     summary: str,
     route_latency_ms: int,
     failure_reason: str | None,
+    token_usage: dict[str, int] | None = None,
 ) -> None:
     if state_db is None or governance is None:
         return
@@ -218,6 +220,10 @@ def _record_provider_execution_event(
         facts["model"] = provider.model
     if failure_reason:
         facts["failure_reason"] = failure_reason
+    if token_usage:
+        for key, value in token_usage.items():
+            if isinstance(value, int) and value >= 0:
+                facts[f"token_{key}"] = value
     record_event(
         state_db,
         event_type=event_type,
@@ -283,6 +289,7 @@ def _execute_chat_completions(
         "model": model_name,
         "api_mode": provider.api_mode,
         "response": response,
+        "token_usage": _extract_chat_completion_token_usage(response),
     }
 
 
@@ -321,6 +328,7 @@ def _execute_anthropic_messages(
         "model": provider.model,
         "api_mode": provider.api_mode,
         "response": response,
+        "token_usage": _extract_anthropic_token_usage(response),
     }
 
 
@@ -379,6 +387,44 @@ def _extract_chat_completion_text(payload: dict[str, object]) -> str:
         if joined:
             return joined
     raise RuntimeError("Chat completion response contained no text content.")
+
+
+def _extract_chat_completion_token_usage(payload: dict[str, object]) -> dict[str, int]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    result: dict[str, int] = {}
+    for source, target in (
+        ("prompt_tokens", "prompt_tokens"),
+        ("completion_tokens", "completion_tokens"),
+        ("total_tokens", "total_tokens"),
+    ):
+        value = usage.get(source)
+        if isinstance(value, int) and value >= 0:
+            result[target] = value
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cached = details.get("cached_tokens")
+        if isinstance(cached, int) and cached >= 0:
+            result["cached_prompt_tokens"] = cached
+    return result
+
+
+def _extract_anthropic_token_usage(payload: dict[str, object]) -> dict[str, int]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    result: dict[str, int] = {}
+    for source, target in (
+        ("input_tokens", "prompt_tokens"),
+        ("output_tokens", "completion_tokens"),
+        ("cache_read_input_tokens", "cached_prompt_tokens"),
+        ("cache_creation_input_tokens", "cache_creation_tokens"),
+    ):
+        value = usage.get(source)
+        if isinstance(value, int) and value >= 0:
+            result[target] = value
+    return result
 
 
 def _extract_anthropic_text(payload: dict[str, object]) -> str:
