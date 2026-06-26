@@ -10,6 +10,14 @@ What is live today:
 - `lookup_current_state_in_memory(...)` reads single current-state facts back through Builder.
 - `inspect_human_memory_in_memory(...)` reads a subject-wide current-state view for identity-style summaries.
 - The default SDK module is `domain_chip_memory`.
+- Builder resolves `domain_chip_memory` through normal import first, then local fallbacks at `~/Desktop/domain-chip-memory/src`, `~/.spark/modules/domain-chip-memory/source/src`, and `~/.spark/modules/domain-chip-memory/src`.
+
+Availability contract:
+
+- A successful governed memory write or read may be represented as memory-backed behavior.
+- An unavailable SDK or abstained governed write must surface as an unavailable memory route, not as a provider fallback that implies the fact was remembered.
+- Live natural-language memory cases stay in the active cadence only while durable write/read proof remains available.
+- Fresh runtime state wins over memory for live health, access, route authority, and capability questions.
 
 What is not yet fully promoted into Builder:
 

@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Telegram Bridge
 
-Last updated: 2026-04-26
+Last updated: 2026-06-26
 
 This document describes the current Telegram split between `spark-telegram-bot` and Builder.
 
@@ -97,6 +97,28 @@ Every Builder gateway trace row is redacted before it is written. Processed Tele
 - Historical gateway traces can be repaired with `spark-intelligence gateway repair-proof --home <spark-intelligence-state-home> --json`. The repair keeps redaction intact, writes `proofStorage: legacy_gap_capsule`, and creates a `.proof-backup`.
 
 Gap capsules are traceability, not authorization. They make Builder gateway rows inspectable while keeping missing authority visible to the control-proof audit.
+
+## Live Cadence Evidence Boundary
+
+The natural-language route matrix proves route shape in simulation. It does not prove a Telegram release by itself.
+
+Live Telegram cadence evidence must come from real runtime traces that satisfy the Harness Core join contract:
+
+- `simulation=false`;
+- `origin_surface=telegram_runtime`;
+- `request_id` starts with `telegram:`;
+- `trace_ref` is present;
+- Harness proof coverage is present through `harnessProofRef` plus `proofCapsule` or `proofStatus`;
+- bridge mode and routing decision match the active route matrix.
+
+If any of those fields are missing, the result is a measured proof or trace-join gap. Do not turn on broader UI, media, or formatting work to compensate for it; fix the join or proof boundary first.
+
+The executable contract lives in:
+
+- `ops/natural-language-live-commands.json`
+- `src/spark_intelligence/self_awareness/live_telegram_cadence.py`
+- `tests/test_natural_language_route_eval_matrix.py`
+- `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`
 
 ## Local Verification
 
