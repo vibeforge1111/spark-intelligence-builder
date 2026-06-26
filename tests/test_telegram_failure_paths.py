@@ -216,3 +216,51 @@ class TelegramFailurePathTests(SparkTestCase):
         self.assertTrue(traces[0]["notice_sent"])
         self.assertEqual(len(outbound), 1)
         self.assertTrue(outbound[0]["delivery_ok"])
+
+    def test_poll_runtime_command_gateway_trace_carries_trace_and_delivery_proof(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=701,
+                    user_id="111",
+                    username="alice",
+                    text="/memory doctor help",
+                )
+            ]
+        )
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                as_json=True,
+            )
+        )
+        command_trace = next(row for row in traces if row.get("event") == "telegram_runtime_command_processed")
+        update_trace = next(row for row in traces if row.get("event") == "telegram_update_processed")
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(command_trace["request_id"], "telegram:701")
+        self.assertEqual(command_trace["trace_ref"], "trace:telegram:701")
+        self.assertEqual(update_trace["request_id"], "telegram:701")
+        self.assertEqual(update_trace["trace_ref"], "trace:telegram:701")
+        self.assertRegex(command_trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(update_trace["harnessProofRef"], command_trace["harnessProofRef"])
+        self.assertEqual(command_trace["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(command_trace["proofCapsule"]["authority"]["contract"], "spark.turn_intent.v1")
+        self.assertEqual(command_trace["proofCapsule"]["governor"]["verified"], True)
+        self.assertEqual(command_trace["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(command_trace["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertEqual(update_trace["proofCapsule"]["turnRef"], command_trace["harnessProofRef"])
+        self.assertNotIn("proofStatus", command_trace)
+        self.assertNotIn("proofStorage", command_trace)
+        self.assertNotIn("proofStatus", update_trace)
+        self.assertNotIn("proofStorage", update_trace)

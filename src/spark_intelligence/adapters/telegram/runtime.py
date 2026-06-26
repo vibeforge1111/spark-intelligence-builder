@@ -372,6 +372,63 @@ def _normalize_harness_proof_capsule(value: Any, proof_ref: str | None = None) -
     return redacted
 
 
+def _stable_harness_proof_ref(*parts: Any) -> str:
+    seed = ":".join(str(part) for part in parts if part not in (None, ""))
+    digest = hashlib.sha256((seed or "telegram-runtime-command").encode("utf-8")).hexdigest()[:16]
+    return f"turn:sha256:{digest}"
+
+
+def _build_runtime_command_delivery_proof_capsule(
+    *,
+    request_id: str | None,
+    trace_ref: str | None,
+    command: str,
+    delivered: bool,
+    reply_text: str,
+) -> dict[str, Any]:
+    command_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(command or "runtime_command")).strip("_") or "runtime_command"
+    proof_ref = _stable_harness_proof_ref(trace_ref, request_id, command_key)
+    return {
+        "schema": "spark.harness_proof.v1",
+        "turnRef": proof_ref,
+        "route": "telegram.runtime_command",
+        "owner": "spark-intelligence-builder",
+        "intent": {
+            "kind": command_key,
+            "confidence": "explicit",
+            "noExecution": False,
+        },
+        "authority": {
+            "decision": "allowed",
+            "contract": "spark.turn_intent.v1",
+            "riskTier": "read",
+            "reasonSummary": "Telegram runtime command reply was delivered through the Builder gateway with request and trace continuity.",
+        },
+        "governor": {
+            "decision": "read_only",
+            "verified": True,
+        },
+        "execution": {
+            "status": "completed" if delivered else "failed",
+            "tool": "telegram.runtime_command.reply",
+            "mutationClass": "read_only",
+        },
+        "reply": {
+            "delivered": delivered,
+            "shape": "card" if "\n" in str(reply_text or "") else "natural",
+            "rawReasonsHidden": True,
+        },
+        "joins": {
+            "telegram": "joined",
+            "builder": "joined",
+            "spawner": "not_applicable",
+            "provider": "not_applicable",
+            "memory": "not_applicable",
+            "voice": "not_applicable",
+        },
+    }
+
+
 def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
     text = str(user_message or "").strip()
     if not text:
@@ -2572,12 +2629,15 @@ def poll_telegram_updates_once(
             external_user_id=normalized.telegram_user_id,
             display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
         )
+        update_request_id = f"telegram:{normalized.update_id}"
+        update_trace_ref = f"trace:telegram:{normalized.update_id}"
         run = open_run(
             state_db,
             run_kind="telegram_update",
             origin_surface="telegram_runtime",
             summary=f"Telegram update {normalized.update_id} opened for user {normalized.telegram_user_id}.",
-            request_id=f"telegram:{normalized.update_id}",
+            request_id=update_request_id,
+            trace_ref=update_trace_ref,
             channel_id="telegram",
             session_id=resolution.session_id,
             human_id=resolution.human_id,
@@ -2625,7 +2685,7 @@ def poll_telegram_updates_once(
                 bridge_mode=None,
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 user_message=normalized.text,
             )
             if send_result["ok"]:
@@ -2649,6 +2709,8 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "response_preview": _preview_text(
                         _resolution_reply_text(
                             decision=resolution.decision,
@@ -2683,7 +2745,7 @@ def poll_telegram_updates_once(
                 bridge_mode=None,
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 user_message=normalized.text,
             )
             if resolution.decision == "held":
@@ -2710,6 +2772,8 @@ def poll_telegram_updates_once(
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "decision": resolution.decision,
                     "response_preview": _preview_text(denied_text),
                     "delivery_ok": send_result["ok"],
@@ -2756,7 +2820,7 @@ def poll_telegram_updates_once(
                 routing_decision=str(media_input.get("routing_decision") or "voice_transcription_unavailable"),
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 respect_voice_reply_state=False,
@@ -2779,6 +2843,14 @@ def poll_telegram_updates_once(
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
                 },
             )
+            media_command = f"/{normalized.message_kind}"
+            media_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command=media_command,
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -2788,11 +2860,15 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
-                    "command": f"/{normalized.message_kind}",
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
+                    "command": media_command,
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    "harnessProofRef": media_proof_capsule["turnRef"],
+                    "proofCapsule": media_proof_capsule,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
                 },
             )
@@ -2898,7 +2974,7 @@ def poll_telegram_updates_once(
                 bridge_mode="runtime_command",
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
@@ -2939,6 +3015,7 @@ def poll_telegram_updates_once(
                 "chat_id": normalized.chat_id,
                 "session_id": resolution.session_id,
                 "request_id": run.request_id,
+                "trace_ref": update_trace_ref,
                 "command": command_result["command"],
                 "delivery_ok": send_result["ok"],
                 "delivery_error": send_result["error"],
@@ -2946,6 +3023,15 @@ def poll_telegram_updates_once(
                 "response_preview": _preview_text(outbound_text),
                 **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
             }
+            runtime_command_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command=str(command_result["command"]),
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
+            )
+            command_trace["harnessProofRef"] = runtime_command_proof_capsule["turnRef"]
+            command_trace["proofCapsule"] = runtime_command_proof_capsule
             if runtime_command_metadata is not None:
                 command_trace["runtime_command_metadata"] = runtime_command_metadata
             append_gateway_trace(config_manager, command_trace)
@@ -2959,6 +3045,7 @@ def poll_telegram_updates_once(
                 "bridge_mode": "runtime_command",
                 "routing_decision": "runtime_command",
                 "request_id": run.request_id,
+                "trace_ref": update_trace_ref,
                 "response_preview": _preview_text(outbound_text),
                 "response_length": len(outbound_text),
                 "user_message_preview": _preview_text(effective_text) if effective_text else None,
@@ -2966,6 +3053,8 @@ def poll_telegram_updates_once(
                 "delivery_ok": send_result["ok"],
                 "delivery_error": send_result["error"],
                 "guardrail_actions": send_result["guardrail_actions"],
+                "harnessProofRef": runtime_command_proof_capsule["turnRef"],
+                "proofCapsule": runtime_command_proof_capsule,
             }
             if runtime_command_metadata is not None:
                 update_trace["runtime_command_metadata"] = runtime_command_metadata
@@ -3047,7 +3136,7 @@ def poll_telegram_updates_once(
                 routing_decision="agent_onboarding",
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 force_voice=voice_origin_reply,
