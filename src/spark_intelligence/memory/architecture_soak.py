@@ -411,9 +411,15 @@ def _run_regression_subprocess(
         ) from exc
     payload: dict[str, Any] = {}
     if write_path.exists():
-        payload = json.loads(write_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(write_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            payload = {}
     elif (completed.stdout or "").strip():
-        payload = json.loads(completed.stdout)
+        try:
+            payload = json.loads(completed.stdout)
+        except (json.JSONDecodeError, ValueError):
+            payload = {}
     if payload:
         return payload
     stderr_tail = ((completed.stderr or completed.stdout or "").strip().splitlines() or [""])[-1]
