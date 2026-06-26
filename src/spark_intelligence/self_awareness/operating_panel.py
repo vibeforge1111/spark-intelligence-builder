@@ -222,6 +222,9 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
     orphan_rows = [_dict(row) for row in _list(orphan_sources.get("rows"))[:5]]
     recent_windows = [_dict(row) for row in _list(trace_health.get("recent_windows"))[:3]]
     health_flags = [str(flag) for flag in _list(trace_health.get("health_flags")) if str(flag or "").strip()]
+    latest_unresolved_high_severity_event_created_at = str(
+        trace_health.get("latest_unresolved_high_severity_event_created_at") or ""
+    ).strip()
     counts = {
         "health_flags": len(health_flags),
         "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
@@ -250,9 +253,7 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
         "source_ref": spark_system_map.get("source_ref") or "spark os compile",
         "health_flags": health_flags,
         "counts": counts,
-        "latest_unresolved_high_severity_event_created_at": trace_health.get(
-            "latest_unresolved_high_severity_event_created_at"
-        ),
+        "latest_unresolved_high_severity_event_created_at": latest_unresolved_high_severity_event_created_at,
         "top_missing_trace_ref_sources": rows,
         "top_orphan_parent_sources": orphan_rows,
         "trace_topology": {
@@ -272,6 +273,7 @@ def _build_trace_repair_queue(aoc_payload: dict[str, Any]) -> dict[str, Any]:
             top_sources=rows,
             orphan_sources=orphan_rows,
             recent_windows=recent_windows,
+            latest_unresolved_high_severity_event_created_at=latest_unresolved_high_severity_event_created_at,
         ),
         "claim_boundary": (
             "Trace repair queue is black-box observability guidance. It ranks trace propagation gaps only; "
@@ -301,6 +303,7 @@ def _trace_repair_next_actions(
     top_sources: list[dict[str, Any]],
     orphan_sources: list[dict[str, Any]],
     recent_windows: list[dict[str, Any]],
+    latest_unresolved_high_severity_event_created_at: str = "",
 ) -> list[str]:
     if not present:
         return ["Run `spark os compile` before using trace health as operating-panel evidence."]
@@ -318,7 +321,18 @@ def _trace_repair_next_actions(
     if int(counts.get("current_unresolved_high_severity_open_count") or 0):
         actions.append("Resolve current open high-severity events before treating black-box health as launch evidence.")
     elif int(counts.get("unresolved_high_severity_open_count") or 0) or int(counts.get("high_severity_open_count") or 0):
-        actions.append("Keep historical high-severity integrity evidence as an explicit publish handoff.")
+        source_groups = int(counts.get("unresolved_high_severity_source_group_count") or 0)
+        latest = str(latest_unresolved_high_severity_event_created_at or "").strip()
+        source_group_text = (
+            f"{source_groups} unresolved source group{'s' if source_groups != 1 else ''}"
+            if source_groups
+            else "unresolved historical source groups"
+        )
+        latest_text = f"; latest unresolved event {latest}" if latest else ""
+        actions.append(
+            "Keep historical high-severity integrity evidence as an explicit publish handoff "
+            f"({source_group_text}{latest_text})."
+        )
     if int(counts.get("orphan_parent_event_id_count") or 0):
         if orphan_sources:
             first_orphan = orphan_sources[0]

@@ -264,7 +264,8 @@ class SystemMapReadModelTests(SparkTestCase):
         self.assertEqual(queue["counts"]["unresolved_high_severity_source_group_count"], 1)
         self.assertEqual(queue["latest_unresolved_high_severity_event_created_at"], "2026-06-02 09:03:25")
         self.assertIn(
-            "Keep historical high-severity integrity evidence as an explicit publish handoff.",
+            "Keep historical high-severity integrity evidence as an explicit publish handoff "
+            "(1 unresolved source group; latest unresolved event 2026-06-02 09:03:25).",
             queue["next_actions"],
         )
 
