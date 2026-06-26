@@ -12550,7 +12550,14 @@ def _resolve_natural_swarm_absorb_target(
                 f"No absorbable insights matched {label}. Use `/swarm insights` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     reason = str(match.group("reason") or "").strip()
     if not reason:
         reason = f"Recorded from Telegram natural-language request: {normalized}"
@@ -12598,7 +12605,14 @@ def _resolve_natural_swarm_review_target(
                 f"No mastery records matched {label}. Use `/swarm masteries` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     reason = str(match.group("reason") or "").strip()
     if not reason:
         reason = f"Recorded from Telegram natural-language request: {normalized}"
@@ -12690,7 +12704,14 @@ def _resolve_latest_swarm_upgrade_target(
                 f"No pending upgrades matched {label}. Use `/swarm upgrades` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     return {
         "upgrade_id": str(ranked[0].get("id") or ""),
     }
