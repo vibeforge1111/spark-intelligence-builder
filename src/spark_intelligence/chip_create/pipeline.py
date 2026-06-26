@@ -52,14 +52,14 @@ _BRIEF_SYSTEM = (
 
 
 def _default_chip_labs_root() -> Path:
-    env = os.environ.get("CHIP_LABS_ROOT")
+    env = (os.environ.get("CHIP_LABS_ROOT") or "").strip()
     if env:
         return Path(env)
     return Path.cwd() / "spark-domain-chip-labs"
 
 
 def _default_output_dir() -> Path:
-    env = os.environ.get("CHIP_CREATE_OUTPUT_DIR")
+    env = (os.environ.get("CHIP_CREATE_OUTPUT_DIR") or "").strip()
     if env:
         return Path(env)
     return Path.cwd()
