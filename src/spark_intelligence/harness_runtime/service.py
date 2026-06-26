@@ -1690,7 +1690,10 @@ def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | Non
 
 def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
-    return match.group(0) if match else None
+    if not match:
+        return None
+    # Strip sentence punctuation the [^\s)] character class folds into the URL.
+    return match.group(0).rstrip(".,;:!?\"'>]") or None
 
 
 def _now_iso() -> str:
