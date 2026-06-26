@@ -3520,7 +3520,7 @@ def _telegram_voice_registry_profile() -> dict[str, Any]:
     registry_path = _telegram_voice_profile_registry_path()
     try:
         payload = json.loads(registry_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         return {}
     profiles = payload.get("profiles") if isinstance(payload, dict) else None
     if not isinstance(profiles, dict):
