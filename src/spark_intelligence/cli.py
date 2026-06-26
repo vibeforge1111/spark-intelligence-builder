@@ -9931,7 +9931,10 @@ def handle_identity_unlink(args: argparse.Namespace) -> int:
         if removed:
             print(f"Unlinked {args.alias}")
         else:
-            print(f"No alias found for {args.alias}")
+            print(
+                f"No alias found for {args.alias}. "
+                f"Run `spark-intelligence identity list` to see registered aliases."
+            )
     return 0 if removed else 1
 
 
