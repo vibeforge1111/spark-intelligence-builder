@@ -50,6 +50,7 @@ from spark_intelligence.memory.retention_policy import (
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_SPARK_MODULES_ROOT = Path.home() / ".spark" / "modules"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
@@ -1449,8 +1450,20 @@ def _prepend_sys_path(path: Path):
                 pass
 
 
-def _local_domain_chip_memory_src() -> Path:
-    return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
+def _local_domain_chip_memory_src_candidates() -> list[Path]:
+    candidates = [
+        DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src",
+        DEFAULT_SPARK_MODULES_ROOT / "domain-chip-memory" / "source" / "src",
+        DEFAULT_SPARK_MODULES_ROOT / "domain-chip-memory" / "src",
+    ]
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
 
 
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
@@ -1458,11 +1471,14 @@ def _import_memory_sdk_module(module_name: str) -> ModuleType:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         root_name = module_name.split(".", 1)[0]
-        local_src = _local_domain_chip_memory_src()
-        if exc.name != root_name or root_name != "domain_chip_memory" or not local_src.exists():
+        if exc.name != root_name or root_name != "domain_chip_memory":
             raise
-        with _prepend_sys_path(local_src):
-            return importlib.import_module(module_name)
+        for local_src in _local_domain_chip_memory_src_candidates():
+            if not local_src.exists():
+                continue
+            with _prepend_sys_path(local_src):
+                return importlib.import_module(module_name)
+        raise
 
 
 def inspect_memory_sdk_runtime(

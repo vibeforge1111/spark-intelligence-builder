@@ -83,15 +83,7 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("telegram_commands", suites)
         self.assertIn("route_confidence_traps", suites)
         archived = [case for case in matrix["cases"] if case.get("archived")]
-        self.assertEqual(
-            {case["id"] for case in archived},
-            {"memory_current_state_write", "memory_current_state_recall", "route_explanation_debug"},
-        )
-        for case in archived:
-            self.assertIn("archived_reason", case)
-            self.assertTrue(str(case["archived_reason"]).strip())
-        self.assertIn("cannot prove persistence", archived[0]["archived_reason"])
-        self.assertIn("restore", archived[2]["archived_reason"])
+        self.assertEqual(archived, [])
 
     def test_live_telegram_cadence_report_declares_release_gate_and_artifacts(self) -> None:
         result = build_live_telegram_regression_cadence(config_manager=self.config_manager)
@@ -109,20 +101,17 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertTrue(runbook_path.exists())
         runbook_text = runbook_path.read_text(encoding="utf-8")
         self.assertIn("1. /self", runbook_text)
-        self.assertIn("9. Review the quality of the /memory-quality build in spawner-ui.", runbook_text)
-        self.assertNotIn("For later, Omar owns the launch checklist.", runbook_text)
+        self.assertIn("12. Why did you answer that way?", runbook_text)
+        self.assertIn("For later, Omar owns the launch checklist.", runbook_text)
         self.assertIn("Simulation, soak, and CLI traces do not count", runbook_text)
         self.assertIn("SinceUtc:", runbook_text)
         self.assertIn("verify_live_traces", runbook_text)
         self.assertEqual(payload["operator_runbook"]["since_utc"], payload["checked_at"])
         active_matrix_cases = [case for case in _load_matrix()["cases"] if not case.get("archived")]
         self.assertEqual(payload["summary"]["case_count"], len(active_matrix_cases))
-        self.assertEqual(payload["summary"]["archived_case_count"], 3)
-        self.assertEqual(payload["matrix"]["archived_case_count"], 3)
-        self.assertEqual(
-            {case["id"] for case in payload["matrix"]["archived_cases"]},
-            {"memory_current_state_write", "memory_current_state_recall", "route_explanation_debug"},
-        )
+        self.assertEqual(payload["summary"]["archived_case_count"], 0)
+        self.assertEqual(payload["matrix"]["archived_case_count"], 0)
+        self.assertEqual(payload["matrix"]["archived_cases"], [])
         suite_ids = {row["suite"] for row in payload["suites"]}
         self.assertIn("self_awareness", suite_ids)
         self.assertIn("llm_wiki", suite_ids)

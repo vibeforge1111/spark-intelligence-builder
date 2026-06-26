@@ -3302,6 +3302,41 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
 
+    def test_inspect_memory_sdk_runtime_falls_back_to_spark_module_domain_chip_memory_src(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        modules_root = self.home / ".spark" / "modules"
+        package_dir = modules_root / "domain-chip-memory" / "source" / "src" / "domain_chip_memory"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "__init__.py").write_text(
+            "class SparkMemorySDK:\n"
+            "    def __init__(self):\n"
+            "        self.ready = True\n",
+            encoding="utf-8",
+        )
+
+        original_module = sys.modules.pop("domain_chip_memory", None)
+        try:
+            with patch.object(memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", self.home / "missing"), patch.object(
+                memory_orchestrator,
+                "DEFAULT_SPARK_MODULES_ROOT",
+                modules_root,
+            ):
+                runtime = memory_orchestrator.inspect_memory_sdk_runtime(
+                    config_manager=self.config_manager,
+                    sdk_module="domain_chip_memory",
+                )
+        finally:
+            sys.modules.pop("domain_chip_memory", None)
+            if original_module is not None:
+                sys.modules["domain_chip_memory"] = original_module
+
+        self.assertTrue(runtime["ready"])
+        self.assertEqual(runtime["configured_module"], "domain_chip_memory")
+        self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
+        self.assertEqual(runtime["client_kind"], "SparkMemorySDK")
+
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
