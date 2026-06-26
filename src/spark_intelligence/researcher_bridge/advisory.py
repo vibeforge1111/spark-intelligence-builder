@@ -89,6 +89,7 @@ from spark_intelligence.memory.episodic_events import (
     telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.generic_observations import (
+    TelegramGenericObservation,
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
     build_telegram_generic_deletions_answer,
@@ -9490,6 +9491,7 @@ def build_researcher_reply(
     detected_generic_memory_deletion = None
     detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
+    generic_memory_write_failure: dict[str, str] | None = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -11237,6 +11239,17 @@ def build_researcher_reply(
                                 else:
                                     generic_write_result = None
                                 if generic_write_result is None or generic_write_result.accepted_count <= 0:
+                                    generic_memory_write_failure = {
+                                        "predicate": detected_generic_memory_observation.predicate,
+                                        "value": detected_generic_memory_observation.value,
+                                        "fact_name": detected_generic_memory_observation.fact_name,
+                                        "label": detected_generic_memory_observation.label,
+                                        "reason": (
+                                            str(getattr(generic_write_result, "reason", "") or "").strip()
+                                            if generic_write_result is not None
+                                            else "write_result_missing"
+                                        ),
+                                    }
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_observation = None
                     if (
@@ -11334,6 +11347,44 @@ def build_researcher_reply(
         )
         if not memory_candidate_authorized:
             assessed_generic_memory_candidate = None
+        elif assessed_generic_memory_candidate.outcome == "current_state":
+            try:
+                current_state_result = write_profile_fact_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    predicate=assessed_generic_memory_candidate.predicate,
+                    value=assessed_generic_memory_candidate.value,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    fact_name=assessed_generic_memory_candidate.fact_name,
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_generic_observation_loader",
+                )
+            except Exception:
+                current_state_result = None
+            if current_state_result is not None and current_state_result.accepted_count > 0:
+                detected_generic_memory_observation = TelegramGenericObservation(
+                    predicate=assessed_generic_memory_candidate.predicate,
+                    value=assessed_generic_memory_candidate.value,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    fact_name=assessed_generic_memory_candidate.fact_name,
+                    label=assessed_generic_memory_candidate.label,
+                )
+            else:
+                generic_memory_write_failure = {
+                    "predicate": assessed_generic_memory_candidate.predicate,
+                    "value": assessed_generic_memory_candidate.value,
+                    "fact_name": assessed_generic_memory_candidate.fact_name,
+                    "label": assessed_generic_memory_candidate.label,
+                    "reason": (
+                        str(getattr(current_state_result, "reason", "") or "").strip()
+                        if current_state_result is not None
+                        else "write_result_missing"
+                    ),
+                }
+                assessed_generic_memory_candidate = None
         elif assessed_generic_memory_candidate.outcome == "structured_evidence":
             try:
                 write_structured_evidence_to_memory(
@@ -11936,6 +11987,78 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_generic_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if generic_memory_write_failure is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_generic_observation_unavailable",
+            routing_decision="memory_generic_observation_unavailable",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        label = str(
+            generic_memory_write_failure.get("label")
+            or generic_memory_write_failure.get("fact_name")
+            or "that memory"
+        ).strip()
+        reason = str(generic_memory_write_failure.get("reason") or "memory_write_unavailable").strip()
+        reply_text = (
+            f"I caught that as {label}, but I could not save it to memory this turn.\n\n"
+            f"Reason: {reason}."
+        )
+        evidence_summary = (
+            "status=memory_generic_observation_unavailable "
+            f"predicate={generic_memory_write_failure.get('predicate') or 'unknown'} "
+            f"reason={reason}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge detected a generic memory observation but memory write was unavailable.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_generic_observation_unavailable",
+            facts=_bridge_event_facts(
+                routing_decision="memory_generic_observation_unavailable",
+                bridge_mode="memory_generic_observation_unavailable",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": generic_memory_write_failure.get("fact_name"),
+                    "predicate": generic_memory_write_failure.get("predicate"),
+                    "value": generic_memory_write_failure.get("value"),
+                    "label": generic_memory_write_failure.get("label"),
+                    "operation": "update",
+                    "write_reason": reason,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint="memory_write_unavailable",
+            trace_ref=trace_ref,
+            mode="memory_generic_observation_unavailable",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_generic_observation_unavailable",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

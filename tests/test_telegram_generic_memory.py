@@ -24,8 +24,9 @@ from spark_intelligence.researcher_bridge.advisory import (
     _filter_open_memory_recall_records,
     build_researcher_reply,
 )
+from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 
-from tests.test_support import SparkTestCase, make_turn_intent_envelope
+from tests.test_support import SparkTestCase, make_telegram_update, make_turn_intent_envelope
 
 
 class TelegramGenericMemoryTests(SparkTestCase):
@@ -136,7 +137,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         facts = (influence_events[0]["facts_json"] or {}).get("detected_generic_memory_observation") or {}
         self.assertEqual(facts.get("predicate"), "profile.cofounder_name")
 
-    def test_build_researcher_reply_persists_recent_family_shared_time_memory(self) -> None:
+    def test_build_researcher_reply_surfaces_unavailable_family_shared_time_memory_write(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -158,16 +159,22 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 user_message="My mom came over yesterday and I spent time with my sister at the park.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember you recently spent time with: mother, sister.")
-        self.assertEqual(result.mode, "memory_generic_observation_update")
-        self.assertEqual(result.routing_decision, "memory_generic_observation")
+        self.assertIn("family members you spent time with recently", result.reply_text)
+        self.assertIn("could not save it to memory", result.reply_text)
+        self.assertIn("sdk_unavailable", result.reply_text)
+        self.assertEqual(result.mode, "memory_generic_observation_unavailable")
+        self.assertEqual(result.routing_decision, "memory_generic_observation_unavailable")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
-        self.assertTrue(write_events)
-        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
-        self.assertEqual(recorded_observations[0]["predicate"], "profile.recent_family_members")
-        self.assertEqual(recorded_observations[0]["value"], "mother, sister")
+        self.assertFalse(write_events)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("routing_decision"), "memory_generic_observation_unavailable")
+        self.assertEqual(facts.get("predicate"), "profile.recent_family_members")
+        self.assertEqual(facts.get("value"), "mother, sister")
+        self.assertEqual(facts.get("write_reason"), "sdk_unavailable")
 
-    def test_build_researcher_reply_answers_recent_family_shared_time_query_from_memory(self) -> None:
+    def test_build_researcher_reply_does_not_recall_unavailable_family_shared_time_write(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -200,9 +207,43 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 user_message="Which family members did I spend time with recently?",
             )
 
-        self.assertEqual(result.reply_text, "You recently spent time with mother, sister.")
+        self.assertEqual(result.reply_text, "I don't currently have that saved.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_telegram_runtime_surfaces_unavailable_entity_memory_write_without_provider(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for unavailable memory writes"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for unavailable memory writes"),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2301,
+                    user_id="111",
+                    username="alice",
+                    text="For later, Omar owns the launch checklist.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["request_id"], "sim:2301")
+        self.assertTrue(result.detail["simulation"])
+        self.assertEqual(result.detail["origin_surface"], "simulation_cli")
+        self.assertEqual(result.detail["bridge_mode"], "memory_generic_observation_unavailable")
+        self.assertEqual(result.detail["routing_decision"], "memory_generic_observation_unavailable")
+        self.assertIn("launch checklist owner", result.detail["response_text"])
+        self.assertIn("could not save it to memory", result.detail["response_text"])
+        self.assertIn("sdk_unavailable", result.detail["response_text"])
 
     def test_build_researcher_reply_answers_plan_and_commitment_queries_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

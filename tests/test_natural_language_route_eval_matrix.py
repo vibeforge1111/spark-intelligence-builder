@@ -90,7 +90,7 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         for case in archived:
             self.assertIn("archived_reason", case)
             self.assertTrue(str(case["archived_reason"]).strip())
-        self.assertIn("Harness Core route falls through", archived[0]["archived_reason"])
+        self.assertIn("cannot prove persistence", archived[0]["archived_reason"])
         self.assertIn("restore", archived[2]["archived_reason"])
 
     def test_live_telegram_cadence_report_declares_release_gate_and_artifacts(self) -> None:
