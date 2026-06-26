@@ -6285,7 +6285,11 @@ def handle_drafts_show(args: argparse.Namespace) -> int:
         handle_or_id=args.handle,
     )
     if draft is None:
-        print(f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}")
+        print(
+            f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}. "
+            f"Run `spark-intelligence drafts list --user-id {args.user_id} --channel {args.channel}` "
+            f"to see recent draft handles."
+        )
         return 1
     print(f"=== Draft {draft.handle} ===")
     print(f"created_at: {draft.created_at}")
