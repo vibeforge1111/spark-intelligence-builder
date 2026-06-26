@@ -81,3 +81,13 @@ def test_telegram_api_error_description_is_redacted() -> None:
     message = str(exc_info.value)
     assert "sk-proj-" not in message
     assert "<redacted api key>" in message
+
+
+def test_sanitize_multipart_filename_strips_crlf() -> None:
+    from spark_intelligence.adapters.telegram.client import _sanitize_multipart_filename
+
+    assert _sanitize_multipart_filename("photo.jpg") == "photo.jpg"
+    assert _sanitize_multipart_filename("evil\r\nContent-Type: text/html") == "evilContent-Type: text/html"
+    assert _sanitize_multipart_filename("test\nfile.txt") == "testfile.txt"
+    assert _sanitize_multipart_filename('name"quote') == "namequote"
+    assert _sanitize_multipart_filename("") == ""

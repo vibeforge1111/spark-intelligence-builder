@@ -11,7 +11,13 @@ from spark_intelligence.security.redaction import redact_text
 
 
 Transport = Callable[[str, dict[str, Any] | None], dict[str, Any]]
-TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^/\s]+")
+TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^\s]+")
+_CRLF_CHARS = re.compile(r"[\r\n\"]")
+
+
+def _sanitize_multipart_filename(filename: str) -> str:
+    """Strip CRLF and quote characters to prevent header injection in multipart uploads."""
+    return _CRLF_CHARS.sub("", filename)
 
 
 @dataclass
@@ -177,7 +183,7 @@ class TelegramBotApiClient:
                 f"--{boundary}\r\n".encode("utf-8"),
                 (
                     f'Content-Disposition: form-data; name="{file_field}"; '
-                    f'filename="{filename}"\r\n'
+                    f'filename="{_sanitize_multipart_filename(filename)}"\r\n'
                 ).encode("utf-8"),
                 f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
                 file_bytes,
