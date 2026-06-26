@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -148,17 +150,45 @@ def benchmark_memory_architectures(
             "summary_markdown": str(resolved_summary_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_summary_path.write_text(
-        _build_summary_markdown(
-            summary=summary,
-            runtime=runtime,
-            benchmark_rows=benchmark_rows,
-            errors=errors,
-        ),
-        encoding="utf-8",
+    # Write benchmark summary JSON + markdown atomically via temp + os.replace
+    # so a crash mid-write cannot truncate either artifact and cannot leave
+    # the JSON advertising a markdown path that does not yet exist. The
+    # benchmark is a long-running multi-baseline pass — exactly the surface
+    # where torn writes happen. Sister-pattern: PR #252 (architecture_soak
+    # atomic), #254 (llm_wiki heartbeat atomic).
+    summary_markdown_text = _build_summary_markdown(
+        summary=summary,
+        runtime=runtime,
+        benchmark_rows=benchmark_rows,
+        errors=errors,
     )
+    _atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
+    _atomic_write_text(resolved_summary_path, summary_markdown_text)
     return MemoryArchitectureBenchmarkResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:
