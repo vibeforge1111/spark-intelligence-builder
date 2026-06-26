@@ -97,6 +97,8 @@ def _load_builder_event_turns(
             facts = json.loads(row["facts_json"] or "{}")
         except json.JSONDecodeError:
             facts = {}
+        if not isinstance(facts, dict):
+            facts = {}
         event_type = str(row["event_type"] or "")
         if event_type == "intent_committed":
             text = str(facts.get("message_text") or "").strip()
