@@ -1755,11 +1755,18 @@ def _record_is_suppressed_by_state_deletion(
             continue
         if deleted_entity_key and entity_key != deleted_entity_key:
             continue
-        if deleted_time and record_time and record_time > deleted_time:
+        if deleted_time and record_time and _parse_iso_timestamp(record_time) > _parse_iso_timestamp(deleted_time):
             continue
         return True
     return False
 
+
+def _parse_iso_timestamp(ts_str: str) -> datetime:
+    """Parse ISO timestamp string to datetime for safe comparison."""
+    try:
+        return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> bool:
     normalized_topic = str(topic or "").strip().casefold()
