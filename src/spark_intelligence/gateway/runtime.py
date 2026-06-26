@@ -363,7 +363,31 @@ def gateway_start(
                     break
                 sleep(max(backoff_seconds, 1))
                 continue
-            record_telegram_poll_success(state_db=state_db)
+            if poll_result.failed_send_count > 0 and poll_result.sent_count == 0:
+                # Polling reached Telegram but every outbound send failed; do not reset
+                # consecutive_failures by recording a clean success.
+                _record_telegram_poll_failure(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    failure_type="outbound_send_failed",
+                    message=(
+                        f"poll cycle reached Telegram and processed {poll_result.processed_count} updates "
+                        f"but all {poll_result.failed_send_count} outbound sends failed"
+                    ),
+                )
+            else:
+                record_telegram_poll_success(state_db=state_db)
+                if poll_result.failed_send_count > 0:
+                    append_gateway_trace(
+                        config_manager,
+                        {
+                            "event": "telegram_poll_partial_send_failure",
+                            "channel_id": "telegram",
+                            "sent_count": poll_result.sent_count,
+                            "failed_send_count": poll_result.failed_send_count,
+                            "processed_count": poll_result.processed_count,
+                        },
+                    )
             lines.append(f"Cycle {cycle_index + 1}:")
             lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
             cycle_index += 1
