@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from spark_intelligence.memory.approval_inbox import (
+    REVIEW_ACTIONS,
+    _normalize_decision,
     build_memory_approval_inbox,
     record_memory_approval_decision,
 )
@@ -146,3 +148,19 @@ class MemoryApprovalInboxTests(SparkTestCase):
         self.assertEqual(len(inbox.items), 1)
         self.assertEqual(inbox.items[0].proposed_text, "concise mission updates")
         self.assertIn("raw logs stay out", inbox.source_policy)
+
+
+class NormalizeDecisionTests(SparkTestCase):
+    def test_unsupported_decision_message_names_the_known_actions(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_decision("aprove")
+        message = str(ctx.exception)
+        self.assertIn("aprove", message)
+        for action in REVIEW_ACTIONS:
+            self.assertIn(action, message)
+
+    def test_supported_decisions_normalize_without_error(self) -> None:
+        self.assertEqual(_normalize_decision("approve"), "approve")
+        self.assertEqual(
+            _normalize_decision("save-as-project-fact"), "save_as_project_fact"
+        )
