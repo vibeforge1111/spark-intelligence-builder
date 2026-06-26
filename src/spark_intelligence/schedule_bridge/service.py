@@ -193,21 +193,43 @@ def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
 
 
 def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    schedules, _ = _fetch_schedules_with_error(spawner_url, timeout=timeout)
+    return schedules
+
+
+def _fetch_schedules_with_error(
+    spawner_url: str | None = None,
+    *,
+    timeout: float = 5.0,
+) -> tuple[list[dict[str, Any]], str | None]:
     base = (spawner_url or _SPAWNER_URL).rstrip("/")
     req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return []
+    except urllib.error.HTTPError as exc:
+        return [], f"HTTP {exc.code} from {base}/api/scheduled"
+    except urllib.error.URLError as exc:
+        return [], f"could not reach {base}: {exc.reason}"
+    except (TimeoutError, OSError) as exc:
+        return [], f"could not reach {base}: {exc}"
+    except json.JSONDecodeError as exc:
+        return [], f"schedule response was not JSON: {exc.msg}"
     if not isinstance(data, dict):
-        return []
+        return [], "schedule response was not a JSON object"
     records = data.get("schedules")
-    return records if isinstance(records, list) else []
+    if not isinstance(records, list):
+        return [], None
+    return records, None
 
 
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
-    schedules = fetch_schedules(spawner_url)
+    schedules, error = _fetch_schedules_with_error(spawner_url)
+    if error is not None:
+        return (
+            f"Couldn't reach the scheduler right now ({error}). "
+            "Try /schedules directly once the spawner is back up."
+        )
     return format_schedule_list(schedules)
 
 
