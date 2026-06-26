@@ -1822,7 +1822,11 @@ def list_pairings(state_db: StateDB) -> str:
             """
         ).fetchall()
     if not rows:
-        return "No pairings recorded."
+        return (
+            "No pairings recorded.\n"
+            "Approve a new pairing with:\n"
+            "  spark-intelligence pairings approve <channel_id> <external_user_id> [--display-name <name>]"
+        )
     lines = ["Pairings:"]
     for row in rows:
         lines.append(
