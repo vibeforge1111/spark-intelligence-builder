@@ -1690,7 +1690,17 @@ def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | Non
 
 def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
-    return match.group(0) if match else None
+    if not match:
+        return None
+    candidate = match.group(0)
+    # Trim trailing punctuation that frequently rides along with a URL embedded
+    # in natural-language tasks (e.g. "check https://example.com." or
+    # "<https://example.com>"). The regex stops at whitespace and `)`, but
+    # other end-of-clause characters still get captured and break the
+    # downstream browser navigate payload.
+    while candidate and candidate[-1] in ".,;:>]'\"":
+        candidate = candidate[:-1]
+    return candidate or None
 
 
 def _now_iso() -> str:
