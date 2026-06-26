@@ -2543,6 +2543,8 @@ def poll_telegram_updates_once(
     for update in updates:
         normalized = normalize_telegram_update(update, channel_id="telegram")
         next_offset = normalized.update_id + 1
+        update_request_id = f"telegram:{normalized.update_id}"
+        update_trace_ref = f"trace:telegram:{normalized.update_id}"
         if is_duplicate_event(
             state_db=state_db,
             channel_id="telegram",
@@ -2599,7 +2601,8 @@ def poll_telegram_updates_once(
                     session_id=None,
                     decision="rate_limited",
                     bridge_mode=None,
-                    trace_ref=None,
+                    request_id=update_request_id,
+                    trace_ref=update_trace_ref,
                 )
                 delivery_ok = send_result["ok"]
                 delivery_error = send_result["error"]
@@ -2607,6 +2610,13 @@ def poll_telegram_updates_once(
                     sent_count += 1
                 else:
                     failed_send_count += 1
+            rate_limit_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=update_request_id,
+                trace_ref=update_trace_ref,
+                command="rate_limited",
+                delivered=bool(delivery_ok),
+                reply_text=f"Rate limit reached. Try again in about {rate_limit['retry_after_seconds']} seconds.",
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -2615,10 +2625,14 @@ def poll_telegram_updates_once(
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "retry_after_seconds": rate_limit["retry_after_seconds"],
                     "notice_sent": rate_limit["notice_allowed"],
                     "delivery_ok": delivery_ok,
                     "delivery_error": delivery_error,
+                    "harnessProofRef": rate_limit_proof_capsule["turnRef"],
+                    "proofCapsule": rate_limit_proof_capsule,
                 },
             )
             continue
@@ -2629,8 +2643,6 @@ def poll_telegram_updates_once(
             external_user_id=normalized.telegram_user_id,
             display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
         )
-        update_request_id = f"telegram:{normalized.update_id}"
-        update_trace_ref = f"trace:telegram:{normalized.update_id}"
         run = open_run(
             state_db,
             run_kind="telegram_update",
@@ -4447,6 +4459,7 @@ def _send_telegram_reply(
             "routing_decision": routing_decision,
             "active_chip_key": active_chip_key,
             "active_chip_task_type": active_chip_task_type,
+            "request_id": request_id,
             "trace_ref": trace_ref,
             "output_keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
