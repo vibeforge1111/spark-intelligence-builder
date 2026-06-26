@@ -70,7 +70,11 @@ def build_handoff_freshness_check(
     write_report: bool = True,
 ) -> HandoffFreshnessCheckResult:
     repo_root = _repo_root()
-    observed_changed_paths = _normalize_paths(changed_paths) if changed_paths is not None else _git_changed_paths(repo_root)
+    git_changed_paths_unavailable = False
+    if changed_paths is not None:
+        observed_changed_paths = _normalize_paths(changed_paths)
+    else:
+        observed_changed_paths, git_changed_paths_unavailable = _git_changed_paths_with_status(repo_root)
     triggered_paths = [path for path in observed_changed_paths if _is_trigger_path(path)]
     docs_changed = [path for path in observed_changed_paths if path in REQUIRED_DOCS]
     doc_rows = [_doc_row(repo_root=repo_root, relative_path=path, required_tokens=tokens) for path, tokens in REQUIRED_DOCS.items()]
@@ -83,6 +87,7 @@ def build_handoff_freshness_check(
         doc_update_present=doc_update_present,
         missing_docs=missing_docs,
         docs_with_missing_tokens=docs_with_missing_tokens,
+        git_changed_paths_unavailable=git_changed_paths_unavailable,
     )
     status = "blocked" if warnings else "pass"
     payload = {
@@ -138,8 +143,16 @@ def _warnings(
     doc_update_present: bool,
     missing_docs: list[dict[str, Any]],
     docs_with_missing_tokens: list[dict[str, Any]],
+    git_changed_paths_unavailable: bool = False,
 ) -> list[str]:
     warnings: list[str] = []
+    # Surface git-unavailable as its own warning so the freshness check
+    # cannot silently report 'pass' just because we could not enumerate
+    # changed paths. A handoff gate that returns 'pass' on a torn git
+    # environment looks identical to one that returns 'pass' on a clean
+    # tree, which is exactly the failure mode the gate exists to prevent.
+    if git_changed_paths_unavailable:
+        warnings.append("handoff_git_changed_paths_unavailable")
     if doc_update_required and not doc_update_present:
         warnings.append("handoff_docs_not_updated_with_self_awareness_change")
     if missing_docs:
@@ -149,7 +162,16 @@ def _warnings(
     return warnings
 
 
-def _git_changed_paths(repo_root: Path) -> list[str]:
+def _git_changed_paths_with_status(repo_root: Path) -> tuple[list[str], bool]:
+    """Return (changed_paths, unavailable_flag).
+
+    unavailable_flag is True when subprocess raises OSError or either git
+    invocation returned a non-zero exit code. Callers must surface this
+    as a warning rather than treat an empty list as evidence of a clean
+    tree, which is the silent-false-pass failure mode that gates can hit
+    in detached worktrees, sandboxed runners, or when git itself is
+    missing from PATH.
+    """
     try:
         diff_result = subprocess.run(
             ["git", "diff", "--name-only", "HEAD"],
@@ -166,10 +188,19 @@ def _git_changed_paths(repo_root: Path) -> list[str]:
             text=True,
         )
     except OSError:
-        return []
+        return [], True
     if diff_result.returncode != 0 or untracked_result.returncode != 0:
-        return []
-    return _normalize_paths([*diff_result.stdout.splitlines(), *untracked_result.stdout.splitlines()])
+        return [], True
+    return (
+        _normalize_paths([*diff_result.stdout.splitlines(), *untracked_result.stdout.splitlines()]),
+        False,
+    )
+
+
+def _git_changed_paths(repo_root: Path) -> list[str]:
+    """Backwards-compatible shim that drops the unavailable flag."""
+    paths, _ = _git_changed_paths_with_status(repo_root)
+    return paths
 
 
 def _normalize_paths(paths: list[str] | tuple[str, ...]) -> list[str]:
