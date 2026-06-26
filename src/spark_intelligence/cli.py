@@ -6233,7 +6233,7 @@ def handle_channel_test(args: argparse.Namespace) -> int:
         )
         print(report.to_json() if args.json else report.to_text())
         return 0 if report.ok else 1
-    print(f"Unsupported channel test target: {args.channel_kind}", file=sys.stderr)
+    print(f"Unsupported channel test target: {args.channel_kind!r}. Currently only --channel-kind telegram is supported.", file=sys.stderr)
     return 2
 
 
