@@ -286,6 +286,15 @@ def _execute_chat_completions(
     }
 
 
+# Anthropic prompt-caching: when the system prompt is long enough to be
+# cache-eligible (~1024 tokens, ~4KB), send it as a structured `system`
+# block with cache_control so repeat calls within the 5-minute ephemeral
+# window reuse the cached prefix instead of re-billing it as fresh input
+# tokens. Below the threshold the API silently ignores the marker, so the
+# call still keeps the historic merged-prompt shape for short prompts.
+_ANTHROPIC_SYSTEM_CACHE_MIN_CHARS = 4096
+
+
 def _execute_anthropic_messages(
     *,
     provider: DirectProviderRequest,
@@ -296,13 +305,26 @@ def _execute_anthropic_messages(
     payload: dict[str, object] = {
         "model": provider.model,
         "max_tokens": 1024,
-        "messages": [
+    }
+    stripped_system = system_prompt.strip() if isinstance(system_prompt, str) else ""
+    if stripped_system and len(stripped_system) >= _ANTHROPIC_SYSTEM_CACHE_MIN_CHARS:
+        payload["system"] = [
+            {
+                "type": "text",
+                "text": stripped_system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        payload["messages"] = [
+            {"role": "user", "content": user_prompt.strip()},
+        ]
+    else:
+        payload["messages"] = [
             {
                 "role": "user",
                 "content": _merge_prompts(system_prompt=system_prompt, user_prompt=user_prompt),
             }
-        ],
-    }
+        ]
     if tools:
         payload["tools"] = tools
     response = _post_json(
