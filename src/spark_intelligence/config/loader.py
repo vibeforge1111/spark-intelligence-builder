@@ -32,7 +32,7 @@ class ConfigManager:
 
     @classmethod
     def from_home(cls, home: str | None) -> "ConfigManager":
-        root = Path(home).expanduser() if home else Path(os.environ.get("SPARK_INTELLIGENCE_HOME", "~/.spark-intelligence")).expanduser()
+        root = Path(home).expanduser() if home else Path(os.environ.get("SPARK_INTELLIGENCE_HOME") or os.environ.get("SPARK_BUILDER_HOME") or "~/.spark-intelligence").expanduser()
         paths = SparkPaths(
             home=root,
             config_yaml=root / "config.yaml",
