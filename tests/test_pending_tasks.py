@@ -131,3 +131,33 @@ class PendingTaskLedgerTests(SparkTestCase):
         rows = recent_pending_task_records(self.state_db, limit=10)
         self.assertEqual(rows[0]["task_key"], "memory:timeout-recovery")
         self.assertEqual(rows[0]["evidence_json"], {})
+
+    def test_close_unknown_pending_task_names_recent_open_keys(self) -> None:
+        upsert_pending_task(
+            self.state_db,
+            task_key="memory:in-progress",
+            original_request="Wire something.",
+            human_id="human:test",
+            next_retry_step="Continue.",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            close_pending_task(
+                self.state_db,
+                task_key="memory:typo",
+                completion_summary="should not run",
+            )
+        message = str(ctx.exception)
+        self.assertIn("unknown_pending_task:memory:typo", message)
+        self.assertIn("recent open keys:", message)
+        self.assertIn("memory:in-progress", message)
+
+    def test_close_unknown_pending_task_says_none_open_when_table_empty(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            close_pending_task(
+                self.state_db,
+                task_key="memory:missing",
+                completion_summary="should not run",
+            )
+        message = str(ctx.exception)
+        self.assertIn("recent open keys: none open", message)
