@@ -251,5 +251,8 @@ def _human_slug(value: str) -> str:
 def _normalize_status(value: str) -> str:
     status = str(value or "candidate").strip().casefold()
     if status not in VALID_USER_NOTE_STATUSES:
-        raise ValueError("user note promotion status must be one of: candidate, verified")
+        allowed = ", ".join(sorted(VALID_USER_NOTE_STATUSES))
+        raise ValueError(
+            f"user note promotion status '{status}' is not recognized. Must be one of: {allowed}."
+        )
     return status
