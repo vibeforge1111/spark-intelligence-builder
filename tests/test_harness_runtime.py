@@ -607,6 +607,40 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_execute_harness_task_returns_planned_for_envelope_with_no_runner(self) -> None:
+        from spark_intelligence.harness_runtime.service import HarnessTaskEnvelope
+
+        envelope = HarnessTaskEnvelope(
+            envelope_id="htask:planned-test",
+            task="Coordinate something we have not implemented yet.",
+            harness_id="future.workflow",
+            owner_system="builder",
+            backend_kind="future_runner",
+            session_scope="task",
+            prompt_strategy="direct",
+            route_mode="forced_harness",
+            required_capabilities=[],
+            artifacts_expected=[],
+            next_actions=[],
+            limitations=[],
+            channel_kind=None,
+            session_id=None,
+            human_id=None,
+            agent_id=None,
+        )
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        self.assertEqual(result.status, "planned")
+        self.assertIn("future.workflow", result.summary)
+        contract = result.artifacts.get("execution_contract") or {}
+        self.assertEqual(contract.get("owner_system"), "builder")
+        self.assertEqual(contract.get("backend_kind"), "future_runner")
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
