@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -12,8 +13,10 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
 from spark_intelligence.state.db import StateDB
 
+logger = logging.getLogger(__name__)
 
-DEFAULT_MAINTENANCE_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+
+DEFAULT_MAINTENANCE_VALIDATOR_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 DEFAULT_EVENT_LIMIT = 2000
 
 
@@ -169,20 +172,29 @@ def _run_domain_chip_memory_cli(
         env=command_env,
     )
     stdout = execution.stdout.strip()
+    stderr = execution.stderr.strip()
+    if stderr and execution.exit_code != 0:
+        # Keep raw subprocess stderr server-side for diagnosis but never
+        # surface it in the returned dict (it can contain filesystem paths
+        # and other internal detail).
+        logger.debug(
+            "domain_chip_memory.cli %s exited with code %s; stderr: %s",
+            command_name,
+            execution.exit_code,
+            stderr,
+        )
     if stdout:
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
-            payload.setdefault("stderr", execution.stderr.strip())
             return payload
     return {
         "valid": execution.exit_code == 0,
-        "errors": [] if execution.exit_code == 0 else [execution.stderr.strip() or stdout or "sdk_maintenance_report_failed"],
+        "errors": [] if execution.exit_code == 0 else ["sdk_maintenance_report_failed"],
         "warnings": [],
         "stdout": stdout,
-        "stderr": execution.stderr.strip(),
     }
 
 

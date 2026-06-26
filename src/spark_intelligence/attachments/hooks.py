@@ -152,6 +152,37 @@ def run_first_chip_hook_supporting(
     return None
 
 
+
+_MINIMAL_ENV_KEYS = {
+    "PATH", "HOME", "TMPDIR", "TMP", "TEMP",
+    "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
+    "PYTHONPATH", "PYTHONDONTWRITEBYTECODE",
+}
+
+
+def _build_minimal_chip_env(record: AttachmentRecord, repo_root: Path) -> dict[str, str]:
+    """Build minimal environment for chip hook subprocesses.
+
+    Only passes variables needed for execution, preventing
+    credential leakage to potentially untrusted chip code.
+    """
+    env: dict[str, str] = {}
+    for key in _MINIMAL_ENV_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    if "HOME" not in env:
+        env["HOME"] = str(Path.home())
+    src_root = repo_root / "src"
+    if src_root.exists():
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            str(src_root) if not existing else os.pathsep.join([str(src_root), existing])
+        )
+    env.update(_runtime_env_overrides(record))
+    return env
+
+
 def execute_chip_hook_record(
     record: AttachmentRecord,
     *,
@@ -179,14 +210,7 @@ def execute_chip_hook_record(
 
     repo_root = Path(record.repo_root)
     final_command = _normalize_command(command)
-    env = os.environ.copy()
-    src_root = repo_root / "src"
-    if src_root.exists():
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            str(src_root) if not existing_pythonpath else os.pathsep.join([str(src_root), existing_pythonpath])
-        )
-    env.update(_runtime_env_overrides(record))
+    env = _build_minimal_chip_env(record, repo_root)
 
     with tempfile.TemporaryDirectory(prefix=f"spark-chip-{record.key}-{hook}-") as temp_dir:
         temp_root = Path(temp_dir)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,9 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
+
+
+_log = logging.getLogger(__name__)
 
 
 _PAYLOAD_KEY_SIGNALS = (
@@ -262,7 +266,8 @@ def _match_project_reference(reference: str, project_records: list[Any]) -> dict
             try:
                 if reference_path == Path(record_path).expanduser().resolve():
                     return record
-            except Exception:
+            except Exception as exc:
+                _log.warning("Unexpected error: %s", exc)
                 continue
     return None
 

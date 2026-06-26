@@ -4489,3 +4489,18 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(env_map["WHATSAPP_WEBHOOK_SECRET"], "whatsapp-webhook-secret")
         self.assertEqual(env_map["WHATSAPP_WEBHOOK_VERIFY_TOKEN"], "whatsapp-verify-token")
         self.assertIn("Configured channel 'whatsapp' with pairing mode 'pairing' status 'enabled'.", stdout)
+
+    def test_wiki_limit_positive_int_helper_accepts_positive_and_rejects_zero_and_negative(self) -> None:
+        import argparse as _argparse
+
+        from spark_intelligence.cli import _positive_int
+
+        # Success path: positive integers pass through unchanged
+        self.assertEqual(_positive_int("1"), 1)
+        self.assertEqual(_positive_int("40"), 40)
+        self.assertEqual(_positive_int("9999"), 9999)
+
+        # Failure path: zero, negative, non-numeric all raise ArgumentTypeError
+        for bad in ("0", "-1", "-99", "abc", "", "5.5"):
+            with self.assertRaises(_argparse.ArgumentTypeError):
+                _positive_int(bad)

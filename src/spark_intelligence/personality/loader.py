@@ -497,7 +497,7 @@ def load_personality_profile(
             signals = data.get("last_signals") or {}
             personality_id = signals.get("personality_id")
             personality_name = signals.get("personality_name")
-        except Exception:
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
             pass
 
     # 2. Merge optional agent-base persona traits
@@ -1007,7 +1007,7 @@ def load_agent_persona_profile(
                     "updated_at": row["updated_at"],
                 }
         return {}
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         return {}
 
 
@@ -2114,7 +2114,7 @@ def detect_and_persist_nl_preferences(
                 channel_kind=channel_kind,
                 governor_decision=governor_decision,
             )
-        except Exception:
+        except (OSError, ValueError, TypeError):
             pass
 
     return deltas
@@ -2241,7 +2241,7 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         if row and row["deltas_json"]:
             data = json.loads(row["deltas_json"])
             return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         pass
     try:
         with state_db.connect() as conn:
@@ -2255,7 +2255,7 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         # Deltas are nested under "deltas" key
         deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
         return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         return {}
 
 
@@ -2951,7 +2951,7 @@ def detect_personality_query(
                         turn_id=turn_id,
                         channel_kind=None,
                     )
-                except Exception:
+                except (OSError, ValueError, TypeError):
                     pass
             record_event(
                 state_db,
@@ -3100,7 +3100,7 @@ def _format_profile_status(
                     trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
                     if trait:
                         lines.append(f"  {trait}: {value}")
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             pass
 
     return "\n".join(lines)
@@ -3168,7 +3168,7 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
                 }
                 for row in rows
             ]
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         pass
     try:
         with state_db.connect() as conn:
@@ -3179,7 +3179,7 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("observations", []) if isinstance(data, dict) else []
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         pass
     return []
 
@@ -3234,7 +3234,7 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
                 }
                 for row in rows
             ]
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         pass
     try:
         with state_db.connect() as conn:
@@ -3245,7 +3245,7 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("events", []) if isinstance(data, dict) else []
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
         pass
     return []
 

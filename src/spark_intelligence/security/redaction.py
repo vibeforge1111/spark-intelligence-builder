@@ -40,9 +40,11 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def mask_secret(value: str) -> str:
-    if len(value) < 18:
-        return "***"
-    return f"{value[:6]}...{value[-4:]}"
+    # Fully redact regardless of length. The previous partial reveal
+    # (value[:6]...value[-4:]) leaked prefix/suffix bytes of real keys — many
+    # tokens carry meaningful, guessable structure in exactly those positions —
+    # so emit a constant marker instead of any source bytes.
+    return "***REDACTED***"
 
 
 def redact_text(text: str | None) -> str:

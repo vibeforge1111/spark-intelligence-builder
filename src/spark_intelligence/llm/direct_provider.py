@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +15,77 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
+_BLOCKED_HOSTNAMES = frozenset({
+    "localhost",
+    "0.0.0.0",
+    "metadata.google.internal",
+    "169.254.169.254",
+})
+
+
+def _validate_base_url(url: str) -> None:
+    """Validate that a provider base URL targets a public host over HTTPS.
+
+    Raises RuntimeError if the URL points to a loopback, link-local, private
+    network, or uses an insecure scheme.
+    """
+    parsed = urllib.parse.urlparse(url)
+
+    if parsed.scheme != "https":
+        raise RuntimeError(
+            f"SSRF policy: provider base URL must use HTTPS, got '{parsed.scheme}': {url}"
+        )
+
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise RuntimeError(f"SSRF policy: provider base URL has no hostname: {url}")
+
+    lower_host = hostname.lower()
+    if lower_host in _BLOCKED_HOSTNAMES:
+        raise RuntimeError(
+            f"SSRF policy: provider base URL targets blocked hostname '{hostname}': {url}"
+        )
+
+    # Resolve hostname to IP addresses and check for private/range-bound targets
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise RuntimeError(
+            f"SSRF policy: provider base URL hostname could not be resolved: {hostname}"
+        )
+
+    for family, _, _, _, sockaddr in addrinfos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            raise RuntimeError(
+                f"SSRF policy: provider base URL resolved to invalid IP '{ip_str}': {url}"
+            )
+        if _is_private_or_reserved(ip):
+            raise RuntimeError(
+                f"SSRF policy: provider base URL resolves to private/reserved IP "
+                f"'{ip_str}' (hostname: {hostname}): {url}"
+            )
+
+
+def _is_private_or_reserved(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True if the IP address belongs to a private, loopback, link-local,
+    or other reserved range that should not be reachable from provider configs."""
+    if ip.is_loopback:
+        return True
+    if ip.is_link_local:
+        return True
+    if ip.is_private:
+        return True
+    if ip.is_reserved:
+        return True
+    if ip.is_unspecified:
+        return True
+    if isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local:
+        return True
+    return False
+
 
 
 @dataclass(frozen=True)
@@ -91,7 +165,9 @@ def execute_direct_provider_prompt(
             )
         else:
             raise RuntimeError(
-                f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
+                f"Provider '{provider.provider_id}' uses api_mode '{provider.api_mode}' "
+                f"which requires the researcher bridge wrapper, not direct HTTP execution. "
+                f"Check the provider's execution_transport configuration."
             )
     except Exception as exc:
         _record_provider_execution_event(
@@ -249,6 +325,7 @@ def _execute_anthropic_messages(
 
 
 def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
+    _validate_base_url(url)
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),

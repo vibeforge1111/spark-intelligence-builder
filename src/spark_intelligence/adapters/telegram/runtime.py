@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -564,7 +565,12 @@ def _telegram_user_instruction_governor_decision_for_message(
 ) -> dict[str, Any] | None:
     try:
         from spark_intelligence.user_instructions import detect_instruction_intent
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Suppressed import error resolving detect_instruction_intent: %s",
+            exc,
+            exc_info=True,
+        )
         return None
     intent = detect_instruction_intent(user_message)
     if not intent:
@@ -4930,6 +4936,7 @@ def _handle_runtime_command_impl(
             state_db,
             user_message=normalized,
             request_id=request_id,
+            trace_ref=f"trace:{request_id}",
             session_id=session_id or f"session:telegram:{external_user_id}",
             human_id=human_id or f"human:telegram:{external_user_id}",
             agent_id=agent_id,
@@ -11699,7 +11706,18 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
 def _render_swarm_bridge_failure(action: str, result: Any) -> str:
     stdout = str(getattr(result, "stdout", "") or "").strip()
     stderr = str(getattr(result, "stderr", "") or "").strip()
-    detail = stderr or stdout or "Command failed without stdout or stderr."
+    detail = "Command failed — see server logs for details."
+    raw_detail = stderr or stdout
+    if raw_detail:
+        # Retain the raw subprocess output server-side for diagnosis; it is
+        # deliberately not forwarded to the Telegram reply (can leak paths,
+        # tokens and other internal detail).
+        logging.getLogger(__name__).debug(
+            "swarm bridge %s failed (exit_code=%s): %s",
+            action,
+            int(getattr(result, "exit_code", 1) or 1),
+            raw_detail,
+        )
     lines = [
         f"Swarm {action} failed.",
         f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",

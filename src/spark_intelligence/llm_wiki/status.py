@@ -190,8 +190,18 @@ def _wiki_retrieval_probe(*, config_manager: ConfigManager, state_db: StateDB) -
 def _newest_modified_at(paths: list[Path]) -> str | None:
     if not paths:
         return None
-    newest = max(path.stat().st_mtime for path in paths)
-    return datetime.fromtimestamp(newest, timezone.utc).replace(microsecond=0).isoformat()
+    mtimes = [_safe_mtime(path) for path in paths]
+    mtimes = [value for value in mtimes if value > 0.0]
+    if not mtimes:
+        return None
+    return datetime.fromtimestamp(max(mtimes), timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _freshness_health(*, root: Path, markdown_files: list[Path]) -> dict[str, Any]:
@@ -216,7 +226,10 @@ def _freshness_health(*, root: Path, markdown_files: list[Path]) -> dict[str, An
 
 def _freshness_page_record(*, root: Path, path: Path) -> dict[str, Any]:
     relative_path = path.relative_to(root).as_posix()
-    content = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        content = ""
     frontmatter = _frontmatter(content)
     freshness = str(frontmatter.get("freshness") or "unknown").strip() or "unknown"
     observed_at = _observed_at(frontmatter=frontmatter, path=path)
@@ -260,7 +273,7 @@ def _observed_at(*, frontmatter: dict[str, Any], path: Path) -> datetime:
         parsed = _parse_datetime(frontmatter.get(key))
         if parsed is not None:
             return parsed
-    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return datetime.fromtimestamp(_safe_mtime(path), timezone.utc)
 
 
 def _parse_datetime(value: Any) -> datetime | None:

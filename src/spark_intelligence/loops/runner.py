@@ -139,7 +139,9 @@ def run_chip_autoloop(
             "history": history,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp = status_path.with_suffix(status_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(status_path)
 
     for round_idx in range(1, rounds + 1):
         try:

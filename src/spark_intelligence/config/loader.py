@@ -167,10 +167,19 @@ class ConfigManager:
             return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
         if windows_match and os.name != "nt":
-            drive = windows_match.group(1).lower()
-            remainder = windows_match.group(2).replace("\\", "/")
-            translated = Path("/mnt") / drive / remainder
-            return translated
+            # Only translate a Windows-style path to a WSL /mnt path when we are
+            # actually running under WSL — on native Linux/macOS this would
+            # invent a /mnt/<drive> path that does not exist.
+            is_wsl = False
+            try:
+                is_wsl = "microsoft" in Path("/proc/version").read_text().lower()
+            except (OSError, AttributeError):
+                is_wsl = False
+            if is_wsl:
+                drive = windows_match.group(1).lower()
+                remainder = windows_match.group(2).replace("\\", "/")
+                translated = Path("/mnt") / drive / remainder
+                return translated
         return path
 
     def save(
@@ -506,7 +515,15 @@ class ConfigManager:
                 error_message=error_message,
                 summary=summary,
             )
-        except Exception:
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Failed to record config mutation for %s/%s: %s",
+                target_document,
+                target_path,
+                exc,
+            )
             return
 
     @staticmethod

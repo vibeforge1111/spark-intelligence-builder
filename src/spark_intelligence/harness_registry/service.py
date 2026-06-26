@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -152,6 +153,20 @@ class AutoHarnessRecipeSelection:
         return payload
 
 
+def _contains_signal(signal: str, text: str) -> bool:
+    """Match *signal* against *text* on word boundaries to avoid substring
+    false positives (e.g. "what harness" firing inside "somewhat harness").
+
+    Signals that are blank or have no alphanumeric characters fall back to a
+    plain substring test, since \\b has no meaning around pure punctuation. This
+    mirrors the word-boundary idiom already used in loop_bridge/service.py.
+    """
+    stripped = signal.strip()
+    if not stripped or not any(c.isalnum() for c in stripped):
+        return signal in text
+    return bool(re.search(rf"\b{re.escape(stripped)}\b", text))
+
+
 def looks_like_harness_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
@@ -175,7 +190,7 @@ def looks_like_harness_query(message: str) -> bool:
         "what toolset would you use",
         "what session would this use",
     )
-    return any(signal in lowered_message for signal in direct_signals)
+    return any(_contains_signal(signal, lowered_message) for signal in direct_signals)
 
 
 def build_harness_registry(
@@ -605,7 +620,7 @@ def _looks_like_advisory_voice_recipe_task(lowered: str) -> bool:
         "tell me",
         "give me",
     )
-    return any(signal in lowered for signal in voice_signals) and any(signal in lowered for signal in advisory_signals)
+    return any(_contains_signal(signal, lowered) for signal in voice_signals) and any(_contains_signal(signal, lowered) for signal in advisory_signals)
 
 
 def _looks_like_research_then_swarm_task(lowered: str) -> bool:
@@ -624,7 +639,7 @@ def _looks_like_research_then_swarm_task(lowered: str) -> bool:
         "parallel",
         "escalate",
     )
-    return any(signal in lowered for signal in research_signals) and any(signal in lowered for signal in swarm_signals)
+    return any(_contains_signal(signal, lowered) for signal in research_signals) and any(_contains_signal(signal, lowered) for signal in swarm_signals)
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:

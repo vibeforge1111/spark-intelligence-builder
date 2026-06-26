@@ -54,7 +54,16 @@ from spark_intelligence.memory.retention_policy import (
 )
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
-DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+
+# Allowlist for modules that may be dynamically imported via the
+# spark.memory.sdk_module config value. Only modules whose root name
+# appears here are permitted, preventing arbitrary code execution
+# through a malicious sdk_module config value.
+_ALLOWED_SDK_MODULE_ROOTS: frozenset[str] = frozenset({
+    "domain_chip_memory",
+})
+
+DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
@@ -1288,7 +1297,7 @@ class _DomainChipMemoryClientAdapter:
             if callable(build_snapshot):
                 try:
                     current_snapshot = list(build_snapshot(merged_observations) or [])
-                except Exception:
+                except (AttributeError, TypeError, ValueError):
                     current_snapshot = []
             elif observation_cls:
                 current_snapshot = _hydrate_domain_entries(
@@ -1641,7 +1650,22 @@ def _local_domain_chip_memory_src() -> Path:
     return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
 
 
+def _validate_sdk_module_name(module_name: str) -> str:
+    """Validate that *module_name* is on the allowlist before dynamic import.
+
+    Returns the validated name on success and raises ValueError otherwise.
+    """
+    root = module_name.split(".", 1)[0]
+    if root not in _ALLOWED_SDK_MODULE_ROOTS:
+        raise ValueError(
+            f"sdk_module '{module_name}' is not in the allowlist; "
+            f"allowed roots: {sorted(_ALLOWED_SDK_MODULE_ROOTS)}"
+        )
+    return module_name
+
+
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    _validate_sdk_module_name(module_name)
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
@@ -3705,7 +3729,7 @@ def write_structured_evidence_to_memory(
                 actor_id=f"{actor_id}_belief_consolidator",
                 governor_decision=effective_governor_decision,
             )
-        except Exception:
+        except (OSError, ValueError, TypeError):
             pass
     if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
         observation=current_state_observation,
@@ -3727,7 +3751,7 @@ def write_structured_evidence_to_memory(
                     actor_id=f"{actor_id}_current_state_consolidator",
                     governor_decision=effective_governor_decision,
                 )
-            except Exception:
+            except (OSError, ValueError, TypeError):
                 pass
     return result
 
@@ -5356,13 +5380,13 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
         return _SDK_CLIENT_CACHE[cache_key]
     try:
         module = _import_memory_sdk_module(module_name)
-    except Exception:
+    except (ImportError, ModuleNotFoundError, AttributeError):
         return None
     if hasattr(module, "SparkMemorySDK"):
         sdk_factory = getattr(module, "SparkMemorySDK")
         try:
             client = sdk_factory()
-        except Exception:
+        except (AttributeError, TypeError):
             return None
         if _supports_domain_chip_memory_adapter(module):
             persistence_path = _domain_chip_memory_persistence_path(home_path)
@@ -5469,7 +5493,7 @@ def _load_domain_chip_memory_payload(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError):
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -5544,7 +5568,7 @@ def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persiste
         return
     try:
         payload = json.loads(persistence_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError):
         return
     if not isinstance(payload, dict):
         return
@@ -5576,7 +5600,7 @@ def _hydrate_domain_entries(raw_entries: Any, entry_cls: Any) -> list[Any]:
             continue
         try:
             hydrated.append(entry_cls(**raw))
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             continue
     return hydrated
 
@@ -7137,7 +7161,7 @@ def _json_object(raw: Any) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(str(raw))
-    except Exception:
+    except (ValueError, json.JSONDecodeError):
         return {}
     return dict(payload) if isinstance(payload, dict) else {}
 
