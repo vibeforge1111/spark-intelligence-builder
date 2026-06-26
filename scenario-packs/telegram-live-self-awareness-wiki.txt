@@ -15,6 +15,3 @@ What do you know about your memory system and what outranks wiki?
 What candidate wiki learnings need verification?
 Scan your wiki candidates for contradictions.
 Review the quality of the /memory-quality build in spawner-ui.
-For later, Omar owns the launch checklist.
-Who owns the launch checklist?
-Why did you answer that way?

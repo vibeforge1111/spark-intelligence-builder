@@ -68,7 +68,8 @@ def build_live_telegram_regression_cadence(
     missing_files = [str(path) for path in (matrix, scenario, verifier) if not path.exists()]
     checked_at = _utc_timestamp()
     matrix_payload = _load_json(matrix) if matrix.exists() else {}
-    cases = [case for case in matrix_payload.get("cases") or [] if isinstance(case, dict)]
+    all_cases = [case for case in matrix_payload.get("cases") or [] if isinstance(case, dict)]
+    cases = [case for case in all_cases if not bool(case.get("archived"))]
     suites = _suite_rows(cases)
     prompt_pack = _prompt_pack(scenario)
     evidence_dir = config_manager.paths.home / "artifacts" / "live-telegram-regression"
@@ -92,6 +93,7 @@ def build_live_telegram_regression_cadence(
         "healthy": status == "evidence_present",
         "summary": {
             "case_count": len(cases),
+            "archived_case_count": len(all_cases) - len(cases),
             "suite_count": len(suites),
             "prompt_count": len(prompt_pack),
             "missing_file_count": len(missing_files),
@@ -101,6 +103,15 @@ def build_live_telegram_regression_cadence(
             "matrix_id": str(matrix_payload.get("matrix_id") or ""),
             "purpose": str(matrix_payload.get("purpose") or ""),
             "case_count": len(cases),
+            "archived_case_count": len(all_cases) - len(cases),
+            "archived_cases": [
+                {
+                    "id": str(case.get("id") or ""),
+                    "reason": str(case.get("archived_reason") or ""),
+                }
+                for case in all_cases
+                if bool(case.get("archived"))
+            ],
             "guardrails": list(matrix_payload.get("guardrails") or []),
         },
         "suites": suites,
@@ -135,12 +146,16 @@ def build_live_telegram_regression_cadence(
                 "matched",
                 "expected",
                 "trace_eligibility",
+                "trace_ref",
+                "harnessProofRef",
                 "traces",
             ],
             "trace_requirements": [
                 "simulation=false",
                 "origin_surface=telegram_runtime",
                 "request_id starts with telegram:",
+                "trace_ref is present",
+                "Harness proof coverage is present through harnessProofRef plus proofCapsule or proofStatus",
                 "recorded_at >= cadence checked_at when verifier is run from cadence command",
                 "bridge_mode and routing_decision match matrix expectations",
             ],

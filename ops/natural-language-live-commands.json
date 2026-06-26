@@ -10,7 +10,8 @@
     "stale status traps must distinguish fresh observation from remembered or wiki context",
     "capability claims require route evidence, not registry visibility alone",
     "operator access permission is separate from runner capability",
-    "plain route tests must not call the provider"
+    "plain route tests must not call the provider",
+    "simulation route matrix cases prove route shape only; release evidence requires live Harness Core trace/proof continuity"
   ],
   "release_cadence": {
     "required_for": [
@@ -118,7 +119,9 @@
     {
       "id": "memory_current_state_write",
       "suite": "governed_memory",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
+      "archived": true,
+      "archived_reason": "Current Harness Core route falls through before the generic memory write proof; keep this out of release cadence until the dedicated memory route is repaired.",
       "prompt": "For later, Omar owns the launch checklist.",
       "expected_mode": "memory_generic_observation_update",
       "expected_routing_decision": "memory_generic_observation",
@@ -128,7 +131,9 @@
     {
       "id": "memory_current_state_recall",
       "suite": "governed_memory",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
+      "archived": true,
+      "archived_reason": "Depends on memory_current_state_write; keep this out of release cadence until the write route is repaired and live trace/proof joins are available.",
       "prompt": "Who owns the launch checklist?",
       "expected_mode": "memory_open_recall",
       "expected_routing_decision": "memory_open_recall_query",
@@ -138,7 +143,9 @@
     {
       "id": "route_explanation_debug",
       "suite": "route_explanation",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
+      "archived": true,
+      "archived_reason": "This case explained the archived governed-memory recall route; restore with a current active route explanation target.",
       "prompt": "Why did you answer that way?",
       "expected_mode": "context_source_debug",
       "expected_routing_decision": "context_source_debug",

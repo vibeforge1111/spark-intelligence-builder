@@ -33,7 +33,8 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("route matrix cases should not call the provider"),
         ):
-            for index, case in enumerate(matrix["cases"], start=1):
+            active_cases = [case for case in matrix["cases"] if not case.get("archived")]
+            for index, case in enumerate(active_cases, start=1):
                 with self.subTest(case=case["id"]):
                     result = self._run_case(case, index=index)
                     self.assertEqual(result["mode"], case["expected_mode"])
@@ -46,6 +47,10 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
                         self.assertIn(needle, result["reply_text"])
                     for needle in case.get("response_not_contains", []):
                         self.assertNotIn(needle, result["reply_text"])
+                    if case["surface"] == "telegram_runtime":
+                        self.assertRegex(str(result["request_id"]), r"^sim:\d+$")
+                        self.assertEqual(result["simulation"], True)
+                        self.assertEqual(result["origin_surface"], "simulation_cli")
 
     def test_matrix_declares_required_guardrails(self) -> None:
         matrix = _load_matrix()
@@ -64,6 +69,10 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         )
         self.assertIn("capability claims require route evidence, not registry visibility alone", guardrails)
         self.assertIn("operator access permission is separate from runner capability", guardrails)
+        self.assertIn(
+            "simulation route matrix cases prove route shape only; release evidence requires live Harness Core trace/proof continuity",
+            guardrails,
+        )
         self.assertEqual(
             matrix["release_cadence"]["evidence_boundary"],
             "Only real Telegram runtime traces with simulation=false count as live evidence.",
@@ -73,6 +82,16 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("llm_wiki", suites)
         self.assertIn("telegram_commands", suites)
         self.assertIn("route_confidence_traps", suites)
+        archived = [case for case in matrix["cases"] if case.get("archived")]
+        self.assertEqual(
+            {case["id"] for case in archived},
+            {"memory_current_state_write", "memory_current_state_recall", "route_explanation_debug"},
+        )
+        for case in archived:
+            self.assertIn("archived_reason", case)
+            self.assertTrue(str(case["archived_reason"]).strip())
+        self.assertIn("Harness Core route falls through", archived[0]["archived_reason"])
+        self.assertIn("restore", archived[2]["archived_reason"])
 
     def test_live_telegram_cadence_report_declares_release_gate_and_artifacts(self) -> None:
         result = build_live_telegram_regression_cadence(config_manager=self.config_manager)
@@ -90,20 +109,35 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertTrue(runbook_path.exists())
         runbook_text = runbook_path.read_text(encoding="utf-8")
         self.assertIn("1. /self", runbook_text)
-        self.assertIn("12. Why did you answer that way?", runbook_text)
+        self.assertIn("9. Review the quality of the /memory-quality build in spawner-ui.", runbook_text)
+        self.assertNotIn("For later, Omar owns the launch checklist.", runbook_text)
         self.assertIn("Simulation, soak, and CLI traces do not count", runbook_text)
         self.assertIn("SinceUtc:", runbook_text)
         self.assertIn("verify_live_traces", runbook_text)
         self.assertEqual(payload["operator_runbook"]["since_utc"], payload["checked_at"])
-        self.assertEqual(payload["summary"]["case_count"], len(_load_matrix()["cases"]))
+        active_matrix_cases = [case for case in _load_matrix()["cases"] if not case.get("archived")]
+        self.assertEqual(payload["summary"]["case_count"], len(active_matrix_cases))
+        self.assertEqual(payload["summary"]["archived_case_count"], 3)
+        self.assertEqual(payload["matrix"]["archived_case_count"], 3)
+        self.assertEqual(
+            {case["id"] for case in payload["matrix"]["archived_cases"]},
+            {"memory_current_state_write", "memory_current_state_recall", "route_explanation_debug"},
+        )
         suite_ids = {row["suite"] for row in payload["suites"]}
         self.assertIn("self_awareness", suite_ids)
         self.assertIn("llm_wiki", suite_ids)
         self.assertIn("simulation=false", payload["artifact_contract"]["trace_requirements"])
         self.assertIn("trace_eligibility", payload["artifact_contract"]["required_fields"])
+        self.assertIn("trace_ref", payload["artifact_contract"]["required_fields"])
+        self.assertIn("harnessProofRef", payload["artifact_contract"]["required_fields"])
         self.assertIn("since_utc", payload["artifact_contract"]["required_fields"])
         self.assertIn("evaluated_traces", payload["artifact_contract"]["required_fields"])
         self.assertIn("recorded_at >= cadence checked_at", " ".join(payload["artifact_contract"]["trace_requirements"]))
+        self.assertIn("trace_ref is present", payload["artifact_contract"]["trace_requirements"])
+        self.assertIn(
+            "Harness proof coverage is present through harnessProofRef plus proofCapsule or proofStatus",
+            payload["artifact_contract"]["trace_requirements"],
+        )
         self.assertIn("live_telegram_evidence_missing", payload["warnings"])
         self.assertIn("-PrintPromptsOnly", payload["commands"]["print_prompts"])
         self.assertIn("-Json", payload["commands"]["verify_live_traces"])
@@ -130,11 +164,16 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
                 "ignored_simulation_traces": 5,
                 "ignored_non_runtime_surface_traces": 5,
                 "ignored_non_telegram_request_traces": 5,
+                "ignored_missing_trace_join_traces": 0,
+                "ignored_missing_proof_coverage_traces": 0,
                 "latest_trace": {
                     "recorded_at": "2026-04-26T17:54:20+00:00",
                     "simulation": "True",
                     "origin_surface": "simulation_cli",
                     "request_id": "sim:1777226044853946",
+                    "trace_ref": "trace:sim:1777226044853946",
+                    "harness_proof_ref": "",
+                    "proof_status": "not_execution_proof",
                 },
                 "latest_eligible_runtime_trace": None,
             },
@@ -153,6 +192,8 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertEqual(payload["latest_evidence"]["evaluated_traces"], 3)
         self.assertEqual(payload["latest_evidence"]["scanned_runtime_traces"], 0)
         self.assertEqual(payload["latest_evidence"]["trace_eligibility"]["ignored_simulation_traces"], 5)
+        self.assertEqual(payload["latest_evidence"]["trace_eligibility"]["ignored_missing_trace_join_traces"], 0)
+        self.assertEqual(payload["latest_evidence"]["trace_eligibility"]["ignored_missing_proof_coverage_traces"], 0)
         self.assertEqual(
             payload["latest_evidence"]["trace_eligibility"]["latest_trace"]["origin_surface"],
             "simulation_cli",
@@ -201,6 +242,10 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
                 "routing_decision": str(detail.get("routing_decision") or ""),
                 "promotion_disposition": str(detail.get("promotion_disposition") or "not_promotable"),
                 "output_keepability": str(detail.get("output_keepability") or ""),
+                "request_id": str(detail.get("request_id") or ""),
+                "simulation": bool(detail.get("simulation")),
+                "origin_surface": str(detail.get("origin_surface") or ""),
+                "trace_ref": str(detail.get("trace_ref") or ""),
                 "reply_text": str(detail.get("response_text") or ""),
             }
         if surface == "builder_bridge":

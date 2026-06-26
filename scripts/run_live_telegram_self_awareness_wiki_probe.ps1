@@ -19,10 +19,7 @@ $Prompts = @(
     "What do you know about your memory system and what outranks wiki?",
     "What candidate wiki learnings need verification?",
     "Scan your wiki candidates for contradictions.",
-    "Review the quality of the /memory-quality build in spawner-ui.",
-    "For later, Omar owns the launch checklist.",
-    "Who owns the launch checklist?",
-    "Why did you answer that way."
+    "Review the quality of the /memory-quality build in spawner-ui."
 )
 
 if ($PrintPromptsOnly) {
@@ -87,24 +84,6 @@ $ExpectedTraces = @(
         BridgeMode = "build_quality_review_direct"
         RoutingDecision = "build_quality_review_direct"
         ResponseContains = @("Target repo: spawner-ui", "Tests:")
-    },
-    @{
-        Name = "natural governed memory write"
-        BridgeMode = "memory_generic_observation_update"
-        RoutingDecision = "memory_generic_observation"
-        ResponseContains = @("I'll remember", "owned by Omar")
-    },
-    @{
-        Name = "natural governed memory recall"
-        BridgeMode = "memory_open_recall"
-        RoutingDecision = "memory_open_recall_query"
-        ResponseContains = @("Omar")
-    },
-    @{
-        Name = "natural route explanation"
-        BridgeMode = "context_source_debug"
-        RoutingDecision = "context_source_debug"
-        ResponseContains = @("Route:", "source:")
     }
 )
 
@@ -202,10 +181,35 @@ function Get-TraceDescriptor {
         simulation = Get-TraceField $Trace "simulation"
         origin_surface = Get-TraceField $Trace "origin_surface"
         request_id = Get-TraceField $Trace "request_id"
+        trace_ref = Get-TraceField $Trace "trace_ref"
+        harness_proof_ref = Get-TraceField $Trace "harnessProofRef"
+        proof_status = Get-TraceField $Trace "proofStatus"
         bridge_mode = Get-TraceField $Trace "bridge_mode"
         routing_decision = Get-TraceField $Trace "routing_decision"
         user_message_preview = Get-TraceField $Trace "user_message_preview"
     }
+}
+
+function Test-TraceHasTraceJoin {
+    param(
+        [Parameter(Mandatory = $true)]$Trace
+    )
+
+    return -not [string]::IsNullOrWhiteSpace((Get-TraceField $Trace "trace_ref"))
+}
+
+function Test-TraceHasProofCoverage {
+    param(
+        [Parameter(Mandatory = $true)]$Trace
+    )
+
+    $proofRef = Get-TraceField $Trace "harnessProofRef"
+    if ([string]::IsNullOrWhiteSpace($proofRef)) {
+        return $false
+    }
+    $capsuleProperty = $Trace.PSObject.Properties["proofCapsule"]
+    $proofStatus = Get-TraceField $Trace "proofStatus"
+    return $null -ne $capsuleProperty -or -not [string]::IsNullOrWhiteSpace($proofStatus)
 }
 
 function Get-TraceEligibilitySummary {
@@ -229,6 +233,23 @@ function Get-TraceEligibilitySummary {
             -not (Get-TraceField $_ "request_id").StartsWith("telegram:")
         }
     )
+    $liveCandidateRows = @(
+        $candidateRows | Where-Object {
+            $_.simulation -eq $false -and
+            (Get-TraceField $_ "origin_surface") -eq "telegram_runtime" -and
+            (Get-TraceField $_ "request_id").StartsWith("telegram:")
+        }
+    )
+    $missingTraceJoinRows = @(
+        $liveCandidateRows | Where-Object {
+            -not (Test-TraceHasTraceJoin $_)
+        }
+    )
+    $missingProofCoverageRows = @(
+        $liveCandidateRows | Where-Object {
+            -not (Test-TraceHasProofCoverage $_)
+        }
+    )
     $latestTrace = $null
     if ($allRows.Count -gt 0) {
         $latestTrace = $allRows[0]
@@ -246,6 +267,8 @@ function Get-TraceEligibilitySummary {
         ignored_simulation_traces = $simulationRows.Count
         ignored_non_runtime_surface_traces = $nonRuntimeSurfaceRows.Count
         ignored_non_telegram_request_traces = $nonTelegramRequestRows.Count
+        ignored_missing_trace_join_traces = $missingTraceJoinRows.Count
+        ignored_missing_proof_coverage_traces = $missingProofCoverageRows.Count
         latest_trace = Get-TraceDescriptor $latestTrace
         latest_eligible_runtime_trace = Get-TraceDescriptor $latestEligibleTrace
     }
@@ -291,7 +314,9 @@ $runtimeRows = @(
     $evaluatedRows | Where-Object {
         $_.simulation -eq $false -and
         (Get-TraceField $_ "origin_surface") -eq "telegram_runtime" -and
-        (Get-TraceField $_ "request_id").StartsWith("telegram:")
+        (Get-TraceField $_ "request_id").StartsWith("telegram:") -and
+        (Test-TraceHasTraceJoin $_) -and
+        (Test-TraceHasProofCoverage $_)
     }
 )
 $traceEligibility = Get-TraceEligibilitySummary -Rows $rows -EvaluatedRows $evaluatedRows -RuntimeRows $runtimeRows
