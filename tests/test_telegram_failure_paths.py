@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import URLError
 
@@ -264,3 +265,57 @@ class TelegramFailurePathTests(SparkTestCase):
         self.assertNotIn("proofStorage", command_trace)
         self.assertNotIn("proofStatus", update_trace)
         self.assertNotIn("proofStorage", update_trace)
+
+    def test_poll_agent_onboarding_gateway_trace_carries_trace_and_delivery_proof(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=702,
+                    user_id="111",
+                    username="alice",
+                    text="hello",
+                )
+            ]
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.maybe_handle_agent_persona_onboarding_turn",
+            return_value=SimpleNamespace(
+                human_id="human:telegram:111",
+                agent_id="agent:telegram:111",
+                step="awaiting_agent_name",
+                reply_text="Let's set up your agent.",
+                agent_name="",
+                persona_profile={},
+                completed=False,
+            ),
+        ):
+            result = poll_telegram_updates_once(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                client=client,
+                timeout_seconds=0,
+            )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                as_json=True,
+            )
+        )
+        onboarding_trace = next(row for row in traces if row.get("event") == "telegram_agent_onboarding_processed")
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(onboarding_trace["request_id"], "telegram:702")
+        self.assertEqual(onboarding_trace["trace_ref"], "trace:telegram:702")
+        self.assertRegex(onboarding_trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(onboarding_trace["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(onboarding_trace["proofCapsule"]["turnRef"], onboarding_trace["harnessProofRef"])
+        self.assertEqual(onboarding_trace["proofCapsule"]["authority"]["contract"], "spark.turn_intent.v1")
+        self.assertEqual(onboarding_trace["proofCapsule"]["governor"]["verified"], True)
+        self.assertEqual(onboarding_trace["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(onboarding_trace["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertNotIn("proofStatus", onboarding_trace)
+        self.assertNotIn("proofStorage", onboarding_trace)

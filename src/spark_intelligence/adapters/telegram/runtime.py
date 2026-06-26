@@ -3164,6 +3164,13 @@ def poll_telegram_updates_once(
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
+            onboarding_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command="agent_onboarding",
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -3173,12 +3180,16 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "step": onboarding_result.step,
                     "completed": onboarding_result.completed,
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    "harnessProofRef": onboarding_proof_capsule["turnRef"],
+                    "proofCapsule": onboarding_proof_capsule,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
