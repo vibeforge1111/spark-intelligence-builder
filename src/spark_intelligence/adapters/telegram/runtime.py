@@ -10832,7 +10832,7 @@ def _render_direct_chip_execution_reply(
             output=output,
             payload_mode=payload_mode,
         )
-    visible_output = json.dumps(output, indent=2, sort_keys=True)[:1500] if output else "No result payload."
+    visible_output = json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)[:1500] if output else "No result payload."
     return (
         f"Chip `{execution.chip_key}` `{hook}` completed.\n"
         f"Input mode: {payload_mode}.\n"
