@@ -11125,7 +11125,14 @@ def _render_swarm_insights_reply(payload: list[dict[str, Any]]) -> str:
     ]
     if not actionable:
         return "Swarm insights:\nNo absorbable insights are waiting right now."
-    ranked = sorted(actionable, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:5]
+    ranked = sorted(
+        actionable,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )[:5]
     lines = [f"Swarm insights:\n{len(actionable)} absorbable insight(s)."]
     for item in ranked:
         lines.append(
@@ -11145,7 +11152,10 @@ def _render_swarm_scoped_insights_reply(payload: dict[str, Any]) -> str:
         return f"Swarm insights for {label}:\nNo absorbable insights are waiting right now."
     ranked = sorted(
         [item for item in actionable if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm insights for {label}:\n{len(actionable)} absorbable insight(s)."]
@@ -11165,7 +11175,10 @@ def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
         return "Swarm masteries:\nNo mastery records are available right now."
     ranked = sorted(
         [item for item in masteries if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm masteries:\n{len(masteries)} mastery record(s)."]
@@ -11187,7 +11200,10 @@ def _render_swarm_scoped_masteries_reply(payload: dict[str, Any]) -> str:
         return f"Swarm masteries for {label}:\nNo mastery records are available right now."
     ranked = sorted(
         [item for item in records if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm masteries for {label}:\n{len(records)} mastery record(s)."]
@@ -11224,7 +11240,14 @@ def _render_swarm_upgrades_reply(payload: list[dict[str, Any]]) -> str:
     pending = [item for item in upgrades if isinstance(item, dict) and str(item.get("status") or "") in pending_statuses]
     if not pending:
         return "Swarm upgrades:\nNo pending upgrades are waiting right now."
-    recent = sorted(pending, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:3]
+    recent = sorted(
+        pending,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )[:3]
     lines = [f"Swarm upgrades:\n{len(pending)} pending upgrade(s)."]
     for item in recent:
         lines.append(
@@ -11243,7 +11266,10 @@ def _render_swarm_scoped_upgrades_reply(payload: dict[str, Any]) -> str:
         return f"Swarm upgrades for {label}:\nNo pending upgrades are waiting right now."
     recent = sorted(
         [item for item in pending if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm upgrades for {label}:\n{len(pending)} pending upgrade(s)."]
