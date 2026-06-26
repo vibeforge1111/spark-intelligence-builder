@@ -1743,7 +1743,9 @@ def run_telegram_memory_regression(
                 "regression_cases_json": str(regression_cases_json_path),
             },
         }
-        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_resolved_write_path = resolved_write_path.with_suffix(resolved_write_path.suffix + ".tmp")
+        tmp_resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_resolved_write_path.replace(resolved_write_path)
         return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
     _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
@@ -1813,7 +1815,9 @@ def run_telegram_memory_regression(
                     "regression_cases_json": str(regression_cases_json_path),
                 },
             }
-            resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp_resolved_write_path = resolved_write_path.with_suffix(resolved_write_path.suffix + ".tmp")
+            tmp_resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp_resolved_write_path.replace(resolved_write_path)
             return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
         case_payloads.append(case_result)
         if not case_result.get("matched_expectations", True):
@@ -1872,7 +1876,8 @@ def run_telegram_memory_regression(
             if isinstance(architecture_live_comparison_payload, dict)
             else None
         )
-    regression_summary_markdown_path.write_text(
+    regression_summary_markdown_tmp_path = regression_summary_markdown_path.with_suffix(regression_summary_markdown_path.suffix + ".tmp")
+    regression_summary_markdown_tmp_path.write_text(
         _build_regression_summary_markdown(
             selected_user_id=selected_user_id,
             selected_chat_id=selected_chat_id,
@@ -1884,7 +1889,9 @@ def run_telegram_memory_regression(
         ),
         encoding="utf-8",
     )
-    regression_cases_json_path.write_text(
+    regression_summary_markdown_tmp_path.replace(regression_summary_markdown_path)
+    regression_cases_json_tmp_path = regression_cases_json_path.with_suffix(regression_cases_json_path.suffix + ".tmp")
+    regression_cases_json_tmp_path.write_text(
         json.dumps(
             {
                 "selected_user_id": selected_user_id,
@@ -1901,6 +1908,7 @@ def run_telegram_memory_regression(
         ),
         encoding="utf-8",
     )
+    regression_cases_json_tmp_path.replace(regression_cases_json_path)
     repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
     if architecture_summary_path:
         repo_sources.append(str(architecture_summary_path))
@@ -2034,7 +2042,9 @@ def run_telegram_memory_regression(
             ),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_resolved_write_path = resolved_write_path.with_suffix(resolved_write_path.suffix + ".tmp")
+    tmp_resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_resolved_write_path.replace(resolved_write_path)
     return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
 
