@@ -14,10 +14,18 @@
 
 set -uo pipefail
 
-DESKTOP="/c/Users/USER/Desktop"
-SPAWNER_DIR="$DESKTOP/spawner-ui"
-BOT_DIR="$DESKTOP/spark-telegram-bot"
-BUILDER_DIR="$DESKTOP/spark-intelligence-builder"
+# Sibling-repo layout assumption: spawner-ui, spark-telegram-bot, and this
+# repo are checked out next to each other. The original `DESKTOP=/c/Users/USER/Desktop`
+# baked in a single machine's path and silently fails for anyone else
+# (mkdir -p of `/c/Users/USER/Desktop/spark-intelligence-builder/.boot-logs`
+# either creates a stray empty tree under the wrong user, or — with stricter
+# umask — leaves $LOG_DIR unwritable and the first `>"$LOG_DIR/spawner-ui.log"`
+# explodes with "No such file or directory" from inside a backgrounded
+# subshell that the user never sees). Resolve relative to this script.
+BUILDER_DIR="${BUILDER_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+PARENT_DIR="$(cd "$BUILDER_DIR/.." && pwd)"
+SPAWNER_DIR="${SPAWNER_DIR:-$PARENT_DIR/spawner-ui}"
+BOT_DIR="${BOT_DIR:-$PARENT_DIR/spark-telegram-bot}"
 LOG_DIR="$BUILDER_DIR/.boot-logs"
 mkdir -p "$LOG_DIR"
 
