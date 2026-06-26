@@ -126,7 +126,19 @@ def _apply_runtime_architecture_pin() -> None:
         os.environ[_PROVIDER_PIN_ENV_VAR] = PINNED_RUNTIME_MEMORY_PROVIDER
 
 
-_apply_runtime_architecture_pin()
+_architecture_pin_applied = False
+
+
+def _ensure_architecture_pin() -> None:
+    """Apply runtime architecture pin lazily on first use instead of at import time.
+
+    This avoids mutating process-wide os.environ at module import, which
+    breaks test isolation and prevents tests from overriding pin values.
+    """
+    global _architecture_pin_applied
+    if not _architecture_pin_applied:
+        _apply_runtime_architecture_pin()
+        _architecture_pin_applied = True
 
 
 @dataclass(frozen=True)
