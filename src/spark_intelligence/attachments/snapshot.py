@@ -131,7 +131,9 @@ def _hide_superseded_legacy_voice_chip(records: list[AttachmentRecord]) -> list[
 def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB) -> AttachmentSnapshot:
     snapshot = build_attachment_snapshot(config_manager)
     snapshot_path = Path(snapshot.snapshot_path)
-    snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
+    snapshot_tmp_path = snapshot_path.with_suffix(snapshot_path.suffix + ".tmp")
+    snapshot_tmp_path.write_text(snapshot.to_json(), encoding="utf-8")
+    snapshot_tmp_path.replace(snapshot_path)
     summary = {
         "workspace_id": snapshot.workspace_id,
         "record_count": len(snapshot.records),
