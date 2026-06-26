@@ -607,6 +607,28 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
 
+    def test_build_harness_runtime_snapshot_honors_limit_and_orders_newest_first(self) -> None:
+        for _ in range(3):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="What chips are active right now?",
+            )
+            execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db, limit=2)
+
+        self.assertEqual(len(snapshot.recent_runs), 2)
+        self.assertEqual(snapshot.summary["recent_run_count"], 2)
+        self.assertEqual(snapshot.summary["last_harness_id"], "builder.direct")
+        for run in snapshot.recent_runs:
+            self.assertEqual(run["harness_id"], "builder.direct")
+            self.assertTrue(run["run_id"].startswith("run"))
+
     def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
