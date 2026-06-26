@@ -51,12 +51,25 @@ def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
         return "No scheduled jobs due. Scheduler harness is healthy."
     lines = [f"Ran {len(jobs)} scheduled job(s)."]
     for job in jobs:
-        result = _run_job(
-            config_manager=config_manager,
-            state_db=state_db,
-            job_id=str(job["job_id"]),
-            job_kind=str(job["job_kind"]),
-        )
+        try:
+            result = _run_job(
+                config_manager=config_manager,
+                state_db=state_db,
+                job_id=str(job["job_id"]),
+                job_kind=str(job["job_kind"]),
+            )
+        except Exception as exc:
+            # Preserve the rest of the scheduled-jobs sweep when one job
+            # raises. _run_job already records run_failed with the typed
+            # exception facts via close_run before re-raising, so the
+            # failure is already in the observability ledger; the tick
+            # caller only needs a per-job summary line and the loop must
+            # continue so other due jobs (oauth refresh, memory SDK
+            # maintenance) still execute on this tick.
+            lines.append(
+                f"- {job['job_id']} kind={job['job_kind']} result=job_exception:{type(exc).__name__}"
+            )
+            continue
         lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
     return "\n".join(lines)
 
