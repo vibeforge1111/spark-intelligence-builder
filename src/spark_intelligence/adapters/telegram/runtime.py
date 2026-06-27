@@ -9745,7 +9745,9 @@ def _render_telegram_voice_dashboard_reply(
     )
     snapshot_path = _telegram_voice_dashboard_snapshot_path()
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(json.dumps(snapshot, sort_keys=True, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp = snapshot_path.with_suffix(snapshot_path.suffix + ".tmp")
+    _tmp.write_text(json.dumps(snapshot, sort_keys=True, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp.replace(snapshot_path)
     dashboard_url = _telegram_voice_dashboard_url(config_manager)
     return (
         "I updated the voice system dashboard snapshot.\n\n"
