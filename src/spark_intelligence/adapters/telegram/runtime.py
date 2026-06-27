@@ -1741,6 +1741,7 @@ def simulate_telegram_update(
                 _delete_intent = None
                 _pending_delete = None
                 _generic_memory_observation = None
+                _generic_memory_deletion = None
                 _mission_control_query = False
                 _confirmation_yes = False
                 _confirmation_no = False
@@ -1761,7 +1762,8 @@ def simulate_telegram_update(
                                     detect_telegram_generic_deletion as _detect_generic_memory_deletion,
                                 )
 
-                                if _detect_generic_memory_deletion(effective_text) is not None:
+                                _generic_memory_deletion = _detect_generic_memory_deletion(effective_text)
+                                if _generic_memory_deletion is not None:
                                     _instruction_intent = None
                         except Exception:
                             pass
@@ -1971,7 +1973,39 @@ def simulate_telegram_update(
                         _schedule_create_intent = _detect_sch_create_intent(effective_text)
                     except Exception:
                         _schedule_create_intent = None
-                    if _generic_memory_observation is not None or _mission_control_query:
+                    if _generic_memory_deletion is not None:
+                        _shortcircuited = True
+                        from spark_intelligence.memory.generic_observations import (
+                            build_telegram_generic_deletions_answer as _build_deletion_answer,
+                        )
+                        from spark_intelligence.memory.orchestrator import (
+                            delete_profile_fact_from_memory as _do_delete,
+                        )
+                        try:
+                            _do_delete(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=str(normalized.telegram_user_id),
+                                predicate=_generic_memory_deletion.predicate,
+                                evidence_text=_generic_memory_deletion.evidence_text,
+                                fact_name=_generic_memory_deletion.fact_name,
+                                session_id=None,
+                                turn_id=None,
+                                channel_kind="telegram",
+                            )
+                        except Exception:
+                            pass
+                        outbound_text = _build_deletion_answer(deletions=[_generic_memory_deletion])
+                        trace_ref = None
+                        bridge_mode = "memory_generic_observation_delete"
+                        attachment_context = None
+                        routing_decision = "memory_generic_observation_delete"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                    elif _generic_memory_observation is not None or _mission_control_query:
                         pass
                     elif _schedule_create_intent is not None:
                         _shortcircuited = True
