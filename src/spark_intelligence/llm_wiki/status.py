@@ -169,7 +169,7 @@ def _wiki_retrieval_probe(*, config_manager: ConfigManager, state_db: StateDB) -
             source_surface="wiki_status_probe",
             record_activity=False,
         )
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as _exc:
         return "error", 0, False, {}
     wiki_lane = next(
         (
