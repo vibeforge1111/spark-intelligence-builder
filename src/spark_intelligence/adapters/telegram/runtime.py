@@ -7790,7 +7790,7 @@ def _memory_doctor_previous_gateway_record(
     except Exception:
         return None
     normalized_user_refs = _gateway_trace_user_filter_refs(external_user_id)
-    normalized_session_id = str(session_id or "").strip()
+    normalized_session_refs = _gateway_trace_session_filter_refs(session_id)
     normalized_current_request_id = str(current_request_id or "").strip()
     failed_diagnostic_request_ids: set[str] = set()
     for record in reversed(traces):
@@ -7801,7 +7801,7 @@ def _memory_doctor_previous_gateway_record(
             continue
         if normalized_user_refs and not normalized_user_refs.intersection(_gateway_trace_record_user_refs(record)):
             continue
-        if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
+        if normalized_session_refs and str(record.get("session_id") or "").strip() not in normalized_session_refs:
             continue
         metadata = record.get("runtime_command_metadata")
         is_memory_doctor_record = isinstance(metadata, dict) and str(metadata.get("command") or "") == "/memory doctor"
@@ -7848,6 +7848,22 @@ def _gateway_trace_user_filter_refs(value: str) -> set[str]:
         trace_identity_ref("user", normalized),
         trace_identity_ref("chat", normalized),
     }
+
+
+def _gateway_trace_session_filter_refs(value: str) -> set[str]:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return set()
+    refs = {normalized}
+    try:
+        from spark_intelligence.gateway.tracing import redact_session_id
+
+        once = redact_session_id(normalized)
+        twice = redact_session_id(once)
+        refs.update(ref for ref in (once, twice) if ref)
+    except Exception:
+        pass
+    return refs
 
 
 def _gateway_trace_record_user_refs(record: dict[str, object]) -> set[str]:

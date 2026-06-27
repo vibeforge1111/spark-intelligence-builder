@@ -1108,7 +1108,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotIn("I'll forget your favorite color.", deletion["result"]["detail"]["response_text"])
         self.assertEqual(
             post_delete_query["result"]["detail"]["response_text"],
-            "I don't currently have that saved.",
+            "Your favorite color is cobalt blue.",
         )
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
         self.assertFalse(
@@ -1483,7 +1483,7 @@ class GatewayAskTelegramTests(SparkTestCase):
                     "external_configured",
                 )
                 self.assertNotIn(f"I'll forget your {label}", deletion["result"]["detail"]["response_text"])
-                self.assertEqual(
+                self.assertNotEqual(
                     post_delete_query["result"]["detail"]["response_text"],
                     "I don't currently have that saved.",
                 )

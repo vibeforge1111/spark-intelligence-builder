@@ -30,6 +30,7 @@ _VNEXT_ENVELOPE_KEYS = (
     "sparkTurnIntentVNext",
 )
 DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME = "domain-chip-memory.memory.write"
+DOMAIN_CHIP_MEMORY_WRITE_VNEXT_TOOL_NAME = "memory.write"
 _BRIDGE_LEDGER_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("spark_bridge_ledger_context", default={})
 _EXPECTED_GUARDRAIL_DENIAL_REASONS = {
     "external_network_not_authorized",
@@ -261,6 +262,39 @@ def _with_governor_decision(verdict: BridgeAuthorityVerdict) -> BridgeAuthorityV
             governor_decision=governor_decision,
         )
     return replace(verdict, governor_decision=governor_decision)
+
+
+def _preserve_vnext_owner_mismatch_reason(
+    reason_codes: tuple[str, ...],
+    envelope: dict[str, Any] | None,
+    *,
+    owner_system: str,
+) -> tuple[str, ...]:
+    if "proposed_action_not_authorized" not in reason_codes:
+        return reason_codes
+    if not isinstance(envelope, dict):
+        return reason_codes
+    proposed_actions = envelope.get("proposed_actions")
+    if not isinstance(proposed_actions, list) or not proposed_actions:
+        return reason_codes
+    expected_prefix = f"capability:{owner_system}:"
+    proposed_capabilities = [
+        str(action.get("capability_id") or "")
+        for action in proposed_actions
+        if isinstance(action, dict)
+    ]
+    if proposed_capabilities and not any(capability.startswith(expected_prefix) for capability in proposed_capabilities):
+        reasons = list(reason_codes)
+        _append_reason(reasons, "owner_mismatch")
+        return tuple(reasons)
+    return reason_codes
+
+
+def _vnext_authorization_tool_name(tool_name: str, *, owner_system: str) -> str:
+    owner_prefix = f"{owner_system}."
+    if tool_name.startswith(owner_prefix):
+        return tool_name.removeprefix(owner_prefix)
+    return tool_name
 
 
 def set_bridge_authority_ledger_context(
@@ -567,7 +601,7 @@ def build_telegram_memory_turn_intent_payload_vnext(
         session_id=session_id,
         human_id=human_id,
         source_kind=source_kind,
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_VNEXT_TOOL_NAME,
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
         intent_summary="User explicitly asked Spark to remember information from this Telegram turn.",
@@ -1086,7 +1120,7 @@ def authorize_builder_bridge_action(
     if vnext_envelope is not None:
         authorization: LegacyToolAuthorization = authorize_vnext_tool_call(
             vnext_envelope,
-            tool_name=tool_name,
+            tool_name=_vnext_authorization_tool_name(tool_name, owner_system=owner_system),
             owner_system=owner_system,
             mutation_class=mutation_class,
             publishes=publishes,
@@ -1103,7 +1137,11 @@ def authorize_builder_bridge_action(
         )
     verdict = BridgeAuthorityVerdict(
         allowed=authorization.verdict == "allowed",
-        reason_codes=authorization.reason_codes,
+        reason_codes=_preserve_vnext_owner_mismatch_reason(
+            authorization.reason_codes,
+            authorization.turn_intent_envelope_vnext,
+            owner_system=owner_system,
+        ),
         envelope=envelope,
         harness_core_envelope=authorization.turn_intent_envelope_vnext,
         proposed_action=authorization.proposed_action,
@@ -1168,7 +1206,7 @@ def authorize_pending_confirmation(
     if vnext_envelope is not None:
         authorization: LegacyToolAuthorization = authorize_vnext_tool_call(
             vnext_envelope,
-            tool_name=tool_name,
+            tool_name=_vnext_authorization_tool_name(tool_name, owner_system=owner_system),
             owner_system=owner_system,
             mutation_class=mutation_class,
             publishes=publishes,

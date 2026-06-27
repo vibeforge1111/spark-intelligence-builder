@@ -320,7 +320,7 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert payload["selected_move"] == "execute_action"
     assert payload["action_authority"]["state"] == "executable"
     assert payload["proposed_actions"][0]["capability_id"] == "capability:domain-chip-memory:memory.write"
-    assert payload["proposed_actions"][0]["action_type"] == "memory.write"
+    assert payload["proposed_actions"][0]["action_type"] == "write_memory"
 
     verdict = authorize_builder_bridge_action(
         {"turn_intent_envelope_vnext": payload},
@@ -334,7 +334,7 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
     assert verdict.tool_call_ledger is not None
-    assert verdict.tool_call_ledger["tool_name"] == DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME
+    assert verdict.tool_call_ledger["tool_name"] == "memory.write"
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
 

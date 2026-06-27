@@ -4446,6 +4446,24 @@ def _build_researcher_memory_write_governor_decision(
 ) -> dict[str, Any] | None:
     if isinstance(governor_decision, dict):
         return governor_decision
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=state_db,
+            request_id=request_id,
+            run_id=run_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            component="researcher_bridge",
+        )
+        if isinstance(authority.governor_decision, dict):
+            return authority.governor_decision
     return None
 
 
@@ -9475,6 +9493,7 @@ def build_researcher_reply(
     detected_generic_memory_deletion = None
     detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
+    generic_memory_delete_blocked_without_governor = False
     generic_memory_write_failure: dict[str, str] | None = None
     try:
         personality_profile = load_personality_profile(
@@ -11144,9 +11163,12 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
+                            explicit_delete_governor_decision = (
+                                governor_decision if isinstance(governor_decision, dict) else None
+                            )
                             if _authorize_researcher_memory_write(
                                 state_db=state_db,
-                                governor_decision=memory_write_governor_decision,
+                                governor_decision=explicit_delete_governor_decision,
                                 turn_intent_envelope=turn_intent_envelope,
                                 turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                 run_id=run_id,
@@ -11180,7 +11202,7 @@ def build_researcher_reply(
                                         turn_id=deletion_turn_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
-                                        governor_decision=memory_write_governor_decision,
+                                        governor_decision=explicit_delete_governor_decision,
                                     )
                                     if generic_delete_result.accepted_count > 0:
                                         accepted_generic_memory_deletions.append(generic_memory_deletion)
@@ -11196,6 +11218,7 @@ def build_researcher_reply(
                                 detected_generic_memory_candidate = None
                                 detected_generic_memory_deletions = []
                                 detected_generic_memory_deletion = None
+                                generic_memory_delete_blocked_without_governor = True
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
@@ -11249,6 +11272,7 @@ def build_researcher_reply(
                         detected_generic_memory_candidate is None
                         and detected_memory_event is None
                         and detected_profile_fact is None
+                        and not generic_memory_delete_blocked_without_governor
                     ):
                         assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
