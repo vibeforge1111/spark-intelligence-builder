@@ -593,24 +593,46 @@ def _telegram_researcher_memory_write_governor_decision(
     human_id: str,
     agent_id: str,
 ) -> dict[str, Any] | None:
-    vnext_payload = extract_turn_intent_envelope_vnext(update_payload)
-    if not isinstance(vnext_payload, dict):
+    return _inbound_governor_decision(update_payload)
+
+
+def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
         return None
-    proposed_actions = vnext_payload.get("proposed_actions")
-    if not isinstance(proposed_actions, list):
+    candidates: list[Any] = [update_payload.get("governor_decision")]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message.get("governor_decision"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("schema_version") == "governor-decision-v1":
+            return candidate
+    return None
+
+
+def _telegram_user_instruction_governor_decision_from_inbound_authority(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    action: str | None,
+) -> dict[str, Any] | None:
+    if not action:
         return None
-    has_memory_write = any(
-        isinstance(action, dict)
-        and str(action.get("action_type") or "") == "write_memory"
-        and "memory.write" in str(action.get("capability_id") or "")
-        for action in proposed_actions
-    )
-    if not has_memory_write:
+    action_name = "archive" if action == "forget" else "write"
+    tool_name = f"user_instruction.{action_name}"
+    inbound_governor = _inbound_governor_decision(update_payload)
+    if isinstance(inbound_governor, dict):
+        return inbound_governor
+    if extract_turn_intent_envelope_vnext(update_payload) is None:
         return None
     authority = authorize_builder_bridge_action(
         update_payload,
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
+        tool_name=tool_name,
+        owner_system="spark-intelligence-builder",
         mutation_class="writes_memory",
         state_db=state_db,
         request_id=request_id,
@@ -620,9 +642,39 @@ def _telegram_researcher_memory_write_governor_decision(
         human_id=human_id,
         agent_id=agent_id,
         actor_id="telegram_runtime",
-        component="telegram_runtime",
+        component="telegram_runtime.user_instruction",
     )
     return authority.governor_decision if isinstance(authority.governor_decision, dict) else None
+
+
+def _telegram_user_instruction_governor_decision_for_message(
+    update_payload: dict[str, Any] | None,
+    *,
+    state_db,
+    request_id: str,
+    run_id: str | None,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+) -> dict[str, Any] | None:
+    try:
+        from spark_intelligence.user_instructions import detect_instruction_intent
+    except Exception:
+        return None
+    intent = detect_instruction_intent(user_message)
+    if not intent:
+        return None
+    return _telegram_user_instruction_governor_decision_from_inbound_authority(
+        update_payload,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        action=str(intent.get("action") or "remember"),
+    )
 
 
 def _detect_telegram_memory_diagnostic_authority_source_kind(
@@ -851,6 +903,7 @@ def _maybe_capture_user_instruction(
     reply_text: str,
     bridge_mode: str | None = None,
     routing_decision: str | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> str:
     try:
         from spark_intelligence.user_instructions import (
@@ -876,6 +929,8 @@ def _maybe_capture_user_instruction(
     text_value = str(intent.get("instruction_text") or "").strip()
     if not text_value:
         return reply_text
+    if not isinstance(governor_decision, dict):
+        return reply_text
     if intent.get("action") == "forget":
         try:
             matches = matching_instructions_to_archive(
@@ -888,18 +943,22 @@ def _maybe_capture_user_instruction(
         except Exception:
             return reply_text
         if not matches:
-            return f"{base}\n\n_(no matching saved instruction to forget for: \"{text_value[:120]}\")_\n"
+            return f"{base}\n\n_(no matching saved preference to forget for: \"{text_value[:120]}\")_\n"
         archived_texts: list[str] = []
         for inst in matches:
             try:
-                if archive_instruction(state_db, instruction_id=inst.instruction_id):
+                if archive_instruction(
+                    state_db,
+                    instruction_id=inst.instruction_id,
+                    governor_decision=governor_decision,
+                ):
                     archived_texts.append(inst.instruction_text)
             except Exception:
                 continue
         if not archived_texts:
             return reply_text
         joined = "; ".join(t[:120] for t in archived_texts)
-        return f"{base}\n\n_(forgot {len(archived_texts)} saved instruction(s): {joined})_\n"
+        return f"{base}\n\n_(forgot {len(archived_texts)} saved preference(s): {joined})_\n"
     try:
         saved = add_instruction(
             state_db,
@@ -907,10 +966,11 @@ def _maybe_capture_user_instruction(
             channel_kind="telegram",
             instruction_text=text_value,
             source="explicit",
+            governor_decision=governor_decision,
         )
     except Exception:
         return reply_text
-    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
+    return f"{base}\n\n_(saved preference evidence: \"{saved.instruction_text[:160]}\" - available as future context)_\n"
 
 
 def _looks_like_memory_forget_request(user_message: str) -> bool:
@@ -1244,7 +1304,6 @@ def _build_voice_chip_payload(
         "surface": "telegram",
         "human_id": human_id,
         "agent_id": agent_id,
-        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
         "advisor_context": {
             "runtime": {
                 "os": platform.system() or "unknown",
@@ -1362,6 +1421,7 @@ def _transcribe_telegram_audio_bytes(
             turn_intent_payload=turn_intent_payload,
             governor_decision=governor_decision,
         ),
+        governor_decision=governor_decision,
     )
     transcribe_ms = int((perf_counter() - transcribe_started) * 1000)
     if execution is None:
@@ -2235,25 +2295,6 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
-                if not _shortcircuited and _instruction_intent is not None:
-                    _shortcircuited = True
-                    outbound_text = _maybe_capture_user_instruction(
-                        state_db=state_db,
-                        user_message=effective_text,
-                        external_user_id=normalized.telegram_user_id,
-                        reply_text="",
-                        bridge_mode="user_instruction_shortcircuit",
-                        routing_decision="user_instruction_shortcircuit",
-                    )
-                    trace_ref = None
-                    bridge_mode = "user_instruction_shortcircuit"
-                    attachment_context = None
-                    routing_decision = "user_instruction_shortcircuit"
-                    active_chip_key = None
-                    active_chip_task_type = None
-                    active_chip_evaluate_used = False
-                    evidence_summary = None
-                    bridge_result = None
                 if not _shortcircuited:
                     researcher_memory_write_governor = _telegram_researcher_memory_write_governor_decision(
                         researcher_update_payload,
@@ -2331,6 +2372,16 @@ def simulate_telegram_update(
                         reply_text=outbound_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
+                        governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                            researcher_update_payload,
+                            state_db=state_db,
+                            request_id=request_id,
+                            run_id=None,
+                            session_id=resolution.session_id,
+                            human_id=resolution.human_id,
+                            agent_id=resolution.agent_id,
+                            user_message=effective_text,
+                        ),
                     )
                     outbound_text = _maybe_use_media_transcript_fallback(
                         normalized=normalized,
@@ -3300,6 +3351,16 @@ def poll_telegram_updates_once(
             reply_text=outbound_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
+            governor_decision=_telegram_user_instruction_governor_decision_for_message(
+                researcher_update_payload,
+                state_db=state_db,
+                request_id=f"telegram:{normalized.update_id}",
+                run_id=run.run_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                user_message=effective_text,
+            ),
         )
         outbound_text = _maybe_use_media_transcript_fallback(
             normalized=normalized,
@@ -3579,6 +3640,7 @@ def _synthesize_telegram_voice_reply(
         config_manager,
         hook="voice.speak",
         payload=payload,
+        governor_decision=governor_decision,
     )
     synthesis_ms = int((perf_counter() - synthesis_started) * 1000)
     if execution is None:
@@ -9097,6 +9159,7 @@ def _run_voice_runtime_command(
         config_manager,
         hook=hook,
         payload=payload,
+        governor_decision=governor_decision,
     )
     if execution is None:
         return _with_tool_result_metadata(
@@ -9148,6 +9211,63 @@ def _run_voice_runtime_command(
         status="failure",
         summary=f"Voice hook {hook} failed.",
     )
+
+
+def _telegram_voice_status_hook_governor_decision(
+    *,
+    update_payload: dict[str, Any] | None,
+    command: str,
+    request_id: str,
+    human_id: str | None,
+    agent_id: str | None,
+    external_user_id: str | None,
+    state_db: StateDB,
+) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
+    authority = authorize_builder_bridge_action(
+        update_payload,
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision, ()
+    actor_ref = str(human_id or "").strip() or f"human:telegram:{str(external_user_id or 'unknown').strip() or 'unknown'}"
+    vnext_payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=f"{request_id}:{uuid4().hex[:8]}",
+        source_kind="telegram_voice_status_adapter",
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        intent_summary=f"User requested {command}, which requires reading voice runtime status.",
+        raw_turn_summary=command,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None, tuple(authority.reason_codes or ("harness_core_vnext_envelope_unavailable",))
+    hook_authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name="voice.status",
+        owner_system="spark-voice-comms",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="telegram",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    if hook_authority.allowed and isinstance(hook_authority.governor_decision, dict):
+        return hook_authority.governor_decision, ()
+    return None, tuple(hook_authority.reason_codes or authority.reason_codes or ("missing_governor_decision",))
 
 
 def _build_voice_onboard_authority_payload(
@@ -9383,16 +9503,29 @@ def _run_voice_doctor_command(
             command="/voice doctor",
             reason_codes=authority.reason_codes,
         )
+    hook_governor, hook_reasons = _telegram_voice_status_hook_governor_decision(
+        update_payload=update_payload,
+        command="/voice doctor",
+        request_id=f"telegram-voice-doctor:{external_user_id}",
+        human_id=human_id,
+        agent_id=agent_id,
+        external_user_id=external_user_id,
+        state_db=state_db,
+    )
+    if hook_governor is None:
+        return _blocked_voice_diagnostic_authority_result(command="/voice doctor", reason_codes=hook_reasons)
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        governor_decision=hook_governor,
     )
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.status",
         payload=payload,
+        governor_decision=hook_governor,
     )
     if execution is None:
         return _with_tool_result_metadata(
@@ -9588,16 +9721,29 @@ def _run_voice_self_test_command(
             command="/voice self-test",
             reason_codes=authority.reason_codes,
         )
+    hook_governor, hook_reasons = _telegram_voice_status_hook_governor_decision(
+        update_payload=update_payload,
+        command="/voice self-test",
+        request_id=f"telegram-voice-self-test:{external_user_id}",
+        human_id=human_id,
+        agent_id=agent_id,
+        external_user_id=external_user_id,
+        state_db=state_db,
+    )
+    if hook_governor is None:
+        return _blocked_voice_diagnostic_authority_result(command="/voice self-test", reason_codes=hook_reasons)
     payload = _build_voice_chip_payload(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
         agent_id=agent_id,
+        governor_decision=hook_governor,
     )
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook="voice.status",
         payload=payload,
+        governor_decision=hook_governor,
     )
     result = execution.output.get("result") if execution and isinstance(execution.output, dict) else {}
     if not isinstance(result, dict):
@@ -10974,6 +11120,7 @@ def _handle_telegram_chip_command(
             chip_key=chip_key,
             hook=hook,
             payload=payload,
+            governor_decision=authority.governor_decision,
         )
     except ValueError as exc:
         return _with_tool_result_metadata(

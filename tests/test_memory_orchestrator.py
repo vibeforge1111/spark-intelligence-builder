@@ -5,6 +5,10 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
@@ -80,6 +84,38 @@ from spark_intelligence.workflow_recovery import (
 )
 
 from tests.test_support import SparkTestCase
+
+
+def _memory_write_governor_decision(
+    *,
+    request_id: str,
+    session_id: str,
+    human_id: str,
+    user_message: str = "Remember this test memory fact.",
+) -> dict[str, object]:
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id=request_id,
+        channel_kind="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        user_message=user_message,
+        source_kind="memory_orchestrator_test",
+    )
+    assert payload is not None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        request_id=request_id,
+        session_id=session_id,
+        human_id=human_id,
+        actor_id="memory_orchestrator_test",
+        component="memory_orchestrator_test",
+    )
+    assert verdict.allowed is True
+    assert isinstance(verdict.governor_decision, dict)
+    return verdict.governor_decision
 
 
 class _FakeMemoryClient:
@@ -2840,6 +2876,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                 session_id="session:event",
                 turn_id="turn:event",
                 channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-telegram-event-write",
+                    session_id="session:event",
+                    human_id="human:test",
+                ),
             )
 
         self.assertEqual(result.status, "succeeded")
@@ -2915,6 +2956,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:flight:1",
             turn_id="turn:flight:1",
             channel_kind="telegram",
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-flight-event-london",
+                session_id="session:flight:1",
+                human_id="human:test",
+            ),
         )
         write_telegram_event_to_memory(
             config_manager=self.config_manager,
@@ -2927,6 +2973,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:flight:2",
             turn_id="turn:flight:2",
             channel_kind="telegram",
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-flight-event-paris",
+                session_id="session:flight:2",
+                human_id="human:test",
+            ),
         )
 
         latest_lookup = lookup_current_state_in_memory(
@@ -3875,6 +3926,16 @@ class MemoryOrchestratorTests(SparkTestCase):
             subject="human:smoke:test",
             predicate="system.memory.smoke",
             value="ok",
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-smoke-test-write",
+                session_id="memory-smoke:memory_cli:human_smoke_test_system_memory_smoke",
+                human_id="human:smoke:test",
+            ),
+            cleanup_governor_decision=_memory_write_governor_decision(
+                request_id="req-smoke-test-cleanup",
+                session_id="memory-smoke:memory_cli:human_smoke_test_system_memory_smoke",
+                human_id="human:smoke:test",
+            ),
         )
 
         self.assertEqual(result.sdk_module, "domain_chip_memory")
@@ -3900,6 +3961,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             predicate="system.memory.movement",
             value="ok",
             cleanup=False,
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-movement-smoke-write",
+                session_id="memory-smoke:memory_cli:human_movement_test_system_memory_movement",
+                human_id="human:movement:test",
+            ),
         )
         lookup_current_state_in_memory(
             config_manager=self.config_manager,
@@ -3962,6 +4028,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             predicate="system.memory.lookup",
             value="ok",
             cleanup=False,
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-lookup-smoke-write",
+                session_id="memory-smoke:memory_cli:human_lookup_test_system_memory_lookup",
+                human_id="human:lookup:test",
+            ),
         )
 
         result = lookup_current_state_in_memory(
@@ -3986,6 +4057,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             predicate="system.memory.persisted",
             value="ok",
             cleanup=False,
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-lookup-persisted-smoke-write",
+                session_id="memory-smoke:memory_cli:human_lookup_persisted_system_memory_persisted",
+                human_id="human:lookup:persisted",
+            ),
         )
         memory_orchestrator._SDK_CLIENT_CACHE.clear()
 
@@ -4009,6 +4085,16 @@ class MemoryOrchestratorTests(SparkTestCase):
             home_path=self.config_manager.paths.home,
         )
         self.assertIsNotNone(client)
+        first_governor = _memory_write_governor_decision(
+            request_id="req-movement-test-note",
+            session_id="session:movement:test",
+            human_id="human:movement:test",
+        )
+        second_governor = _memory_write_governor_decision(
+            request_id="req-movement-test-current",
+            session_id="session:movement:test",
+            human_id="human:movement:test",
+        )
 
         client.write_observation(
             operation="create",
@@ -4019,6 +4105,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:movement:test",
             turn_id="turn:movement:test:write",
             timestamp="2026-05-02T09:00:00+00:00",
+            governor_decision=first_governor,
             metadata={
                 "memory_role": "structured_evidence",
                 "source_surface": "test",
@@ -4035,6 +4122,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             turn_id="turn:movement:test:current",
             timestamp="2026-05-02T09:01:00+00:00",
             retention_class="active_state",
+            governor_decision=second_governor,
             metadata={
                 "memory_role": "current_state",
                 "source_surface": "test",
@@ -4089,6 +4177,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
         self.assertIsNotNone(client_a)
         self.assertIsNotNone(client_b)
+        owner_governor = _memory_write_governor_decision(
+            request_id="req-merge-test-owner",
+            session_id="session:merge:test:a",
+            human_id="human:merge:test:a",
+        )
+        constraint_governor = _memory_write_governor_decision(
+            request_id="req-merge-test-constraint",
+            session_id="session:merge:test:b",
+            human_id="human:merge:test:b",
+        )
 
         client_a.write_observation(
             operation="update",
@@ -4099,6 +4197,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:a",
             turn_id="turn:merge:test:a",
             timestamp="2026-04-21T10:00:00+00:00",
+            governor_decision=owner_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4117,6 +4216,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:b",
             turn_id="turn:merge:test:b",
             timestamp="2026-04-21T10:00:01+00:00",
+            governor_decision=constraint_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_constraint",
@@ -4162,6 +4262,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
         self.assertIsNotNone(client_a)
         self.assertIsNotNone(client_b)
+        owner_governor = _memory_write_governor_decision(
+            request_id="req-merge-mixed-owner",
+            session_id="session:merge:test:mixed:owner",
+            human_id="human:merge:test:mixed",
+        )
+        event_governor = _memory_write_governor_decision(
+            request_id="req-merge-mixed-event",
+            session_id="session:merge:test:mixed:event",
+            human_id="human:merge:test:mixed",
+        )
 
         client_a.write_observation(
             operation="update",
@@ -4172,6 +4282,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:mixed:owner",
             turn_id="turn:merge:test:mixed:owner",
             timestamp="2026-04-21T10:01:00+00:00",
+            governor_decision=owner_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4190,6 +4301,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:mixed:event",
             turn_id="turn:merge:test:mixed:event",
             timestamp="2026-04-21T10:01:01+00:00",
+            governor_decision=event_governor,
             metadata={
                 "entity_type": "human",
                 "memory_role": "event",
@@ -4237,6 +4349,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
         self.assertIsNotNone(client_a)
         self.assertIsNotNone(client_b)
+        write_governor = _memory_write_governor_decision(
+            request_id="req-merge-delete-write",
+            session_id="session:merge:test:delete:write",
+            human_id="human:merge:test:delete",
+        )
+        delete_governor = _memory_write_governor_decision(
+            request_id="req-merge-delete-delete",
+            session_id="session:merge:test:delete:delete",
+            human_id="human:merge:test:delete",
+        )
 
         client_a.write_observation(
             operation="update",
@@ -4247,6 +4369,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:delete:write",
             turn_id="turn:merge:test:delete:write",
             timestamp="2026-04-21T10:02:00+00:00",
+            governor_decision=write_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4265,6 +4388,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:delete:delete",
             turn_id="turn:merge:test:delete:delete",
             timestamp="2026-04-21T10:02:01+00:00",
+            governor_decision=delete_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4306,6 +4430,26 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIsNotNone(client_a)
         self.assertIsNotNone(client_b)
         self.assertIsNotNone(client_c)
+        owner_initial_governor = _memory_write_governor_decision(
+            request_id="req-merge-multi-owner-initial",
+            session_id="session:merge:test:multi:owner:1",
+            human_id="human:merge:test:multi",
+        )
+        risk_governor = _memory_write_governor_decision(
+            request_id="req-merge-multi-risk",
+            session_id="session:merge:test:multi:risk",
+            human_id="human:merge:test:multi",
+        )
+        dependency_governor = _memory_write_governor_decision(
+            request_id="req-merge-multi-dependency",
+            session_id="session:merge:test:multi:dependency",
+            human_id="human:merge:test:multi",
+        )
+        owner_update_governor = _memory_write_governor_decision(
+            request_id="req-merge-multi-owner-update",
+            session_id="session:merge:test:multi:owner:2",
+            human_id="human:merge:test:multi",
+        )
 
         client_a.write_observation(
             operation="update",
@@ -4316,6 +4460,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:multi:owner:1",
             turn_id="turn:merge:test:multi:owner:1",
             timestamp="2026-04-21T10:03:00+00:00",
+            governor_decision=owner_initial_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4334,6 +4479,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:multi:risk",
             turn_id="turn:merge:test:multi:risk",
             timestamp="2026-04-21T10:03:01+00:00",
+            governor_decision=risk_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_risk",
@@ -4352,6 +4498,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:multi:dependency",
             turn_id="turn:merge:test:multi:dependency",
             timestamp="2026-04-21T10:03:02+00:00",
+            governor_decision=dependency_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_dependency",
@@ -4370,6 +4517,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:merge:test:multi:owner:2",
             turn_id="turn:merge:test:multi:owner:2",
             timestamp="2026-04-21T10:03:03+00:00",
+            governor_decision=owner_update_governor,
             metadata={
                 "entity_type": "human",
                 "field_name": "current_owner",
@@ -4464,6 +4612,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             predicate="system.memory.one",
             value="alpha",
             cleanup=False,
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-inspect-smoke-one",
+                session_id="memory-smoke:memory_cli:human_inspect_test_system_memory_one",
+                human_id="human:inspect:test",
+            ),
         )
         run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
@@ -4473,6 +4626,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             predicate="system.memory.two",
             value="beta",
             cleanup=False,
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-inspect-smoke-two",
+                session_id="memory-smoke:memory_cli:human_inspect_test_system_memory_two",
+                human_id="human:inspect:test",
+            ),
         )
         memory_orchestrator._SDK_CLIENT_CACHE.clear()
 
@@ -4500,6 +4658,11 @@ class MemoryOrchestratorTests(SparkTestCase):
             session_id="session:domain-chip",
             turn_id="turn:domain-chip-write",
             channel_kind="telegram",
+            governor_decision=_memory_write_governor_decision(
+                request_id="req-domain-chip-preference-write",
+                session_id="session:domain-chip",
+                human_id="human:test",
+            ),
         )
 
         self.assertIsNotNone(deltas)
@@ -4556,6 +4719,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                 session_id="session:memory",
                 turn_id="turn:memory-write",
                 channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-durable-preference-memory-write",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
             )
 
         self.assertIsNotNone(deltas)
@@ -4583,6 +4751,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                 session_id="session:memory",
                 turn_id="turn:memory-create",
                 channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-personality-reset-seed",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
             )
             fake_client.observation_calls.clear()
             query = detect_personality_query(
@@ -4679,6 +4852,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                 session_id="session:memory",
                 turn_id="turn:memory-write",
                 channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-watchtower-preference-write",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
             )
             detect_personality_query(
                 user_message="show my personality",

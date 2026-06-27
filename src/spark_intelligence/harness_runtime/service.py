@@ -815,7 +815,6 @@ def _build_voice_hook_payload(
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "surface": envelope.channel_kind or "cli",
-        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
         "human_id": envelope.human_id,
         "agent_id": envelope.agent_id,
     }
@@ -862,7 +861,12 @@ def _run_voice_hook(
                 payload["turn_intent_envelope_vnext"] = authorization.turn_intent_envelope_vnext
     from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
 
-    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook=hook,
+        payload=payload,
+        governor_decision=payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None,
+    )
     if not execution:
         raise RuntimeError(f"No attached chip supports `{hook}`.")
     if not execution.ok:

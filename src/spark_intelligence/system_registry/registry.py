@@ -1158,7 +1158,7 @@ def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str
     )
     try:
         execution = run_first_active_chip_hook(config_manager, hook=_BROWSER_STATUS_HOOK, payload=payload)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return {
             "status": "unavailable",
             "chip_key": "browser",

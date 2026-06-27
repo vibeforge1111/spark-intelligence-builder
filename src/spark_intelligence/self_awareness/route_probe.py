@@ -348,7 +348,6 @@ def _run_voice_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
         hook="voice.status",
         payload={
             "surface": "route_probe",
-            "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
             "advisor_context": {
                 "source_ledger": [
                     {

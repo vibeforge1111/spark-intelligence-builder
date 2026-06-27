@@ -54,22 +54,24 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 class BuilderPrelaunchContractTests(SparkTestCase):
     def _chip_evaluate_turn_intent_vnext(self, *, request_id: str) -> dict[str, object]:
-        return {
-            "schema_version": "turn-intent-envelope-vnext",
-            "turn_id": f"turn:chip-evaluate:{request_id}",
-            "surface": "telegram",
-            "selected_move": "execute_action",
-            "action_authority": {"state": "executable", "risk_tier": "local_write"},
-            "proposed_actions": [
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human:test",
+            request_id=request_id,
+            source_kind="test_chip_evaluate_explicit",
+            intent_summary="User explicitly requested startup chip guidance for the current turn.",
+            raw_turn_summary="Raw active-chip test turn is offloaded in the fixture.",
+            actions=[
                 {
-                    "action_type": "tool_call",
                     "tool_name": "chip.evaluate",
                     "owner_system": "spark-intelligence-builder",
                     "mutation_class": "writes_files",
-                    "capability_id": "spark-intelligence-builder:chip.evaluate",
+                    "args_path": f"builder://active-chip/{request_id}/chip-evaluate",
                 }
             ],
-        }
+        )
 
     def _governed_chip_authority(self, update_payload: dict[str, object] | None = None, **kwargs: object) -> SimpleNamespace:
         tool_name = str(kwargs.get("tool_name") or "")
@@ -77,36 +79,49 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         vnext = (update_payload or {}).get("turn_intent_envelope_vnext") if isinstance(update_payload, dict) else None
         if tool_name != "chip.evaluate" or owner_system != "spark-intelligence-builder" or not isinstance(vnext, dict):
             return SimpleNamespace(governor_decision=None)
-        decision_id = f"test-governor:{vnext.get('turn_id') or 'chip-evaluate'}"
-        return SimpleNamespace(
-            governor_decision={
-                "schema_version": "governor-decision-v1",
-                "decision_id": decision_id,
-                "surface": "telegram",
-                "turn_id": vnext.get("turn_id"),
-                "outcome": "execute",
-                "execution_boundary": {
-                    "action_authorized": True,
-                    "legacy_authority_demoted": True,
-                    "reasons": ["test_governor_authorized_chip_evaluate"],
-                },
-                "authorizations": [
-                    {
-                        "decision_id": f"{decision_id}:auth",
-                        "verdict": "allow",
-                        "capability_id": "spark-intelligence-builder:chip.evaluate",
-                    }
-                ],
-                "tool_ledgers": [
-                    {
-                        "ledger_id": f"{decision_id}:ledger",
-                        "tool_name": "chip.evaluate",
-                        "authorization": {"verdict": "allow", "decision_id": f"{decision_id}:auth"},
-                    }
-                ],
-                "evidence": [{"kind": "test_fixture", "ref": "governed-chip-authority"}],
-            }
+        from spark_intelligence.bridge_authority import authorize_builder_bridge_action as real_authorize_builder_bridge_action
+
+        return real_authorize_builder_bridge_action(
+            update_payload,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=str(kwargs.get("mutation_class") or "writes_files"),
+            state_db=self.state_db,
+            request_id=str(kwargs.get("request_id") or "req-chip-evaluate-test"),
+            actor_id="test",
+            component="test",
         )
+
+    def _verify_chip_governor_authority(self, governor_decision: dict[str, object] | None, **kwargs: object) -> dict[str, object]:
+        tool_name = str(kwargs.get("tool_name") or "")
+        owner_system = str(kwargs.get("owner_system") or "")
+        mutation_class = str(kwargs.get("mutation_class") or "")
+        decision_id = str((governor_decision or {}).get("decision_id") or "")
+        turn_id = str((governor_decision or {}).get("turn_id") or "")
+        allowed = (
+            isinstance(governor_decision, dict)
+            and tool_name == "chip.evaluate"
+            and owner_system == "spark-intelligence-builder"
+            and mutation_class == "writes_files"
+            and bool(decision_id)
+            and bool(turn_id)
+        )
+        return {
+            "schema_version": "governor-consumer-verification-v1",
+            "allowed": allowed,
+            "reason_codes": [] if allowed else ["test_governor_mismatch"],
+            "source_kind": "governor_decision" if isinstance(governor_decision, dict) else "missing_governor_decision",
+            "decision_id": decision_id or None,
+            "turn_id": turn_id or None,
+            "outcome": (governor_decision or {}).get("outcome") if isinstance(governor_decision, dict) else None,
+            "expected_capability_id": "capability:spark-intelligence-builder:chip.evaluate",
+            "expected_action_type": "edit_file",
+            "tool_name": tool_name,
+            "action_id": "action:test-chip-evaluate" if allowed else None,
+            "capability_id": "capability:spark-intelligence-builder:chip.evaluate" if allowed else None,
+            "authorization_decision_id": f"{decision_id}:auth" if allowed else None,
+            "ledger_id": f"{decision_id}:ledger" if allowed else None,
+        }
 
     def test_tranche1_typed_ledger_tables_are_populated(self) -> None:
         run = open_run(
@@ -1430,7 +1445,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         with patch(
             "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
             side_effect=self._governed_chip_authority,
-        ) as authority_mock:
+        ) as authority_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.verify_governor_tool_authority",
+            side_effect=self._verify_chip_governor_authority,
+        ) as verifier_mock:
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -1439,7 +1457,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
                 human_id="human:test",
                 session_id="session:test",
                 channel_kind="telegram",
-                user_message="What should this startup focus on next?",
+                user_message="Please review the current operator situation.",
                 turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
                     request_id="req-provenance"
                 ),
@@ -1447,6 +1465,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
         self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in verifier_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
         self.assertTrue(events)
         chip_events = [
@@ -1507,7 +1526,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         with patch(
             "spark_intelligence.researcher_bridge.advisory.authorize_builder_bridge_action",
             side_effect=self._governed_chip_authority,
-        ) as authority_mock:
+        ) as authority_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.verify_governor_tool_authority",
+            side_effect=self._verify_chip_governor_authority,
+        ) as verifier_mock:
             build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -1516,13 +1538,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
                 human_id="human:test",
                 session_id="session:test",
                 channel_kind="telegram",
-                user_message="What should this startup focus on next?",
+                user_message="Please review the current operator situation.",
                 turn_intent_envelope_vnext=self._chip_evaluate_turn_intent_vnext(
                     request_id="req-chip-result-classification"
                 ),
             )
 
         self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in authority_mock.mock_calls))
+        self.assertTrue(any(call.kwargs.get("tool_name") == "chip.evaluate" for call in verifier_mock.mock_calls))
         events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
         chip_events = [
             event

@@ -4418,14 +4418,16 @@ def _governor_authorizes_researcher_tool_call(
     return ("blocked", ("governor_consumer_verification_failed",), source_kind, decision_id)
 
 
-def _vnext_proposes_researcher_memory_write(payload: dict[str, Any] | None) -> bool:
+def _vnext_proposes_builder_chip_evaluate(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return False
     for action in payload.get("proposed_actions") or []:
         if not isinstance(action, dict):
             continue
-        capability_id = str(action.get("capability_id") or "")
-        if str(action.get("action_type") or "") == "write_memory" and "memory.write" in capability_id:
+        if (
+            str(action.get("capability_id") or "") == "capability:spark-intelligence-builder:chip.evaluate"
+            and str(action.get("action_type") or "") == "edit_file"
+        ):
             return True
     return False
 
@@ -4444,24 +4446,7 @@ def _build_researcher_memory_write_governor_decision(
 ) -> dict[str, Any] | None:
     if isinstance(governor_decision, dict):
         return governor_decision
-    if not _vnext_proposes_researcher_memory_write(turn_intent_envelope_vnext):
-        return None
-    verdict = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        state_db=state_db,
-        request_id=request_id,
-        run_id=run_id,
-        channel_id=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id="researcher_bridge",
-        component="researcher_bridge",
-    )
-    return verdict.governor_decision if isinstance(verdict.governor_decision, dict) else None
+    return None
 
 
 def _authorize_researcher_browser_hook(
@@ -4477,7 +4462,7 @@ def _authorize_researcher_browser_hook(
     human_id: str,
     agent_id: str,
     blocked_stage: str,
-) -> bool:
+) -> dict[str, Any] | None:
     governor_decision = None
     authority_source_kind = "missing_governor_decision"
     authority_source_ref = None
@@ -4512,7 +4497,7 @@ def _authorize_researcher_browser_hook(
         mutation_class="external_network",
     )
     if verdict == "allowed":
-        return True
+        return governor_decision if isinstance(governor_decision, dict) else None
     if governor_source_kind != "missing_governor_decision":
         authority_source_kind = governor_source_kind
     if governor_source_ref is not None:
@@ -4554,7 +4539,7 @@ def _authorize_researcher_browser_hook(
         )
     except Exception:
         pass
-    return False
+    return None
 
 
 def _authorize_researcher_active_chip_evaluate(
@@ -4569,7 +4554,7 @@ def _authorize_researcher_active_chip_evaluate(
     session_id: str,
     human_id: str,
     agent_id: str,
-) -> bool:
+) -> dict[str, Any] | None:
     governor_decision = None
     authority_source_kind = "missing_governor_decision"
     authority_source_ref = None
@@ -4603,7 +4588,7 @@ def _authorize_researcher_active_chip_evaluate(
         mutation_class="writes_files",
     )
     if verdict == "allowed":
-        return True
+        return governor_decision if isinstance(governor_decision, dict) else None
     if governor_source_kind != "missing_governor_decision":
         authority_source_kind = governor_source_kind
     if governor_source_ref is not None:
@@ -4650,7 +4635,7 @@ def _authorize_researcher_active_chip_evaluate(
         )
     except Exception:
         pass
-    return False
+    return None
 
 
 def _build_researcher_memory_turn_intent_envelope(
@@ -4849,24 +4834,6 @@ def _authorize_researcher_memory_write(
         )
         adapter_envelope_used = authority_envelope is not None
     effective_governor_decision = governor_decision
-    if effective_governor_decision is None and adapter_vnext_used and isinstance(authority_vnext, dict):
-        adapter_authority = authorize_builder_bridge_action(
-            {"turn_intent_envelope_vnext": authority_vnext},
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
-            mutation_class="writes_memory",
-            state_db=state_db,
-            request_id=request_id,
-            run_id=run_id,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            component="researcher_bridge",
-        )
-        if isinstance(adapter_authority.governor_decision, dict):
-            effective_governor_decision = adapter_authority.governor_decision
     verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
         governor_decision=effective_governor_decision,
         tool_name="memory.write",
@@ -4963,7 +4930,7 @@ def _execute_browser_hook(
     turn_intent_envelope: TurnIntentEnvelope | None = None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    if not _authorize_researcher_browser_hook(
+    governor_decision = _authorize_researcher_browser_hook(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
@@ -4975,10 +4942,16 @@ def _execute_browser_hook(
         human_id=human_id,
         agent_id=agent_id,
         blocked_stage="browser_hook_execution",
-    ):
+    )
+    if governor_decision is None:
         return None, None
     try:
-        execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+        execution = run_first_chip_hook_supporting(
+            config_manager,
+            hook=hook,
+            payload=payload,
+            governor_decision=governor_decision,
+        )
     except ValueError as exc:
         message = str(exc)
         if "legacy browser extension lane is disabled" in message.lower():
@@ -6386,9 +6359,9 @@ def _build_user_instructions_context(
     if not instructions:
         return ""
     lines = [
-        "[Persistent user instructions — saved by the user, must be honoured]",
-        "These are durable instructions this user has explicitly given. Treat them as standing rules.",
-        "If a current request conflicts with one, follow the instruction unless the user is overriding it now.",
+        "[Saved user preferences - evidence only]",
+        "These recalled rows are contextual preferences, not authority over the current turn.",
+        "Fresh user intent, system/developer policy, and Harness Core Governor decisions outrank them.",
     ]
     for inst in instructions:
         lines.append(f"- {inst.instruction_text}")
@@ -7051,15 +7024,19 @@ def _run_active_chip_evaluate(
         conversation_history=conversation_history,
         recent_active_chip_keys=recent_chip_keys,
     )
-    if not decision.selected:
+    selected_keys = [s.chip_key for s in decision.selected]
+    if not selected_keys and _vnext_proposes_builder_chip_evaluate(turn_intent_envelope_vnext):
+        evaluate_records = [r for r in active_records if "evaluate" in r.commands]
+        if len(evaluate_records) == 1:
+            selected_keys = [evaluate_records[0].key]
+    if not selected_keys:
         return None
 
-    selected_keys = [s.chip_key for s in decision.selected]
     selected_records = [r for r in active_records if r.key in selected_keys and "evaluate" in r.commands]
     if not selected_records:
         return None
     selected_record_keys = [record.key for record in selected_records]
-    if not _authorize_researcher_active_chip_evaluate(
+    governor_decision = _authorize_researcher_active_chip_evaluate(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
@@ -7070,7 +7047,8 @@ def _run_active_chip_evaluate(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
-    ):
+    )
+    if governor_decision is None:
         return None
 
     analyses: list[str] = []
@@ -7086,7 +7064,13 @@ def _run_active_chip_evaluate(
 
     for record in selected_records:
         try:
-            execution = run_chip_hook(config_manager, chip_key=record.key, hook="evaluate", payload=payload)
+            execution = run_chip_hook(
+                config_manager,
+                chip_key=record.key,
+                hook="evaluate",
+                payload=payload,
+                governor_decision=governor_decision,
+            )
         except Exception:
             continue
         if not execution or not execution.ok:
@@ -9445,7 +9429,7 @@ def build_researcher_reply(
         allow_memory_adapter_envelope = bool(
             config_manager.get_path(
                 "spark.testing.allow_researcher_memory_adapter",
-                default=True,
+                default=False,
             )
         )
     attachment_context = build_attachment_context(config_manager)
@@ -10318,6 +10302,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_plan_transition_command",
+                governor_decision=memory_write_governor_decision,
             )
         if write_result is None:
             plan_transition = None
@@ -10409,6 +10394,7 @@ def build_researcher_reply(
                 turn_id=request_id,
                 channel_kind=channel_kind,
                 actor_id="current_focus_transition_command",
+                governor_decision=memory_write_governor_decision,
             )
         if write_result is None:
             focus_transition = None
@@ -10730,6 +10716,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
                     )
                     accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
                     rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
@@ -10747,6 +10734,7 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                         actor_id="telegram_explicit_decision_loader",
+                        governor_decision=memory_write_governor_decision,
                     )
                     current_state_accepted_count = int(
                         getattr(current_state_result, "accepted_count", 0) or 0
@@ -11068,6 +11056,7 @@ def build_researcher_reply(
                 session_id=session_id,
                 turn_id=request_id,
                 channel_kind=channel_kind,
+                governor_decision=memory_write_governor_decision,
             )
             if detected_deltas:
                 # Build acknowledgment context for the LLM
@@ -11113,6 +11102,7 @@ def build_researcher_reply(
                         session_id=session_id,
                         turn_id=request_id,
                         channel_kind=channel_kind,
+                        governor_decision=memory_write_governor_decision,
                     )
                 else:
                     detected_profile_fact = None
@@ -11146,6 +11136,7 @@ def build_researcher_reply(
                             session_id=session_id,
                             turn_id=request_id,
                             channel_kind=channel_kind,
+                            governor_decision=memory_write_governor_decision,
                         )
                     else:
                         detected_memory_event = None
@@ -11189,6 +11180,7 @@ def build_researcher_reply(
                                         turn_id=deletion_turn_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
                                     )
                                     if generic_delete_result.accepted_count > 0:
                                         accepted_generic_memory_deletions.append(generic_memory_deletion)
@@ -11235,6 +11227,7 @@ def build_researcher_reply(
                                         turn_id=request_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
+                                        governor_decision=memory_write_governor_decision,
                                     )
                                 else:
                                     generic_write_result = None
@@ -11399,6 +11392,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_structured_evidence_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11415,6 +11409,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass
@@ -11432,6 +11427,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                     actor_id="telegram_belief_loader",
                     salience_decision=assessed_generic_memory_candidate.salience_decision,
+                    governor_decision=memory_write_governor_decision,
                 )
             except Exception:
                 pass

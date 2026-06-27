@@ -886,6 +886,74 @@ def _should_promote_current_state_from_evidence(
     return bool(corroborating_evidence_records) or rule.direct_promotion_without_corroboration
 
 
+def _contains_exact_string(payload: Any, needle: str) -> bool:
+    if not needle:
+        return True
+    if isinstance(payload, dict):
+        return any(_contains_exact_string(key, needle) or _contains_exact_string(value, needle) for key, value in payload.items())
+    if isinstance(payload, (list, tuple, set)):
+        return any(_contains_exact_string(item, needle) for item in payload)
+    return str(payload) == needle
+
+
+def _memory_write_authority_binding_refs(payload: dict[str, Any], governor_decision: dict[str, Any] | None) -> tuple[str, ...]:
+    raw_refs = payload.get("authority_binding_refs")
+    if isinstance(raw_refs, (list, tuple, set)):
+        refs = tuple(str(ref).strip() for ref in raw_refs if str(ref).strip())
+        if refs:
+            return refs
+    if isinstance(raw_refs, str) and raw_refs.strip():
+        return (raw_refs.strip(),)
+    if not isinstance(governor_decision, dict):
+        return ()
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    candidates = (
+        governor_decision.get("turn_id"),
+        payload.get("turn_id"),
+        metadata.get("source_turn_id"),
+        metadata.get("request_id"),
+        metadata.get("trace_ref"),
+        metadata.get("human_id"),
+        payload.get("subject"),
+    )
+    refs: list[str] = []
+    for candidate in candidates:
+        ref = str(candidate or "").strip()
+        if ref and ref not in refs and _contains_exact_string(governor_decision, ref):
+            refs.append(ref)
+    return tuple(refs)
+
+
+def _memory_write_request_authority_kwargs(payload: dict[str, Any]) -> dict[str, Any]:
+    governor_decision = payload.get("governor_decision") if isinstance(payload.get("governor_decision"), dict) else None
+    return {
+        "governor_decision": governor_decision,
+        "authority_binding_refs": _memory_write_authority_binding_refs(payload, governor_decision),
+    }
+
+
+def _domain_write_authority_contract_blocked(*, operation: str, default_role: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "unsupported",
+        "memory_role": default_role,
+        "provenance": [],
+        "retrieval_trace": {
+            "operation": "write_memory",
+            "status": "authority_contract_blocked",
+            "reason": reason,
+            "authority": {
+                "state": "blocked",
+                "errors": [reason],
+                "required_fields": ["governor_decision", "authority_binding_refs"],
+            },
+        },
+        "reason": reason,
+        "accepted_count": 0,
+        "rejected_count": 1,
+        "skipped_count": 0,
+    }
+
+
 class _DomainChipMemoryClientAdapter:
     def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
@@ -894,60 +962,85 @@ class _DomainChipMemoryClientAdapter:
         self._persistence_path = persistence_path
 
     def write_observation(self, **payload: Any) -> dict[str, Any]:
-        request = self._module.MemoryWriteRequest(
-            text=_memory_write_text(payload),
-            speaker=str(payload.get("speaker") or "user"),
-            timestamp=_optional_string(payload.get("timestamp")),
-            session_id=_optional_string(payload.get("session_id")),
-            turn_id=_optional_string(payload.get("turn_id")),
-            operation=str(payload.get("operation") or "auto"),
-            subject=_optional_string(payload.get("subject")),
-            predicate=_optional_string(payload.get("predicate")),
-            value=None if payload.get("value") is None else str(payload.get("value")),
-            retention_class=_optional_string(payload.get("retention_class")),
-            document_time=_optional_string(payload.get("document_time")),
-            event_time=_optional_string(payload.get("event_time")),
-            valid_from=_optional_string(payload.get("valid_from")),
-            valid_to=_optional_string(payload.get("valid_to")),
-            supersedes=_optional_string(payload.get("supersedes")),
-            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
-            deleted_at=_optional_string(payload.get("deleted_at")),
-            metadata=dict(payload.get("metadata") or {}),
-        )
+        operation = str(payload.get("operation") or "update")
+        default_role = str(payload.get("memory_role") or "current_state")
+        request_kwargs = {
+            "text": _memory_write_text(payload),
+            "speaker": str(payload.get("speaker") or "user"),
+            "timestamp": _optional_string(payload.get("timestamp")),
+            "session_id": _optional_string(payload.get("session_id")),
+            "turn_id": _optional_string(payload.get("turn_id")),
+            "operation": str(payload.get("operation") or "auto"),
+            "subject": _optional_string(payload.get("subject")),
+            "predicate": _optional_string(payload.get("predicate")),
+            "value": None if payload.get("value") is None else str(payload.get("value")),
+            "retention_class": _optional_string(payload.get("retention_class")),
+            "document_time": _optional_string(payload.get("document_time")),
+            "event_time": _optional_string(payload.get("event_time")),
+            "valid_from": _optional_string(payload.get("valid_from")),
+            "valid_to": _optional_string(payload.get("valid_to")),
+            "supersedes": _optional_string(payload.get("supersedes")),
+            "conflicts_with": [str(item) for item in list(payload.get("conflicts_with") or [])],
+            "deleted_at": _optional_string(payload.get("deleted_at")),
+            "metadata": dict(payload.get("metadata") or {}),
+            **_memory_write_request_authority_kwargs(payload),
+        }
+        try:
+            request = self._module.MemoryWriteRequest(**request_kwargs)
+        except TypeError as exc:
+            if "governor_decision" in str(exc) or "authority_binding_refs" in str(exc):
+                return _domain_write_authority_contract_blocked(
+                    operation=operation,
+                    default_role=default_role,
+                    reason="memory_write_request_authority_fields_missing",
+                )
+            raise
         result = self._sdk.write_observation(request)
         self._persist_manual_state()
         return _normalize_domain_write_result(
             result=result,
-            operation=str(payload.get("operation") or "update"),
-            default_role=str(payload.get("memory_role") or "current_state"),
+            operation=operation,
+            default_role=default_role,
         )
 
     def write_event(self, **payload: Any) -> dict[str, Any]:
-        request = self._module.MemoryWriteRequest(
-            text=_memory_write_text(payload),
-            speaker=str(payload.get("speaker") or "user"),
-            timestamp=_optional_string(payload.get("timestamp")),
-            session_id=_optional_string(payload.get("session_id")),
-            turn_id=_optional_string(payload.get("turn_id")),
-            operation=str(payload.get("operation") or "event"),
-            subject=_optional_string(payload.get("subject")),
-            predicate=_optional_string(payload.get("predicate")),
-            value=None if payload.get("value") is None else str(payload.get("value")),
-            retention_class=_optional_string(payload.get("retention_class")),
-            document_time=_optional_string(payload.get("document_time")),
-            event_time=_optional_string(payload.get("event_time")),
-            valid_from=_optional_string(payload.get("valid_from")),
-            valid_to=_optional_string(payload.get("valid_to")),
-            supersedes=_optional_string(payload.get("supersedes")),
-            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
-            deleted_at=_optional_string(payload.get("deleted_at")),
-            metadata=dict(payload.get("metadata") or {}),
-        )
+        operation = str(payload.get("operation") or "event")
+        request_kwargs = {
+            "text": _memory_write_text(payload),
+            "speaker": str(payload.get("speaker") or "user"),
+            "timestamp": _optional_string(payload.get("timestamp")),
+            "session_id": _optional_string(payload.get("session_id")),
+            "turn_id": _optional_string(payload.get("turn_id")),
+            "operation": str(payload.get("operation") or "event"),
+            "subject": _optional_string(payload.get("subject")),
+            "predicate": _optional_string(payload.get("predicate")),
+            "value": None if payload.get("value") is None else str(payload.get("value")),
+            "retention_class": _optional_string(payload.get("retention_class")),
+            "document_time": _optional_string(payload.get("document_time")),
+            "event_time": _optional_string(payload.get("event_time")),
+            "valid_from": _optional_string(payload.get("valid_from")),
+            "valid_to": _optional_string(payload.get("valid_to")),
+            "supersedes": _optional_string(payload.get("supersedes")),
+            "conflicts_with": [str(item) for item in list(payload.get("conflicts_with") or [])],
+            "deleted_at": _optional_string(payload.get("deleted_at")),
+            "metadata": dict(payload.get("metadata") or {}),
+            **_memory_write_request_authority_kwargs(payload),
+        }
+        try:
+            request = self._module.MemoryWriteRequest(**request_kwargs)
+        except TypeError as exc:
+            if "governor_decision" in str(exc) or "authority_binding_refs" in str(exc):
+                return _domain_write_authority_contract_blocked(
+                    operation=operation,
+                    default_role="event",
+                    reason="memory_write_request_authority_fields_missing",
+                )
+            raise
         result = self._sdk.write_event(request)
         self._persist_manual_state()
         return _normalize_domain_write_result(
             result=result,
-            operation=str(payload.get("operation") or "event"),
+            operation=operation,
             default_role="event",
         )
 
@@ -1228,6 +1321,8 @@ def run_memory_sdk_smoke_test(
     value: str = "ok",
     cleanup: bool = True,
     actor_id: str = "memory_cli",
+    governor_decision: dict[str, Any] | None = None,
+    cleanup_governor_decision: dict[str, Any] | None = None,
 ) -> MemorySdkSmokeResult:
     module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
@@ -1270,6 +1365,8 @@ def run_memory_sdk_smoke_test(
             "memory_role": "current_state",
         },
     }
+    if governor_decision is not None:
+        payload["governor_decision"] = governor_decision
     raw_write = _call_sdk_method(client, "write_observation", payload)
     write_result = _normalize_write_result(raw=raw_write, operation="update")
     raw_read = _call_sdk_method(
@@ -1287,19 +1384,22 @@ def run_memory_sdk_smoke_test(
     read_result = _normalize_read_result(raw=raw_read, method="get_current_state", shadow_only=False)
     cleanup_result: MemoryWriteResult | None = None
     if cleanup:
+        cleanup_payload = {
+            "operation": "delete",
+            "subject": subject,
+            "predicate": predicate,
+            "memory_role": "current_state",
+            "session_id": session_id,
+            "turn_id": cleanup_turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": "memory_cli_smoke", "smoke_test": True},
+        }
+        if cleanup_governor_decision is not None:
+            cleanup_payload["governor_decision"] = cleanup_governor_decision
         raw_cleanup = _call_sdk_method(
             client,
             "write_observation",
-            {
-                "operation": "delete",
-                "subject": subject,
-                "predicate": predicate,
-                "memory_role": "current_state",
-                "session_id": session_id,
-                "turn_id": cleanup_turn_id,
-                "timestamp": _now_iso(),
-                "metadata": {"source_surface": "memory_cli_smoke", "smoke_test": True},
-            },
+            cleanup_payload,
         )
         cleanup_result = _normalize_write_result(raw=raw_cleanup, operation="delete")
     result = MemorySdkSmokeResult(
@@ -2959,6 +3059,7 @@ def write_personality_preferences_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "personality_loader",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not detected_deltas:
         return MemoryWriteResult(
@@ -2989,6 +3090,7 @@ def write_personality_preferences_to_memory(
         turn_id=turn_id,
         channel_kind=channel_kind,
         actor_id=actor_id,
+        governor_decision=governor_decision,
     )
 
 
@@ -3002,6 +3104,7 @@ def delete_personality_preferences_from_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "personality_loader",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not existing_deltas:
         return MemoryWriteResult(
@@ -3032,6 +3135,7 @@ def delete_personality_preferences_from_memory(
         turn_id=turn_id,
         channel_kind=channel_kind,
         actor_id=actor_id,
+        governor_decision=governor_decision,
     )
 
 
@@ -3048,6 +3152,7 @@ def write_profile_fact_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "profile_fact_loader",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not predicate or not str(value or "").strip():
         return MemoryWriteResult(
@@ -3076,6 +3181,7 @@ def write_profile_fact_to_memory(
         channel_kind=channel_kind,
         actor_id=actor_id,
         operation="update",
+        governor_decision=governor_decision,
     )
 
 
@@ -3092,6 +3198,7 @@ def write_structured_evidence_to_memory(
     channel_kind: str | None,
     actor_id: str = "structured_evidence_loader",
     salience_decision: MemorySalienceDecision | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
         return _optional_string(record.get("observation_id")) or _optional_string(
@@ -3400,6 +3507,7 @@ def write_structured_evidence_to_memory(
             "retention_class": "episodic_archive",
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -3446,6 +3554,7 @@ def write_structured_evidence_to_memory(
                 turn_id=turn_id,
                 channel_kind=channel_kind,
                 actor_id=f"{actor_id}_belief_consolidator",
+                governor_decision=governor_decision,
             )
         except Exception:
             pass
@@ -3467,6 +3576,7 @@ def write_structured_evidence_to_memory(
                     turn_id=turn_id,
                     channel_kind=channel_kind,
                     actor_id=f"{actor_id}_current_state_consolidator",
+                    governor_decision=governor_decision,
                 )
             except Exception:
                 pass
@@ -3486,6 +3596,7 @@ def archive_structured_evidence_from_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "structured_evidence_archiver",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
         return _disabled_write_result(operation="delete", default_role="structured_evidence")
@@ -3557,6 +3668,7 @@ def archive_structured_evidence_from_memory(
             "document_time": timestamp,
             "valid_to": timestamp,
             "deleted_at": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -3617,6 +3729,7 @@ def write_belief_to_memory(
     channel_kind: str | None,
     actor_id: str = "belief_loader",
     salience_decision: MemorySalienceDecision | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
         return _optional_string(record.get("observation_id")) or _optional_string(
@@ -3774,6 +3887,7 @@ def write_belief_to_memory(
             "retention_class": "derived_belief",
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -3846,6 +3960,7 @@ def archive_belief_from_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "belief_archiver",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
         return _disabled_write_result(operation="delete", default_role="belief")
@@ -3916,6 +4031,7 @@ def archive_belief_from_memory(
             "valid_to": timestamp,
             "deleted_at": timestamp,
             "supersedes": belief_observation_id,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -3970,6 +4086,7 @@ def archive_raw_episode_from_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "raw_episode_archiver",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
         return _disabled_write_result(operation="delete", default_role="episodic")
@@ -4042,6 +4159,7 @@ def archive_raw_episode_from_memory(
             "document_time": timestamp,
             "valid_to": timestamp,
             "deleted_at": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4102,6 +4220,7 @@ def write_raw_episode_to_memory(
     channel_kind: str | None,
     actor_id: str = "raw_episode_loader",
     salience_decision: MemorySalienceDecision | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     normalized_text = str(episode_text or "").strip()
     if not normalized_text:
@@ -4190,6 +4309,7 @@ def write_raw_episode_to_memory(
             "retention_class": "episodic_archive",
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4234,6 +4354,7 @@ def delete_profile_fact_from_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "profile_fact_deleter",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not predicate:
         return MemoryWriteResult(
@@ -4262,6 +4383,7 @@ def delete_profile_fact_from_memory(
         channel_kind=channel_kind,
         actor_id=actor_id,
         operation="delete",
+        governor_decision=governor_decision,
     )
 
 
@@ -4279,6 +4401,7 @@ def _write_profile_fact_memory_operation(
     channel_kind: str | None,
     actor_id: str,
     operation: str,
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
         return _disabled_write_result(operation=operation)
@@ -4462,6 +4585,7 @@ def _write_profile_fact_memory_operation(
             "valid_from": None if operation == "delete" else timestamp,
             "valid_to": timestamp if operation == "delete" else None,
             "deleted_at": timestamp if operation == "delete" else None,
+            "governor_decision": governor_decision,
             "metadata": metadata,
         },
     )
@@ -4486,6 +4610,7 @@ def _write_profile_fact_memory_operation(
                 "valid_from": projected_observation["valid_from"],
                 "valid_to": projected_observation["valid_to"],
                 "deleted_at": projected_observation["deleted_at"],
+                "governor_decision": governor_decision,
                 "metadata": projected_observation["metadata"],
             },
         )
@@ -4500,6 +4625,7 @@ def _write_profile_fact_memory_operation(
             session_id=session_id,
             turn_id=turn_id,
             channel_kind=channel_kind,
+            governor_decision=governor_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -4576,6 +4702,7 @@ def write_telegram_event_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "telegram_event_loader",
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     if not predicate or not str(value or "").strip():
         return MemoryWriteResult(
@@ -4702,6 +4829,7 @@ def write_telegram_event_to_memory(
             "retention_class": "time_bound_event",
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4734,6 +4862,7 @@ def write_telegram_event_to_memory(
             event_name=event_name,
             subject=subject,
             salience_decision=salience_decision,
+            governor_decision=governor_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -4757,6 +4886,7 @@ def _write_profile_fact_history_event(
     session_id: str | None,
     turn_id: str | None,
     channel_kind: str | None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> None:
     timestamp = _now_iso()
     metadata = {
@@ -4797,6 +4927,7 @@ def _write_profile_fact_history_event(
             "retention_class": _profile_fact_retention_class(predicate),
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": metadata,
         },
     )
@@ -4814,6 +4945,7 @@ def _consolidate_telegram_event_summary_observation(
     event_name: str,
     subject: str,
     salience_decision: MemorySalienceDecision | None = None,
+    governor_decision: dict[str, Any] | None = None,
 ) -> None:
     suffix = str(predicate or "").strip().removeprefix("telegram.event.")
     if not suffix:
@@ -4836,6 +4968,7 @@ def _consolidate_telegram_event_summary_observation(
             "retention_class": "active_state",
             "document_time": timestamp,
             "valid_from": timestamp,
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -4944,6 +5077,7 @@ def _write_personality_observations(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str,
+    governor_decision: dict[str, Any] | None = None,
 ) -> MemoryWriteResult:
     client = _load_sdk_client(config_manager)
     if client is None:
@@ -4995,6 +5129,7 @@ def _write_personality_observations(
             "session_id": session_id,
             "turn_id": turn_id,
             "timestamp": _now_iso(),
+            "governor_decision": governor_decision,
             "metadata": {
                 "entity_type": "human",
                 "field_name": trait,
@@ -5104,17 +5239,47 @@ def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
     return Path(str(home_path)) / "artifacts" / "domain_chip_memory_sdk_state.json"
 
 
+def _persistence_lock_is_stale(lock_path: Path, stale_seconds: float) -> bool:
+    """A lock left by a crashed/exited process is reclaimable once it is older
+    than stale_seconds. Returns True if the lock should be removed and retried."""
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return age >= stale_seconds
+
+
 @contextmanager
-def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll_seconds: float = 0.05):
+def _exclusive_path_lock(
+    lock_path: Path,
+    *,
+    timeout_seconds: float = 15.0,
+    poll_seconds: float = 0.05,
+    stale_seconds: float = 60.0,
+):
     fd: int | None = None
     deadline = time.monotonic() + timeout_seconds
     while fd is None:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
         except FileExistsError:
+            # Reclaim an abandoned lock left behind by a crashed/exited process so
+            # memory reads/writes are not wedged forever by a stale lock file.
+            if _persistence_lock_is_stale(lock_path, stale_seconds):
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"timed out waiting for persistence lock: {lock_path}")
             time.sleep(poll_seconds)
+    try:
+        os.write(fd, f"{os.getpid()} {int(time.time())}".encode("ascii", "ignore"))
+    except OSError:
+        pass
     try:
         yield
     finally:

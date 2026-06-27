@@ -29,6 +29,7 @@ _VNEXT_ENVELOPE_KEYS = (
     "spark_turn_intent_vnext",
     "sparkTurnIntentVNext",
 )
+DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME = "domain-chip-memory.memory.write"
 _BRIDGE_LEDGER_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("spark_bridge_ledger_context", default={})
 _EXPECTED_GUARDRAIL_DENIAL_REASONS = {
     "external_network_not_authorized",
@@ -566,7 +567,7 @@ def build_telegram_memory_turn_intent_payload_vnext(
         session_id=session_id,
         human_id=human_id,
         source_kind=source_kind,
-        tool_name="memory.write",
+        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
         intent_summary="User explicitly asked Spark to remember information from this Telegram turn.",
