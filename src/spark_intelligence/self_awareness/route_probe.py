@@ -218,7 +218,7 @@ def _run_builder_status_probe(config_manager: ConfigManager, state_db: StateDB) 
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else _first_nonempty(status.doctor_blocking_failures) or status.provider_runtime_detail,
         "summary": (
-            f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} "
+            f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} " + ("WARNING: gateway not ready - run spark providers status to configure " if not status.ready else "") + ("WARNING: no providers configured - run spark providers status " if not status.configured_providers else "") +
             f"providers={len(status.configured_providers)} channels={len(status.configured_channels)}"
         ),
     }
@@ -321,7 +321,7 @@ def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
     ok = bool(status.payload_ready)
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
+        "failure_reason": "" if ok else f"swarm_payload_not_ready: auth_state={status.auth_state}, api_ready={status.api_ready}. Run: spark swarm auth to configure authentication.",
         "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
     }
 
