@@ -216,7 +216,9 @@ def execute_chip_hook_record(
         temp_root = Path(temp_dir)
         input_path = temp_root / "input.json"
         output_path = temp_root / "output.json"
-        input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _tmp = input_path.with_suffix(input_path.suffix + ".tmp")
+        _tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _tmp.replace(input_path)
         command = [*final_command, "--input", str(input_path), "--output", str(output_path)]
         completed = run_governed_command(
             command=command,

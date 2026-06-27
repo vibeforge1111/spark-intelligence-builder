@@ -3807,7 +3807,9 @@ def _windows_startup_wrapper_path(config_manager: ConfigManager, task_name: str)
 def _install_windows_startup_wrapper(config_manager: ConfigManager, task_name: str, task_command: str) -> Path:
     wrapper_path = _windows_startup_wrapper_path(config_manager, task_name)
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
-    wrapper_path.write_text(f"@echo off\r\n{task_command}\r\n", encoding="utf-8")
+    _tmp = wrapper_path.with_suffix(wrapper_path.suffix + ".tmp")
+    _tmp.write_text(f"@echo off\r\n{task_command}\r\n", encoding="utf-8")
+    _tmp.replace(wrapper_path)
     return wrapper_path
 
 
@@ -4554,7 +4556,9 @@ def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_payload = execution.to_payload()
-    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp = result_path.with_suffix(result_path.suffix + ".tmp")
+    _tmp.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp.replace(result_path)
     handoff_status = "completed" if execution.ok else "failed"
     summary = (
         "Observer handoff completed and wrote the chip result artifact."
@@ -6956,7 +6960,9 @@ def _execute_browser_hook(
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_payload = execution.to_payload()
-    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp = result_path.with_suffix(result_path.suffix + ".tmp")
+    _tmp.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp.replace(result_path)
 
     record_chip_hook_execution(
         state_db,
@@ -9319,7 +9325,9 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
         )
         return 1
 
-    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp = result_path.with_suffix(result_path.suffix + ".tmp")
+    _tmp.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp.replace(result_path)
 
     if not execution.ok:
         log_operator_event(
@@ -9656,7 +9664,9 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
         )
         return 1
 
-    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp = result_path.with_suffix(result_path.suffix + ".tmp")
+    _tmp.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    _tmp.replace(result_path)
 
     if not execution.ok:
         log_operator_event(
