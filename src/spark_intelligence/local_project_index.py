@@ -92,7 +92,7 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
             return
         try:
             resolved = path.expanduser().resolve()
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
             resolved = path.expanduser()
         key = str(resolved).casefold()
         if key in seen:
@@ -127,7 +127,7 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
     if include_attachments:
         try:
             attachment_context = build_attachment_context(config_manager)
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
             attachment_context = {}
         for item in list(attachment_context.get("attached_chip_records") or []) + list(
             attachment_context.get("attached_path_records") or []
@@ -170,7 +170,7 @@ def _spark_module_roots(config_manager: ConfigManager) -> list[Path]:
     for root in roots:
         try:
             resolved = root.expanduser().resolve()
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as _exc:
             resolved = root.expanduser()
         key = str(resolved).casefold()
         if key in seen:
