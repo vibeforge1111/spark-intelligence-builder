@@ -300,59 +300,83 @@ _PENDING_TTL_SECONDS = 300
 
 
 def _pending_store_path() -> _Path:
-    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
-    base = _Path(home_env) if home_env else _Path.home() / ".spark-intelligence"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "pending_confirmations.json"
-
-
-def _load_pending() -> dict[str, Any]:
-    p = _pending_store_path()
-    if not p.exists():
-        return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
+        base = _Path(home_env) if home_env else _Path.home() / ".spark-intelligence"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "pending_confirmations.json"
+
+
+
+    except Exception:
+        return None
+def _load_pending() -> dict[str, Any]:
+    try:
+        p = _pending_store_path()
+        if not p.exists():
+            return {}
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+
+
     except Exception:
         return {}
-
-
 def _save_pending(store: dict[str, Any]) -> None:
-    import time as _time
-    p = _pending_store_path()
-    tmp = p.with_suffix(".json.tmp")
-    now = _time.time()
-    pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
-    tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    if not isinstance(store, str): store = str(store or '')
+    try:
+        import time as _time
+        p = _pending_store_path()
+        tmp = p.with_suffix(".json.tmp")
+        now = _time.time()
+        pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
+        tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+        tmp.replace(p)
 
 
+
+    except Exception:
+        return None
 def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
-    import time as _time
-    store = _load_pending()
-    store[str(user_id)] = {
-        "schedule_id": schedule.get("id"),
-        "cron": schedule.get("cron"),
-        "payload": schedule.get("payload"),
-        "action": schedule.get("action"),
-        "authority": schedule.get("authority"),
-        "expires_at": _time.time() + _PENDING_TTL_SECONDS,
-    }
-    _save_pending(store)
-
-
-def peek_pending_delete(user_id: str) -> dict[str, Any] | None:
-    import time as _time
-    store = _load_pending()
-    rec = store.get(str(user_id))
-    if not rec:
-        return None
-    if rec.get("expires_at", 0) < _time.time():
-        store.pop(str(user_id), None)
+    if not isinstance(user_id, str): user_id = str(user_id or '')
+    if not isinstance(schedule, str): schedule = str(schedule or '')
+    try:
+        import time as _time
+        store = _load_pending()
+        store[str(user_id)] = {
+            "schedule_id": schedule.get("id"),
+            "cron": schedule.get("cron"),
+            "payload": schedule.get("payload"),
+            "action": schedule.get("action"),
+            "authority": schedule.get("authority"),
+            "expires_at": _time.time() + _PENDING_TTL_SECONDS,
+        }
         _save_pending(store)
+
+
+
+    except Exception:
         return None
-    return rec
+def peek_pending_delete(user_id: str) -> dict[str, Any] | None:
+    if not isinstance(user_id, str): user_id = str(user_id or '')
+    try:
+        import time as _time
+        store = _load_pending()
+        rec = store.get(str(user_id))
+        if not rec:
+            return None
+        if rec.get("expires_at", 0) < _time.time():
+            store.pop(str(user_id), None)
+            _save_pending(store)
+            return None
+        return rec
 
 
+
+    except Exception:
+        return {}
 def clear_pending_delete(user_id: str) -> None:
     store = _load_pending()
     if str(user_id) in store:
