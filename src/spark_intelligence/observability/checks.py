@@ -385,194 +385,216 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
 
 
 def _has_provenance_mutation_source_prefix(state_db: StateDB, *, prefix: str) -> bool:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM provenance_mutation_log
-            WHERE source_kind LIKE ?
-            ORDER BY recorded_at DESC, mutation_id DESC
-            LIMIT 1
-            """,
-            (f"{prefix}%",),
-        ).fetchone()
-    return row is not None
+    if not isinstance(prefix, str): prefix = str(prefix or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM provenance_mutation_log
+                WHERE source_kind LIKE ?
+                ORDER BY recorded_at DESC, mutation_id DESC
+                LIMIT 1
+                """,
+                (f"{prefix}%",),
+            ).fetchone()
+        return row is not None
 
 
+
+    except Exception:
+        return False
 def _provenance_ledger_issue(state_db: StateDB) -> StopShipIssue:
-    provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=200)
-    if not provenance_events:
+    try:
+        provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=200)
+        if not provenance_events:
+            return StopShipIssue(
+                name="stop_ship_provenance_ledger",
+                ok=True,
+                detail="No provenance-bearing influence events have executed yet.",
+                severity="high",
+            )
+        mutations = recent_provenance_mutations(state_db, limit=200)
+        if not mutations:
+            return StopShipIssue(
+                name="stop_ship_provenance_ledger",
+                ok=False,
+                detail="Provenance-bearing influence events exist without typed provenance mutation rows.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_provenance_ledger",
             ok=True,
-            detail="No provenance-bearing influence events have executed yet.",
+            detail="Provenance-bearing influence events are mirrored into typed provenance mutation rows.",
             severity="high",
         )
-    mutations = recent_provenance_mutations(state_db, limit=200)
-    if not mutations:
-        return StopShipIssue(
-            name="stop_ship_provenance_ledger",
-            ok=False,
-            detail="Provenance-bearing influence events exist without typed provenance mutation rows.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_provenance_ledger",
-        ok=True,
-        detail="Provenance-bearing influence events are mirrored into typed provenance mutation rows.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _unlabeled_provenance_quarantine_issue(state_db: StateDB) -> StopShipIssue:
-    mutations = recent_provenance_mutations(state_db, limit=200)
-    unlabeled = [
-        row
-        for row in mutations
-        if str(row.get("source_kind") or "") == "unknown" or str(row.get("source_id") or "") == "unknown"
-    ]
-    if not unlabeled:
+    try:
+        mutations = recent_provenance_mutations(state_db, limit=200)
+        unlabeled = [
+            row
+            for row in mutations
+            if str(row.get("source_kind") or "") == "unknown" or str(row.get("source_id") or "") == "unknown"
+        ]
+        if not unlabeled:
+            return StopShipIssue(
+                name="stop_ship_unlabeled_provenance_quarantine",
+                ok=True,
+                detail="No unlabeled provenance mutations were recorded.",
+                severity="high",
+            )
+        missing_quarantine = [row for row in unlabeled if not bool(row.get("quarantined"))]
+        if missing_quarantine:
+            return StopShipIssue(
+                name="stop_ship_unlabeled_provenance_quarantine",
+                ok=False,
+                detail="Unlabeled provenance mutations were recorded without quarantine.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_unlabeled_provenance_quarantine",
             ok=True,
-            detail="No unlabeled provenance mutations were recorded.",
+            detail="Unlabeled provenance mutations are quarantined automatically.",
             severity="high",
         )
-    missing_quarantine = [row for row in unlabeled if not bool(row.get("quarantined"))]
-    if missing_quarantine:
-        return StopShipIssue(
-            name="stop_ship_unlabeled_provenance_quarantine",
-            ok=False,
-            detail="Unlabeled provenance mutations were recorded without quarantine.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_unlabeled_provenance_quarantine",
-        ok=True,
-        detail="Unlabeled provenance mutations are quarantined automatically.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT state_key
-            FROM runtime_state
-            WHERE
-                state_key LIKE 'researcher:%'
-                OR state_key LIKE 'swarm:%'
-                OR state_key LIKE 'attachments:%'
-                OR state_key LIKE 'personality:%'
-                OR state_key IN ('telegram:auth_state', 'telegram:poll_state')
-            ORDER BY state_key
-            """
-        ).fetchall()
-    if not rows:
-        return StopShipIssue(
-            name="stop_ship_runtime_state_authority",
-            ok=True,
-            detail="No critical hidden runtime_state authority keys are active.",
-            severity="high",
-        )
-    missing_domains: list[str] = []
-    state_keys = [str(row["state_key"]) for row in rows]
-    if any(key.startswith("researcher:") for key in state_keys) and not _typed_events(
-        state_db,
-        event_types=("dispatch_started", "dispatch_failed", "tool_result_received", "runtime_environment_snapshot"),
-        component="researcher_bridge",
-        limit=200,
-    ):
-        missing_domains.append("researcher")
-    swarm_events = [
-        event
-        for event in _typed_events(
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT state_key
+                FROM runtime_state
+                WHERE
+                    state_key LIKE 'researcher:%'
+                    OR state_key LIKE 'swarm:%'
+                    OR state_key LIKE 'attachments:%'
+                    OR state_key LIKE 'personality:%'
+                    OR state_key IN ('telegram:auth_state', 'telegram:poll_state')
+                ORDER BY state_key
+                """
+            ).fetchall()
+        if not rows:
+            return StopShipIssue(
+                name="stop_ship_runtime_state_authority",
+                ok=True,
+                detail="No critical hidden runtime_state authority keys are active.",
+                severity="high",
+            )
+        missing_domains: list[str] = []
+        state_keys = [str(row["state_key"]) for row in rows]
+        if any(key.startswith("researcher:") for key in state_keys) and not _typed_events(
             state_db,
             event_types=("dispatch_started", "dispatch_failed", "tool_result_received", "runtime_environment_snapshot"),
-            component="swarm_bridge",
+            component="researcher_bridge",
+            limit=200,
+        ):
+            missing_domains.append("researcher")
+        swarm_events = [
+            event
+            for event in _typed_events(
+                state_db,
+                event_types=("dispatch_started", "dispatch_failed", "tool_result_received", "runtime_environment_snapshot"),
+                component="swarm_bridge",
+                limit=200,
+            )
+            if str(((event.get("facts_json") or {}).get("swarm_operation") or "")) in {"sync", "decision", "auth_refresh"}
+            or str(event.get("event_type") or "") == "runtime_environment_snapshot"
+        ]
+        if any(key.startswith("swarm:") for key in state_keys) and not swarm_events:
+            missing_domains.append("swarm")
+        if any(key.startswith("attachments:") for key in state_keys):
+            with state_db.connect() as conn:
+                attachment_row = conn.execute(
+                    "SELECT snapshot_id FROM attachment_state_snapshots ORDER BY generated_at DESC, created_at DESC LIMIT 1"
+                ).fetchone()
+            if not attachment_row:
+                missing_domains.append("attachments")
+        if any(key.startswith("personality:") for key in state_keys):
+            with state_db.connect() as conn:
+                personality_row = conn.execute(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM personality_trait_profiles) AS trait_profile_count,
+                        (SELECT COUNT(*) FROM personality_observations) AS observation_count,
+                        (SELECT COUNT(*) FROM personality_evolution_events) AS evolution_count
+                    """
+                ).fetchone()
+            if not personality_row or (
+                int(personality_row["trait_profile_count"]) == 0
+                and int(personality_row["observation_count"]) == 0
+                and int(personality_row["evolution_count"]) == 0
+            ):
+                missing_domains.append("personality")
+        telegram_state_keys = [key for key in state_keys if key.startswith("telegram:")]
+        telegram_events = _typed_events(
+            state_db,
+            event_types=("intent_committed", "delivery_attempted", "delivery_succeeded", "delivery_failed"),
+            component="telegram_runtime",
             limit=200,
         )
-        if str(((event.get("facts_json") or {}).get("swarm_operation") or "")) in {"sync", "decision", "auth_refresh"}
-        or str(event.get("event_type") or "") == "runtime_environment_snapshot"
-    ]
-    if any(key.startswith("swarm:") for key in state_keys) and not swarm_events:
-        missing_domains.append("swarm")
-    if any(key.startswith("attachments:") for key in state_keys):
-        with state_db.connect() as conn:
-            attachment_row = conn.execute(
-                "SELECT snapshot_id FROM attachment_state_snapshots ORDER BY generated_at DESC, created_at DESC LIMIT 1"
-            ).fetchone()
-        if not attachment_row:
-            missing_domains.append("attachments")
-    if any(key.startswith("personality:") for key in state_keys):
-        with state_db.connect() as conn:
-            personality_row = conn.execute(
-                """
-                SELECT
-                    (SELECT COUNT(*) FROM personality_trait_profiles) AS trait_profile_count,
-                    (SELECT COUNT(*) FROM personality_observations) AS observation_count,
-                    (SELECT COUNT(*) FROM personality_evolution_events) AS evolution_count
-                """
-            ).fetchone()
-        if not personality_row or (
-            int(personality_row["trait_profile_count"]) == 0
-            and int(personality_row["observation_count"]) == 0
-            and int(personality_row["evolution_count"]) == 0
+        if telegram_state_keys and not telegram_events and not _telegram_runtime_state_has_typed_mirror(
+            state_db,
+            state_keys=telegram_state_keys,
         ):
-            missing_domains.append("personality")
-    telegram_state_keys = [key for key in state_keys if key.startswith("telegram:")]
-    telegram_events = _typed_events(
-        state_db,
-        event_types=("intent_committed", "delivery_attempted", "delivery_succeeded", "delivery_failed"),
-        component="telegram_runtime",
-        limit=200,
-    )
-    if telegram_state_keys and not telegram_events and not _telegram_runtime_state_has_typed_mirror(
-        state_db,
-        state_keys=telegram_state_keys,
-    ):
-        missing_domains.append("telegram")
-    if missing_domains:
+            missing_domains.append("telegram")
+        if missing_domains:
+            return StopShipIssue(
+                name="stop_ship_runtime_state_authority",
+                ok=False,
+                detail=(
+                    "Critical runtime_state keys exist without typed domain mirrors: "
+                    + ", ".join(sorted(set(missing_domains)))
+                ),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_runtime_state_authority",
-            ok=False,
-            detail=(
-                "Critical runtime_state keys exist without typed domain mirrors: "
-                + ", ".join(sorted(set(missing_domains)))
-            ),
+            ok=True,
+            detail="Critical runtime_state keys have typed domain mirrors available.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_runtime_state_authority",
-        ok=True,
-        detail="Critical runtime_state keys have typed domain mirrors available.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _telegram_runtime_state_has_typed_mirror(state_db: StateDB, *, state_keys: list[str]) -> bool:
-    # telegram:auth_state and telegram:poll_state are runtime health snapshots.
-    # Their authority mirror is the typed Telegram channel installation, not a
-    # delivery event, because healthy installs can exist before a message is sent.
-    if not state_keys:
-        return True
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT channel_id, status, auth_ref
-            FROM channel_installations
-            WHERE channel_id = 'telegram' AND channel_kind = 'telegram'
-            LIMIT 1
-            """
-        ).fetchone()
-    if not row:
+    if not isinstance(state_keys, str): state_keys = str(state_keys or '')
+    try:
+        # telegram:auth_state and telegram:poll_state are runtime health snapshots.
+        # Their authority mirror is the typed Telegram channel installation, not a
+        # delivery event, because healthy installs can exist before a message is sent.
+        if not state_keys:
+            return True
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT channel_id, status, auth_ref
+                FROM channel_installations
+                WHERE channel_id = 'telegram' AND channel_kind = 'telegram'
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return False
+        status = str(row["status"] or "").strip().lower()
+        auth_ref = str(row["auth_ref"] or "").strip()
+        return status in {"enabled", "active"} and bool(auth_ref)
+
+
+
+    except Exception:
         return False
-    status = str(row["status"] or "").strip().lower()
-    auth_ref = str(row["auth_ref"] or "").strip()
-    return status in {"enabled", "active"} and bool(auth_ref)
-
-
 def _reset_integrity_issue(state_db: StateDB) -> StopShipIssue:
     reset_events = latest_events_by_type(state_db, event_type="session_reset_performed", limit=50)
     if not reset_events:
