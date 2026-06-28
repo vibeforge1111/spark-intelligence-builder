@@ -212,41 +212,45 @@ def _config_audit_issue(state_db: StateDB) -> StopShipIssue:
 
 
 def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
-    terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
-    proof_event_types = {"tool_result_received", "dispatch_failed", *terminal_run_events}
-    intents = latest_events_by_type(state_db, event_type="intent_committed", limit=200)
-    incomplete: list[str] = []
-    for intent in intents:
-        run_id = intent.get("run_id")
-        if not run_id:
-            request_id = intent.get("request_id")
-            if request_id and _request_has_execution_proof(
-                state_db,
-                request_id=str(request_id),
-                intent_event_id=str(intent.get("event_id") or ""),
-                proof_event_types=proof_event_types,
-            ):
+    try:
+        terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
+        proof_event_types = {"tool_result_received", "dispatch_failed", *terminal_run_events}
+        intents = latest_events_by_type(state_db, event_type="intent_committed", limit=200)
+        incomplete: list[str] = []
+        for intent in intents:
+            run_id = intent.get("run_id")
+            if not run_id:
+                request_id = intent.get("request_id")
+                if request_id and _request_has_execution_proof(
+                    state_db,
+                    request_id=str(request_id),
+                    intent_event_id=str(intent.get("event_id") or ""),
+                    proof_event_types=proof_event_types,
+                ):
+                    continue
+                incomplete.append(str(intent.get("event_id")))
                 continue
-            incomplete.append(str(intent.get("event_id")))
-            continue
-        events = {event.get("event_type") for event in events_for_run(state_db, run_id=str(run_id))}
-        if proof_event_types.isdisjoint(events):
-            incomplete.append(str(run_id))
-    if incomplete:
+            events = {event.get("event_type") for event in events_for_run(state_db, run_id=str(run_id))}
+            if proof_event_types.isdisjoint(events):
+                incomplete.append(str(run_id))
+        if incomplete:
+            return StopShipIssue(
+                name="stop_ship_intent_without_proof",
+                ok=False,
+                detail=f"{len(incomplete)} run(s) committed intent without dispatch/result proof.",
+                severity="critical",
+            )
         return StopShipIssue(
             name="stop_ship_intent_without_proof",
-            ok=False,
-            detail=f"{len(incomplete)} run(s) committed intent without dispatch/result proof.",
+            ok=True,
+            detail="Intent packets have matching dispatch or result proof.",
             severity="critical",
         )
-    return StopShipIssue(
-        name="stop_ship_intent_without_proof",
-        ok=True,
-        detail="Intent packets have matching dispatch or result proof.",
-        severity="critical",
-    )
 
 
+
+    except Exception:
+        return None
 def _request_has_execution_proof(
     state_db: StateDB,
     *,
@@ -254,136 +258,155 @@ def _request_has_execution_proof(
     intent_event_id: str,
     proof_event_types: set[str],
 ) -> bool:
-    placeholders = ", ".join("?" for _ in proof_event_types)
-    params = [request_id, intent_event_id, *sorted(proof_event_types)]
-    with state_db.connect() as conn:
-        row = conn.execute(
-            f"""
-            SELECT event_id
-            FROM builder_events
-            WHERE request_id = ?
-              AND event_id != ?
-              AND event_type IN ({placeholders})
-            LIMIT 1
-            """,
-            params,
-        ).fetchone()
-    return row is not None
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(intent_event_id, str): intent_event_id = str(intent_event_id or '')
+    if not isinstance(proof_event_types, str): proof_event_types = str(proof_event_types or '')
+    try:
+        placeholders = ", ".join("?" for _ in proof_event_types)
+        params = [request_id, intent_event_id, *sorted(proof_event_types)]
+        with state_db.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT event_id
+                FROM builder_events
+                WHERE request_id = ?
+                  AND event_id != ?
+                  AND event_type IN ({placeholders})
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        return row is not None
 
 
+
+    except Exception:
+        return False
 def _background_closure_issue(state_db: StateDB) -> StopShipIssue:
-    stalled = [
-        row
-        for row in open_runs(state_db)
-        if str(row.get("run_kind") or "").startswith("job:") or str(row.get("origin_surface") or "") == "jobs_tick"
-    ]
-    if stalled:
+    try:
+        stalled = [
+            row
+            for row in open_runs(state_db)
+            if str(row.get("run_kind") or "").startswith("job:") or str(row.get("origin_surface") or "") == "jobs_tick"
+        ]
+        if stalled:
+            return StopShipIssue(
+                name="stop_ship_background_closure",
+                ok=False,
+                detail=f"{len(stalled)} background/job run(s) remain open without closure.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_background_closure",
-            ok=False,
-            detail=f"{len(stalled)} background/job run(s) remain open without closure.",
+            ok=True,
+            detail="Background and job runs have closure records.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_background_closure",
-        ok=True,
-        detail="Background and job runs have closure records.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _delivery_truth_issue(state_db: StateDB) -> StopShipIssue:
-    attempts = latest_events_by_type(state_db, event_type="delivery_attempted", limit=200)
-    successes = latest_events_by_type(state_db, event_type="delivery_succeeded", limit=200)
-    failures = latest_events_by_type(state_db, event_type="delivery_failed", limit=200)
-    if not attempts and not successes and not failures:
+    try:
+        attempts = latest_events_by_type(state_db, event_type="delivery_attempted", limit=200)
+        successes = latest_events_by_type(state_db, event_type="delivery_succeeded", limit=200)
+        failures = latest_events_by_type(state_db, event_type="delivery_failed", limit=200)
+        if not attempts and not successes and not failures:
+            return StopShipIssue(
+                name="stop_ship_delivery_truth",
+                ok=True,
+                detail="No delivery lineage has executed yet.",
+                severity="high",
+            )
+        registry_rows = recent_delivery_records(state_db, limit=400)
+        if not registry_rows:
+            return StopShipIssue(
+                name="stop_ship_delivery_truth",
+                ok=False,
+                detail="Delivery events exist without typed delivery registry rows.",
+                severity="high",
+            )
+        terminal_registry = [row for row in registry_rows if str(row.get("status") or "") in {"succeeded", "failed"}]
+        terminal_events = len(successes) + len(failures)
+        if terminal_events > len(terminal_registry):
+            return StopShipIssue(
+                name="stop_ship_delivery_truth",
+                ok=False,
+                detail="Terminal delivery events exceed typed delivery registry rows.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_delivery_truth",
             ok=True,
-            detail="No delivery lineage has executed yet.",
+            detail="Delivery attempts and acknowledgments are mirrored into typed delivery registry rows.",
             severity="high",
         )
-    registry_rows = recent_delivery_records(state_db, limit=400)
-    if not registry_rows:
-        return StopShipIssue(
-            name="stop_ship_delivery_truth",
-            ok=False,
-            detail="Delivery events exist without typed delivery registry rows.",
-            severity="high",
-        )
-    terminal_registry = [row for row in registry_rows if str(row.get("status") or "") in {"succeeded", "failed"}]
-    terminal_events = len(successes) + len(failures)
-    if terminal_events > len(terminal_registry):
-        return StopShipIssue(
-            name="stop_ship_delivery_truth",
-            ok=False,
-            detail="Terminal delivery events exceed typed delivery registry rows.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_delivery_truth",
-        ok=True,
-        detail="Delivery attempts and acknowledgments are mirrored into typed delivery registry rows.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB) -> StopShipIssue:
-    active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
-    active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key", default=None)
-    personality_enabled = bool(config_manager.get_path("spark.personality.enabled", default=True))
-    provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=200)
-    chip_or_path_events = [
-        event
-        for event in provenance_events
-        if str((event.get("provenance_json") or {}).get("source_kind") or "")
-        in {"chip_hook", "attachment_snapshot"}
-    ]
-    personality_events = [
-        event
-        for event in provenance_events
-        if str((event.get("provenance_json") or {}).get("source_kind") or "").startswith("personality_")
-    ]
-    personality_provenance_recorded = bool(personality_events) or _has_provenance_mutation_source_prefix(
-        state_db,
-        prefix="personality_",
-    )
-    bridge_activity = _typed_events(
-        state_db,
-        event_types=("dispatch_started", "tool_result_received"),
-        component="researcher_bridge",
-        limit=200,
-    )
-    if active_chip_keys or active_path_key:
-        if not chip_or_path_events:
+    try:
+        active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
+        active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key", default=None)
+        personality_enabled = bool(config_manager.get_path("spark.personality.enabled", default=True))
+        provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=200)
+        chip_or_path_events = [
+            event
+            for event in provenance_events
+            if str((event.get("provenance_json") or {}).get("source_kind") or "")
+            in {"chip_hook", "attachment_snapshot"}
+        ]
+        personality_events = [
+            event
+            for event in provenance_events
+            if str((event.get("provenance_json") or {}).get("source_kind") or "").startswith("personality_")
+        ]
+        personality_provenance_recorded = bool(personality_events) or _has_provenance_mutation_source_prefix(
+            state_db,
+            prefix="personality_",
+        )
+        bridge_activity = _typed_events(
+            state_db,
+            event_types=("dispatch_started", "tool_result_received"),
+            component="researcher_bridge",
+            limit=200,
+        )
+        if active_chip_keys or active_path_key:
+            if not chip_or_path_events:
+                return StopShipIssue(
+                    name="stop_ship_plugin_provenance",
+                    ok=False,
+                    detail="Active chip or specialization-path influence exists without provenance events.",
+                    severity="critical",
+                )
+        if personality_enabled and bridge_activity and not personality_provenance_recorded:
             return StopShipIssue(
                 name="stop_ship_plugin_provenance",
                 ok=False,
-                detail="Active chip or specialization-path influence exists without provenance events.",
+                detail="Personality influence shaped bridge execution without typed provenance.",
                 severity="critical",
             )
-    if personality_enabled and bridge_activity and not personality_provenance_recorded:
-        return StopShipIssue(
-            name="stop_ship_plugin_provenance",
-            ok=False,
-            detail="Personality influence shaped bridge execution without typed provenance.",
-            severity="critical",
-        )
-    if not active_chip_keys and not active_path_key and not bridge_activity:
+        if not active_chip_keys and not active_path_key and not bridge_activity:
+            return StopShipIssue(
+                name="stop_ship_plugin_provenance",
+                ok=True,
+                detail="No active bridge influence requiring provenance has executed yet.",
+                severity="critical",
+            )
         return StopShipIssue(
             name="stop_ship_plugin_provenance",
             ok=True,
-            detail="No active bridge influence requiring provenance has executed yet.",
+            detail="Chip, path, and personality influence is recorded with provenance.",
             severity="critical",
         )
-    return StopShipIssue(
-        name="stop_ship_plugin_provenance",
-        ok=True,
-        detail="Chip, path, and personality influence is recorded with provenance.",
-        severity="critical",
-    )
 
 
+
+    except Exception:
+        return None
 def _has_provenance_mutation_source_prefix(state_db: StateDB, *, prefix: str) -> bool:
     with state_db.connect() as conn:
         row = conn.execute(
