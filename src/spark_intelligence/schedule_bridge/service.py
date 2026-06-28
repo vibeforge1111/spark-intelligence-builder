@@ -154,65 +154,80 @@ def _human_summary(rec: dict[str, Any]) -> str:
 
 
 def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
-    """Conversational rendering of the scheduler surface.
-
-    Reads like Spark answering a friend, not a terminal dumping fields.
-    """
-    if not schedules:
-        return (
-            "Nothing on the schedule right now. If you want me to run "
-            "something on a cadence, say the word, or use /schedule to set it up."
-        )
-    n = len(schedules)
-    opener = (
-        f"Here's what I've got queued up ({n} active):"
-        if n > 1
-        else "Just one thing on the schedule:"
-    )
-    lines = [opener, ""]
-    for rec in schedules:
-        summary = _human_summary(rec)
-        when = humanize_cron(str(rec.get("cron") or ""))
-        next_fire = _format_next_fire(rec.get("nextFireAt"))
-        fires = int(rec.get("fireCount", 0) or 0)
-        last = rec.get("lastStatus")
-        ran_bit = (
-            " Hasn't fired yet." if fires == 0
-            else f" Fired {fires} time{'' if fires == 1 else 's'} so far"
-            + (f" (last result: {str(last)[:60]})." if last else ".")
-        )
-        lines.append(f"• {summary}")
-        lines.append(f"  {when}, next run {next_fire}.{ran_bit}")
-        lines.append(f"  (id {rec.get('id')} - delete with /schedules delete {rec.get('id')})")
-        lines.append("")
-    lines.append(
-        "Want to add or kill one? Use /schedule to create, /schedules delete <id> to remove, "
-        "or just ask me in plain English."
-    )
-    return "\n".join(lines).rstrip()
-
-
-def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
-    base = (spawner_url or _SPAWNER_URL).rstrip("/")
-    req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
+    if not isinstance(schedules, str): schedules = str(schedules or '')
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    records = data.get("schedules")
-    return records if isinstance(records, list) else []
+        """Conversational rendering of the scheduler surface.
+
+        Reads like Spark answering a friend, not a terminal dumping fields.
+        """
+        if not schedules:
+            return (
+                "Nothing on the schedule right now. If you want me to run "
+                "something on a cadence, say the word, or use /schedule to set it up."
+            )
+        n = len(schedules)
+        opener = (
+            f"Here's what I've got queued up ({n} active):"
+            if n > 1
+            else "Just one thing on the schedule:"
+        )
+        lines = [opener, ""]
+        for rec in schedules:
+            summary = _human_summary(rec)
+            when = humanize_cron(str(rec.get("cron") or ""))
+            next_fire = _format_next_fire(rec.get("nextFireAt"))
+            fires = int(rec.get("fireCount", 0) or 0)
+            last = rec.get("lastStatus")
+            ran_bit = (
+                " Hasn't fired yet." if fires == 0
+                else f" Fired {fires} time{'' if fires == 1 else 's'} so far"
+                + (f" (last result: {str(last)[:60]})." if last else ".")
+            )
+            lines.append(f"• {summary}")
+            lines.append(f"  {when}, next run {next_fire}.{ran_bit}")
+            lines.append(f"  (id {rec.get('id')} - delete with /schedules delete {rec.get('id')})")
+            lines.append("")
+        lines.append(
+            "Want to add or kill one? Use /schedule to create, /schedules delete <id> to remove, "
+            "or just ask me in plain English."
+        )
+        return "\n".join(lines).rstrip()
 
 
+
+    except Exception:
+        return ""
+def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    if not isinstance(spawner_url, str): spawner_url = str(spawner_url or '')
+    try:
+        base = (spawner_url or _SPAWNER_URL).rstrip("/")
+        req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, dict):
+            return []
+        records = data.get("schedules")
+        return records if isinstance(records, list) else []
+
+
+
+    except Exception:
+        return []
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
-    schedules = fetch_schedules(spawner_url)
-    return format_schedule_list(schedules)
+    if not isinstance(spawner_url, str): spawner_url = str(spawner_url or '')
+    try:
+        schedules = fetch_schedules(spawner_url)
+        return format_schedule_list(schedules)
 
 
-# --- Delete intent + confirmation gate ----------------------------------
+    # --- Delete intent + confirmation gate ----------------------------------
 
+
+    except Exception:
+        return ""
 _DELETE_PATTERNS = (
     re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:schedule|schedules?|cron|nightly|daily|weekly|autoloop|automation|routine|recurring(?:\s+task)?|scheduled\s+task|scheduled\s+job)\b", re.IGNORECASE),
     re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:sched-[a-z0-9]+)\b", re.IGNORECASE),
@@ -231,69 +246,80 @@ _CONFIRM_NO_PATTERNS = (
 
 
 def detect_delete_intent(message: str) -> dict | None:
-    """Detect intent to cancel/delete a schedule. Returns hints for matching."""
-    text = str(message or "").strip()
-    if not text:
-        return None
-    if has_conversation_only_boundary(text) or denies_intent(
-        text,
-        ("cancel", "delete", "kill", "remove", "stop", "disable", "turn off", "drop"),
-    ):
-        return None
-    matched = False
-    for pat in _DELETE_PATTERNS:
-        if pat.search(text):
-            matched = True
-            break
-    if not matched:
-        return None
-    hints: dict[str, Any] = {"raw": text}
-    id_match = re.search(r"\b(sched-[a-z0-9]+)\b", text, re.IGNORECASE)
-    if id_match:
-        hints["schedule_id"] = id_match.group(1)
-    for tod in ("nightly", "daily", "weekly", "morning", "evening"):
-        if re.search(rf"\b{tod}\b", text, re.IGNORECASE):
-            hints["time_of_day"] = tod
-            break
-    time_match = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
-    if time_match:
-        h = int(time_match.group(1))
-        ampm = time_match.group(2).lower()
-        if ampm == "pm" and h < 12:
-            h += 12
-        if ampm == "am" and h == 12:
-            h = 0
-        hints["hour_24"] = h
-    return {"action": "delete", "hints": hints}
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        """Detect intent to cancel/delete a schedule. Returns hints for matching."""
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if has_conversation_only_boundary(text) or denies_intent(
+            text,
+            ("cancel", "delete", "kill", "remove", "stop", "disable", "turn off", "drop"),
+        ):
+            return None
+        matched = False
+        for pat in _DELETE_PATTERNS:
+            if pat.search(text):
+                matched = True
+                break
+        if not matched:
+            return None
+        hints: dict[str, Any] = {"raw": text}
+        id_match = re.search(r"\b(sched-[a-z0-9]+)\b", text, re.IGNORECASE)
+        if id_match:
+            hints["schedule_id"] = id_match.group(1)
+        for tod in ("nightly", "daily", "weekly", "morning", "evening"):
+            if re.search(rf"\b{tod}\b", text, re.IGNORECASE):
+                hints["time_of_day"] = tod
+                break
+        time_match = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
+        if time_match:
+            h = int(time_match.group(1))
+            ampm = time_match.group(2).lower()
+            if ampm == "pm" and h < 12:
+                h += 12
+            if ampm == "am" and h == 12:
+                h = 0
+            hints["hour_24"] = h
+        return {"action": "delete", "hints": hints}
 
 
+
+    except Exception:
+        return {}
 def match_schedules(schedules: list[dict[str, Any]], hints: dict) -> list[dict[str, Any]]:
-    """Filter schedules by delete-intent hints. Returns best matches."""
-    if not schedules:
+    if not isinstance(schedules, str): schedules = str(schedules or '')
+    if not isinstance(hints, dict): hints = dict(hints or {})
+    try:
+        """Filter schedules by delete-intent hints. Returns best matches."""
+        if not schedules:
+            return []
+        sid = hints.get("schedule_id")
+        if sid:
+            return [s for s in schedules if s.get("id") == sid]
+        candidates = list(schedules)
+        hour = hints.get("hour_24")
+        if hour is not None:
+            filtered = []
+            for s in candidates:
+                parts = str(s.get("cron") or "").split()
+                if len(parts) == 5 and parts[1].isdigit() and int(parts[1]) == hour:
+                    filtered.append(s)
+            if filtered:
+                candidates = filtered
+        tod = hints.get("time_of_day")
+        if tod in ("nightly", "morning", "evening", "daily"):
+            # No precise filter; if only one schedule exists, treat it as the match.
+            pass
+        return candidates
+
+
+    # File-backed pending confirmations per external_user_id. TTL 5 minutes.
+    # Must persist across Python invocations because the telegram bot shells
+    # out to a fresh `python -m spark_intelligence.cli` per message.
+
+    except Exception:
         return []
-    sid = hints.get("schedule_id")
-    if sid:
-        return [s for s in schedules if s.get("id") == sid]
-    candidates = list(schedules)
-    hour = hints.get("hour_24")
-    if hour is not None:
-        filtered = []
-        for s in candidates:
-            parts = str(s.get("cron") or "").split()
-            if len(parts) == 5 and parts[1].isdigit() and int(parts[1]) == hour:
-                filtered.append(s)
-        if filtered:
-            candidates = filtered
-    tod = hints.get("time_of_day")
-    if tod in ("nightly", "morning", "evening", "daily"):
-        # No precise filter; if only one schedule exists, treat it as the match.
-        pass
-    return candidates
-
-
-# File-backed pending confirmations per external_user_id. TTL 5 minutes.
-# Must persist across Python invocations because the telegram bot shells
-# out to a fresh `python -m spark_intelligence.cli` per message.
 from pathlib import Path as _Path
 
 _PENDING_TTL_SECONDS = 300
