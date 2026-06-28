@@ -354,52 +354,77 @@ def peek_pending_delete(user_id: str) -> dict[str, Any] | None:
 
 
 def clear_pending_delete(user_id: str) -> None:
-    store = _load_pending()
-    if str(user_id) in store:
-        store.pop(str(user_id), None)
-        _save_pending(store)
+    if not isinstance(user_id, str): user_id = str(user_id or '')
+    try:
+        store = _load_pending()
+        if str(user_id) in store:
+            store.pop(str(user_id), None)
+            _save_pending(store)
 
 
+
+    except Exception:
+        return None
 def is_confirmation_yes(message: str) -> bool:
-    text = str(message or "").strip()
-    if not text:
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        return any(p.search(text) for p in _CONFIRM_YES_PATTERNS)
+
+
+
+    except Exception:
         return False
-    return any(p.search(text) for p in _CONFIRM_YES_PATTERNS)
-
-
 def is_confirmation_no(message: str) -> bool:
-    text = str(message or "").strip()
-    if not text:
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        return any(p.search(text) for p in _CONFIRM_NO_PATTERNS)
+
+
+
+    except Exception:
         return False
-    return any(p.search(text) for p in _CONFIRM_NO_PATTERNS)
-
-
 def format_delete_prompt(schedule: dict[str, Any]) -> str:
-    payload = schedule.get("payload") or {}
-    if schedule.get("action") == "mission":
-        what = f'the mission "{payload.get("goal", "(no goal)")}"'
-    else:
-        what = f'the {payload.get("chipKey", "chip")} loop'
-    when = humanize_cron(str(schedule.get("cron") or ""))
-    sid = schedule.get("id")
-    return (
-        f'Kill {what} scheduled {when.lower()} ({sid})?\n'
-        f'Say "yes cancel" to confirm, or "never mind" to keep it.'
-    )
+    if not isinstance(schedule, str): schedule = str(schedule or '')
+    try:
+        payload = schedule.get("payload") or {}
+        if schedule.get("action") == "mission":
+            what = f'the mission "{payload.get("goal", "(no goal)")}"'
+        else:
+            what = f'the {payload.get("chipKey", "chip")} loop'
+        when = humanize_cron(str(schedule.get("cron") or ""))
+        sid = schedule.get("id")
+        return (
+            f'Kill {what} scheduled {when.lower()} ({sid})?\n'
+            f'Say "yes cancel" to confirm, or "never mind" to keep it.'
+        )
 
 
+
+    except Exception:
+        return ""
 def format_delete_ambiguous(matches: list[dict[str, Any]]) -> str:
-    lines = ["I found a few that could match. Which one do you mean?", ""]
-    for s in matches[:5]:
-        payload = s.get("payload") or {}
-        tag = payload.get("goal") if s.get("action") == "mission" else payload.get("chipKey")
-        when = humanize_cron(str(s.get("cron") or ""))
-        lines.append(f'  {s.get("id")}: {tag} ({when})')
-    lines.append("")
-    lines.append("Reply with the id (e.g. cancel sched-abc123) or 'never mind' to back out.")
-    return "\n".join(lines)
+    if not isinstance(matches, str): matches = str(matches or '')
+    try:
+        lines = ["I found a few that could match. Which one do you mean?", ""]
+        for s in matches[:5]:
+            payload = s.get("payload") or {}
+            tag = payload.get("goal") if s.get("action") == "mission" else payload.get("chipKey")
+            when = humanize_cron(str(s.get("cron") or ""))
+            lines.append(f'  {s.get("id")}: {tag} ({when})')
+        lines.append("")
+        lines.append("Reply with the id (e.g. cancel sched-abc123) or 'never mind' to back out.")
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def format_delete_not_found(hints: dict) -> str:
     detail = ""
     if hints.get("schedule_id"):
