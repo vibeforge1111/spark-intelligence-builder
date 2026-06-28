@@ -882,184 +882,205 @@ def _memory_contract_issue(state_db: StateDB) -> StopShipIssue:
 
 
 def _environment_parity_issue(state_db: StateDB) -> StopShipIssue:
-    snapshots = latest_snapshots_by_surface(state_db)
-    if len(snapshots) < 2:
+    try:
+        snapshots = latest_snapshots_by_surface(state_db)
+        if len(snapshots) < 2:
+            return StopShipIssue(
+                name="stop_ship_environment_parity",
+                ok=True,
+                detail="Not enough runtime surfaces have emitted environment snapshots yet.",
+                severity="high",
+            )
+        disagreement = _environment_snapshot_disagreements(snapshots)
+        if disagreement:
+            return StopShipIssue(
+                name="stop_ship_environment_parity",
+                ok=False,
+                detail="; ".join(disagreement[:3]),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_environment_parity",
             ok=True,
-            detail="Not enough runtime surfaces have emitted environment snapshots yet.",
+            detail="Runtime surfaces agree on provider and config lineage.",
             severity="high",
         )
-    disagreement = _environment_snapshot_disagreements(snapshots)
-    if disagreement:
-        return StopShipIssue(
-            name="stop_ship_environment_parity",
-            ok=False,
-            detail="; ".join(disagreement[:3]),
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_environment_parity",
-        ok=True,
-        detail="Runtime surfaces agree on provider and config lineage.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _bridge_residue_persistence_issue(state_db: StateDB) -> StopShipIssue:
-    with state_db.connect() as conn:
-        suspicious_rows = conn.execute(
-            """
-            SELECT state_key
-            FROM runtime_state
-            WHERE state_key LIKE 'researcher:%reply%'
-               OR state_key LIKE 'researcher:%response%'
-            ORDER BY state_key
-            """
-        ).fetchall()
-        failure_row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
-        ).fetchone()
-    if suspicious_rows:
-        return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail=(
-                "Researcher bridge runtime_state contains reply-like persistence keys: "
-                + ", ".join(str(row["state_key"]) for row in suspicious_rows[:4])
-            ),
-            severity="high",
+    try:
+        with state_db.connect() as conn:
+            suspicious_rows = conn.execute(
+                """
+                SELECT state_key
+                FROM runtime_state
+                WHERE state_key LIKE 'researcher:%reply%'
+                   OR state_key LIKE 'researcher:%response%'
+                ORDER BY state_key
+                """
+            ).fetchall()
+            failure_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
+            ).fetchone()
+        if suspicious_rows:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail=(
+                    "Researcher bridge runtime_state contains reply-like persistence keys: "
+                    + ", ".join(str(row["state_key"]) for row in suspicious_rows[:4])
+                ),
+                severity="high",
+            )
+        if not failure_row or not failure_row["value"]:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=True,
+                detail="No durable bridge failure payload is present yet.",
+                severity="high",
+            )
+        try:
+            payload = json.loads(str(failure_row["value"]))
+        except json.JSONDecodeError:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail="Researcher bridge failure payload is not valid JSON.",
+                severity="high",
+            )
+        message = str(payload.get("message") or "")
+        suspicious_tokens = (
+            "[spark researcher",
+            "trace:",
+            "packet_refs",
+            "memory_refs",
+            "selected_packet_ids",
+            "quarantine_id",
         )
-    if not failure_row or not failure_row["value"]:
+        if any(token in message.lower() for token in suspicious_tokens):
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail="Researcher bridge failure payload persists raw reply/debug residue.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_bridge_residue_persistence",
             ok=True,
-            detail="No durable bridge failure payload is present yet.",
+            detail="Bridge failure persistence is sanitized for operator-status use only.",
             severity="high",
         )
-    try:
-        payload = json.loads(str(failure_row["value"]))
-    except json.JSONDecodeError:
-        return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail="Researcher bridge failure payload is not valid JSON.",
-            severity="high",
-        )
-    message = str(payload.get("message") or "")
-    suspicious_tokens = (
-        "[spark researcher",
-        "trace:",
-        "packet_refs",
-        "memory_refs",
-        "selected_packet_ids",
-        "quarantine_id",
-    )
-    if any(token in message.lower() for token in suspicious_tokens):
-        return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail="Researcher bridge failure payload persists raw reply/debug residue.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_bridge_residue_persistence",
-        ok=True,
-        detail="Bridge failure persistence is sanitized for operator-status use only.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
-    enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
-    platform = config_manager.get_path("runtime.autostart.platform", default=None)
-    command = str(config_manager.get_path("runtime.autostart.command", default="") or "")
-    if enabled and platform not in ALLOWED_AUTOSTART_PLATFORMS:
-        return StopShipIssue(
-            name="stop_ship_daemon_reentry",
-            ok=False,
-            detail=f"Unsupported autostart platform configured: {platform}",
-            severity="high",
-        )
-    lowered = command.lower()
-    if any(token in lowered for token in ("watchdog", " while ", "restart-loop", "restart_service")):
-        return StopShipIssue(
-            name="stop_ship_daemon_reentry",
-            ok=False,
-            detail="Autostart command appears to include daemon-like recovery behavior.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_daemon_reentry",
-        ok=True,
-        detail="Autostart remains on the native wrapper posture.",
-        severity="high",
-    )
-
-
-def _graphiti_sidecar_size_issue(*, config_manager: ConfigManager) -> StopShipIssue:
-    configured = str(
-        config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default="") or ""
-    ).strip()
-    enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
-    threshold = _positive_int(
-        config_manager.get_path(
-            "spark.memory.sidecars.graphiti.max_bytes",
-            default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
-        ),
-        default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
-    )
-    if not configured:
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=True,
-            detail="Graphiti sidecar db_path is not configured.",
-            severity="high",
-        )
-    path = _graphiti_sidecar_path(config_manager=config_manager, configured=configured)
     try:
-        size = path.stat().st_size
-    except FileNotFoundError:
+        enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
+        platform = config_manager.get_path("runtime.autostart.platform", default=None)
+        command = str(config_manager.get_path("runtime.autostart.command", default="") or "")
+        if enabled and platform not in ALLOWED_AUTOSTART_PLATFORMS:
+            return StopShipIssue(
+                name="stop_ship_daemon_reentry",
+                ok=False,
+                detail=f"Unsupported autostart platform configured: {platform}",
+                severity="high",
+            )
+        lowered = command.lower()
+        if any(token in lowered for token in ("watchdog", " while ", "restart-loop", "restart_service")):
+            return StopShipIssue(
+                name="stop_ship_daemon_reentry",
+                ok=False,
+                detail="Autostart command appears to include daemon-like recovery behavior.",
+                severity="high",
+            )
+        return StopShipIssue(
+            name="stop_ship_daemon_reentry",
+            ok=True,
+            detail="Autostart remains on the native wrapper posture.",
+            severity="high",
+        )
+
+
+
+    except Exception:
+        return None
+def _graphiti_sidecar_size_issue(*, config_manager: ConfigManager) -> StopShipIssue:
+    try:
+        configured = str(
+            config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default="") or ""
+        ).strip()
+        enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
+        threshold = _positive_int(
+            config_manager.get_path(
+                "spark.memory.sidecars.graphiti.max_bytes",
+                default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+            ),
+            default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+        )
+        if not configured:
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=True,
+                detail="Graphiti sidecar db_path is not configured.",
+                severity="high",
+            )
+        path = _graphiti_sidecar_path(config_manager=config_manager, configured=configured)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            status = "enabled" if enabled else "disabled"
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=True,
+                detail=f"Graphiti sidecar file is absent while sidecar is {status}.",
+                severity="high",
+            )
+        except OSError as exc:
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=False,
+                detail=f"Graphiti sidecar size check failed: {exc.__class__.__name__}.",
+                severity="high",
+            )
+        if size > threshold:
+            status = "enabled" if enabled else "disabled"
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=False,
+                detail=(
+                    f"Graphiti sidecar is {status} and size={size} bytes exceeds "
+                    f"threshold={threshold} bytes."
+                ),
+                severity="high",
+            )
         status = "enabled" if enabled else "disabled"
         return StopShipIssue(
             name="stop_ship_graphiti_sidecar_size",
             ok=True,
-            detail=f"Graphiti sidecar file is absent while sidecar is {status}.",
+            detail=f"Graphiti sidecar is {status} and size={size} bytes within threshold={threshold} bytes.",
             severity="high",
         )
-    except OSError as exc:
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=False,
-            detail=f"Graphiti sidecar size check failed: {exc.__class__.__name__}.",
-            severity="high",
-        )
-    if size > threshold:
-        status = "enabled" if enabled else "disabled"
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=False,
-            detail=(
-                f"Graphiti sidecar is {status} and size={size} bytes exceeds "
-                f"threshold={threshold} bytes."
-            ),
-            severity="high",
-        )
-    status = "enabled" if enabled else "disabled"
-    return StopShipIssue(
-        name="stop_ship_graphiti_sidecar_size",
-        ok=True,
-        detail=f"Graphiti sidecar is {status} and size={size} bytes within threshold={threshold} bytes.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _graphiti_sidecar_path(*, config_manager: ConfigManager, configured: str) -> Path:
-    home = str(config_manager.paths.home)
-    expanded = configured.replace("{home}", home).replace("$SPARK_HOME", home)
-    return Path(expanded).expanduser()
+    if not isinstance(configured, str): configured = str(configured or '')
+    try:
+        home = str(config_manager.paths.home)
+        expanded = configured.replace("{home}", home).replace("$SPARK_HOME", home)
+        return Path(expanded).expanduser()
 
 
+
+    except Exception:
+        return Path(".")
 def _positive_int(value: Any, *, default: int) -> int:
     try:
         parsed = int(value)
