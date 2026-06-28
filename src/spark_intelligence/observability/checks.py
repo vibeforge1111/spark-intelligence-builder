@@ -1062,112 +1062,136 @@ def _graphiti_sidecar_path(*, config_manager: ConfigManager, configured: str) ->
 
 def _positive_int(value: Any, *, default: int) -> int:
     try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
 
 
+
+    except Exception:
+        return 0
 def _external_execution_governance_issue() -> StopShipIssue:
-    allowed_subprocess_paths = {
-        "src/spark_intelligence/build_quality_review.py",
-        "src/spark_intelligence/cli.py",
-        "src/spark_intelligence/config/loader.py",
-        "src/spark_intelligence/execution/governed.py",
-        "src/spark_intelligence/local_project_index.py",
-        "src/spark_intelligence/self_awareness/handoff_check.py",
-    }
-    allowed_direct_provider_paths = {
-        "src/spark_intelligence/chip_create/pipeline.py",
-        "src/spark_intelligence/llm/direct_provider.py",
-        "src/spark_intelligence/llm/provider_wrapper.py",
-        "src/spark_intelligence/researcher_bridge/advisory.py",
-    }
-    unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
-    unexpected_provider = _find_source_pattern_paths(
-        "execute_direct_provider_prompt(",
-        allowed_paths=allowed_direct_provider_paths,
-    )
-    offenders = sorted(set(unexpected_subprocess + unexpected_provider))
-    if offenders:
+    try:
+        allowed_subprocess_paths = {
+            "src/spark_intelligence/build_quality_review.py",
+            "src/spark_intelligence/cli.py",
+            "src/spark_intelligence/config/loader.py",
+            "src/spark_intelligence/execution/governed.py",
+            "src/spark_intelligence/local_project_index.py",
+            "src/spark_intelligence/self_awareness/handoff_check.py",
+        }
+        allowed_direct_provider_paths = {
+            "src/spark_intelligence/chip_create/pipeline.py",
+            "src/spark_intelligence/llm/direct_provider.py",
+            "src/spark_intelligence/llm/provider_wrapper.py",
+            "src/spark_intelligence/researcher_bridge/advisory.py",
+        }
+        unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
+        unexpected_provider = _find_source_pattern_paths(
+            "execute_direct_provider_prompt(",
+            allowed_paths=allowed_direct_provider_paths,
+        )
+        offenders = sorted(set(unexpected_subprocess + unexpected_provider))
+        if offenders:
+            return StopShipIssue(
+                name="stop_ship_external_execution_governance",
+                ok=False,
+                detail="Ungoverned external execution entry points detected: " + ", ".join(offenders[:4]),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_external_execution_governance",
-            ok=False,
-            detail="Ungoverned external execution entry points detected: " + ", ".join(offenders[:4]),
+            ok=True,
+            detail="External execution is limited to governed helper and approved wrapper modules.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_external_execution_governance",
-        ok=True,
-        detail="External execution is limited to governed helper and approved wrapper modules.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _bridge_output_governance_issue() -> StopShipIssue:
-    allowed_reply_paths = {
-        "src/spark_intelligence/researcher_bridge/advisory.py",
-        "src/spark_intelligence/adapters/telegram/runtime.py",
-        "src/spark_intelligence/gateway/simulated_dm.py",
-    }
-    unexpected_reply_consumers = _find_source_pattern_paths(
-        "reply_text_attribute",
-        allowed_paths=allowed_reply_paths,
-    )
-    if unexpected_reply_consumers:
+    try:
+        allowed_reply_paths = {
+            "src/spark_intelligence/researcher_bridge/advisory.py",
+            "src/spark_intelligence/adapters/telegram/runtime.py",
+            "src/spark_intelligence/gateway/simulated_dm.py",
+        }
+        unexpected_reply_consumers = _find_source_pattern_paths(
+            "reply_text_attribute",
+            allowed_paths=allowed_reply_paths,
+        )
+        if unexpected_reply_consumers:
+            return StopShipIssue(
+                name="stop_ship_bridge_output_governance",
+                ok=False,
+                detail=(
+                    "Raw researcher bridge reply consumption appears outside immediate delivery surfaces: "
+                    + ", ".join(unexpected_reply_consumers[:4])
+                ),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_bridge_output_governance",
-            ok=False,
-            detail=(
-                "Raw researcher bridge reply consumption appears outside immediate delivery surfaces: "
-                + ", ".join(unexpected_reply_consumers[:4])
-            ),
+            ok=True,
+            detail="Raw bridge replies are limited to immediate delivery surfaces.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_bridge_output_governance",
-        ok=True,
-        detail="Raw bridge replies are limited to immediate delivery surfaces.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _find_source_pattern_paths(pattern: str, *, allowed_paths: set[str]) -> list[str]:
-    repo_root = Path(__file__).resolve().parents[3]
-    src_root = repo_root / "src"
-    matches: list[str] = []
-    for path in src_root.rglob("*.py"):
-        relative = path.relative_to(repo_root).as_posix()
-        if relative in allowed_paths:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if _source_contains_governed_pattern(text, pattern):
-            matches.append(relative)
-    return matches
-
-
-def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+    if not isinstance(pattern, str): pattern = str(pattern or '')
+    if not isinstance(allowed_paths, str): allowed_paths = str(allowed_paths or '')
     try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return False
-    if pattern == "subprocess.run(":
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "run":
+        repo_root = Path(__file__).resolve().parents[3]
+        src_root = repo_root / "src"
+        matches: list[str] = []
+        for path in src_root.rglob("*.py"):
+            relative = path.relative_to(repo_root).as_posix()
+            if relative in allowed_paths:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if _source_contains_governed_pattern(text, pattern):
+                matches.append(relative)
+        return matches
+
+
+
+    except Exception:
+        return []
+def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+    if not isinstance(text, str): text = str(text or '')
+    if not isinstance(pattern, str): pattern = str(pattern or '')
+    try:
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return False
+        if pattern == "subprocess.run(":
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "run":
+                        return True
+            return False
+        if pattern == "execute_direct_provider_prompt(":
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "execute_direct_provider_prompt":
                     return True
+            return False
+        if pattern == "reply_text_attribute":
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr == "reply_text":
+                    return True
+            return False
+        return pattern in text
+
+    except Exception:
         return False
-    if pattern == "execute_direct_provider_prompt(":
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "execute_direct_provider_prompt":
-                return True
-        return False
-    if pattern == "reply_text_attribute":
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr == "reply_text":
-                return True
-        return False
-    return pattern in text
