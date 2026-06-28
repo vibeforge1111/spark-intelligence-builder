@@ -53,106 +53,130 @@ _LIST_PATTERNS = (
 
 
 def detect_schedule_intent(message: str) -> dict | None:
-    """Detect plain-language intent to list the scheduler surface.
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        """Detect plain-language intent to list the scheduler surface.
 
-    Returns {"action": "list"} on match, None otherwise. Errs on the side
-    of matching since the short-circuit is cheap and easy to avoid
-    (users who don't want schedules simply don't ask about them).
-    """
-    text = str(message or "").strip()
-    if not text:
+        Returns {"action": "list"} on match, None otherwise. Errs on the side
+        of matching since the short-circuit is cheap and easy to avoid
+        (users who don't want schedules simply don't ask about them).
+        """
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if has_conversation_only_boundary(text) or denies_intent(
+            text,
+            ("show schedules", "list schedules", "open schedule", "route", "show scheduler"),
+        ):
+            return None
+        for pat in _LIST_PATTERNS:
+            if pat.search(text):
+                return {"action": "list"}
         return None
-    if has_conversation_only_boundary(text) or denies_intent(
-        text,
-        ("show schedules", "list schedules", "open schedule", "route", "show scheduler"),
-    ):
-        return None
-    for pat in _LIST_PATTERNS:
-        if pat.search(text):
-            return {"action": "list"}
-    return None
 
 
+
+    except Exception:
+        return {}
 _DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def _format_12(h: int, m: int) -> str:
-    hh = ((h + 11) % 12) + 1
-    suffix = "AM" if h < 12 else "PM"
-    return f"{hh} {suffix}" if m == 0 else f"{hh}:{m:02d} {suffix}"
-
-
-def humanize_cron(cron: str) -> str:
-    parts = cron.strip().split()
-    if len(parts) != 5:
-        return cron
-    minute, hour, dom, month, dow = parts
-    if hour == "*" and dom == "*" and month == "*" and dow == "*":
-        if minute == "*":
-            return "Every minute"
-        m = re.match(r"^\*/(\d+)$", minute)
-        if m:
-            n = m.group(1)
-            return f"Every {n} minute" + ("" if n == "1" else "s")
-        if minute.isdigit():
-            return f"At {minute} min past every hour"
-    if dom == "*" and month == "*" and dow == "*":
-        h = re.match(r"^\*/(\d+)$", hour)
-        if h and minute.isdigit():
-            n = h.group(1)
-            return f"Every {n} hour" + ("" if n == "1" else "s") + f" at :{int(minute):02d}"
-        if hour.isdigit() and minute.isdigit():
-            return f"Daily at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
-        dow_int = int(dow)
-        if dow_int < len(_DOW):
-            return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
-        return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
-        month_int = int(month)
-        if 1 <= month_int <= 12:
-            return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
-    return f"Custom: {cron}"
-
-
-def _format_next_fire(iso: str | None) -> str:
-    if not iso:
-        return "-"
     try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        local_dt = dt.astimezone()
-        now = datetime.now(timezone.utc)
-        delta = (dt - now).total_seconds()
-        local_str = local_dt.strftime("%a, %I:%M %p").lstrip("0").replace(" 0", " ")
-        if delta <= 0:
-            return f"{local_str} (due now)"
-        if delta < 60:
-            rel = f"{int(delta)}s"
-        elif delta < 3600:
-            rel = f"{int(delta // 60)}m"
-        elif delta < 86_400:
-            rel = f"{int(delta // 3600)}h"
-        else:
-            rel = f"{int(delta // 86_400)}d"
-        return f"{local_str} (in {rel})"
+        hh = ((h + 11) % 12) + 1
+        suffix = "AM" if h < 12 else "PM"
+        return f"{hh} {suffix}" if m == 0 else f"{hh}:{m:02d} {suffix}"
+
+
+
     except Exception:
-        return iso
+        return ""
+def humanize_cron(cron: str) -> str:
+    if not isinstance(cron, str): cron = str(cron or '')
+    try:
+        parts = cron.strip().split()
+        if len(parts) != 5:
+            return cron
+        minute, hour, dom, month, dow = parts
+        if hour == "*" and dom == "*" and month == "*" and dow == "*":
+            if minute == "*":
+                return "Every minute"
+            m = re.match(r"^\*/(\d+)$", minute)
+            if m:
+                n = m.group(1)
+                return f"Every {n} minute" + ("" if n == "1" else "s")
+            if minute.isdigit():
+                return f"At {minute} min past every hour"
+        if dom == "*" and month == "*" and dow == "*":
+            h = re.match(r"^\*/(\d+)$", hour)
+            if h and minute.isdigit():
+                n = h.group(1)
+                return f"Every {n} hour" + ("" if n == "1" else "s") + f" at :{int(minute):02d}"
+            if hour.isdigit() and minute.isdigit():
+                return f"Daily at {_format_12(int(hour), int(minute))}"
+        if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
+            dow_int = int(dow)
+            if dow_int < len(_DOW):
+                return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
+        if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
+            return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
+        if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
+            month_int = int(month)
+            if 1 <= month_int <= 12:
+                return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
+        return f"Custom: {cron}"
 
 
+
+    except Exception:
+        return ""
+def _format_next_fire(iso: str | None) -> str:
+    if not isinstance(iso, str): iso = str(iso or '')
+    try:
+        if not iso:
+            return "-"
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            local_dt = dt.astimezone()
+            now = datetime.now(timezone.utc)
+            delta = (dt - now).total_seconds()
+            local_str = local_dt.strftime("%a, %I:%M %p").lstrip("0").replace(" 0", " ")
+            if delta <= 0:
+                return f"{local_str} (due now)"
+            if delta < 60:
+                rel = f"{int(delta)}s"
+            elif delta < 3600:
+                rel = f"{int(delta // 60)}m"
+            elif delta < 86_400:
+                rel = f"{int(delta // 3600)}h"
+            else:
+                rel = f"{int(delta // 86_400)}d"
+            return f"{local_str} (in {rel})"
+        except Exception:
+            return iso
+
+
+
+    except Exception:
+        return ""
 def _human_summary(rec: dict[str, Any]) -> str:
-    action = rec.get("action", "")
-    payload = rec.get("payload") or {}
-    if action == "mission":
-        goal = str(payload.get("goal") or "(no goal)")
-        return f'Run mission "{goal}"'
-    chip = payload.get("chipKey") or "?"
-    rounds = int(payload.get("rounds") or 1)
-    plural = "" if rounds == 1 else "s"
-    return f"Run {rounds} loop round{plural} on {chip}"
+    if not isinstance(rec, str): rec = str(rec or '')
+    try:
+        action = rec.get("action", "")
+        payload = rec.get("payload") or {}
+        if action == "mission":
+            goal = str(payload.get("goal") or "(no goal)")
+            return f'Run mission "{goal}"'
+        chip = payload.get("chipKey") or "?"
+        rounds = int(payload.get("rounds") or 1)
+        plural = "" if rounds == 1 else "s"
+        return f"Run {rounds} loop round{plural} on {chip}"
 
 
+
+    except Exception:
+        return ""
 def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
     """Conversational rendering of the scheduler surface.
 
