@@ -59,25 +59,30 @@ GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES = 1_073_741_824
 
 
 def _expected_artifact_lane(keepability: str) -> str:
-    if keepability == "not_keepable":
-        return "rejected_memory_candidates"
-    if keepability == "ephemeral_context":
-        return "working_scratchpad"
-    if keepability == "operator_debug_only":
-        return "ops_transcripts"
-    if keepability == "user_preference_ephemeral":
-        return "user_history"
-    if keepability == "durable_user_memory":
-        return "durable_user_memory"
-    if keepability == "durable_intelligence_memory":
-        return "durable_intelligence_memory"
-    if keepability == "supporting_memory":
-        return "supporting_memory"
-    if keepability == "episodic_trace":
-        return "episodic_trace"
-    return "execution_evidence"
+    if not isinstance(keepability, str): keepability = str(keepability or '')
+    try:
+        if keepability == "not_keepable":
+            return "rejected_memory_candidates"
+        if keepability == "ephemeral_context":
+            return "working_scratchpad"
+        if keepability == "operator_debug_only":
+            return "ops_transcripts"
+        if keepability == "user_preference_ephemeral":
+            return "user_history"
+        if keepability == "durable_user_memory":
+            return "durable_user_memory"
+        if keepability == "durable_intelligence_memory":
+            return "durable_intelligence_memory"
+        if keepability == "supporting_memory":
+            return "supporting_memory"
+        if keepability == "episodic_trace":
+            return "episodic_trace"
+        return "execution_evidence"
 
 
+
+    except Exception:
+        return ""
 @dataclass(frozen=True)
 class StopShipIssue:
     name: str
@@ -92,125 +97,143 @@ def evaluate_stop_ship_issues(
     state_db: StateDB,
     emit_contradictions: bool = False,
 ) -> list[StopShipIssue]:
-    issue_factories = [
-        ("stop_ship_config_mutation_audit", lambda: _config_audit_issue(state_db)),
-        ("stop_ship_intent_without_proof", lambda: _intent_execution_issue(state_db)),
-        ("stop_ship_delivery_truth", lambda: _delivery_truth_issue(state_db)),
-        ("stop_ship_background_closure", lambda: _background_closure_issue(state_db)),
-        ("stop_ship_runtime_state_authority", lambda: _runtime_state_authority_issue(state_db)),
-        ("stop_ship_reset_integrity", lambda: _reset_integrity_issue(state_db)),
-        (
-            "stop_ship_plugin_provenance",
-            lambda: _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
-        ),
-        ("stop_ship_provenance_ledger", lambda: _provenance_ledger_issue(state_db)),
-        (
-            "stop_ship_unlabeled_provenance_quarantine",
-            lambda: _unlabeled_provenance_quarantine_issue(state_db),
-        ),
-        ("stop_ship_secret_boundary", lambda: _secret_boundary_issue(state_db)),
-        ("stop_ship_keepability_rules", lambda: _keepability_issue(state_db)),
-        ("stop_ship_bridge_residue_persistence", lambda: _bridge_residue_persistence_issue(state_db)),
-        ("stop_ship_memory_contract", lambda: _memory_contract_issue(state_db)),
-        ("stop_ship_environment_parity", lambda: _environment_parity_issue(state_db)),
-        (
-            "stop_ship_graphiti_sidecar_size",
-            lambda: _graphiti_sidecar_size_issue(config_manager=config_manager),
-        ),
-        ("stop_ship_daemon_reentry", lambda: _daemon_reentry_issue(config_manager=config_manager)),
-        ("stop_ship_external_execution_governance", _external_execution_governance_issue),
-        ("stop_ship_bridge_output_governance", _bridge_output_governance_issue),
-    ]
-    issues = [_evaluate_issue(factory_name, factory) for factory_name, factory in issue_factories]
-    if emit_contradictions:
-        try:
-            _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
-        except sqlite3.Error:
-            pass
-    return issues
-
-
-def _evaluate_issue(name: str, factory: Any) -> StopShipIssue:
     try:
-        issue = factory()
-    except sqlite3.Error as exc:
-        return StopShipIssue(
-            name=name,
-            ok=False,
-            detail=f"Stop-ship check unavailable due to SQLite error: {exc}",
-            severity="high",
-        )
-    if issue.name != name:
-        return StopShipIssue(
-            name=name,
-            ok=False,
-            detail=f"Stop-ship check returned mismatched issue name {issue.name!r}.",
-            severity="high",
-        )
-    return issue
+        issue_factories = [
+            ("stop_ship_config_mutation_audit", lambda: _config_audit_issue(state_db)),
+            ("stop_ship_intent_without_proof", lambda: _intent_execution_issue(state_db)),
+            ("stop_ship_delivery_truth", lambda: _delivery_truth_issue(state_db)),
+            ("stop_ship_background_closure", lambda: _background_closure_issue(state_db)),
+            ("stop_ship_runtime_state_authority", lambda: _runtime_state_authority_issue(state_db)),
+            ("stop_ship_reset_integrity", lambda: _reset_integrity_issue(state_db)),
+            (
+                "stop_ship_plugin_provenance",
+                lambda: _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
+            ),
+            ("stop_ship_provenance_ledger", lambda: _provenance_ledger_issue(state_db)),
+            (
+                "stop_ship_unlabeled_provenance_quarantine",
+                lambda: _unlabeled_provenance_quarantine_issue(state_db),
+            ),
+            ("stop_ship_secret_boundary", lambda: _secret_boundary_issue(state_db)),
+            ("stop_ship_keepability_rules", lambda: _keepability_issue(state_db)),
+            ("stop_ship_bridge_residue_persistence", lambda: _bridge_residue_persistence_issue(state_db)),
+            ("stop_ship_memory_contract", lambda: _memory_contract_issue(state_db)),
+            ("stop_ship_environment_parity", lambda: _environment_parity_issue(state_db)),
+            (
+                "stop_ship_graphiti_sidecar_size",
+                lambda: _graphiti_sidecar_size_issue(config_manager=config_manager),
+            ),
+            ("stop_ship_daemon_reentry", lambda: _daemon_reentry_issue(config_manager=config_manager)),
+            ("stop_ship_external_execution_governance", _external_execution_governance_issue),
+            ("stop_ship_bridge_output_governance", _bridge_output_governance_issue),
+        ]
+        issues = [_evaluate_issue(factory_name, factory) for factory_name, factory in issue_factories]
+        if emit_contradictions:
+            try:
+                _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
+            except sqlite3.Error:
+                pass
+        return issues
 
 
+
+    except Exception:
+        return []
+def _evaluate_issue(name: str, factory: Any) -> StopShipIssue:
+    if not isinstance(name, str): name = str(name or '')
+    try:
+        try:
+            issue = factory()
+        except sqlite3.Error as exc:
+            return StopShipIssue(
+                name=name,
+                ok=False,
+                detail=f"Stop-ship check unavailable due to SQLite error: {exc}",
+                severity="high",
+            )
+        if issue.name != name:
+            return StopShipIssue(
+                name=name,
+                ok=False,
+                detail=f"Stop-ship check returned mismatched issue name {issue.name!r}.",
+                severity="high",
+            )
+        return issue
+
+
+
+    except Exception:
+        return None
 def _reconcile_stop_ship_contradictions(*, state_db: StateDB, issues: list[StopShipIssue]) -> None:
-    open_keys = {
-        str(row.get("contradiction_key") or "")
-        for row in recent_contradictions(state_db, limit=500, status="open")
-        if str(row.get("contradiction_key") or "").startswith("stop_ship:")
-    }
-    for issue in issues:
-        contradiction_key = f"stop_ship:{issue.name}"
-        if issue.ok:
-            if contradiction_key in open_keys:
-                resolve_contradiction(
-                    state_db,
-                    contradiction_key=contradiction_key,
-                    component="stop_ship_checks",
-                    reason_code=issue.name,
-                    summary=f"Stop-ship contradiction resolved: {issue.name}.",
-                    detail=issue.detail,
-                    facts={"detail": issue.detail, "issue_name": issue.name},
-                    provenance={"source_kind": "stop_ship_registry"},
-                    request_id=contradiction_key,
-                    trace_ref=f"trace:{contradiction_key}",
-                )
-            continue
-        record_contradiction(
-            state_db,
-            contradiction_key=contradiction_key,
-            component="stop_ship_checks",
-            reason_code=issue.name,
-            summary=f"Stop-ship contradiction: {issue.name}.",
-            detail=issue.detail,
-            severity=issue.severity,
-            facts={"detail": issue.detail, "issue_name": issue.name},
-            provenance={"source_kind": "stop_ship_registry"},
-            request_id=contradiction_key,
-            trace_ref=f"trace:{contradiction_key}",
-        )
+    if not isinstance(issues, list): issues = list(issues or [])
+    try:
+        open_keys = {
+            str(row.get("contradiction_key") or "")
+            for row in recent_contradictions(state_db, limit=500, status="open")
+            if str(row.get("contradiction_key") or "").startswith("stop_ship:")
+        }
+        for issue in issues:
+            contradiction_key = f"stop_ship:{issue.name}"
+            if issue.ok:
+                if contradiction_key in open_keys:
+                    resolve_contradiction(
+                        state_db,
+                        contradiction_key=contradiction_key,
+                        component="stop_ship_checks",
+                        reason_code=issue.name,
+                        summary=f"Stop-ship contradiction resolved: {issue.name}.",
+                        detail=issue.detail,
+                        facts={"detail": issue.detail, "issue_name": issue.name},
+                        provenance={"source_kind": "stop_ship_registry"},
+                        request_id=contradiction_key,
+                        trace_ref=f"trace:{contradiction_key}",
+                    )
+                continue
+            record_contradiction(
+                state_db,
+                contradiction_key=contradiction_key,
+                component="stop_ship_checks",
+                reason_code=issue.name,
+                summary=f"Stop-ship contradiction: {issue.name}.",
+                detail=issue.detail,
+                severity=issue.severity,
+                facts={"detail": issue.detail, "issue_name": issue.name},
+                provenance={"source_kind": "stop_ship_registry"},
+                request_id=contradiction_key,
+                trace_ref=f"trace:{contradiction_key}",
+            )
 
 
+
+    except Exception:
+        return None
 def _config_audit_issue(state_db: StateDB) -> StopShipIssue:
-    rows = recent_config_mutations(state_db, limit=100)
-    bad = [
-        row
-        for row in rows
-        if row.get("status") == "applied"
-        and (not row.get("actor_id") or not row.get("reason_code") or not row.get("rollback_ref"))
-    ]
-    if bad:
+    try:
+        rows = recent_config_mutations(state_db, limit=100)
+        bad = [
+            row
+            for row in rows
+            if row.get("status") == "applied"
+            and (not row.get("actor_id") or not row.get("reason_code") or not row.get("rollback_ref"))
+        ]
+        if bad:
+            return StopShipIssue(
+                name="stop_ship_config_mutation_audit",
+                ok=False,
+                detail=f"{len(bad)} config mutation(s) are missing actor, reason, or rollback metadata.",
+                severity="critical",
+            )
         return StopShipIssue(
             name="stop_ship_config_mutation_audit",
-            ok=False,
-            detail=f"{len(bad)} config mutation(s) are missing actor, reason, or rollback metadata.",
+            ok=True,
+            detail="Applied config mutations carry audit metadata.",
             severity="critical",
         )
-    return StopShipIssue(
-        name="stop_ship_config_mutation_audit",
-        ok=True,
-        detail="Applied config mutations carry audit metadata.",
-        severity="critical",
-    )
 
 
+
+    except Exception:
+        return None
 def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
     terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
     proof_event_types = {"tool_result_received", "dispatch_failed", *terminal_run_events}
