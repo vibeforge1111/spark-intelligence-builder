@@ -297,6 +297,60 @@ def _vnext_authorization_tool_name(tool_name: str, *, owner_system: str) -> str:
     return tool_name
 
 
+def _build_denied_tool_call_ledger(
+    *,
+    envelope: dict[str, Any] | None,
+    proposed_action: dict[str, Any] | None,
+    authorization: dict[str, Any] | None,
+    owner_system: str,
+) -> dict[str, Any] | None:
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != "turn-intent-envelope-vnext":
+        return None
+    if not isinstance(proposed_action, dict):
+        return None
+    if not isinstance(authorization, dict) or authorization.get("schema_version") != "authorization-decision-v1":
+        return None
+    if str(authorization.get("verdict") or "") not in {"deny", "denied", "blocked"}:
+        return None
+
+    action_id = str(proposed_action.get("action_id") or authorization.get("action_id") or "")
+    capability_id = str(proposed_action.get("capability_id") or authorization.get("capability_id") or "")
+    turn_id = str(envelope.get("turn_id") or authorization.get("turn_id") or "")
+    action_type = str(proposed_action.get("action_type") or "")
+    created_at = str(authorization.get("created_at") or envelope.get("created_at") or "")
+    args_ref = proposed_action.get("args_ref") if isinstance(proposed_action.get("args_ref"), dict) else None
+    tool_name = f"{owner_system}.{action_type}" if owner_system and action_type else action_type or "unknown_tool"
+    ledger_id = f"ledger:{str(authorization.get('decision_id') or action_id or turn_id).replace(':', '_')}"
+    return {
+        "schema_version": "tool-call-ledger-v1",
+        "ledger_id": ledger_id,
+        "created_at": created_at,
+        "turn_id": turn_id,
+        "action_id": action_id,
+        "capability_id": capability_id,
+        "tool_name": tool_name,
+        "lifecycle": [
+            {"stage": "propose", "at": created_at, "verdict": "passed"},
+            {"stage": "authorize", "at": created_at, "verdict": "denied"},
+            {"stage": "execute", "at": created_at, "verdict": "skipped"},
+        ],
+        "authorization": authorization,
+        "arguments": {
+            "schema_valid": True,
+            "raw_ref": args_ref,
+            "sanitized_ref": args_ref,
+        },
+        "result": {
+            "status": "not_started",
+            "output_ref": None,
+            "error_ref": None,
+            "rollback_ref": None,
+            "summary": "Denied by Harness Core before execution.",
+        },
+        "trace": authorization.get("trace") if isinstance(authorization.get("trace"), dict) else {},
+    }
+
+
 def set_bridge_authority_ledger_context(
     *,
     state_db: Any,
@@ -1146,7 +1200,13 @@ def authorize_builder_bridge_action(
         harness_core_envelope=authorization.turn_intent_envelope_vnext,
         proposed_action=authorization.proposed_action,
         authorization_decision=authorization.authorization_decision,
-        tool_call_ledger=authorization.tool_call_ledger,
+        tool_call_ledger=authorization.tool_call_ledger
+        or _build_denied_tool_call_ledger(
+            envelope=authorization.turn_intent_envelope_vnext,
+            proposed_action=authorization.proposed_action,
+            authorization=authorization.authorization_decision,
+            owner_system=owner_system,
+        ),
     )
     verdict = _with_governor_decision(verdict)
     ledger_context = _ledger_context(

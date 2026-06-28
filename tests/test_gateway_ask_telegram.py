@@ -1156,7 +1156,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsInstance(vnext, dict)
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
         self.assertEqual(vnext["selected_move"], "execute_action")
-        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "memory.write")
         self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
@@ -1384,7 +1384,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         vnext = captured.get("turn_intent_payload_vnext")
         self.assertIsInstance(vnext, dict)
         self.assertEqual(vnext["schema_version"], "turn-intent-envelope-vnext")
-        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "write_memory")
+        self.assertEqual(vnext["proposed_actions"][0]["action_type"], "memory.write")
         self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
