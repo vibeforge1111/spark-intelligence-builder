@@ -10471,6 +10471,7 @@ def _run_swarm_read_command(
     renderer: Any,
     unavailable_message: str | None = None,
 ) -> dict[str, str]:
+    reply_text = "Swarm read encountered an unexpected error."
     try:
         payload = loader()
         reply_text = renderer(payload)
@@ -10479,6 +10480,8 @@ def _run_swarm_read_command(
             reply_text = unavailable_message
         else:
             reply_text = _render_swarm_unavailable_reply("Swarm read is unavailable.", exc)
+    except Exception as exc:
+        reply_text = _render_swarm_unavailable_reply("Swarm read is unavailable.", exc)
     return {
         "command": command,
         "reply_text": reply_text,
@@ -11018,7 +11021,7 @@ def _blocked_swarm_authority_result(*, command: str, reason_codes: tuple[str, ..
     }
 
 
-def _render_swarm_unavailable_reply(verdict: str, exc: RuntimeError) -> str:
+def _render_swarm_unavailable_reply(verdict: str, exc: Exception) -> str:
     detail = str(exc).strip()
     lines = [verdict]
     if detail:
