@@ -411,23 +411,63 @@ def create_chip_from_prompt(
             pin_chip,
             build_attachment_snapshot,
         )
+    except Exception as exc:
+        return ChipCreateResult(
+            ok=False,
+            chip_key=chip_key,
+            chip_path=str(chip_dir),
+            brief=brief,
+            router_invokable=False,
+            governor_verification=governor_verification,
+            warnings=warnings,
+            error=f"attachments import failed: {exc}",
+        )
+
+    try:
         add_attachment_root(
             config_manager,
             target="chips",
             root=str(chip_dir),
         )
     except Exception as exc:
-        warnings.append(f"add_attachment_root failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            chip_key=chip_key,
+            chip_path=str(chip_dir),
+            brief=brief,
+            router_invokable=False,
+            governor_verification=governor_verification,
+            warnings=warnings,
+            error=f"add_attachment_root failed: {exc}",
+        )
 
     try:
         build_attachment_snapshot(config_manager)
     except Exception as exc:
-        warnings.append(f"snapshot after add-root failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            chip_key=chip_key,
+            chip_path=str(chip_dir),
+            brief=brief,
+            router_invokable=False,
+            governor_verification=governor_verification,
+            warnings=warnings,
+            error=f"snapshot after add-root failed: {exc}",
+        )
 
     try:
         pin_chip(config_manager, chip_key=chip_key)
     except Exception as exc:
-        warnings.append(f"pin_chip failed: {exc}")
+        return ChipCreateResult(
+            ok=False,
+            chip_key=chip_key,
+            chip_path=str(chip_dir),
+            brief=brief,
+            router_invokable=False,
+            governor_verification=governor_verification,
+            warnings=warnings,
+            error=f"pin_chip failed: {exc}",
+        )
 
     router_invokable = False
     try:
