@@ -229,4 +229,9 @@ def _normalize_repo_source_path(raw_value: str, *, base_dir: Path) -> str | None
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = (base_dir / candidate).resolve(strict=False)
+    # Prevent path traversal: ensure resolved path stays within base_dir
+    try:
+        candidate.relative_to(base_dir.resolve())
+    except ValueError:
+        return None
     return str(candidate)
