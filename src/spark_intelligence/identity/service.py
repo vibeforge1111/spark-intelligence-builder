@@ -1771,6 +1771,7 @@ def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str,
 def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, held_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
     _require_operator(state_db, held_by)
     human_id = _canonical_human_id(channel_id, external_user_id)
+    session_id = _canonical_session_id(channel_id, external_user_id)
     pairing_id = f"pairing:{channel_id}:{external_user_id}"
     with state_db.connect() as conn:
         conn.execute(
@@ -1788,6 +1789,10 @@ def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, h
         conn.execute(
             "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
             (channel_id, external_user_id),
+        )
+        conn.execute(
+            "UPDATE session_bindings SET status='held', updated_at=CURRENT_TIMESTAMP WHERE session_id = ?",
+            (session_id,),
         )
         conn.commit()
     return f"Held pairing for {channel_id}:{external_user_id}"
