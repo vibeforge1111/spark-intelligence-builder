@@ -103,6 +103,7 @@ def _strip_code_fences(text: str) -> str:
 
 def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
     from spark_intelligence.llm.direct_provider import (
+        DirectProviderGovernance,
         DirectProviderRequest,
         execute_direct_provider_prompt,
     )
@@ -116,14 +117,41 @@ def _parse_brief_via_llm(prompt: str, *, provider) -> dict:
         model=provider.default_model,
         secret_value=provider.secret_value,
     )
+
+    # Build governance so pre-model secret screening actually runs.
+    state_db_path = _get_state_db_path()
+    governance = DirectProviderGovernance(
+        state_db_path=state_db_path,
+        source_kind="chip_create_pipeline",
+        source_ref=provider.provider_id,
+        summary="Builder screened chip-create brief prompt for secrets before external LLM dispatch.",
+        reason_code="chip_create_brief_secret_like",
+        policy_domain="chip_create",
+        blocked_stage="pre_model",
+    ) if state_db_path else None
+
     result = execute_direct_provider_prompt(
         provider=req,
         system_prompt=_BRIEF_SYSTEM,
         user_prompt=f"User request:\n{prompt}\n\nReturn the JSON brief.",
+        governance=governance,
     )
     raw = str(result.get("raw_response") or "")
     cleaned = _strip_code_fences(raw)
     return json.loads(cleaned)
+
+
+def _get_state_db_path() -> str:
+    """Best-effort resolve of the state DB path for governance screening."""
+    env = os.environ.get("SPARK_INTELLIGENCE_STATE_DB_PATH", "").strip()
+    if env:
+        return env
+    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
+    base = Path(home_env) if home_env else Path.home() / ".spark-intelligence"
+    candidate = base / "spark_intelligence_state.db"
+    if candidate.exists():
+        return str(candidate)
+    return ""
 
 
 def _validate_brief(brief: dict) -> list[str]:
