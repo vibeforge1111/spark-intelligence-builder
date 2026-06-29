@@ -1742,7 +1742,19 @@ def resolve_inbound_dm(
 
 def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, revoked_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
     _require_operator(state_db, revoked_by)
-    human_id = _canonical_human_id(channel_id, external_user_id)
+
+    # Resolve alias: if this (channel, user) is an alias of a primary identity,
+    # use the primary's IDs so the UPDATE actually targets the real rows.
+    alias = _resolve_alias(state_db, channel_id, external_user_id)
+    if alias is not None:
+        human_id = alias.primary_human_id
+        canonical_channel = alias.primary_channel
+        canonical_user = alias.primary_external_user
+    else:
+        human_id = _canonical_human_id(channel_id, external_user_id)
+        canonical_channel = channel_id
+        canonical_user = external_user_id
+
     session_id = _canonical_session_id(channel_id, external_user_id)
     pairing_id = f"pairing:{channel_id}:{external_user_id}"
 
@@ -1763,6 +1775,12 @@ def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str,
             "UPDATE humans SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE human_id = ?",
             (human_id,),
         )
+        # If aliased, revoke the alias row itself.
+        if alias is not None:
+            conn.execute(
+                "DELETE FROM identity_aliases WHERE alias_channel = ? AND alias_external_user = ?",
+                (channel_id, external_user_id),
+            )
         conn.commit()
 
     return f"Revoked pairing for {channel_id}:{external_user_id}"
