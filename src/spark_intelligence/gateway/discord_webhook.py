@@ -136,6 +136,16 @@ def handle_discord_webhook(
             facts={"error": str(exc)},
         )
         return _json_error_response(400, str(exc))
+    except Exception as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="uncaught_exception",
+            summary="Discord webhook run closed with unhandled error.",
+            facts={"error": str(exc)},
+        )
+        return _json_error_response(500, "Internal server error")
     append_gateway_trace(
         config_manager,
         {
