@@ -1621,7 +1621,10 @@ def _read_json_file_if_exists(path: Path | None) -> dict[str, Any] | None:
     if path is None or not path.exists():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -1768,7 +1771,10 @@ def _resolve_active_path_collective_payload(
     if not payload_path.exists():
         return None
     try:
+        try:
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
@@ -1798,7 +1804,10 @@ def _build_collective_payload(
     with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
         export_info = write_payload(researcher_root, runtime_root, config)
     payload_path = Path(str(export_info["payload_path"]))
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
     if _normalize_collective_payload(payload):
         payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
