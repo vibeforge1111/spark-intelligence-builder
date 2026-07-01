@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from datetime import UTC, datetime, timedelta
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.config.loader import ConfigManager
@@ -223,6 +226,9 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
 def runtime_provider_health(*, config_manager: ConfigManager, state_db: StateDB) -> tuple[bool, str]:
     provider_records = config_manager.load().get("providers", {}).get("records", {}) or {}
     if not provider_records:
+        resolution = _resolve_builder_codex_service_role_provider()
+        if resolution is not None:
+            return _builder_codex_service_role_health(resolution)
         return True, "no providers configured yet"
     try:
         resolution = resolve_runtime_provider(
@@ -243,6 +249,12 @@ def resolve_runtime_provider(
 ) -> RuntimeProviderResolution:
     config = config_manager.load()
     provider_records = config.get("providers", {}).get("records", {}) or {}
+    if not provider_records and requested_profile is None:
+        service_role_resolution = _resolve_builder_codex_service_role_provider(
+            requested_provider=requested_provider,
+        )
+        if service_role_resolution is not None:
+            return service_role_resolution
     provider_id = _select_provider_id(provider_records=provider_records, default_provider=config.get("providers", {}).get("default_provider"), requested_provider=requested_provider)
     record = provider_records.get(provider_id)
     if not isinstance(record, dict):
@@ -363,6 +375,51 @@ def _select_provider_id(
     if not provider_records:
         raise RuntimeError("No providers are configured.")
     raise RuntimeError("No default provider is configured.")
+
+
+def _resolve_builder_codex_service_role_provider(
+    *,
+    requested_provider: str | None = None,
+) -> RuntimeProviderResolution | None:
+    provider_name = os.environ.get("SPARK_BUILDER_LLM_PROVIDER", "").strip().lower()
+    if provider_name not in {"codex", "openai-codex"}:
+        return None
+    if requested_provider and requested_provider.strip().lower() not in {"codex", "openai-codex"}:
+        return None
+    auth_mode = os.environ.get("SPARK_BUILDER_LLM_AUTH_MODE", "").strip().lower()
+    if auth_mode != "codex_oauth":
+        return None
+
+    provider_id = "openai-codex"
+    spec = get_provider_spec(provider_id)
+    return RuntimeProviderResolution(
+        provider_id=provider_id,
+        provider_kind=spec.provider_kind,
+        auth_profile_id="service-role:builder:codex",
+        auth_method="oauth",
+        api_mode=spec.api_mode,
+        execution_transport=spec.execution_transport,
+        base_url=spec.default_base_url,
+        default_model=_optional_string(os.environ.get("SPARK_BUILDER_LLM_MODEL")) or spec.default_model,
+        secret_ref=StaticSecretRef(source="codex_cli_auth", provider="codex", ref_id="CODEX_HOME"),
+        secret_value="",
+        source="service_role_env",
+    )
+
+
+def _builder_codex_service_role_health(
+    resolution: RuntimeProviderResolution,
+) -> tuple[bool, str]:
+    detail = (
+        f"{resolution.provider_id}:{resolution.auth_profile_id}:"
+        f"{resolution.execution_transport}:{resolution.source}"
+    )
+    if not shutil.which("codex"):
+        return False, f"{detail}:codex_cli_missing"
+    codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+    if not (Path(codex_home) / "auth.json").exists():
+        return False, f"{detail}:codex_cli_auth_missing"
+    return True, detail
 
 
 def _derive_profile_status(*, profile_row: object, secret_present: bool, oauth_row: object) -> str:

@@ -6243,6 +6243,7 @@ def handle_loops_run(args: argparse.Namespace) -> int:
 
 def handle_chips_create(args: argparse.Namespace) -> int:
     from pathlib import Path as _Path
+    import hashlib as _hashlib
     import json as _json
     from spark_intelligence.chip_create import create_chip_from_prompt
 
@@ -6253,6 +6254,13 @@ def handle_chips_create(args: argparse.Namespace) -> int:
     output_dir = _Path(args.output_dir) if args.output_dir else None
     chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
     governor_decision = _load_governor_decision_json(args.governor_decision_json)
+    if governor_decision is None:
+        request_hash = _hashlib.sha256(str(args.prompt).encode("utf-8")).hexdigest()[:12]
+        governor_decision, _authority_reasons = _authorize_cli_chip_create(
+            state_db=state_db,
+            request_id=f"chips-create-{request_hash}",
+            prompt=args.prompt,
+        )
     result = create_chip_from_prompt(
         prompt=args.prompt,
         config_manager=config_manager,
@@ -6260,6 +6268,7 @@ def handle_chips_create(args: argparse.Namespace) -> int:
         output_dir=output_dir,
         chip_labs_root=chip_labs_root,
         governor_decision=governor_decision,
+        command_receipt_context=_chips_create_command_receipt_context(args),
     )
     if args.json:
         print(_json.dumps(result.to_dict(), indent=2, default=str))
@@ -6273,6 +6282,82 @@ def handle_chips_create(args: argparse.Namespace) -> int:
         else:
             print(f"error: {result.error}")
     return 0 if result.ok else 1
+
+
+def _chips_create_command_receipt_context(args: argparse.Namespace) -> dict[str, object]:
+    argv_shape: list[str] = [
+        "-m",
+        "spark_intelligence.cli",
+        "chips",
+        "create",
+        "--home",
+        "[redacted-path]" if args.home else "[default-home]",
+        "--prompt",
+        "[redacted-prompt]",
+    ]
+    flags_present = ["--home", "--prompt"]
+    if args.output_dir:
+        argv_shape.extend(["--output-dir", "[redacted-path]"])
+        flags_present.append("--output-dir")
+    if args.chip_labs_root:
+        argv_shape.extend(["--chip-labs-root", "[redacted-path]"])
+        flags_present.append("--chip-labs-root")
+    if args.governor_decision_json:
+        argv_shape.extend(["--governor-decision-json", "[redacted-json]"])
+        flags_present.append("--governor-decision-json")
+    if args.json:
+        argv_shape.append("--json")
+        flags_present.append("--json")
+    return {
+        "command_source": "spark_intelligence.cli chips create",
+        "argv_shape": argv_shape,
+        "flags_present": sorted(set(flags_present)),
+    }
+
+
+def _authorize_cli_chip_create(
+    *,
+    state_db: StateDB | None,
+    request_id: str,
+    prompt: str,
+    component: str = "cli_chips_create",
+    actor_id: str = "local-operator",
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+    action: dict[str, object] = {
+        "tool_name": "chip.create",
+        "owner_system": "spark-intelligence-builder",
+        "mutation_class": "creates_chip",
+        "args_path": f"builder://{component}/{request_id}/chip.create",
+    }
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref=human_id or actor_id,
+        request_id=request_id,
+        source_kind=component,
+        intent_summary="Create a private Domain Chip starter kit.",
+        raw_turn_summary=str(prompt or "Create a private Domain Chip starter kit."),
+        actions=[action],
+    )
+    if not isinstance(envelope, dict):
+        return None, ("harness_core_vnext_envelope_unavailable",)
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="chip.create",
+        owner_system="spark-intelligence-builder",
+        mutation_class="creates_chip",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        component=component,
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision, ()
+    return None, tuple(authority.reason_codes or ("missing_governor_decision",))
 
 
 def handle_creator_plan(args: argparse.Namespace) -> int:

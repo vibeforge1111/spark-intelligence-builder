@@ -3,13 +3,98 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from spark_intelligence.auth.runtime import build_auth_status_report, resolve_runtime_provider
+from spark_intelligence.auth.runtime import (
+    build_auth_status_report,
+    resolve_runtime_provider,
+    runtime_provider_health,
+)
 from spark_intelligence.gateway.oauth_callback import GatewayOAuthCallbackResult, OAuthCallbackCapture
 
 from tests.test_support import SparkTestCase
 
 
 class AuthProfileTests(SparkTestCase):
+    def test_resolve_runtime_provider_uses_builder_codex_service_role_env_when_records_empty(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            resolution = resolve_runtime_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertEqual(resolution.provider_id, "openai-codex")
+        self.assertEqual(resolution.provider_kind, "openai-codex")
+        self.assertEqual(resolution.auth_method, "oauth")
+        self.assertEqual(resolution.api_mode, "codex_responses")
+        self.assertEqual(resolution.execution_transport, "external_cli_wrapper")
+        self.assertEqual(resolution.default_model, "gpt-5.5")
+        self.assertEqual(resolution.secret_value, "")
+        self.assertEqual(resolution.source, "service_role_env")
+
+    def test_resolve_runtime_provider_does_not_infer_non_codex_service_role_provider(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "openai",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "api_key",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "No providers are configured"):
+                resolve_runtime_provider(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+
+    def test_runtime_provider_health_reports_builder_codex_service_role_env(self) -> None:
+        codex_home = self.home / "codex-home"
+        codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}", encoding="utf-8")
+        env = {
+            "CODEX_HOME": str(codex_home),
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("spark_intelligence.auth.runtime.shutil.which", return_value="/usr/local/bin/codex"),
+        ):
+            ok, detail = runtime_provider_health(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            detail,
+            "openai-codex:service-role:builder:codex:external_cli_wrapper:service_role_env",
+        )
+
+    def test_runtime_provider_health_rejects_builder_codex_service_role_without_cli(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("spark_intelligence.auth.runtime.shutil.which", return_value=None),
+        ):
+            ok, detail = runtime_provider_health(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertFalse(ok)
+        self.assertTrue(detail.endswith(":codex_cli_missing"))
+
     def test_auth_connect_creates_default_auth_profile_and_static_env_ref(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "auth",
