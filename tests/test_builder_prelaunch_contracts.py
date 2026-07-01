@@ -18,7 +18,10 @@ from spark_intelligence.identity.service import (
     resolve_canonical_agent_identity,
 )
 from spark_intelligence.ops.service import build_operator_security_report
-from spark_intelligence.observability.checks import evaluate_stop_ship_issues
+from spark_intelligence.observability.checks import (
+    _external_execution_governance_issue,
+    evaluate_stop_ship_issues,
+)
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     close_run,
@@ -2058,6 +2061,12 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertFalse(issues["stop_ship_external_execution_governance"].ok)
         self.assertIn("future_tooling/raw_exec.py", issues["stop_ship_external_execution_governance"].detail)
+
+    def test_chip_create_external_cli_uses_governed_execution_surface(self) -> None:
+        issue = _external_execution_governance_issue()
+
+        self.assertTrue(issue.ok, issue.detail)
+        self.assertNotIn("src/spark_intelligence/chip_create/pipeline.py", issue.detail)
 
     def test_stop_ship_flags_promotable_ephemeral_bridge_output(self) -> None:
         record_event(

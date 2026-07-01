@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.execution.governed import run_governed_command
 from spark_intelligence.harness_contract import verify_governor_tool_authority
 
 
@@ -329,20 +330,18 @@ def _parse_brief_via_codex_cli(prompt: str, *, provider, governance=None) -> dic
             command.extend(["--model", model])
         command.append("-")
         try:
-            result = subprocess.run(
-                command,
-                input=f"{system_prompt}\n\n{user_prompt}",
+            result = run_governed_command(
+                command=command,
+                input_text=f"{system_prompt}\n\n{user_prompt}",
                 cwd=tmp,
-                capture_output=True,
-                text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=_CODEX_BRIEF_TIMEOUT_SECONDS,
+                timeout_seconds=_CODEX_BRIEF_TIMEOUT_SECONDS,
                 env=_codex_cli_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise ChipCreateProviderExecutionError("codex_cli_timeout") from exc
-    if result.returncode != 0:
+    if result.exit_code != 0:
         raise ChipCreateProviderExecutionError("codex_cli_nonzero_exit")
     raw = str(result.stdout or "").strip()
     if not raw:

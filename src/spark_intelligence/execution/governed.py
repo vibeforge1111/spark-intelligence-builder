@@ -28,6 +28,7 @@ def run_governed_command(
     command: list[str],
     cwd: str | Path,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
     timeout_seconds: float | None = None,
     encoding: str | None = None,
     errors: str | None = None,
@@ -39,6 +40,8 @@ def run_governed_command(
         "text": True,
         "timeout": timeout_seconds,
     }
+    if input_text is not None:
+        run_kwargs["input"] = input_text
     if encoding:
         run_kwargs["encoding"] = encoding
     if errors:

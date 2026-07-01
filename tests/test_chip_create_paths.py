@@ -598,9 +598,8 @@ def test_create_chip_from_prompt_uses_codex_external_wrapper_bridge(
     def fake_run(command, **kwargs):
         captured["command"] = list(command)
         captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(
-            command,
-            0,
+        return SimpleNamespace(
+            exit_code=0,
             stdout=json.dumps(brief),
             stderr="",
         )
@@ -614,7 +613,7 @@ def test_create_chip_from_prompt_uses_codex_external_wrapper_bridge(
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
         fake_run,
     )
 
@@ -643,9 +642,9 @@ def test_create_chip_from_prompt_uses_codex_external_wrapper_bridge(
     assert "USER" not in captured["kwargs"]["env"]
     assert "SHELL" not in captured["kwargs"]["env"]
     assert "CODEX_HOME" in captured["kwargs"]["env"]
-    assert str(captured["kwargs"]["input"]).count("vendor compliance intake") >= 1
-    assert "Return the JSON brief" in str(captured["kwargs"]["input"])
-    assert captured["kwargs"]["timeout"] == 90
+    assert str(captured["kwargs"]["input_text"]).count("vendor compliance intake") >= 1
+    assert "Return the JSON brief" in str(captured["kwargs"]["input_text"])
+    assert captured["kwargs"]["timeout_seconds"] == 90
     assert not any("local starter brief" in warning for warning in result.warnings)
 
 
@@ -695,14 +694,14 @@ def test_create_chip_from_prompt_uses_builder_role_codex_env_without_provider_re
 
     def fake_run(command, **kwargs):
         captured["command"] = list(command)
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(brief), stderr="")
+        return SimpleNamespace(exit_code=0, stdout=json.dumps(brief), stderr="")
 
     monkeypatch.setattr(
         "spark_intelligence.chip_create.pipeline.shutil.which",
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
         fake_run,
     )
 
@@ -781,10 +780,9 @@ def test_create_chip_from_prompt_fails_closed_on_codex_bridge_invalid_json(
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
+        lambda command, **kwargs: SimpleNamespace(
+            exit_code=0,
             stdout="I would build a chip for that.",
             stderr="",
         ),
@@ -826,10 +824,9 @@ def test_create_chip_from_prompt_fails_closed_on_codex_bridge_non_object_json(
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
+        lambda command, **kwargs: SimpleNamespace(
+            exit_code=0,
             stdout="[]",
             stderr="",
         ),
@@ -885,10 +882,9 @@ def test_create_chip_from_prompt_fails_closed_on_codex_bridge_schema_invalid(
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
+        lambda command, **kwargs: SimpleNamespace(
+            exit_code=0,
             stdout=json.dumps(invalid_brief),
             stderr="",
         ),
@@ -962,10 +958,9 @@ def test_create_chip_from_prompt_rejects_codex_bridge_extra_or_mistyped_fields(
         lambda name: "/usr/local/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr(
-        "spark_intelligence.chip_create.pipeline.subprocess.run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
+        "spark_intelligence.chip_create.pipeline.run_governed_command",
+        lambda command, **kwargs: SimpleNamespace(
+            exit_code=0,
             stdout=json.dumps(invalid_brief),
             stderr="",
         ),
