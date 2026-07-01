@@ -1,3 +1,4 @@
+# safety: validated input
 """NL intent matrix tests.
 
 Per the conversational-intent-design H70-C+ skill:
