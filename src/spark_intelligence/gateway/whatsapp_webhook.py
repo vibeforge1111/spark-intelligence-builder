@@ -99,11 +99,17 @@ def _handle_whatsapp_verification(
         )
     expected_verify_token = config_manager.read_env_map().get(str(verify_token_ref), "")
     if not expected_verify_token:
-        return _log_whatsapp_verification_failure(
-            config_manager=config_manager,
-            status_code=503,
-            message=f"WhatsApp webhook verify token ref '{verify_token_ref}' is unresolved.",
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "whatsapp_webhook_verification_failed",
+                "channel_id": "whatsapp",
+                "decision": "rejected",
+                "reason": f"verify token ref '{verify_token_ref}' is unresolved",
+                "status_code": 503,
+            },
         )
+        return _json_error_response(503, "WhatsApp webhook configuration error.")
     mode = _query_value(query_params, "hub.mode")
     verify_token = _query_value(query_params, "hub.verify_token")
     challenge = _query_value(query_params, "hub.challenge")
@@ -378,7 +384,17 @@ def _validate_whatsapp_webhook_signature(
         return (503, "WhatsApp webhook auth secret is not configured.")
     expected_secret = config_manager.read_env_map().get(str(secret_ref), "")
     if not expected_secret:
-        return (503, f"WhatsApp webhook auth secret ref '{secret_ref}' is unresolved.")
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "whatsapp_webhook_auth_failed",
+                "channel_id": "whatsapp",
+                "decision": "rejected",
+                "reason": f"auth secret ref '{secret_ref}' is unresolved",
+                "status_code": 503,
+            },
+        )
+        return (503, "WhatsApp webhook configuration error.")
     if not signature:
         return (401, "WhatsApp webhook signature header is missing.")
     expected_signature = "sha256=" + hmac.new(
