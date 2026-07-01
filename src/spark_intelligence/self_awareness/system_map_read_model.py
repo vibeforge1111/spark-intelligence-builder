@@ -204,7 +204,8 @@ def _read_json_object(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
+    except Exception as _e:
+        import logging as _log; _log.getLogger(__name__).warning("Suppressed: %s", _e, exc_info=True)
         return {}
     return payload if isinstance(payload, dict) else {}
 
