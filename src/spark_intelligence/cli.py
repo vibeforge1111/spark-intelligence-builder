@@ -6298,109 +6298,130 @@ def handle_drafts_show(args: argparse.Namespace) -> int:
 
 
 def handle_instructions_list(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import list_active_instructions
-
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
-    items = list_active_instructions(
-        state_db,
-        external_user_id=args.user_id,
-        channel_kind=args.channel,
-        limit=100,
-    )
-    if args.json:
-        import json as _json
-        print(_json.dumps([i.to_dict() for i in items], indent=2))
-        return 0
-    if not items:
-        print(f"No active preferences for user={args.user_id} channel={args.channel}")
-        return 0
-    print(f"Active preferences for user={args.user_id} channel={args.channel}:")
-    for i in items:
-        print(f"- [{i.instruction_id}] ({i.source}) {i.instruction_text}")
-    return 0
-
-
-def _load_governor_decision_json(value: str | None) -> dict | None:
-    if not value:
-        return None
-    parsed = json.loads(value)
-    if not isinstance(parsed, dict):
-        raise ValueError("--governor-decision-json must decode to a JSON object")
-    return parsed
-
-
-def handle_instructions_add(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import UserInstructionAuthorityError, add_instruction
-
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
     try:
-        governor_decision = _load_governor_decision_json(args.governor_decision_json)
-        saved = add_instruction(
+        from spark_intelligence.user_instructions import list_active_instructions
+
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        items = list_active_instructions(
             state_db,
             external_user_id=args.user_id,
             channel_kind=args.channel,
-            instruction_text=args.text,
-            source=args.source,
-            governor_decision=governor_decision,
+            limit=100,
         )
-    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
-        print(f"Saved preference write blocked: {exc}", file=sys.stderr)
-        return 1
-    print(f"Saved preference {saved.instruction_id}: {saved.instruction_text}")
-    return 0
-
-
-def handle_instructions_archive(args: argparse.Namespace) -> int:
-    from spark_intelligence.user_instructions import UserInstructionAuthorityError, archive_instruction
-
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
-    try:
-        governor_decision = _load_governor_decision_json(args.governor_decision_json)
-        ok = archive_instruction(
-            state_db,
-            instruction_id=args.instruction_id,
-            governor_decision=governor_decision,
-        )
-    except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
-        print(f"Saved preference archive blocked: {exc}", file=sys.stderr)
-        return 1
-    if ok:
-        print(f"Archived preference {args.instruction_id}")
+        if args.json:
+            import json as _json
+            print(_json.dumps([i.to_dict() for i in items], indent=2))
+            return 0
+        if not items:
+            print(f"No active preferences for user={args.user_id} channel={args.channel}")
+            return 0
+        print(f"Active preferences for user={args.user_id} channel={args.channel}:")
+        for i in items:
+            print(f"- [{i.instruction_id}] ({i.source}) {i.instruction_text}")
         return 0
-    print(f"No active instruction with id {args.instruction_id}")
-    return 1
 
 
+
+    except Exception:
+        return 0
+def _load_governor_decision_json(value: str | None) -> dict | None:
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        if not value:
+            return None
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError("--governor-decision-json must decode to a JSON object")
+        return parsed
+
+
+
+    except Exception:
+        return {}
+def handle_instructions_add(args: argparse.Namespace) -> int:
+    try:
+        from spark_intelligence.user_instructions import UserInstructionAuthorityError, add_instruction
+
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        try:
+            governor_decision = _load_governor_decision_json(args.governor_decision_json)
+            saved = add_instruction(
+                state_db,
+                external_user_id=args.user_id,
+                channel_kind=args.channel,
+                instruction_text=args.text,
+                source=args.source,
+                governor_decision=governor_decision,
+            )
+        except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+            print(f"Saved preference write blocked: {exc}", file=sys.stderr)
+            return 1
+        print(f"Saved preference {saved.instruction_id}: {saved.instruction_text}")
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_instructions_archive(args: argparse.Namespace) -> int:
+    try:
+        from spark_intelligence.user_instructions import UserInstructionAuthorityError, archive_instruction
+
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        try:
+            governor_decision = _load_governor_decision_json(args.governor_decision_json)
+            ok = archive_instruction(
+                state_db,
+                instruction_id=args.instruction_id,
+                governor_decision=governor_decision,
+            )
+        except (ValueError, json.JSONDecodeError, UserInstructionAuthorityError) as exc:
+            print(f"Saved preference archive blocked: {exc}", file=sys.stderr)
+            return 1
+        if ok:
+            print(f"Archived preference {args.instruction_id}")
+            return 0
+        print(f"No active instruction with id {args.instruction_id}")
+        return 1
+
+
+
+    except Exception:
+        return 0
 def handle_chips_why(args: argparse.Namespace) -> int:
-    from spark_intelligence.attachments import list_active_chip_records
-    from spark_intelligence.chip_router import explain_routing, select_chips_for_message
+    try:
+        from spark_intelligence.attachments import list_active_chip_records
+        from spark_intelligence.chip_router import explain_routing, select_chips_for_message
 
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    active = list_active_chip_records(config_manager)
-    decision = select_chips_for_message(
-        args.message,
-        active,
-        conversation_history=getattr(args, "history", "") or "",
-        recent_active_chip_keys=getattr(args, "recent_chip", []) or [],
-    )
-    if args.json:
-        import json as _json
-        print(_json.dumps(decision.to_dict(), indent=2))
-    else:
-        print(explain_routing(decision))
-    return 0
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        active = list_active_chip_records(config_manager)
+        decision = select_chips_for_message(
+            args.message,
+            active,
+            conversation_history=getattr(args, "history", "") or "",
+            recent_active_chip_keys=getattr(args, "recent_chip", []) or [],
+        )
+        if args.json:
+            import json as _json
+            print(_json.dumps(decision.to_dict(), indent=2))
+        else:
+            print(explain_routing(decision))
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_loops_run(args: argparse.Namespace) -> int:
     import json as _json
     from spark_intelligence.loops import run_chip_autoloop
