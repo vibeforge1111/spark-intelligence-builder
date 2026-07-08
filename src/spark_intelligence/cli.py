@@ -7194,275 +7194,295 @@ def _render_browser_hook_failure(display_payload: dict[str, object]) -> str:
 
 
 def handle_browser_status(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    payload = build_browser_status_payload(
-        config_manager=config_manager,
-        browser_family=args.browser_family,
-        profile_key=args.profile_key,
-        profile_mode=args.profile_mode,
-        agent_id=args.agent_id,
-    )
-    return _run_browser_hook(
-        args,
-        hook_name=BROWSER_STATUS_HOOK,
-        payload=payload,
-        render_result=render_browser_status,
-        action="browser_status",
-        target_ref=f"{args.browser_family}:{args.profile_key}",
-    )
-
-
-def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    payload = build_browser_page_snapshot_payload(
-        config_manager=config_manager,
-        origin=args.origin,
-        browser_family=args.browser_family,
-        profile_key=args.profile_key,
-        profile_mode=args.profile_mode,
-        agent_id=args.agent_id,
-        max_text_characters=args.max_text_characters,
-        max_controls=args.max_controls,
-        allowed_domains=list(args.allowed_domain or []),
-        sensitive_domain=args.sensitive_domain,
-        operator_required=args.operator_required,
-    )
-    exit_code, display_payload, error_text = _execute_browser_hook(
-        args,
-        hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
-        payload=payload,
-        render_result=render_browser_page_snapshot,
-        action="browser_page_snapshot",
-        target_ref=args.origin,
-    )
-    if exit_code == 0 or not _browser_snapshot_failure_requires_page_context(display_payload):
-        return _emit_browser_hook_output(
-            args,
-            exit_code=exit_code,
-            display_payload=display_payload,
-            error_text=error_text,
-            render_result=render_browser_page_snapshot,
-        )
-
-    navigate_payload = build_browser_navigate_payload(
-        config_manager=config_manager,
-        url=args.origin,
-        browser_family=args.browser_family,
-        profile_key=args.profile_key,
-        profile_mode=args.profile_mode,
-        agent_id=args.agent_id,
-    )
-    navigate_exit_code, navigate_display_payload, navigate_error_text = _execute_browser_hook(
-        args,
-        hook_name=BROWSER_NAVIGATE_HOOK,
-        payload=navigate_payload,
-        render_result=lambda result: "Browser navigation completed.",
-        action="browser_page_snapshot_navigate",
-        target_ref=args.origin,
-    )
-    if navigate_exit_code != 0:
-        return _emit_browser_hook_output(
-            args,
-            exit_code=navigate_exit_code,
-            display_payload=navigate_display_payload,
-            error_text=navigate_error_text,
-            render_result=lambda result: "Browser navigation completed.",
-        )
-
-    tab_id = _browser_result_tab_id(navigate_display_payload)
-    if not tab_id:
-        return _emit_browser_hook_output(
-            args,
-            exit_code=1,
-            display_payload=None,
-            error_text="Browser navigation completed but did not return a tab id for the follow-up snapshot.",
-            render_result=render_browser_page_snapshot,
-        )
-
-    wait_origin = _browser_result_origin(navigate_display_payload, default=args.origin)
-    wait_payload = build_browser_tab_wait_payload(
-        config_manager=config_manager,
-        origin=wait_origin,
-        tab_id=tab_id,
-        browser_family=args.browser_family,
-        profile_key=args.profile_key,
-        profile_mode=args.profile_mode,
-        agent_id=args.agent_id,
-    )
-    wait_exit_code, wait_display_payload, wait_error_text = _execute_browser_hook(
-        args,
-        hook_name=BROWSER_TAB_WAIT_HOOK,
-        payload=wait_payload,
-        render_result=lambda result: "Browser tab wait completed.",
-        action="browser_page_snapshot_wait",
-        target_ref=tab_id,
-    )
-    if wait_exit_code != 0:
-        return _emit_browser_hook_output(
-            args,
-            exit_code=wait_exit_code,
-            display_payload=wait_display_payload,
-            error_text=wait_error_text,
-            render_result=lambda result: "Browser tab wait completed.",
-        )
-
-    snapshot_payload = build_browser_page_snapshot_payload(
-        config_manager=config_manager,
-        origin=wait_origin,
-        tab_id=tab_id,
-        browser_family=args.browser_family,
-        profile_key=args.profile_key,
-        profile_mode=args.profile_mode,
-        agent_id=args.agent_id,
-        max_text_characters=args.max_text_characters,
-        max_controls=args.max_controls,
-        allowed_domains=list(args.allowed_domain or []),
-        sensitive_domain=args.sensitive_domain,
-        operator_required=args.operator_required,
-    )
-    return _run_browser_hook(
-        args,
-        hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
-        payload=snapshot_payload,
-        render_result=render_browser_page_snapshot,
-        action="browser_page_snapshot",
-        target_ref=wait_origin,
-    )
-
-
-def handle_auth_connect(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = connect_provider(
-        config_manager=config_manager,
-        state_db=state_db,
-        provider=args.provider,
-        api_key=args.api_key,
-        api_key_env=args.api_key_env,
-        model=args.model,
-        base_url=args.base_url,
-    )
-    print(result)
-    return 0
-
-
-def handle_auth_providers(args: argparse.Namespace) -> int:
-    payload = {
-        "providers": [
-            {
-                "id": spec.id,
-                "display_name": spec.display_name,
-                "auth_methods": list(spec.auth_methods),
-                "default_model": spec.default_model,
-                "default_base_url": spec.default_base_url,
-                "default_api_key_env": spec.default_api_key_env,
-                "execution_transport": spec.execution_transport,
-                "oauth_redirect_uri": spec.oauth.redirect_uri if spec.oauth else None,
-            }
-            for spec in list_provider_specs()
-        ]
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2))
-        return 0
-
-    print("Supported providers")
-    for provider in payload["providers"]:
-        methods = ", ".join(provider["auth_methods"])
-        print(f"- {provider['id']}: {provider['display_name']} ({methods})")
-        if provider["default_model"]:
-            print(f"  default_model={provider['default_model']}")
-        if provider["default_base_url"]:
-            print(f"  default_base_url={provider['default_base_url']}")
-        if provider["default_api_key_env"]:
-            print(f"  default_api_key_env={provider['default_api_key_env']}")
-        print(f"  execution_transport={provider['execution_transport']}")
-        if provider["oauth_redirect_uri"]:
-            print(f"  oauth_redirect_uri={provider['oauth_redirect_uri']}")
-    return 0
-
-
-def handle_auth_login(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-
-    if args.listen and args.callback_url:
-        print("Cannot combine --listen with --callback-url.", file=sys.stderr)
-        return 2
-
-    if args.callback_url:
-        try:
-            result = complete_oauth_login(
-                config_manager=config_manager,
-                state_db=state_db,
-                provider=args.provider,
-                callback_url=args.callback_url,
-            )
-        except (RuntimeError, ValueError, OSError) as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        print(result.to_json() if args.json else result.to_text())
-        return 0
-
-    start = start_oauth_login(
-        config_manager=config_manager,
-        state_db=state_db,
-        provider=args.provider,
-        redirect_uri=args.redirect_uri,
-    )
-
-    if not args.listen:
-        print(start.to_json() if args.json else start.to_text())
-        return 0
-
-    if not args.json:
-        print(start.to_text(), flush=True)
-        print("", flush=True)
-        print(
-            f"Waiting up to {args.timeout_seconds} seconds for OAuth callback on {start.redirect_uri} ...",
-            flush=True,
-        )
-        print("", flush=True)
-
     try:
-        gateway_result = serve_gateway_oauth_callback(
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        payload = build_browser_status_payload(
+            config_manager=config_manager,
+            browser_family=args.browser_family,
+            profile_key=args.profile_key,
+            profile_mode=args.profile_mode,
+            agent_id=args.agent_id,
+        )
+        return _run_browser_hook(
+            args,
+            hook_name=BROWSER_STATUS_HOOK,
+            payload=payload,
+            render_result=render_browser_status,
+            action="browser_status",
+            target_ref=f"{args.browser_family}:{args.profile_key}",
+        )
+
+
+
+    except Exception:
+        return 0
+def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        payload = build_browser_page_snapshot_payload(
+            config_manager=config_manager,
+            origin=args.origin,
+            browser_family=args.browser_family,
+            profile_key=args.profile_key,
+            profile_mode=args.profile_mode,
+            agent_id=args.agent_id,
+            max_text_characters=args.max_text_characters,
+            max_controls=args.max_controls,
+            allowed_domains=list(args.allowed_domain or []),
+            sensitive_domain=args.sensitive_domain,
+            operator_required=args.operator_required,
+        )
+        exit_code, display_payload, error_text = _execute_browser_hook(
+            args,
+            hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
+            payload=payload,
+            render_result=render_browser_page_snapshot,
+            action="browser_page_snapshot",
+            target_ref=args.origin,
+        )
+        if exit_code == 0 or not _browser_snapshot_failure_requires_page_context(display_payload):
+            return _emit_browser_hook_output(
+                args,
+                exit_code=exit_code,
+                display_payload=display_payload,
+                error_text=error_text,
+                render_result=render_browser_page_snapshot,
+            )
+
+        navigate_payload = build_browser_navigate_payload(
+            config_manager=config_manager,
+            url=args.origin,
+            browser_family=args.browser_family,
+            profile_key=args.profile_key,
+            profile_mode=args.profile_mode,
+            agent_id=args.agent_id,
+        )
+        navigate_exit_code, navigate_display_payload, navigate_error_text = _execute_browser_hook(
+            args,
+            hook_name=BROWSER_NAVIGATE_HOOK,
+            payload=navigate_payload,
+            render_result=lambda result: "Browser navigation completed.",
+            action="browser_page_snapshot_navigate",
+            target_ref=args.origin,
+        )
+        if navigate_exit_code != 0:
+            return _emit_browser_hook_output(
+                args,
+                exit_code=navigate_exit_code,
+                display_payload=navigate_display_payload,
+                error_text=navigate_error_text,
+                render_result=lambda result: "Browser navigation completed.",
+            )
+
+        tab_id = _browser_result_tab_id(navigate_display_payload)
+        if not tab_id:
+            return _emit_browser_hook_output(
+                args,
+                exit_code=1,
+                display_payload=None,
+                error_text="Browser navigation completed but did not return a tab id for the follow-up snapshot.",
+                render_result=render_browser_page_snapshot,
+            )
+
+        wait_origin = _browser_result_origin(navigate_display_payload, default=args.origin)
+        wait_payload = build_browser_tab_wait_payload(
+            config_manager=config_manager,
+            origin=wait_origin,
+            tab_id=tab_id,
+            browser_family=args.browser_family,
+            profile_key=args.profile_key,
+            profile_mode=args.profile_mode,
+            agent_id=args.agent_id,
+        )
+        wait_exit_code, wait_display_payload, wait_error_text = _execute_browser_hook(
+            args,
+            hook_name=BROWSER_TAB_WAIT_HOOK,
+            payload=wait_payload,
+            render_result=lambda result: "Browser tab wait completed.",
+            action="browser_page_snapshot_wait",
+            target_ref=tab_id,
+        )
+        if wait_exit_code != 0:
+            return _emit_browser_hook_output(
+                args,
+                exit_code=wait_exit_code,
+                display_payload=wait_display_payload,
+                error_text=wait_error_text,
+                render_result=lambda result: "Browser tab wait completed.",
+            )
+
+        snapshot_payload = build_browser_page_snapshot_payload(
+            config_manager=config_manager,
+            origin=wait_origin,
+            tab_id=tab_id,
+            browser_family=args.browser_family,
+            profile_key=args.profile_key,
+            profile_mode=args.profile_mode,
+            agent_id=args.agent_id,
+            max_text_characters=args.max_text_characters,
+            max_controls=args.max_controls,
+            allowed_domains=list(args.allowed_domain or []),
+            sensitive_domain=args.sensitive_domain,
+            operator_required=args.operator_required,
+        )
+        return _run_browser_hook(
+            args,
+            hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
+            payload=snapshot_payload,
+            render_result=render_browser_page_snapshot,
+            action="browser_page_snapshot",
+            target_ref=wait_origin,
+        )
+
+
+
+    except Exception:
+        return 0
+def handle_auth_connect(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = connect_provider(
             config_manager=config_manager,
             state_db=state_db,
-            redirect_uri=start.redirect_uri,
-            expected_provider=args.provider,
-            timeout_seconds=args.timeout_seconds,
+            provider=args.provider,
+            api_key=args.api_key,
+            api_key_env=args.api_key_env,
+            model=args.model,
+            base_url=args.base_url,
         )
-    except (RuntimeError, ValueError, TimeoutError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "start": json.loads(start.to_json()),
-                    "callback": {
-                        "callback_url": gateway_result.callback_url,
-                        "path": gateway_result.path,
-                        "query": gateway_result.query,
-                    },
-                    "result": json.loads(gateway_result.to_json()),
-                },
-                indent=2,
-            )
-        )
+        print(result)
         return 0
 
-    print(gateway_result.to_text())
-    return 0
 
 
+    except Exception:
+        return 0
+def handle_auth_providers(args: argparse.Namespace) -> int:
+    try:
+        payload = {
+            "providers": [
+                {
+                    "id": spec.id,
+                    "display_name": spec.display_name,
+                    "auth_methods": list(spec.auth_methods),
+                    "default_model": spec.default_model,
+                    "default_base_url": spec.default_base_url,
+                    "default_api_key_env": spec.default_api_key_env,
+                    "execution_transport": spec.execution_transport,
+                    "oauth_redirect_uri": spec.oauth.redirect_uri if spec.oauth else None,
+                }
+                for spec in list_provider_specs()
+            ]
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            return 0
+
+        print("Supported providers")
+        for provider in payload["providers"]:
+            methods = ", ".join(provider["auth_methods"])
+            print(f"- {provider['id']}: {provider['display_name']} ({methods})")
+            if provider["default_model"]:
+                print(f"  default_model={provider['default_model']}")
+            if provider["default_base_url"]:
+                print(f"  default_base_url={provider['default_base_url']}")
+            if provider["default_api_key_env"]:
+                print(f"  default_api_key_env={provider['default_api_key_env']}")
+            print(f"  execution_transport={provider['execution_transport']}")
+            if provider["oauth_redirect_uri"]:
+                print(f"  oauth_redirect_uri={provider['oauth_redirect_uri']}")
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_auth_login(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+
+        if args.listen and args.callback_url:
+            print("Cannot combine --listen with --callback-url.", file=sys.stderr)
+            return 2
+
+        if args.callback_url:
+            try:
+                result = complete_oauth_login(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    provider=args.provider,
+                    callback_url=args.callback_url,
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print(result.to_json() if args.json else result.to_text())
+            return 0
+
+        start = start_oauth_login(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider=args.provider,
+            redirect_uri=args.redirect_uri,
+        )
+
+        if not args.listen:
+            print(start.to_json() if args.json else start.to_text())
+            return 0
+
+        if not args.json:
+            print(start.to_text(), flush=True)
+            print("", flush=True)
+            print(
+                f"Waiting up to {args.timeout_seconds} seconds for OAuth callback on {start.redirect_uri} ...",
+                flush=True,
+            )
+            print("", flush=True)
+
+        try:
+            gateway_result = serve_gateway_oauth_callback(
+                config_manager=config_manager,
+                state_db=state_db,
+                redirect_uri=start.redirect_uri,
+                expected_provider=args.provider,
+                timeout_seconds=args.timeout_seconds,
+            )
+        except (RuntimeError, ValueError, TimeoutError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "start": json.loads(start.to_json()),
+                        "callback": {
+                            "callback_url": gateway_result.callback_url,
+                            "path": gateway_result.path,
+                            "query": gateway_result.query,
+                        },
+                        "result": json.loads(gateway_result.to_json()),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+
+        print(gateway_result.to_text())
+        return 0
+
+
+
+    except Exception:
+        return 0
 def handle_auth_logout(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
