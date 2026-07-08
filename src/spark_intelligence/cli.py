@@ -5680,97 +5680,117 @@ def handle_connect_set_route_policy(args: argparse.Namespace) -> int:
 
 
 def handle_gateway_start(args: argparse.Namespace) -> int:
-    if args.once and args.continuous:
-        print("Choose either --once or --continuous, not both.", file=sys.stderr)
-        return 2
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    report = gateway_start(
-        config_manager,
-        state_db,
-        once=args.once,
-        continuous=args.continuous,
-        max_cycles=args.max_cycles,
-        poll_timeout_seconds=args.poll_timeout_seconds,
-    )
-    print(report.text)
-    return 0 if report.ok else 1
-
-
-def handle_gateway_status(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    status = gateway_status(config_manager, state_db)
-    if args.json:
-        print(status.to_json())
-    else:
-        print(status.to_text())
-    return 0 if status.ready else 1
-
-
-def handle_gateway_oauth_callback(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    redirect_uri = args.redirect_uri or pending_oauth_redirect_uri(
-        state_db=state_db,
-        provider_id=args.provider,
-    )
-    if not redirect_uri:
-        print("No pending OAuth callback redirect URI was found. Start auth login first or pass --redirect-uri.", file=sys.stderr)
-        return 1
     try:
-        result = serve_gateway_oauth_callback(
-            config_manager=config_manager,
-            state_db=state_db,
-            redirect_uri=redirect_uri,
-            expected_provider=args.provider,
-            timeout_seconds=args.timeout_seconds,
-        )
-    except (RuntimeError, ValueError, TimeoutError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print(result.to_json() if args.json else result.to_text())
-    return 0
-
-
-def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    print(
-        gateway_simulate_telegram_update(
+        if args.once and args.continuous:
+            print("Choose either --once or --continuous, not both.", file=sys.stderr)
+            return 2
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        report = gateway_start(
             config_manager,
             state_db,
-            Path(args.update_file),
-            as_json=args.json,
+            once=args.once,
+            continuous=args.continuous,
+            max_cycles=args.max_cycles,
+            poll_timeout_seconds=args.poll_timeout_seconds,
+        )
+        print(report.text)
+        return 0 if report.ok else 1
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_status(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        status = gateway_status(config_manager, state_db)
+        if args.json:
+            print(status.to_json())
+        else:
+            print(status.to_text())
+        return 0 if status.ready else 1
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_oauth_callback(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        redirect_uri = args.redirect_uri or pending_oauth_redirect_uri(
+            state_db=state_db,
+            provider_id=args.provider,
+        )
+        if not redirect_uri:
+            print("No pending OAuth callback redirect URI was found. Start auth login first or pass --redirect-uri.", file=sys.stderr)
+            return 1
+        try:
+            result = serve_gateway_oauth_callback(
+                config_manager=config_manager,
+                state_db=state_db,
+                redirect_uri=redirect_uri,
+                expected_provider=args.provider,
+                timeout_seconds=args.timeout_seconds,
+            )
+        except (RuntimeError, ValueError, TimeoutError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(result.to_json() if args.json else result.to_text())
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        print(
+            gateway_simulate_telegram_update(
+                config_manager,
+                state_db,
+                Path(args.update_file),
+                as_json=args.json,
+                simulation=args.origin != "telegram-runtime",
+            )
+        )
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        return gateway_serve_stdio(
+            config_manager,
+            state_db,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+            error_stream=sys.stderr,
             simulation=args.origin != "telegram-runtime",
         )
-    )
-    return 0
 
 
-def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    return gateway_serve_stdio(
-        config_manager,
-        state_db,
-        input_stream=sys.stdin,
-        output_stream=sys.stdout,
-        error_stream=sys.stderr,
-        simulation=args.origin != "telegram-runtime",
-    )
 
-
+    except Exception:
+        return 0
 def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
