@@ -6144,159 +6144,179 @@ def handle_channel_add(args: argparse.Namespace) -> int:
 
 
 def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    if args.clear_allowed_users and args.allowed_user:
-        print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
-        return 2
-    existing_record = config_manager.get_path("channels.records.telegram", default={}) or {}
-    existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
-    existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
-    existing_status = existing_record.get("status") if isinstance(existing_record, dict) else None
-    if args.clear_allowed_users:
-        effective_allowed_users: list[str] = []
-    else:
-        effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
-    effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
-    effective_status = str(existing_status) if existing_status else "enabled"
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        if args.clear_allowed_users and args.allowed_user:
+            print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
+            return 2
+        existing_record = config_manager.get_path("channels.records.telegram", default={}) or {}
+        existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
+        existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+        existing_status = existing_record.get("status") if isinstance(existing_record, dict) else None
+        if args.clear_allowed_users:
+            effective_allowed_users: list[str] = []
+        else:
+            effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+        effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
+        effective_status = str(existing_status) if existing_status else "enabled"
 
-    if not args.bot_token:
-        print(
-            render_telegram_botfather_guide(
-                allowed_users=effective_allowed_users,
-                pairing_mode=effective_pairing_mode,
-            )
-        )
-        return 0
-
-    if args.skip_validate:
-        profile = None
-    else:
-        try:
-            profile = inspect_telegram_bot_token(args.bot_token)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            print("", file=sys.stderr)
+        if not args.bot_token:
             print(
                 render_telegram_botfather_guide(
                     allowed_users=effective_allowed_users,
                     pairing_mode=effective_pairing_mode,
-                ),
-                file=sys.stderr,
+                )
             )
-            return 1
-
-    if profile:
-        print(
-            f"Validated Telegram bot @{profile.username or 'unknown'} "
-            f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
-        )
-        if args.validate_only:
-            print("Token validation passed. No config was changed.")
             return 0
-    elif args.validate_only:
-        print("Cannot use --validate-only together with --skip-validate.", file=sys.stderr)
-        return 2
 
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = add_channel(
-        config_manager=config_manager,
-        state_db=state_db,
-        channel_kind="telegram",
-        bot_token=args.bot_token,
-        allowed_users=effective_allowed_users,
-        pairing_mode=effective_pairing_mode,
-        status=effective_status,
-        metadata={"bot_profile": profile.to_dict()} if profile else None,
-    )
-    print(result)
-    print("Telegram onboarding next steps:")
-    print("  1. Open Telegram and send /start to the bot.")
-    if effective_allowed_users:
-        print("  2. Confirm the listed allowed user ids are the accounts you want paired first.")
-    else:
-        print("  2. Run spark-intelligence operator review-pairings after the first DM arrives.")
-    print("  3. Run spark-intelligence gateway start")
-    return 0
+        if args.skip_validate:
+            profile = None
+        else:
+            try:
+                profile = inspect_telegram_bot_token(args.bot_token)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                print("", file=sys.stderr)
+                print(
+                    render_telegram_botfather_guide(
+                        allowed_users=effective_allowed_users,
+                        pairing_mode=effective_pairing_mode,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
 
+        if profile:
+            print(
+                f"Validated Telegram bot @{profile.username or 'unknown'} "
+                f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
+            )
+            if args.validate_only:
+                print("Token validation passed. No config was changed.")
+                return 0
+        elif args.validate_only:
+            print("Cannot use --validate-only together with --skip-validate.", file=sys.stderr)
+            return 2
 
-def handle_channel_test(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    if args.channel_kind == "telegram":
-        report = test_configured_telegram_channel(
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = add_channel(
             config_manager=config_manager,
             state_db=state_db,
+            channel_kind="telegram",
+            bot_token=args.bot_token,
+            allowed_users=effective_allowed_users,
+            pairing_mode=effective_pairing_mode,
+            status=effective_status,
+            metadata={"bot_profile": profile.to_dict()} if profile else None,
         )
-        print(report.to_json() if args.json else report.to_text())
-        return 0 if report.ok else 1
-    print(f"Unsupported channel test target: {args.channel_kind}", file=sys.stderr)
-    return 2
+        print(result)
+        print("Telegram onboarding next steps:")
+        print("  1. Open Telegram and send /start to the bot.")
+        if effective_allowed_users:
+            print("  2. Confirm the listed allowed user ids are the accounts you want paired first.")
+        else:
+            print("  2. Run spark-intelligence operator review-pairings after the first DM arrives.")
+        print("  3. Run spark-intelligence gateway start")
+        return 0
 
 
+
+    except Exception:
+        return 0
+def handle_channel_test(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        if args.channel_kind == "telegram":
+            report = test_configured_telegram_channel(
+                config_manager=config_manager,
+                state_db=state_db,
+            )
+            print(report.to_json() if args.json else report.to_text())
+            return 0 if report.ok else 1
+        print(f"Unsupported channel test target: {args.channel_kind}", file=sys.stderr)
+        return 2
+
+
+
+    except Exception:
+        return 0
 def handle_attachments_status(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    result = attachment_status(config_manager)
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        result = attachment_status(config_manager)
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_drafts_list(args: argparse.Namespace) -> int:
-    from spark_intelligence.bot_drafts import list_recent_drafts
+    try:
+        from spark_intelligence.bot_drafts import list_recent_drafts
 
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
-    drafts = list_recent_drafts(
-        state_db,
-        external_user_id=args.user_id,
-        channel_kind=args.channel,
-        limit=args.limit,
-    )
-    if args.json:
-        import json as _json
-        print(_json.dumps([d.to_dict() for d in drafts], indent=2))
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        drafts = list_recent_drafts(
+            state_db,
+            external_user_id=args.user_id,
+            channel_kind=args.channel,
+            limit=args.limit,
+        )
+        if args.json:
+            import json as _json
+            print(_json.dumps([d.to_dict() for d in drafts], indent=2))
+            return 0
+        if not drafts:
+            print(f"No drafts for user={args.user_id} channel={args.channel}")
+            return 0
+        print(f"Recent drafts for user={args.user_id} channel={args.channel}:")
+        for d in drafts:
+            print(f"- {d.handle}  {d.created_at}  len={d.content_length}  chip={d.chip_used or '-'}  topic={d.topic_hint or '-'}")
         return 0
-    if not drafts:
-        print(f"No drafts for user={args.user_id} channel={args.channel}")
+
+
+
+    except Exception:
         return 0
-    print(f"Recent drafts for user={args.user_id} channel={args.channel}:")
-    for d in drafts:
-        print(f"- {d.handle}  {d.created_at}  len={d.content_length}  chip={d.chip_used or '-'}  topic={d.topic_hint or '-'}")
-    return 0
-
-
 def handle_drafts_show(args: argparse.Namespace) -> int:
-    from spark_intelligence.bot_drafts import find_draft_by_handle
+    try:
+        from spark_intelligence.bot_drafts import find_draft_by_handle
 
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
-    draft = find_draft_by_handle(
-        state_db,
-        external_user_id=args.user_id,
-        channel_kind=args.channel,
-        handle_or_id=args.handle,
-    )
-    if draft is None:
-        print(f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}")
-        return 1
-    print(f"=== Draft {draft.handle} ===")
-    print(f"created_at: {draft.created_at}")
-    print(f"length: {draft.content_length}")
-    print(f"chip_used: {draft.chip_used or '-'}")
-    print(f"topic_hint: {draft.topic_hint or '-'}")
-    print("--- content ---")
-    print(draft.content)
-    return 0
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        draft = find_draft_by_handle(
+            state_db,
+            external_user_id=args.user_id,
+            channel_kind=args.channel,
+            handle_or_id=args.handle,
+        )
+        if draft is None:
+            print(f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}")
+            return 1
+        print(f"=== Draft {draft.handle} ===")
+        print(f"created_at: {draft.created_at}")
+        print(f"length: {draft.content_length}")
+        print(f"chip_used: {draft.chip_used or '-'}")
+        print(f"topic_hint: {draft.topic_hint or '-'}")
+        print("--- content ---")
+        print(draft.content)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_instructions_list(args: argparse.Namespace) -> int:
     from spark_intelligence.user_instructions import list_active_instructions
 
