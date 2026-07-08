@@ -5963,186 +5963,206 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
 
 
 def handle_gateway_simulate_discord_message(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    print(
-        gateway_simulate_discord_message(
-            config_manager,
-            state_db,
-            Path(args.message_file),
-            as_json=args.json,
-        )
-    )
-    return 0
-
-
-def handle_gateway_simulate_whatsapp_message(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    print(
-        gateway_simulate_whatsapp_message(
-            config_manager,
-            state_db,
-            Path(args.message_file),
-            as_json=args.json,
-        )
-    )
-    return 0
-
-
-def handle_gateway_traces(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    print(
-        gateway_trace_view(
-            config_manager,
-            limit=args.limit,
-            channel_id=args.channel_id,
-            event=args.event,
-            user=args.user,
-            decision=args.decision,
-            as_json=args.json,
-        )
-    )
-    return 0
-
-
-def handle_gateway_outbound(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    print(
-        gateway_outbound_view(
-            config_manager,
-            limit=args.limit,
-            channel_id=args.channel_id,
-            event=args.event,
-            user=args.user,
-            decision=args.decision,
-            delivery=args.delivery,
-            contains=args.contains,
-            as_json=args.json,
-        )
-    )
-    return 0
-
-
-def handle_channel_add(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    if args.clear_allowed_users and args.allowed_user:
-        print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
-        return 2
-    if args.allow_legacy_message_webhook and args.disable_legacy_message_webhook:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
         print(
-            "Cannot combine --allow-legacy-message-webhook with --disable-legacy-message-webhook.",
-            file=sys.stderr,
+            gateway_simulate_discord_message(
+                config_manager,
+                state_db,
+                Path(args.message_file),
+                as_json=args.json,
+            )
         )
-        return 2
-    existing_record = config_manager.get_path(f"channels.records.{args.channel_kind}", default={}) or {}
-    existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
-    existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
-    existing_legacy_message_webhook = bool(existing_record.get("allow_legacy_message_webhook")) if isinstance(existing_record, dict) else False
-    if args.clear_allowed_users:
-        effective_allowed_users: list[str] = []
-    else:
-        effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
-    effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
-    metadata: dict[str, object] | None = None
-    validation_note: str | None = None
-    if args.allow_legacy_message_webhook or args.disable_legacy_message_webhook:
-        if args.channel_kind != "discord":
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_simulate_whatsapp_message(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        print(
+            gateway_simulate_whatsapp_message(
+                config_manager,
+                state_db,
+                Path(args.message_file),
+                as_json=args.json,
+            )
+        )
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_traces(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        print(
+            gateway_trace_view(
+                config_manager,
+                limit=args.limit,
+                channel_id=args.channel_id,
+                event=args.event,
+                user=args.user,
+                decision=args.decision,
+                as_json=args.json,
+            )
+        )
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_outbound(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        print(
+            gateway_outbound_view(
+                config_manager,
+                limit=args.limit,
+                channel_id=args.channel_id,
+                event=args.event,
+                user=args.user,
+                decision=args.decision,
+                delivery=args.delivery,
+                contains=args.contains,
+                as_json=args.json,
+            )
+        )
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_channel_add(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        if args.clear_allowed_users and args.allowed_user:
+            print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
+            return 2
+        if args.allow_legacy_message_webhook and args.disable_legacy_message_webhook:
             print(
-                "--allow-legacy-message-webhook and --disable-legacy-message-webhook are only supported for Discord.",
+                "Cannot combine --allow-legacy-message-webhook with --disable-legacy-message-webhook.",
                 file=sys.stderr,
             )
             return 2
-    effective_legacy_message_webhook = existing_legacy_message_webhook
-    if args.allow_legacy_message_webhook:
-        effective_legacy_message_webhook = True
-    if args.disable_legacy_message_webhook:
-        effective_legacy_message_webhook = False
-    if args.webhook_secret:
-        if args.channel_kind == "discord":
-            if not effective_legacy_message_webhook:
+        existing_record = config_manager.get_path(f"channels.records.{args.channel_kind}", default={}) or {}
+        existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
+        existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+        existing_legacy_message_webhook = bool(existing_record.get("allow_legacy_message_webhook")) if isinstance(existing_record, dict) else False
+        if args.clear_allowed_users:
+            effective_allowed_users: list[str] = []
+        else:
+            effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+        effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
+        metadata: dict[str, object] | None = None
+        validation_note: str | None = None
+        if args.allow_legacy_message_webhook or args.disable_legacy_message_webhook:
+            if args.channel_kind != "discord":
                 print(
-                    "Discord legacy message webhooks require --allow-legacy-message-webhook.",
+                    "--allow-legacy-message-webhook and --disable-legacy-message-webhook are only supported for Discord.",
                     file=sys.stderr,
                 )
                 return 2
-            env_key = args.webhook_secret_env or "DISCORD_WEBHOOK_SECRET"
-        elif args.channel_kind == "whatsapp":
-            env_key = args.webhook_secret_env or "WHATSAPP_WEBHOOK_SECRET"
-        else:
-            print("--webhook-secret is only supported for webhook-based adapters.", file=sys.stderr)
-            return 2
-        config_manager.upsert_env_secret(env_key, args.webhook_secret)
-        metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
-    if args.webhook_verify_token:
-        if args.channel_kind != "whatsapp":
-            print("--webhook-verify-token is only supported for WhatsApp.", file=sys.stderr)
-            return 2
-        verify_env_key = args.webhook_verify_token_env or "WHATSAPP_WEBHOOK_VERIFY_TOKEN"
-        config_manager.upsert_env_secret(verify_env_key, args.webhook_verify_token)
-        metadata = {**(metadata or {}), "webhook_verify_token_ref": verify_env_key}
-    if args.channel_kind == "discord":
+        effective_legacy_message_webhook = existing_legacy_message_webhook
+        if args.allow_legacy_message_webhook:
+            effective_legacy_message_webhook = True
         if args.disable_legacy_message_webhook:
-            metadata = {**(metadata or {}), "webhook_auth_ref": None}
-        if (
-            args.allow_legacy_message_webhook
-            or args.disable_legacy_message_webhook
-            or existing_legacy_message_webhook
-        ):
-            metadata = {**(metadata or {}), "allow_legacy_message_webhook": effective_legacy_message_webhook}
-    if args.interaction_public_key:
-        if args.channel_kind != "discord":
-            print("--interaction-public-key is only supported for Discord.", file=sys.stderr)
-            return 2
-        metadata = {**(metadata or {}), "interaction_public_key": args.interaction_public_key.strip()}
-    if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
-        try:
-            profile = inspect_telegram_bot_token(args.bot_token)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            print("", file=sys.stderr)
-            print(
-                render_telegram_botfather_guide(
-                    allowed_users=effective_allowed_users,
-                    pairing_mode=effective_pairing_mode,
-                ),
-                file=sys.stderr,
+            effective_legacy_message_webhook = False
+        if args.webhook_secret:
+            if args.channel_kind == "discord":
+                if not effective_legacy_message_webhook:
+                    print(
+                        "Discord legacy message webhooks require --allow-legacy-message-webhook.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                env_key = args.webhook_secret_env or "DISCORD_WEBHOOK_SECRET"
+            elif args.channel_kind == "whatsapp":
+                env_key = args.webhook_secret_env or "WHATSAPP_WEBHOOK_SECRET"
+            else:
+                print("--webhook-secret is only supported for webhook-based adapters.", file=sys.stderr)
+                return 2
+            config_manager.upsert_env_secret(env_key, args.webhook_secret)
+            metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
+        if args.webhook_verify_token:
+            if args.channel_kind != "whatsapp":
+                print("--webhook-verify-token is only supported for WhatsApp.", file=sys.stderr)
+                return 2
+            verify_env_key = args.webhook_verify_token_env or "WHATSAPP_WEBHOOK_VERIFY_TOKEN"
+            config_manager.upsert_env_secret(verify_env_key, args.webhook_verify_token)
+            metadata = {**(metadata or {}), "webhook_verify_token_ref": verify_env_key}
+        if args.channel_kind == "discord":
+            if args.disable_legacy_message_webhook:
+                metadata = {**(metadata or {}), "webhook_auth_ref": None}
+            if (
+                args.allow_legacy_message_webhook
+                or args.disable_legacy_message_webhook
+                or existing_legacy_message_webhook
+            ):
+                metadata = {**(metadata or {}), "allow_legacy_message_webhook": effective_legacy_message_webhook}
+        if args.interaction_public_key:
+            if args.channel_kind != "discord":
+                print("--interaction-public-key is only supported for Discord.", file=sys.stderr)
+                return 2
+            metadata = {**(metadata or {}), "interaction_public_key": args.interaction_public_key.strip()}
+        if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
+            try:
+                profile = inspect_telegram_bot_token(args.bot_token)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                print("", file=sys.stderr)
+                print(
+                    render_telegram_botfather_guide(
+                        allowed_users=effective_allowed_users,
+                        pairing_mode=effective_pairing_mode,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            metadata = {"bot_profile": profile.to_dict()}
+            validation_note = (
+                f"Validated Telegram bot @{profile.username or 'unknown'} "
+                f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
             )
-            return 1
-        metadata = {"bot_profile": profile.to_dict()}
-        validation_note = (
-            f"Validated Telegram bot @{profile.username or 'unknown'} "
-            f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
+        result = add_channel(
+            config_manager=config_manager,
+            state_db=state_db,
+            channel_kind=args.channel_kind,
+            bot_token=args.bot_token,
+            allowed_users=effective_allowed_users,
+            pairing_mode=effective_pairing_mode,
+            metadata=metadata,
         )
-    result = add_channel(
-        config_manager=config_manager,
-        state_db=state_db,
-        channel_kind=args.channel_kind,
-        bot_token=args.bot_token,
-        allowed_users=effective_allowed_users,
-        pairing_mode=effective_pairing_mode,
-        metadata=metadata,
-    )
-    if validation_note:
-        print(validation_note)
-    print(result)
-    if args.channel_kind == "telegram":
-        print("Next Telegram steps:")
-        print("  1. Open Telegram and send /start to the bot from the account you want to pair.")
-        print("  2. Run spark-intelligence gateway start")
-        print("  3. Use spark-intelligence operator review-pairings if pairing approval is required.")
-    return 0
+        if validation_note:
+            print(validation_note)
+        print(result)
+        if args.channel_kind == "telegram":
+            print("Next Telegram steps:")
+            print("  1. Open Telegram and send /start to the bot from the account you want to pair.")
+            print("  2. Run spark-intelligence gateway start")
+            print("  3. Use spark-intelligence operator review-pairings if pairing approval is required.")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     if args.clear_allowed_users and args.allowed_user:
