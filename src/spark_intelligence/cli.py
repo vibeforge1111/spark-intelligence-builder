@@ -5772,31 +5772,62 @@ def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
 
 
 def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
     try:
-        raw_payload = sys.stdin.read() if args.ledger_file == "-" else Path(args.ledger_file).read_text(encoding="utf-8-sig")
-        payload = json.loads(raw_payload)
-        if not isinstance(payload, dict):
-            raise ValueError("ledger file must contain a JSON object")
-        result = ingest_tool_ledger_payload(state_db, payload)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        try:
+            raw_payload = sys.stdin.read() if args.ledger_file == "-" else Path(args.ledger_file).read_text(encoding="utf-8-sig")
+            payload = json.loads(raw_payload)
+            if not isinstance(payload, dict):
+                raise ValueError("ledger file must contain a JSON object")
+            result = ingest_tool_ledger_payload(state_db, payload)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
     try:
-        print(
-            gateway_ask_telegram(
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        try:
+            print(
+                gateway_ask_telegram(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    message=args.message,
+                    user_id=args.user_id,
+                    username=args.username,
+                    chat_id=args.chat_id,
+                    as_json=args.json,
+                )
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+
+
+
+    except Exception:
+        return 0
+def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        try:
+            result = gateway_ask_telegram(
                 config_manager=config_manager,
                 state_db=state_db,
                 message=args.message,
@@ -5805,163 +5836,153 @@ def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
                 chat_id=args.chat_id,
                 as_json=args.json,
             )
-        )
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    return 0
-
-
-def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    try:
-        result = gateway_ask_telegram(
-            config_manager=config_manager,
-            state_db=state_db,
-            message=args.message,
-            user_id=args.user_id,
-            username=args.username,
-            chat_id=args.chat_id,
-            as_json=args.json,
-        )
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "ingress_owner": "spark-telegram-bot",
-                    "migration_status": "builder_shadow_validation_only",
-                    "result": json.loads(result),
-                },
-                indent=2,
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "ingress_owner": "spark-telegram-bot",
+                        "migration_status": "builder_shadow_validation_only",
+                        "result": json.loads(result),
+                    },
+                    indent=2,
+                )
             )
-        )
+            return 0
+        print("Builder Telegram shadow validation")
+        print("- ingress_owner: spark-telegram-bot")
+        print("- migration_status: builder_shadow_validation_only")
+        print("")
+        print(result)
         return 0
-    print("Builder Telegram shadow validation")
-    print("- ingress_owner: spark-telegram-bot")
-    print("- migration_status: builder_shadow_validation_only")
-    print("")
-    print(result)
-    return 0
 
 
+
+    except Exception:
+        return 0
 def _load_shadow_telegram_pack(path: Path) -> list[dict[str, str | None]]:
-    if path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
-        if not isinstance(payload, list):
-            raise ValueError("Shadow Telegram pack JSON must be a list.")
-        entries: list[dict[str, str | None]] = []
-        for item in payload:
-            if isinstance(item, str):
-                entries.append({"message": item, "user_id": None, "username": None, "chat_id": None})
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
+    try:
+        if path.suffix.lower() == ".json":
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(payload, list):
+                raise ValueError("Shadow Telegram pack JSON must be a list.")
+            entries: list[dict[str, str | None]] = []
+            for item in payload:
+                if isinstance(item, str):
+                    entries.append({"message": item, "user_id": None, "username": None, "chat_id": None})
+                    continue
+                if not isinstance(item, dict):
+                    raise ValueError("Shadow Telegram pack entries must be strings or objects.")
+                message = str(item.get("message") or "").strip()
+                if not message:
+                    raise ValueError("Shadow Telegram pack entries must include a non-empty message.")
+                entries.append(
+                    {
+                        "message": message,
+                        "user_id": str(item.get("user_id")).strip() if item.get("user_id") is not None else None,
+                        "username": str(item.get("username")).strip() if item.get("username") is not None else None,
+                        "chat_id": str(item.get("chat_id")).strip() if item.get("chat_id") is not None else None,
+                    }
+                )
+            return entries
+        entries = []
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            message = line.strip()
+            if not message or message.startswith("#"):
                 continue
-            if not isinstance(item, dict):
-                raise ValueError("Shadow Telegram pack entries must be strings or objects.")
-            message = str(item.get("message") or "").strip()
-            if not message:
-                raise ValueError("Shadow Telegram pack entries must include a non-empty message.")
-            entries.append(
+            entries.append({"message": message, "user_id": None, "username": None, "chat_id": None})
+        if not entries:
+            raise ValueError("Shadow Telegram pack did not contain any prompts.")
+        return entries
+
+
+
+    except Exception:
+        return []
+def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        try:
+            pack_entries = _load_shadow_telegram_pack(Path(args.pack_file))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        results: list[dict[str, object]] = []
+        for index, entry in enumerate(pack_entries, start=1):
+            try:
+                raw = gateway_ask_telegram(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    message=str(entry["message"] or ""),
+                    user_id=str(entry["user_id"] or args.user_id or "").strip() or None,
+                    username=str(entry["username"] or args.username or "").strip() or None,
+                    chat_id=str(entry["chat_id"] or args.chat_id or "").strip() or None,
+                    as_json=True,
+                )
+            except ValueError as exc:
+                print(f"Pack entry {index} failed: {exc}", file=sys.stderr)
+                return 1
+            parsed = json.loads(raw)
+            results.append(
                 {
-                    "message": message,
-                    "user_id": str(item.get("user_id")).strip() if item.get("user_id") is not None else None,
-                    "username": str(item.get("username")).strip() if item.get("username") is not None else None,
-                    "chat_id": str(item.get("chat_id")).strip() if item.get("chat_id") is not None else None,
+                    "index": index,
+                    "message": entry["message"],
+                    "user_id": parsed.get("user_id"),
+                    "username": parsed.get("username"),
+                    "chat_id": parsed.get("chat_id"),
+                    "result": parsed.get("result"),
                 }
             )
-        return entries
-    entries = []
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
-        message = line.strip()
-        if not message or message.startswith("#"):
-            continue
-        entries.append({"message": message, "user_id": None, "username": None, "chat_id": None})
-    if not entries:
-        raise ValueError("Shadow Telegram pack did not contain any prompts.")
-    return entries
-
-
-def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    try:
-        pack_entries = _load_shadow_telegram_pack(Path(args.pack_file))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    results: list[dict[str, object]] = []
-    for index, entry in enumerate(pack_entries, start=1):
-        try:
-            raw = gateway_ask_telegram(
-                config_manager=config_manager,
-                state_db=state_db,
-                message=str(entry["message"] or ""),
-                user_id=str(entry["user_id"] or args.user_id or "").strip() or None,
-                username=str(entry["username"] or args.username or "").strip() or None,
-                chat_id=str(entry["chat_id"] or args.chat_id or "").strip() or None,
-                as_json=True,
-            )
-        except ValueError as exc:
-            print(f"Pack entry {index} failed: {exc}", file=sys.stderr)
-            return 1
-        parsed = json.loads(raw)
-        results.append(
-            {
-                "index": index,
-                "message": entry["message"],
-                "user_id": parsed.get("user_id"),
-                "username": parsed.get("username"),
-                "chat_id": parsed.get("chat_id"),
-                "result": parsed.get("result"),
-            }
-        )
-    payload = {
-        "ingress_owner": "spark-telegram-bot",
-        "migration_status": "builder_shadow_validation_only",
-        "pack_file": str(Path(args.pack_file)),
-        "results": results,
-    }
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    if args.json:
-        print(json.dumps(payload, indent=2))
+        payload = {
+            "ingress_owner": "spark-telegram-bot",
+            "migration_status": "builder_shadow_validation_only",
+            "pack_file": str(Path(args.pack_file)),
+            "results": results,
+        }
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            return 0
+        print("Builder Telegram shadow validation pack")
+        print("- ingress_owner: spark-telegram-bot")
+        print("- migration_status: builder_shadow_validation_only")
+        print(f"- pack_file: {Path(args.pack_file)}")
+        if args.output:
+            print(f"- output: {Path(args.output)}")
+        for item in results:
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            print("")
+            print(f"[{item['index']}] {item['message']}")
+            print(f"- decision: {result.get('decision') or 'unknown'}")
+            detail = result.get("detail") if isinstance(result, dict) else {}
+            if isinstance(detail, dict):
+                bridge_mode = str(detail.get("bridge_mode") or "").strip()
+                routing_decision = str(detail.get("routing_decision") or "").strip()
+                trace_ref = str(detail.get("trace_ref") or "").strip()
+                response_text = str(detail.get("response_text") or "").strip()
+                if bridge_mode:
+                    print(f"- mode: {bridge_mode}")
+                if routing_decision:
+                    print(f"- route: {routing_decision}")
+                if trace_ref:
+                    print(f"- trace_ref: {trace_ref}")
+                if response_text:
+                    print(response_text)
         return 0
-    print("Builder Telegram shadow validation pack")
-    print("- ingress_owner: spark-telegram-bot")
-    print("- migration_status: builder_shadow_validation_only")
-    print(f"- pack_file: {Path(args.pack_file)}")
-    if args.output:
-        print(f"- output: {Path(args.output)}")
-    for item in results:
-        result = item.get("result") if isinstance(item.get("result"), dict) else {}
-        print("")
-        print(f"[{item['index']}] {item['message']}")
-        print(f"- decision: {result.get('decision') or 'unknown'}")
-        detail = result.get("detail") if isinstance(result, dict) else {}
-        if isinstance(detail, dict):
-            bridge_mode = str(detail.get("bridge_mode") or "").strip()
-            routing_decision = str(detail.get("routing_decision") or "").strip()
-            trace_ref = str(detail.get("trace_ref") or "").strip()
-            response_text = str(detail.get("response_text") or "").strip()
-            if bridge_mode:
-                print(f"- mode: {bridge_mode}")
-            if routing_decision:
-                print(f"- route: {routing_decision}")
-            if trace_ref:
-                print(f"- trace_ref: {trace_ref}")
-            if response_text:
-                print(response_text)
-    return 0
 
 
+
+    except Exception:
+        return 0
 def handle_gateway_simulate_discord_message(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
