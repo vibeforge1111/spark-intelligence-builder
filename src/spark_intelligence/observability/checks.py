@@ -635,144 +635,148 @@ def _secret_boundary_issue(state_db: StateDB) -> StopShipIssue:
 
 
 def _keepability_issue(state_db: StateDB) -> StopShipIssue:
-    provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=100)
-    missing = []
-    for event in provenance_events:
-        facts = event.get("facts_json") or {}
-        if not isinstance(facts, dict) or not facts.get("keepability"):
-            missing.append(event)
-    bridge_output_events = _typed_events(
-        state_db,
-        event_types=("tool_result_received", "dispatch_failed"),
-        component="researcher_bridge",
-        limit=200,
-    )
-    bridge_delivery_events = [
-        event
-        for event in _typed_events(
+    try:
+        provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=100)
+        missing = []
+        for event in provenance_events:
+            facts = event.get("facts_json") or {}
+            if not isinstance(facts, dict) or not facts.get("keepability"):
+                missing.append(event)
+        bridge_output_events = _typed_events(
             state_db,
-            event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
-            component="telegram_runtime",
+            event_types=("tool_result_received", "dispatch_failed"),
+            component="researcher_bridge",
             limit=200,
         )
-        if str((event.get("facts_json") or {}).get("event") or "") == "telegram_bridge_outbound"
-    ]
-    webhook_delivery_events: list[dict[str, Any]] = []
-    for component in ("discord_webhook", "whatsapp_webhook"):
-        webhook_delivery_events.extend(
-            [
-                event
-                for event in _typed_events(
-                    state_db,
-                    event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
-                    component=component,
-                    limit=200,
-                )
-                if str((event.get("facts_json") or {}).get("bridge_mode") or "")
-            ]
+        bridge_delivery_events = [
+            event
+            for event in _typed_events(
+                state_db,
+                event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
+                component="telegram_runtime",
+                limit=200,
+            )
+            if str((event.get("facts_json") or {}).get("event") or "") == "telegram_bridge_outbound"
+        ]
+        webhook_delivery_events: list[dict[str, Any]] = []
+        for component in ("discord_webhook", "whatsapp_webhook"):
+            webhook_delivery_events.extend(
+                [
+                    event
+                    for event in _typed_events(
+                        state_db,
+                        event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
+                        component=component,
+                        limit=200,
+                    )
+                    if str((event.get("facts_json") or {}).get("bridge_mode") or "")
+                ]
+            )
+        classified_events = bridge_output_events + bridge_delivery_events + webhook_delivery_events
+        for event in classified_events:
+            facts = event.get("facts_json") or {}
+            if not facts.get("keepability") or not facts.get("promotion_disposition"):
+                missing.append(event)
+        invalid_promotions = []
+        for event in classified_events:
+            facts = event.get("facts_json") or {}
+            keepability = str(facts.get("keepability") or "")
+            promotion_disposition = str(facts.get("promotion_disposition") or "")
+            if keepability in NON_PROMOTABLE_KEEPABILITY and promotion_disposition not in NON_PROMOTABLE_DISPOSITIONS:
+                invalid_promotions.append(event)
+        lane_records = memory_lane_records_for_event_ids(
+            state_db,
+            event_ids=[str(event.get("event_id") or "") for event in classified_events],
         )
-    classified_events = bridge_output_events + bridge_delivery_events + webhook_delivery_events
-    for event in classified_events:
-        facts = event.get("facts_json") or {}
-        if not facts.get("keepability") or not facts.get("promotion_disposition"):
-            missing.append(event)
-    invalid_promotions = []
-    for event in classified_events:
-        facts = event.get("facts_json") or {}
-        keepability = str(facts.get("keepability") or "")
-        promotion_disposition = str(facts.get("promotion_disposition") or "")
-        if keepability in NON_PROMOTABLE_KEEPABILITY and promotion_disposition not in NON_PROMOTABLE_DISPOSITIONS:
-            invalid_promotions.append(event)
-    lane_records = memory_lane_records_for_event_ids(
-        state_db,
-        event_ids=[str(event.get("event_id") or "") for event in classified_events],
-    )
-    lane_records_by_event = {
-        str(record.get("event_id")): record
-        for record in lane_records
-        if str(record.get("event_id") or "")
-    }
-    missing_lane_records = [
-        event for event in classified_events if str(event.get("event_id") or "") not in lane_records_by_event
-    ]
-    invalid_lane_records = []
-    for event in classified_events:
-        event_id = str(event.get("event_id") or "")
-        lane_record = lane_records_by_event.get(event_id)
-        if not lane_record:
-            continue
-        facts = event.get("facts_json") or {}
-        keepability = str(facts.get("keepability") or "")
-        artifact_lane = str(lane_record.get("artifact_lane") or "")
-        if artifact_lane != _expected_artifact_lane(keepability):
-            invalid_lane_records.append(lane_record)
-    missing_mutation_refs = []
-    for event in classified_events:
-        facts = event.get("facts_json") or {}
-        if not isinstance(facts, dict) or not bool(facts.get("text_mutated")):
-            continue
-        if not facts.get("raw_text_ref") or not facts.get("mutated_text_ref"):
-            missing_mutation_refs.append(event)
-    if missing:
+        lane_records_by_event = {
+            str(record.get("event_id")): record
+            for record in lane_records
+            if str(record.get("event_id") or "")
+        }
+        missing_lane_records = [
+            event for event in classified_events if str(event.get("event_id") or "") not in lane_records_by_event
+        ]
+        invalid_lane_records = []
+        for event in classified_events:
+            event_id = str(event.get("event_id") or "")
+            lane_record = lane_records_by_event.get(event_id)
+            if not lane_record:
+                continue
+            facts = event.get("facts_json") or {}
+            keepability = str(facts.get("keepability") or "")
+            artifact_lane = str(lane_record.get("artifact_lane") or "")
+            if artifact_lane != _expected_artifact_lane(keepability):
+                invalid_lane_records.append(lane_record)
+        missing_mutation_refs = []
+        for event in classified_events:
+            facts = event.get("facts_json") or {}
+            if not isinstance(facts, dict) or not bool(facts.get("text_mutated")):
+                continue
+            if not facts.get("raw_text_ref") or not facts.get("mutated_text_ref"):
+                missing_mutation_refs.append(event)
+        if missing:
+            return StopShipIssue(
+                name="stop_ship_keepability_rules",
+                ok=False,
+                detail=(
+                    f"{len(missing)} influence or bridge output event(s) are missing "
+                    "keepability or promotion classification."
+                ),
+                severity="high",
+            )
+        if invalid_promotions:
+            return StopShipIssue(
+                name="stop_ship_keepability_rules",
+                ok=False,
+                detail=(
+                    f"{len(invalid_promotions)} bridge output event(s) mark ephemeral or debug material "
+                    "as promotion-eligible."
+                ),
+                severity="high",
+            )
+        if missing_lane_records:
+            return StopShipIssue(
+                name="stop_ship_keepability_rules",
+                ok=False,
+                detail=(
+                    f"{len(missing_lane_records)} classified influence or bridge output event(s) "
+                    "lack typed memory-lane records."
+                ),
+                severity="high",
+            )
+        if invalid_lane_records:
+            return StopShipIssue(
+                name="stop_ship_keepability_rules",
+                ok=False,
+                detail=(
+                    f"{len(invalid_lane_records)} classified artifact(s) were stored in the wrong memory lane."
+                ),
+                severity="high",
+            )
+        if missing_mutation_refs:
+            return StopShipIssue(
+                name="stop_ship_keepability_rules",
+                ok=False,
+                detail=(
+                    f"{len(missing_mutation_refs)} high-risk mutated bridge or delivery event(s) "
+                    "lack raw-vs-mutated text refs."
+                ),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_keepability_rules",
-            ok=False,
+            ok=True,
             detail=(
-                f"{len(missing)} influence or bridge output event(s) are missing "
-                "keepability or promotion classification."
+                "Operational influence and bridge outputs include non-promotable keepability "
+                "classification and typed memory-lane labels."
             ),
             severity="high",
         )
-    if invalid_promotions:
-        return StopShipIssue(
-            name="stop_ship_keepability_rules",
-            ok=False,
-            detail=(
-                f"{len(invalid_promotions)} bridge output event(s) mark ephemeral or debug material "
-                "as promotion-eligible."
-            ),
-            severity="high",
-        )
-    if missing_lane_records:
-        return StopShipIssue(
-            name="stop_ship_keepability_rules",
-            ok=False,
-            detail=(
-                f"{len(missing_lane_records)} classified influence or bridge output event(s) "
-                "lack typed memory-lane records."
-            ),
-            severity="high",
-        )
-    if invalid_lane_records:
-        return StopShipIssue(
-            name="stop_ship_keepability_rules",
-            ok=False,
-            detail=(
-                f"{len(invalid_lane_records)} classified artifact(s) were stored in the wrong memory lane."
-            ),
-            severity="high",
-        )
-    if missing_mutation_refs:
-        return StopShipIssue(
-            name="stop_ship_keepability_rules",
-            ok=False,
-            detail=(
-                f"{len(missing_mutation_refs)} high-risk mutated bridge or delivery event(s) "
-                "lack raw-vs-mutated text refs."
-            ),
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_keepability_rules",
-        ok=True,
-        detail=(
-            "Operational influence and bridge outputs include non-promotable keepability "
-            "classification and typed memory-lane labels."
-        ),
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _typed_events(
     state_db: StateDB,
     *,
@@ -780,196 +784,214 @@ def _typed_events(
     component: str,
     limit: int,
 ) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for event_type in event_types:
-        events.extend(
-            [
-                event
-                for event in latest_events_by_type(state_db, event_type=event_type, limit=limit)
-                if str(event.get("component") or "") == component
-            ]
-        )
-    return events
+    if not isinstance(event_types, str): event_types = str(event_types or '')
+    if not isinstance(component, str): component = str(component or '')
+    try:
+        events: list[dict[str, Any]] = []
+        for event_type in event_types:
+            events.extend(
+                [
+                    event
+                    for event in latest_events_by_type(state_db, event_type=event_type, limit=limit)
+                    if str(event.get("component") or "") == component
+                ]
+            )
+        return events
 
 
+
+    except Exception:
+        return []
 def _memory_contract_issue(state_db: StateDB) -> StopShipIssue:
-    events = []
-    for event_type in (
-        "memory_write_requested",
-        "memory_write_succeeded",
-        "memory_write_abstained",
-        "memory_read_succeeded",
-        "memory_read_abstained",
-    ):
-        events.extend(
-            [
-                event
-                for event in latest_events_by_type(state_db, event_type=event_type, limit=200)
-                if str(event.get("component") or "") == "memory_orchestrator"
-            ]
-        )
-    invalid_events: list[dict[str, Any]] = []
-    for event in events:
-        facts = event.get("facts_json") or {}
-        if not isinstance(facts, dict):
-            continue
-        event_type = str(event.get("event_type") or "")
-        if event_type == "memory_write_requested":
-            observations = facts.get("observations")
-            if not isinstance(observations, list):
+    try:
+        events = []
+        for event_type in (
+            "memory_write_requested",
+            "memory_write_succeeded",
+            "memory_write_abstained",
+            "memory_read_succeeded",
+            "memory_read_abstained",
+        ):
+            events.extend(
+                [
+                    event
+                    for event in latest_events_by_type(state_db, event_type=event_type, limit=200)
+                    if str(event.get("component") or "") == "memory_orchestrator"
+                ]
+            )
+        invalid_events: list[dict[str, Any]] = []
+        for event in events:
+            facts = event.get("facts_json") or {}
+            if not isinstance(facts, dict):
                 continue
-            for observation in observations:
-                if not isinstance(observation, dict):
+            event_type = str(event.get("event_type") or "")
+            if event_type == "memory_write_requested":
+                observations = facts.get("observations")
+                if not isinstance(observations, list):
                     continue
-                role = normalize_memory_role(observation.get("memory_role"), allow_unknown=False)
-                if memory_contract_reason(
-                    memory_role=role,
-                    operation=str(observation.get("operation") or ""),
-                    allow_unknown=False,
-                ):
-                    invalid_events.append(event)
-                    break
-            continue
-        reason = str(facts.get("reason") or "")
-        raw_role = facts.get("memory_role")
-        violation_reason: str | None = None
-        if "operation" in facts:
-            allow_unknown = int(facts.get("accepted_count") or 0) == 0
-            effective_role = effective_memory_role(
-                raw_role,
-                allow_unknown=allow_unknown,
-                provenance=event.get("provenance_json"),
+                for observation in observations:
+                    if not isinstance(observation, dict):
+                        continue
+                    role = normalize_memory_role(observation.get("memory_role"), allow_unknown=False)
+                    if memory_contract_reason(
+                        memory_role=role,
+                        operation=str(observation.get("operation") or ""),
+                        allow_unknown=False,
+                    ):
+                        invalid_events.append(event)
+                        break
+                continue
+            reason = str(facts.get("reason") or "")
+            raw_role = facts.get("memory_role")
+            violation_reason: str | None = None
+            if "operation" in facts:
+                allow_unknown = int(facts.get("accepted_count") or 0) == 0
+                effective_role = effective_memory_role(
+                    raw_role,
+                    allow_unknown=allow_unknown,
+                    provenance=event.get("provenance_json"),
+                )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=raw_role,
+                    effective_role=effective_role,
+                    operation=str(facts.get("operation") or ""),
+                    allow_unknown=allow_unknown,
+                )
+            elif "method" in facts:
+                allow_unknown = int(facts.get("record_count") or 0) == 0
+                effective_role = effective_memory_role(
+                    raw_role,
+                    allow_unknown=allow_unknown,
+                    provenance=event.get("provenance_json"),
+                )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=raw_role,
+                    effective_role=effective_role,
+                    method=str(facts.get("method") or ""),
+                    allow_unknown=allow_unknown,
+                )
+            elif is_memory_contract_reason(reason):
+                violation_reason = reason
+            if violation_reason:
+                invalid_events.append(event)
+                continue
+        if invalid_events:
+            return StopShipIssue(
+                name="stop_ship_memory_contract",
+                ok=False,
+                detail=f"{len(invalid_events)} memory event(s) violated the Builder memory role contract.",
+                severity="high",
             )
-            violation_reason = persisted_memory_contract_reason(
-                reason=reason,
-                raw_memory_role=raw_role,
-                effective_role=effective_role,
-                operation=str(facts.get("operation") or ""),
-                allow_unknown=allow_unknown,
-            )
-        elif "method" in facts:
-            allow_unknown = int(facts.get("record_count") or 0) == 0
-            effective_role = effective_memory_role(
-                raw_role,
-                allow_unknown=allow_unknown,
-                provenance=event.get("provenance_json"),
-            )
-            violation_reason = persisted_memory_contract_reason(
-                reason=reason,
-                raw_memory_role=raw_role,
-                effective_role=effective_role,
-                method=str(facts.get("method") or ""),
-                allow_unknown=allow_unknown,
-            )
-        elif is_memory_contract_reason(reason):
-            violation_reason = reason
-        if violation_reason:
-            invalid_events.append(event)
-            continue
-    if invalid_events:
         return StopShipIssue(
             name="stop_ship_memory_contract",
-            ok=False,
-            detail=f"{len(invalid_events)} memory event(s) violated the Builder memory role contract.",
+            ok=True,
+            detail="Builder memory reads and writes respect allowed memory roles and operation contracts.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_memory_contract",
-        ok=True,
-        detail="Builder memory reads and writes respect allowed memory roles and operation contracts.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _environment_parity_issue(state_db: StateDB) -> StopShipIssue:
-    snapshots = latest_snapshots_by_surface(state_db)
-    if len(snapshots) < 2:
-        return StopShipIssue(
-            name="stop_ship_environment_parity",
-            ok=True,
-            detail="Not enough runtime surfaces have emitted environment snapshots yet.",
-            severity="high",
-        )
-    disagreement = _environment_snapshot_disagreements(snapshots)
-    if disagreement:
-        return StopShipIssue(
-            name="stop_ship_environment_parity",
-            ok=False,
-            detail="; ".join(disagreement[:3]),
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_environment_parity",
-        ok=True,
-        detail="Runtime surfaces agree on provider and config lineage.",
-        severity="high",
-    )
-
-
-def _bridge_residue_persistence_issue(state_db: StateDB) -> StopShipIssue:
-    with state_db.connect() as conn:
-        suspicious_rows = conn.execute(
-            """
-            SELECT state_key
-            FROM runtime_state
-            WHERE state_key LIKE 'researcher:%reply%'
-               OR state_key LIKE 'researcher:%response%'
-            ORDER BY state_key
-            """
-        ).fetchall()
-        failure_row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
-        ).fetchone()
-    if suspicious_rows:
-        return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail=(
-                "Researcher bridge runtime_state contains reply-like persistence keys: "
-                + ", ".join(str(row["state_key"]) for row in suspicious_rows[:4])
-            ),
-            severity="high",
-        )
-    if not failure_row or not failure_row["value"]:
-        return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=True,
-            detail="No durable bridge failure payload is present yet.",
-            severity="high",
-        )
     try:
-        payload = json.loads(str(failure_row["value"]))
-    except json.JSONDecodeError:
+        snapshots = latest_snapshots_by_surface(state_db)
+        if len(snapshots) < 2:
+            return StopShipIssue(
+                name="stop_ship_environment_parity",
+                ok=True,
+                detail="Not enough runtime surfaces have emitted environment snapshots yet.",
+                severity="high",
+            )
+        disagreement = _environment_snapshot_disagreements(snapshots)
+        if disagreement:
+            return StopShipIssue(
+                name="stop_ship_environment_parity",
+                ok=False,
+                detail="; ".join(disagreement[:3]),
+                severity="high",
+            )
         return StopShipIssue(
-            name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail="Researcher bridge failure payload is not valid JSON.",
+            name="stop_ship_environment_parity",
+            ok=True,
+            detail="Runtime surfaces agree on provider and config lineage.",
             severity="high",
         )
-    message = str(payload.get("message") or "")
-    suspicious_tokens = (
-        "[spark researcher",
-        "trace:",
-        "packet_refs",
-        "memory_refs",
-        "selected_packet_ids",
-        "quarantine_id",
-    )
-    if any(token in message.lower() for token in suspicious_tokens):
+
+
+
+    except Exception:
+        return None
+def _bridge_residue_persistence_issue(state_db: StateDB) -> StopShipIssue:
+    try:
+        with state_db.connect() as conn:
+            suspicious_rows = conn.execute(
+                """
+                SELECT state_key
+                FROM runtime_state
+                WHERE state_key LIKE 'researcher:%reply%'
+                   OR state_key LIKE 'researcher:%response%'
+                ORDER BY state_key
+                """
+            ).fetchall()
+            failure_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
+            ).fetchone()
+        if suspicious_rows:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail=(
+                    "Researcher bridge runtime_state contains reply-like persistence keys: "
+                    + ", ".join(str(row["state_key"]) for row in suspicious_rows[:4])
+                ),
+                severity="high",
+            )
+        if not failure_row or not failure_row["value"]:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=True,
+                detail="No durable bridge failure payload is present yet.",
+                severity="high",
+            )
+        try:
+            payload = json.loads(str(failure_row["value"]))
+        except json.JSONDecodeError:
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail="Researcher bridge failure payload is not valid JSON.",
+                severity="high",
+            )
+        message = str(payload.get("message") or "")
+        suspicious_tokens = (
+            "[spark researcher",
+            "trace:",
+            "packet_refs",
+            "memory_refs",
+            "selected_packet_ids",
+            "quarantine_id",
+        )
+        if any(token in message.lower() for token in suspicious_tokens):
+            return StopShipIssue(
+                name="stop_ship_bridge_residue_persistence",
+                ok=False,
+                detail="Researcher bridge failure payload persists raw reply/debug residue.",
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_bridge_residue_persistence",
-            ok=False,
-            detail="Researcher bridge failure payload persists raw reply/debug residue.",
+            ok=True,
+            detail="Bridge failure persistence is sanitized for operator-status use only.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_bridge_residue_persistence",
-        ok=True,
-        detail="Bridge failure persistence is sanitized for operator-status use only.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
     enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
     platform = config_manager.get_path("runtime.autostart.platform", default=None)
