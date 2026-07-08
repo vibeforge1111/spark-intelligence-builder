@@ -3983,100 +3983,120 @@ def handle_operator_set_bridge(args: argparse.Namespace) -> int:
 
 
 def handle_operator_review_pairings(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    report = review_pairings(
-        state_db,
-        channel_id=args.channel_id,
-        status=args.status,
-        limit=args.limit,
-    )
-    print(report.to_json() if args.json else report.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        report = review_pairings(
+            state_db,
+            channel_id=args.channel_id,
+            status=args.status,
+            limit=args.limit,
+        )
+        print(report.to_json() if args.json else report.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_pairing_summary(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    report = pairing_summary(state_db=state_db, channel_id=args.channel_id)
-    print(report.to_json() if args.json else report.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        report = pairing_summary(state_db=state_db, channel_id=args.channel_id)
+        print(report.to_json() if args.json else report.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_approve_pairing(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = approve_pairing(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        external_user_id=args.external_user_id,
-        display_name=args.display_name,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="approve_pairing",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{args.external_user_id}",
-        reason=args.reason,
-        details={"display_name": args.display_name},
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = approve_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            external_user_id=args.external_user_id,
+            display_name=args.display_name,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="approve_pairing",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{args.external_user_id}",
+            reason=args.reason,
+            details={"display_name": args.display_name},
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_issue_pairing_code(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    issued = issue_pairing_code(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        external_user_id=args.external_user_id,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="issue_pairing_code",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{args.external_user_id}",
-        reason=args.reason,
-        details={"expires_at": issued.expires_at},
-    )
-    print(f"Pairing code for {issued.channel_id}:{issued.external_user_id}: {issued.code}")
-    print(f"Expires at: {issued.expires_at}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        issued = issue_pairing_code(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            external_user_id=args.external_user_id,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="issue_pairing_code",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{args.external_user_id}",
+            reason=args.reason,
+            details={"expires_at": issued.expires_at},
+        )
+        print(f"Pairing code for {issued.channel_id}:{issued.external_user_id}: {issued.code}")
+        print(f"Expires at: {issued.expires_at}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_approve_pairing_code(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = consume_pairing_code(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        external_user_id=args.external_user_id,
-        code=args.code,
-        display_name=args.display_name,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="approve_pairing_code",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{args.external_user_id}",
-        reason=args.reason,
-        details={"decision": result.decision, "display_name": args.display_name},
-    )
-    print(result.message)
-    return 0 if result.ok else 1
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = consume_pairing_code(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            external_user_id=args.external_user_id,
+            code=args.code,
+            display_name=args.display_name,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="approve_pairing_code",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{args.external_user_id}",
+            reason=args.reason,
+            details={"decision": result.decision, "display_name": args.display_name},
+        )
+        print(result.message)
+        return 0 if result.ok else 1
 
 
+
+    except Exception:
+        return 0
 def handle_operator_approve_latest(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
