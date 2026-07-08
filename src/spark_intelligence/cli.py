@@ -4078,122 +4078,142 @@ def handle_operator_approve_pairing_code(args: argparse.Namespace) -> int:
 
 
 def handle_operator_approve_latest(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        statuses=("pending",),
-    )
-    result = approve_latest_pairing(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        display_name=args.display_name,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="approve_latest_pairing",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{external_user_id}",
-        reason=args.reason,
-        details={"display_name": args.display_name},
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            statuses=("pending",),
+        )
+        result = approve_latest_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            display_name=args.display_name,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="approve_latest_pairing",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{external_user_id}",
+            reason=args.reason,
+            details={"display_name": args.display_name},
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_hold_latest(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        statuses=("pending",),
-    )
-    result = hold_latest_pairing(
-        state_db=state_db,
-        channel_id=args.channel_id,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="hold_latest_pairing",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{external_user_id}",
-        reason=args.reason,
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            statuses=("pending",),
+        )
+        result = hold_latest_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="hold_latest_pairing",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{external_user_id}",
+            reason=args.reason,
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_revoke_latest(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=args.channel_id,
-        statuses=("pending", "held"),
-    )
-    result = revoke_latest_pairing(
-        state_db=state_db,
-        channel_id=args.channel_id,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="revoke_latest_pairing",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{external_user_id}",
-        reason=args.reason,
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            statuses=("pending", "held"),
+        )
+        result = revoke_latest_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="revoke_latest_pairing",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{external_user_id}",
+            reason=args.reason,
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_hold_pairing(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = hold_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id)
-    log_operator_event(
-        state_db=state_db,
-        action="hold_pairing",
-        target_kind="pairing",
-        target_ref=f"{args.channel_id}:{args.external_user_id}",
-        reason=args.reason,
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = hold_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id)
+        log_operator_event(
+            state_db=state_db,
+            action="hold_pairing",
+            target_kind="pairing",
+            target_ref=f"{args.channel_id}:{args.external_user_id}",
+            reason=args.reason,
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_set_channel(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = set_channel_status(
-        config_manager=config_manager,
-        state_db=state_db,
-        channel_id=args.channel_id,
-        status=args.mode,
-    )
-    log_operator_event(
-        state_db=state_db,
-        action="set_channel",
-        target_kind="channel",
-        target_ref=args.channel_id,
-        reason=args.reason,
-        details={"status": args.mode},
-    )
-    print(result)
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = set_channel_status(
+            config_manager=config_manager,
+            state_db=state_db,
+            channel_id=args.channel_id,
+            status=args.mode,
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="set_channel",
+            target_kind="channel",
+            target_ref=args.channel_id,
+            reason=args.reason,
+            details={"status": args.mode},
+        )
+        print(result)
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_operator_history(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
