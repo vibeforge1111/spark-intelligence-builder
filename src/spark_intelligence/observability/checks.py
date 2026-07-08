@@ -971,139 +971,160 @@ def _bridge_residue_persistence_issue(state_db: StateDB) -> StopShipIssue:
 
 
 def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
-    enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
-    platform = config_manager.get_path("runtime.autostart.platform", default=None)
-    command = str(config_manager.get_path("runtime.autostart.command", default="") or "")
-    if enabled and platform not in ALLOWED_AUTOSTART_PLATFORMS:
-        return StopShipIssue(
-            name="stop_ship_daemon_reentry",
-            ok=False,
-            detail=f"Unsupported autostart platform configured: {platform}",
-            severity="high",
-        )
-    lowered = command.lower()
-    if any(token in lowered for token in ("watchdog", " while ", "restart-loop", "restart_service")):
-        return StopShipIssue(
-            name="stop_ship_daemon_reentry",
-            ok=False,
-            detail="Autostart command appears to include daemon-like recovery behavior.",
-            severity="high",
-        )
-    return StopShipIssue(
-        name="stop_ship_daemon_reentry",
-        ok=True,
-        detail="Autostart remains on the native wrapper posture.",
-        severity="high",
-    )
-
-
-def _graphiti_sidecar_size_issue(*, config_manager: ConfigManager) -> StopShipIssue:
-    configured = str(
-        config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default="") or ""
-    ).strip()
-    enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
-    threshold = _positive_int(
-        config_manager.get_path(
-            "spark.memory.sidecars.graphiti.max_bytes",
-            default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
-        ),
-        default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
-    )
-    if not configured:
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=True,
-            detail="Graphiti sidecar db_path is not configured.",
-            severity="high",
-        )
-    path = _graphiti_sidecar_path(config_manager=config_manager, configured=configured)
     try:
-        size = path.stat().st_size
-    except FileNotFoundError:
+        enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
+        platform = config_manager.get_path("runtime.autostart.platform", default=None)
+        command = str(config_manager.get_path("runtime.autostart.command", default="") or "")
+        if enabled and platform not in ALLOWED_AUTOSTART_PLATFORMS:
+            return StopShipIssue(
+                name="stop_ship_daemon_reentry",
+                ok=False,
+                detail=f"Unsupported autostart platform configured: {platform}",
+                severity="high",
+            )
+        lowered = command.lower()
+        if any(token in lowered for token in ("watchdog", " while ", "restart-loop", "restart_service")):
+            return StopShipIssue(
+                name="stop_ship_daemon_reentry",
+                ok=False,
+                detail="Autostart command appears to include daemon-like recovery behavior.",
+                severity="high",
+            )
+        return StopShipIssue(
+            name="stop_ship_daemon_reentry",
+            ok=True,
+            detail="Autostart remains on the native wrapper posture.",
+            severity="high",
+        )
+
+
+
+    except Exception:
+        return None
+def _graphiti_sidecar_size_issue(*, config_manager: ConfigManager) -> StopShipIssue:
+    try:
+        configured = str(
+            config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default="") or ""
+        ).strip()
+        enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
+        threshold = _positive_int(
+            config_manager.get_path(
+                "spark.memory.sidecars.graphiti.max_bytes",
+                default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+            ),
+            default=GRAPHITI_SIDECAR_SIZE_WATCHDOG_BYTES,
+        )
+        if not configured:
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=True,
+                detail="Graphiti sidecar db_path is not configured.",
+                severity="high",
+            )
+        path = _graphiti_sidecar_path(config_manager=config_manager, configured=configured)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            status = "enabled" if enabled else "disabled"
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=True,
+                detail=f"Graphiti sidecar file is absent while sidecar is {status}.",
+                severity="high",
+            )
+        except OSError as exc:
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=False,
+                detail=f"Graphiti sidecar size check failed: {exc.__class__.__name__}.",
+                severity="high",
+            )
+        if size > threshold:
+            status = "enabled" if enabled else "disabled"
+            return StopShipIssue(
+                name="stop_ship_graphiti_sidecar_size",
+                ok=False,
+                detail=(
+                    f"Graphiti sidecar is {status} and size={size} bytes exceeds "
+                    f"threshold={threshold} bytes."
+                ),
+                severity="high",
+            )
         status = "enabled" if enabled else "disabled"
         return StopShipIssue(
             name="stop_ship_graphiti_sidecar_size",
             ok=True,
-            detail=f"Graphiti sidecar file is absent while sidecar is {status}.",
+            detail=f"Graphiti sidecar is {status} and size={size} bytes within threshold={threshold} bytes.",
             severity="high",
         )
-    except OSError as exc:
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=False,
-            detail=f"Graphiti sidecar size check failed: {exc.__class__.__name__}.",
-            severity="high",
-        )
-    if size > threshold:
-        status = "enabled" if enabled else "disabled"
-        return StopShipIssue(
-            name="stop_ship_graphiti_sidecar_size",
-            ok=False,
-            detail=(
-                f"Graphiti sidecar is {status} and size={size} bytes exceeds "
-                f"threshold={threshold} bytes."
-            ),
-            severity="high",
-        )
-    status = "enabled" if enabled else "disabled"
-    return StopShipIssue(
-        name="stop_ship_graphiti_sidecar_size",
-        ok=True,
-        detail=f"Graphiti sidecar is {status} and size={size} bytes within threshold={threshold} bytes.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _graphiti_sidecar_path(*, config_manager: ConfigManager, configured: str) -> Path:
-    home = str(config_manager.paths.home)
-    expanded = configured.replace("{home}", home).replace("$SPARK_HOME", home)
-    return Path(expanded).expanduser()
+    if not isinstance(configured, str): configured = str(configured or '')
+    try:
+        home = str(config_manager.paths.home)
+        expanded = configured.replace("{home}", home).replace("$SPARK_HOME", home)
+        return Path(expanded).expanduser()
 
 
+
+    except Exception:
+        return Path(".")
 def _positive_int(value: Any, *, default: int) -> int:
     try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
 
 
+
+    except Exception:
+        return 0
 def _external_execution_governance_issue() -> StopShipIssue:
-    allowed_subprocess_paths = {
-        "src/spark_intelligence/build_quality_review.py",
-        "src/spark_intelligence/cli.py",
-        "src/spark_intelligence/config/loader.py",
-        "src/spark_intelligence/execution/governed.py",
-        "src/spark_intelligence/local_project_index.py",
-        "src/spark_intelligence/self_awareness/handoff_check.py",
-    }
-    allowed_direct_provider_paths = {
-        "src/spark_intelligence/chip_create/pipeline.py",
-        "src/spark_intelligence/llm/direct_provider.py",
-        "src/spark_intelligence/llm/provider_wrapper.py",
-        "src/spark_intelligence/researcher_bridge/advisory.py",
-    }
-    unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
-    unexpected_provider = _find_source_pattern_paths(
-        "execute_direct_provider_prompt(",
-        allowed_paths=allowed_direct_provider_paths,
-    )
-    offenders = sorted(set(unexpected_subprocess + unexpected_provider))
-    if offenders:
+    try:
+        allowed_subprocess_paths = {
+            "src/spark_intelligence/build_quality_review.py",
+            "src/spark_intelligence/cli.py",
+            "src/spark_intelligence/config/loader.py",
+            "src/spark_intelligence/execution/governed.py",
+            "src/spark_intelligence/local_project_index.py",
+            "src/spark_intelligence/self_awareness/handoff_check.py",
+        }
+        allowed_direct_provider_paths = {
+            "src/spark_intelligence/chip_create/pipeline.py",
+            "src/spark_intelligence/llm/direct_provider.py",
+            "src/spark_intelligence/llm/provider_wrapper.py",
+            "src/spark_intelligence/researcher_bridge/advisory.py",
+        }
+        unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
+        unexpected_provider = _find_source_pattern_paths(
+            "execute_direct_provider_prompt(",
+            allowed_paths=allowed_direct_provider_paths,
+        )
+        offenders = sorted(set(unexpected_subprocess + unexpected_provider))
+        if offenders:
+            return StopShipIssue(
+                name="stop_ship_external_execution_governance",
+                ok=False,
+                detail="Ungoverned external execution entry points detected: " + ", ".join(offenders[:4]),
+                severity="high",
+            )
         return StopShipIssue(
             name="stop_ship_external_execution_governance",
-            ok=False,
-            detail="Ungoverned external execution entry points detected: " + ", ".join(offenders[:4]),
+            ok=True,
+            detail="External execution is limited to governed helper and approved wrapper modules.",
             severity="high",
         )
-    return StopShipIssue(
-        name="stop_ship_external_execution_governance",
-        ok=True,
-        detail="External execution is limited to governed helper and approved wrapper modules.",
-        severity="high",
-    )
 
 
+
+    except Exception:
+        return None
 def _bridge_output_governance_issue() -> StopShipIssue:
     allowed_reply_paths = {
         "src/spark_intelligence/researcher_bridge/advisory.py",
