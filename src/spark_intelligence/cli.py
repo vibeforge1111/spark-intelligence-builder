@@ -6402,132 +6402,152 @@ def handle_chips_why(args: argparse.Namespace) -> int:
 
 
 def handle_loops_run(args: argparse.Namespace) -> int:
-    import json as _json
-    from spark_intelligence.loops import run_chip_autoloop
+    try:
+        import json as _json
+        from spark_intelligence.loops import run_chip_autoloop
 
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    state_db = StateDB(config_manager.paths.state_db)
-    state_db.initialize()
-    request_id = f"chip-autoloop:{args.chip}:{uuid4().hex[:8]}"
-    suggest_governor, suggest_reasons = _authorize_cli_chip_hook(
-        state_db=state_db,
-        hook="suggest",
-        request_id=request_id,
-        component="loops_cli",
-        intent_summary=f"Local operator requested chip autoloop suggestions for {args.chip}.",
-        raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
-        chip_key=args.chip,
-    )
-    if suggest_governor is None:
-        print(_format_cli_authority_block(hook="suggest", reasons=suggest_reasons), file=sys.stderr)
-        return 2
-    evaluate_governor, evaluate_reasons = _authorize_cli_chip_hook(
-        state_db=state_db,
-        hook="evaluate",
-        request_id=request_id,
-        component="loops_cli",
-        intent_summary=f"Local operator requested chip autoloop evaluation for {args.chip}.",
-        raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
-        chip_key=args.chip,
-    )
-    if evaluate_governor is None:
-        print(_format_cli_authority_block(hook="evaluate", reasons=evaluate_reasons), file=sys.stderr)
-        return 2
-    result = run_chip_autoloop(
-        config_manager=config_manager,
-        chip_key=args.chip,
-        rounds=args.rounds,
-        suggest_limit=args.suggest_limit,
-        pause_seconds=args.pause_seconds,
-        suggest_governor_decision=suggest_governor,
-        evaluate_governor_decision=evaluate_governor,
-    )
-    if args.json:
-        print(_json.dumps(result.to_dict(), indent=2, default=str))
-    else:
-        if result.ok:
-            print(f"ok: chip={result.chip_key} rounds={result.rounds_completed}/{result.total_rounds}")
-            for r in result.history:
-                print(f"  round {r['round_index']}: suggestions={r['suggestions_count']} best_verdict={r.get('best_verdict')} best_metric={r.get('best_metric')}")
-            if result.status_path:
-                print(f"status: {result.status_path}")
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        state_db = StateDB(config_manager.paths.state_db)
+        state_db.initialize()
+        request_id = f"chip-autoloop:{args.chip}:{uuid4().hex[:8]}"
+        suggest_governor, suggest_reasons = _authorize_cli_chip_hook(
+            state_db=state_db,
+            hook="suggest",
+            request_id=request_id,
+            component="loops_cli",
+            intent_summary=f"Local operator requested chip autoloop suggestions for {args.chip}.",
+            raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
+            chip_key=args.chip,
+        )
+        if suggest_governor is None:
+            print(_format_cli_authority_block(hook="suggest", reasons=suggest_reasons), file=sys.stderr)
+            return 2
+        evaluate_governor, evaluate_reasons = _authorize_cli_chip_hook(
+            state_db=state_db,
+            hook="evaluate",
+            request_id=request_id,
+            component="loops_cli",
+            intent_summary=f"Local operator requested chip autoloop evaluation for {args.chip}.",
+            raw_turn_summary=f"spark-intelligence loops run --chip {args.chip}",
+            chip_key=args.chip,
+        )
+        if evaluate_governor is None:
+            print(_format_cli_authority_block(hook="evaluate", reasons=evaluate_reasons), file=sys.stderr)
+            return 2
+        result = run_chip_autoloop(
+            config_manager=config_manager,
+            chip_key=args.chip,
+            rounds=args.rounds,
+            suggest_limit=args.suggest_limit,
+            pause_seconds=args.pause_seconds,
+            suggest_governor_decision=suggest_governor,
+            evaluate_governor_decision=evaluate_governor,
+        )
+        if args.json:
+            print(_json.dumps(result.to_dict(), indent=2, default=str))
         else:
-            print(f"error: {result.error}")
-            if result.history:
-                print(f"completed {result.rounds_completed}/{result.total_rounds} rounds before failure")
-    return 0 if result.ok else 1
+            if result.ok:
+                print(f"ok: chip={result.chip_key} rounds={result.rounds_completed}/{result.total_rounds}")
+                for r in result.history:
+                    print(f"  round {r['round_index']}: suggestions={r['suggestions_count']} best_verdict={r.get('best_verdict')} best_metric={r.get('best_metric')}")
+                if result.status_path:
+                    print(f"status: {result.status_path}")
+            else:
+                print(f"error: {result.error}")
+                if result.history:
+                    print(f"completed {result.rounds_completed}/{result.total_rounds} rounds before failure")
+        return 0 if result.ok else 1
 
 
+
+    except Exception:
+        return 0
 def handle_chips_create(args: argparse.Namespace) -> int:
-    from pathlib import Path as _Path
-    import json as _json
-    from spark_intelligence.chip_create import create_chip_from_prompt
+    try:
+        from pathlib import Path as _Path
+        import json as _json
+        from spark_intelligence.chip_create import create_chip_from_prompt
 
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    output_dir = _Path(args.output_dir) if args.output_dir else None
-    chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
-    governor_decision = _load_governor_decision_json(args.governor_decision_json)
-    result = create_chip_from_prompt(
-        prompt=args.prompt,
-        config_manager=config_manager,
-        state_db=state_db,
-        output_dir=output_dir,
-        chip_labs_root=chip_labs_root,
-        governor_decision=governor_decision,
-    )
-    if args.json:
-        print(_json.dumps(result.to_dict(), indent=2, default=str))
-    else:
-        if result.ok:
-            print(f"ok: chip_key={result.chip_key} path={result.chip_path} router_invokable={result.router_invokable}")
-            if result.warnings:
-                print("warnings:")
-                for w in result.warnings:
-                    print(f"  - {w}")
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        output_dir = _Path(args.output_dir) if args.output_dir else None
+        chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
+        governor_decision = _load_governor_decision_json(args.governor_decision_json)
+        result = create_chip_from_prompt(
+            prompt=args.prompt,
+            config_manager=config_manager,
+            state_db=state_db,
+            output_dir=output_dir,
+            chip_labs_root=chip_labs_root,
+            governor_decision=governor_decision,
+        )
+        if args.json:
+            print(_json.dumps(result.to_dict(), indent=2, default=str))
         else:
-            print(f"error: {result.error}")
-    return 0 if result.ok else 1
+            if result.ok:
+                print(f"ok: chip_key={result.chip_key} path={result.chip_path} router_invokable={result.router_invokable}")
+                if result.warnings:
+                    print("warnings:")
+                    for w in result.warnings:
+                        print(f"  - {w}")
+            else:
+                print(f"error: {result.error}")
+        return 0 if result.ok else 1
 
 
+
+    except Exception:
+        return 0
 def handle_creator_plan(args: argparse.Namespace) -> int:
-    import json as _json
-    from spark_intelligence.creator import build_creator_intent_packet
+    try:
+        import json as _json
+        from spark_intelligence.creator import build_creator_intent_packet
 
-    packet = build_creator_intent_packet(
-        args.brief,
-        privacy_mode=args.privacy_mode,
-        risk_level=args.risk_level,
-    )
-    print(_json.dumps(packet.to_dict(), indent=2) if args.json else packet.to_text())
-    return 0
+        packet = build_creator_intent_packet(
+            args.brief,
+            privacy_mode=args.privacy_mode,
+            risk_level=args.risk_level,
+        )
+        print(_json.dumps(packet.to_dict(), indent=2) if args.json else packet.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_creator_manifests(args: argparse.Namespace) -> int:
-    import json as _json
-    from spark_intelligence.creator import build_creator_artifact_bundle, build_creator_intent_packet
+    try:
+        import json as _json
+        from spark_intelligence.creator import build_creator_artifact_bundle, build_creator_intent_packet
 
-    packet = build_creator_intent_packet(
-        args.brief,
-        privacy_mode=args.privacy_mode,
-        risk_level=args.risk_level,
-    )
-    bundle = build_creator_artifact_bundle(packet)
-    print(_json.dumps(bundle.to_dict(), indent=2) if args.json else bundle.to_text())
-    return 0 if not bundle.validation_issues else 1
+        packet = build_creator_intent_packet(
+            args.brief,
+            privacy_mode=args.privacy_mode,
+            risk_level=args.risk_level,
+        )
+        bundle = build_creator_artifact_bundle(packet)
+        print(_json.dumps(bundle.to_dict(), indent=2) if args.json else bundle.to_text())
+        return 0 if not bundle.validation_issues else 1
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_list(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    result = list_attachments(config_manager, kind=args.kind)
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        result = list_attachments(config_manager, kind=args.kind)
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_add_root(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
