@@ -6589,41 +6589,53 @@ def handle_attachments_pin_chip(args: argparse.Namespace) -> int:
 
 
 def handle_attachments_unpin_chip(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    pinned_keys = unpin_chip(config_manager, chip_key=args.chip_key)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(f"Pinned chips: {', '.join(pinned_keys) if pinned_keys else 'none'}")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        pinned_keys = unpin_chip(config_manager, chip_key=args.chip_key)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(f"Pinned chips: {', '.join(pinned_keys) if pinned_keys else 'none'}")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_set_path(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    path_key = set_active_path(config_manager, path_key=args.path_key)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(f"Active path: {path_key}")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        path_key = set_active_path(config_manager, path_key=args.path_key)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(f"Active path: {path_key}")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_clear_path(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    clear_active_path(config_manager)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print("Active path: none")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        clear_active_path(config_manager)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print("Active path: none")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def _authorize_cli_chip_hook(
     *,
     state_db: StateDB,
@@ -6637,50 +6649,69 @@ def _authorize_cli_chip_hook(
     human_id: str | None = None,
     agent_id: str | None = None,
 ) -> tuple[dict[str, object] | None, tuple[str, ...]]:
-    tool_name, owner_system, mutation_class, external_network = chip_hook_authority_contract(hook)
-    action: dict[str, object] = {
-        "tool_name": tool_name,
-        "owner_system": owner_system,
-        "mutation_class": mutation_class,
-        "args_path": f"builder://{component}/{request_id}/{chip_key or 'active'}/{hook}",
-    }
-    if external_network:
-        action["external_network"] = True
-    envelope = build_vnext_action_intent_envelope(
-        surface="cli",
-        actor_id_ref=human_id or actor_id,
-        request_id=request_id,
-        source_kind=component,
-        intent_summary=intent_summary,
-        raw_turn_summary=raw_turn_summary,
-        actions=[action],
-    )
-    if not isinstance(envelope, dict):
-        return None, ("harness_core_vnext_envelope_unavailable",)
-    authority = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": envelope},
-        tool_name=tool_name,
-        owner_system=owner_system,
-        mutation_class=mutation_class,
-        external_network=external_network,
-        state_db=state_db,
-        request_id=request_id,
-        channel_id="cli",
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id=actor_id,
-        component=component,
-    )
-    if authority.allowed and isinstance(authority.governor_decision, dict):
-        return authority.governor_decision, ()
-    return None, tuple(authority.reason_codes or ("missing_governor_decision",))
+    if not isinstance(hook, str): hook = str(hook or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(intent_summary, str): intent_summary = str(intent_summary or '')
+    if not isinstance(raw_turn_summary, str): raw_turn_summary = str(raw_turn_summary or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    if not isinstance(chip_key, str): chip_key = str(chip_key or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    try:
+        tool_name, owner_system, mutation_class, external_network = chip_hook_authority_contract(hook)
+        action: dict[str, object] = {
+            "tool_name": tool_name,
+            "owner_system": owner_system,
+            "mutation_class": mutation_class,
+            "args_path": f"builder://{component}/{request_id}/{chip_key or 'active'}/{hook}",
+        }
+        if external_network:
+            action["external_network"] = True
+        envelope = build_vnext_action_intent_envelope(
+            surface="cli",
+            actor_id_ref=human_id or actor_id,
+            request_id=request_id,
+            source_kind=component,
+            intent_summary=intent_summary,
+            raw_turn_summary=raw_turn_summary,
+            actions=[action],
+        )
+        if not isinstance(envelope, dict):
+            return None, ("harness_core_vnext_envelope_unavailable",)
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class=mutation_class,
+            external_network=external_network,
+            state_db=state_db,
+            request_id=request_id,
+            channel_id="cli",
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+            component=component,
+        )
+        if authority.allowed and isinstance(authority.governor_decision, dict):
+            return authority.governor_decision, ()
+        return None, tuple(authority.reason_codes or ("missing_governor_decision",))
 
 
+
+    except Exception:
+        return ()
 def _format_cli_authority_block(*, hook: str, reasons: tuple[str, ...]) -> str:
-    reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "turn_not_authorized"
-    return f"Chip hook '{hook}' is blocked before execution. Reason: {reason_text}."
+    if not isinstance(hook, str): hook = str(hook or '')
+    if not isinstance(reasons, str): reasons = str(reasons or '')
+    try:
+        reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "turn_not_authorized"
+        return f"Chip hook '{hook}' is blocked before execution. Reason: {reason_text}."
 
 
+
+    except Exception:
+        return ""
 def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
