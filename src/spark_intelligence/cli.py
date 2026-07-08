@@ -5453,110 +5453,130 @@ def handle_wiki_inventory(args: argparse.Namespace) -> int:
 
 
 def handle_wiki_candidate_inbox(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    result = build_llm_wiki_candidate_inbox(
-        config_manager=config_manager,
-        output_dir=getattr(args, "output_dir", None),
-        status=str(getattr(args, "status", "") or "candidate"),
-        limit=int(getattr(args, "limit", 40) or 40),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("exists") else 1
-
-
-def handle_wiki_candidate_scan(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    result = build_llm_wiki_candidate_scan(
-        config_manager=config_manager,
-        output_dir=getattr(args, "output_dir", None),
-        status=str(getattr(args, "status", "") or "all"),
-        limit=int(getattr(args, "limit", 80) or 80),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("exists") else 1
-
-
-def handle_wiki_query(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = build_llm_wiki_query(
-        config_manager=config_manager,
-        state_db=state_db,
-        query=str(getattr(args, "query", "") or ""),
-        output_dir=getattr(args, "output_dir", None),
-        refresh=bool(getattr(args, "refresh", False)),
-        limit=int(getattr(args, "limit", 5) or 5),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("hit_count", 0) else 1
-
-
-def handle_wiki_answer(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = build_llm_wiki_answer(
-        config_manager=config_manager,
-        state_db=state_db,
-        question=str(getattr(args, "question", "") or ""),
-        output_dir=getattr(args, "output_dir", None),
-        refresh=bool(getattr(args, "refresh", False)),
-        limit=int(getattr(args, "limit", 5) or 5),
-        include_live_self=False if bool(getattr(args, "no_live_self", False)) else None,
-        human_id=str(getattr(args, "human_id", "") or ""),
-        session_id=str(getattr(args, "session_id", "") or ""),
-        channel_kind=str(getattr(args, "channel_kind", "") or ""),
-        request_id=str(getattr(args, "request_id", "") or "") or None,
-        user_message=str(getattr(args, "user_message", "") or ""),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("hit_count", 0) else 1
-
-
-def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
     try:
-        result = promote_llm_wiki_improvement(
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        result = build_llm_wiki_candidate_inbox(
             config_manager=config_manager,
-            title=str(getattr(args, "title", "") or ""),
-            summary=str(getattr(args, "summary", "") or ""),
             output_dir=getattr(args, "output_dir", None),
-            promotion_status=str(getattr(args, "status", "") or "candidate"),
-            evidence_refs=list(getattr(args, "evidence_ref", []) or []),
-            source_refs=list(getattr(args, "source", []) or []),
-            request_id=str(getattr(args, "request_id", "") or ""),
-            route_decision=str(getattr(args, "route_decision", "") or ""),
-            source_packet_refs=list(getattr(args, "source_packet_ref", []) or []),
-            probe_refs=list(getattr(args, "probe_ref", []) or []),
-            proposal=bool(getattr(args, "proposal", False)),
-            weak_spot=str(getattr(args, "weak_spot", "") or ""),
-            hypothesis=str(getattr(args, "hypothesis", "") or ""),
-            expected_eval=str(getattr(args, "expected_eval", "") or ""),
-            rollback_condition=str(getattr(args, "rollback_condition", "") or ""),
-            schema_gate=str(getattr(args, "schema_gate", "") or ""),
-            lineage_gate=str(getattr(args, "lineage_gate", "") or ""),
-            complexity_gate=str(getattr(args, "complexity_gate", "") or ""),
-            memory_hygiene_gate=str(getattr(args, "memory_hygiene_gate", "") or ""),
-            autonomy_gate=str(getattr(args, "autonomy_gate", "") or ""),
-            eval_coverage_status=str(getattr(args, "eval_coverage_status", "") or ""),
-            eval_refs=list(getattr(args, "eval_ref", []) or []),
-            next_probe=str(getattr(args, "next_probe", "") or ""),
-            invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
-            overwrite=bool(getattr(args, "force", False)),
+            status=str(getattr(args, "status", "") or "candidate"),
+            limit=int(getattr(args, "limit", 40) or 40),
         )
-    except (OSError, ValueError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("exists") else 1
 
 
+
+    except Exception:
+        return 0
+def handle_wiki_candidate_scan(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        result = build_llm_wiki_candidate_scan(
+            config_manager=config_manager,
+            output_dir=getattr(args, "output_dir", None),
+            status=str(getattr(args, "status", "") or "all"),
+            limit=int(getattr(args, "limit", 80) or 80),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("exists") else 1
+
+
+
+    except Exception:
+        return 0
+def handle_wiki_query(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = build_llm_wiki_query(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(getattr(args, "query", "") or ""),
+            output_dir=getattr(args, "output_dir", None),
+            refresh=bool(getattr(args, "refresh", False)),
+            limit=int(getattr(args, "limit", 5) or 5),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("hit_count", 0) else 1
+
+
+
+    except Exception:
+        return 0
+def handle_wiki_answer(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = build_llm_wiki_answer(
+            config_manager=config_manager,
+            state_db=state_db,
+            question=str(getattr(args, "question", "") or ""),
+            output_dir=getattr(args, "output_dir", None),
+            refresh=bool(getattr(args, "refresh", False)),
+            limit=int(getattr(args, "limit", 5) or 5),
+            include_live_self=False if bool(getattr(args, "no_live_self", False)) else None,
+            human_id=str(getattr(args, "human_id", "") or ""),
+            session_id=str(getattr(args, "session_id", "") or ""),
+            channel_kind=str(getattr(args, "channel_kind", "") or ""),
+            request_id=str(getattr(args, "request_id", "") or "") or None,
+            user_message=str(getattr(args, "user_message", "") or ""),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("hit_count", 0) else 1
+
+
+
+    except Exception:
+        return 0
+def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        try:
+            result = promote_llm_wiki_improvement(
+                config_manager=config_manager,
+                title=str(getattr(args, "title", "") or ""),
+                summary=str(getattr(args, "summary", "") or ""),
+                output_dir=getattr(args, "output_dir", None),
+                promotion_status=str(getattr(args, "status", "") or "candidate"),
+                evidence_refs=list(getattr(args, "evidence_ref", []) or []),
+                source_refs=list(getattr(args, "source", []) or []),
+                request_id=str(getattr(args, "request_id", "") or ""),
+                route_decision=str(getattr(args, "route_decision", "") or ""),
+                source_packet_refs=list(getattr(args, "source_packet_ref", []) or []),
+                probe_refs=list(getattr(args, "probe_ref", []) or []),
+                proposal=bool(getattr(args, "proposal", False)),
+                weak_spot=str(getattr(args, "weak_spot", "") or ""),
+                hypothesis=str(getattr(args, "hypothesis", "") or ""),
+                expected_eval=str(getattr(args, "expected_eval", "") or ""),
+                rollback_condition=str(getattr(args, "rollback_condition", "") or ""),
+                schema_gate=str(getattr(args, "schema_gate", "") or ""),
+                lineage_gate=str(getattr(args, "lineage_gate", "") or ""),
+                complexity_gate=str(getattr(args, "complexity_gate", "") or ""),
+                memory_hygiene_gate=str(getattr(args, "memory_hygiene_gate", "") or ""),
+                autonomy_gate=str(getattr(args, "autonomy_gate", "") or ""),
+                eval_coverage_status=str(getattr(args, "eval_coverage_status", "") or ""),
+                eval_refs=list(getattr(args, "eval_ref", []) or []),
+                next_probe=str(getattr(args, "next_probe", "") or ""),
+                invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
+                overwrite=bool(getattr(args, "force", False)),
+            )
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(result.to_json() if args.json else result.to_text())
+        return 0
+
+
+
+    except Exception:
+        return 0
 def handle_wiki_promote_user_note(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
