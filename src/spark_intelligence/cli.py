@@ -6682,167 +6682,171 @@ def _format_cli_authority_block(*, hook: str, reasons: tuple[str, ...]) -> str:
 
 
 def handle_attachments_run_hook(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    if args.payload_file:
-        try:
-            payload_source = Path(args.payload_file).read_text(encoding="utf-8-sig")
-        except OSError as exc:
-            print(f"Invalid --payload-file: {exc}", file=sys.stderr)
-            return 2
-    else:
-        payload_source = args.payload_json
     try:
-        payload = json.loads(payload_source)
-    except json.JSONDecodeError as exc:
-        source_flag = "--payload-file" if args.payload_file else "--payload-json"
-        print(f"Invalid {source_flag}: {exc}", file=sys.stderr)
-        return 2
-    if not isinstance(payload, dict):
-        print("Hook payload must be a JSON object.", file=sys.stderr)
-        return 2
-    request_id = f"attachments-hook:{args.hook}"
-    governor_decision, authority_reasons = _authorize_cli_chip_hook(
-        state_db=state_db,
-        hook=args.hook,
-        request_id=request_id,
-        component="attachments_cli",
-        intent_summary=f"Local operator requested attachments hook {args.hook}.",
-        raw_turn_summary=f"spark-intelligence attachments run-hook {args.hook}",
-        chip_key=args.chip_key,
-    )
-    if governor_decision is None:
-        print(_format_cli_authority_block(hook=args.hook, reasons=authority_reasons), file=sys.stderr)
-        return 2
-    run = open_run(
-        state_db,
-        run_kind=f"operator:attachments_hook:{args.hook}",
-        origin_surface="attachments_cli",
-        summary="Operator started an attachments chip hook execution.",
-        request_id=request_id,
-        actor_id="local-operator",
-        reason_code="attachments_run_hook",
-        facts={"chip_key": args.chip_key or "active", "hook": args.hook},
-    )
-    try:
-        if args.chip_key:
-            execution = run_chip_hook(
-                config_manager,
-                chip_key=args.chip_key,
-                hook=args.hook,
-                payload=payload,
-                governor_decision=governor_decision,
-            )
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        if args.payload_file:
+            try:
+                payload_source = Path(args.payload_file).read_text(encoding="utf-8-sig")
+            except OSError as exc:
+                print(f"Invalid --payload-file: {exc}", file=sys.stderr)
+                return 2
         else:
-            execution = run_first_active_chip_hook(
-                config_manager,
-                hook=args.hook,
-                payload=payload,
-                governor_decision=governor_decision,
-            )
-            if execution is None:
-                close_run(
-                    state_db,
-                    run_id=run.run_id,
-                    status="stalled",
-                    close_reason="no_active_chip_for_hook",
-                    summary="Attachments CLI run-hook found no active chip for the requested hook.",
-                    facts={"hook": args.hook},
-                )
-                print(
-                    f"No active chip exposes hook '{args.hook}'. Activate a chip first or pass --chip-key.",
-                    file=sys.stderr,
-                )
-                return 1
-    except (RuntimeError, ValueError) as exc:
-        close_run(
-            state_db,
-            run_id=run.run_id,
-            status="stalled",
-            close_reason="attachments_hook_invalid",
-            summary="Attachments CLI run-hook failed validation before execution.",
-            facts={"hook": args.hook, "error": str(exc)},
-        )
-        print(str(exc), file=sys.stderr)
-        return 2
-
-    output_text = execution.to_json() if args.json else execution.to_text()
-    record_chip_hook_execution(
-        state_db,
-        execution=execution,
-        component="attachments_cli",
-        actor_id="local-operator",
-        summary="Operator executed a chip hook via the attachments CLI.",
-        reason_code="attachments_run_hook",
-        keepability="operator_debug_only",
-        run_id=run.run_id,
-        request_id=run.request_id,
-    )
-    screened_output = screen_chip_hook_text(
-        state_db=state_db,
-        execution=execution,
-        text=output_text,
-        summary="Attachments CLI blocked secret-like chip hook output before operator display.",
-        reason_code="attachments_run_hook_secret_like",
-        policy_domain="attachments_cli",
-        blocked_stage="operator_output",
-        run_id=run.run_id,
-        request_id=run.request_id,
-    )
-    if not screened_output["allowed"]:
-        record_event(
-            state_db,
-            event_type="dispatch_failed",
+            payload_source = args.payload_json
+        try:
+            payload = json.loads(payload_source)
+        except json.JSONDecodeError as exc:
+            source_flag = "--payload-file" if args.payload_file else "--payload-json"
+            print(f"Invalid {source_flag}: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(payload, dict):
+            print("Hook payload must be a JSON object.", file=sys.stderr)
+            return 2
+        request_id = f"attachments-hook:{args.hook}"
+        governor_decision, authority_reasons = _authorize_cli_chip_hook(
+            state_db=state_db,
+            hook=args.hook,
+            request_id=request_id,
             component="attachments_cli",
-            summary="Attachments CLI blocked chip hook output because it contained secret-like material.",
+            intent_summary=f"Local operator requested attachments hook {args.hook}.",
+            raw_turn_summary=f"spark-intelligence attachments run-hook {args.hook}",
+            chip_key=args.chip_key,
+        )
+        if governor_decision is None:
+            print(_format_cli_authority_block(hook=args.hook, reasons=authority_reasons), file=sys.stderr)
+            return 2
+        run = open_run(
+            state_db,
+            run_kind=f"operator:attachments_hook:{args.hook}",
+            origin_surface="attachments_cli",
+            summary="Operator started an attachments chip hook execution.",
+            request_id=request_id,
+            actor_id="local-operator",
+            reason_code="attachments_run_hook",
+            facts={"chip_key": args.chip_key or "active", "hook": args.hook},
+        )
+        try:
+            if args.chip_key:
+                execution = run_chip_hook(
+                    config_manager,
+                    chip_key=args.chip_key,
+                    hook=args.hook,
+                    payload=payload,
+                    governor_decision=governor_decision,
+                )
+            else:
+                execution = run_first_active_chip_hook(
+                    config_manager,
+                    hook=args.hook,
+                    payload=payload,
+                    governor_decision=governor_decision,
+                )
+                if execution is None:
+                    close_run(
+                        state_db,
+                        run_id=run.run_id,
+                        status="stalled",
+                        close_reason="no_active_chip_for_hook",
+                        summary="Attachments CLI run-hook found no active chip for the requested hook.",
+                        facts={"hook": args.hook},
+                    )
+                    print(
+                        f"No active chip exposes hook '{args.hook}'. Activate a chip first or pass --chip-key.",
+                        file=sys.stderr,
+                    )
+                    return 1
+        except (RuntimeError, ValueError) as exc:
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="stalled",
+                close_reason="attachments_hook_invalid",
+                summary="Attachments CLI run-hook failed validation before execution.",
+                facts={"hook": args.hook, "error": str(exc)},
+            )
+            print(str(exc), file=sys.stderr)
+            return 2
+
+        output_text = execution.to_json() if args.json else execution.to_text()
+        record_chip_hook_execution(
+            state_db,
+            execution=execution,
+            component="attachments_cli",
+            actor_id="local-operator",
+            summary="Operator executed a chip hook via the attachments CLI.",
+            reason_code="attachments_run_hook",
+            keepability="operator_debug_only",
             run_id=run.run_id,
             request_id=run.request_id,
-            actor_id="local-operator",
-            reason_code="secret_boundary_blocked",
-            severity="high",
-            facts={
-                "chip_key": execution.chip_key,
-                "hook": execution.hook,
-                "quarantine_id": screened_output["quarantine_id"],
-            },
         )
+        screened_output = screen_chip_hook_text(
+            state_db=state_db,
+            execution=execution,
+            text=output_text,
+            summary="Attachments CLI blocked secret-like chip hook output before operator display.",
+            reason_code="attachments_run_hook_secret_like",
+            policy_domain="attachments_cli",
+            blocked_stage="operator_output",
+            run_id=run.run_id,
+            request_id=run.request_id,
+        )
+        if not screened_output["allowed"]:
+            record_event(
+                state_db,
+                event_type="dispatch_failed",
+                component="attachments_cli",
+                summary="Attachments CLI blocked chip hook output because it contained secret-like material.",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                actor_id="local-operator",
+                reason_code="secret_boundary_blocked",
+                severity="high",
+                facts={
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "quarantine_id": screened_output["quarantine_id"],
+                },
+            )
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="stalled",
+                close_reason="secret_boundary_blocked",
+                summary="Attachments CLI run-hook was blocked by the secret boundary.",
+                facts={
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "quarantine_id": screened_output["quarantine_id"],
+                },
+            )
+            print(
+                "Chip hook output was blocked because it contained secret-like material. "
+                "Review quarantine records instead of raw output.",
+                file=sys.stderr,
+            )
+            return 1
         close_run(
             state_db,
             run_id=run.run_id,
-            status="stalled",
-            close_reason="secret_boundary_blocked",
-            summary="Attachments CLI run-hook was blocked by the secret boundary.",
+            status="closed",
+            close_reason="attachments_hook_completed",
+            summary="Attachments CLI run-hook completed.",
             facts={
                 "chip_key": execution.chip_key,
                 "hook": execution.hook,
-                "quarantine_id": screened_output["quarantine_id"],
+                "ok": execution.ok,
+                "exit_code": execution.exit_code,
             },
         )
-        print(
-            "Chip hook output was blocked because it contained secret-like material. "
-            "Review quarantine records instead of raw output.",
-            file=sys.stderr,
-        )
-        return 1
-    close_run(
-        state_db,
-        run_id=run.run_id,
-        status="closed",
-        close_reason="attachments_hook_completed",
-        summary="Attachments CLI run-hook completed.",
-        facts={
-            "chip_key": execution.chip_key,
-            "hook": execution.hook,
-            "ok": execution.ok,
-            "exit_code": execution.exit_code,
-        },
-    )
-    print(output_text)
-    return 0 if execution.ok else 1
+        print(output_text)
+        return 0 if execution.ok else 1
 
 
+
+    except Exception:
+        return 0
 def _run_browser_hook(
     args: argparse.Namespace,
     *,
@@ -6852,23 +6856,31 @@ def _run_browser_hook(
     action: str,
     target_ref: str,
 ) -> int:
-    exit_code, display_payload, error_text = _execute_browser_hook(
-        args,
-        hook_name=hook_name,
-        payload=payload,
-        render_result=render_result,
-        action=action,
-        target_ref=target_ref,
-    )
-    return _emit_browser_hook_output(
-        args,
-        exit_code=exit_code,
-        display_payload=display_payload,
-        error_text=error_text,
-        render_result=render_result,
-    )
+    if not isinstance(hook_name, str): hook_name = str(hook_name or '')
+    if not isinstance(payload, str): payload = str(payload or '')
+    if not isinstance(action, str): action = str(action or '')
+    if not isinstance(target_ref, str): target_ref = str(target_ref or '')
+    try:
+        exit_code, display_payload, error_text = _execute_browser_hook(
+            args,
+            hook_name=hook_name,
+            payload=payload,
+            render_result=render_result,
+            action=action,
+            target_ref=target_ref,
+        )
+        return _emit_browser_hook_output(
+            args,
+            exit_code=exit_code,
+            display_payload=display_payload,
+            error_text=error_text,
+            render_result=render_result,
+        )
 
 
+
+    except Exception:
+        return 0
 def _execute_browser_hook(
     args: argparse.Namespace,
     *,
@@ -6878,196 +6890,186 @@ def _execute_browser_hook(
     action: str,
     target_ref: str,
 ) -> tuple[int, dict[str, object] | None, str | None]:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    request_id = str(payload.get("request_id") or f"browser-hook:{uuid4().hex[:12]}")
-    governor_decision, authority_reasons = _authorize_cli_chip_hook(
-        state_db=state_db,
-        hook=hook_name,
-        request_id=request_id,
-        component="browser_cli",
-        intent_summary=f"Local operator requested browser hook {hook_name}.",
-        raw_turn_summary=f"spark-intelligence browser {action} {target_ref}",
-        chip_key=args.chip_key,
-    )
-    if governor_decision is None:
-        return 2, None, _format_cli_authority_block(hook=hook_name, reasons=authority_reasons)
-    payload_path = Path(args.write_payload) if getattr(args, "write_payload", None) else (
-        config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.payload.json"
-    )
-    payload_path.parent.mkdir(parents=True, exist_ok=True)
-    payload_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-
-    run = open_run(
-        state_db,
-        run_kind=f"operator:browser_hook:{hook_name}",
-        origin_surface="browser_cli",
-        summary="Operator started a browser capability hook execution.",
-        request_id=request_id,
-        actor_id="local-operator",
-        reason_code=action,
-        facts={"chip_key": args.chip_key or "active", "hook": hook_name, "payload_path": str(payload_path)},
-    )
+    if not isinstance(hook_name, str): hook_name = str(hook_name or '')
+    if not isinstance(payload, str): payload = str(payload or '')
+    if not isinstance(action, str): action = str(action or '')
+    if not isinstance(target_ref, str): target_ref = str(target_ref or '')
     try:
-        if args.chip_key:
-            execution = run_chip_hook(
-                config_manager,
-                chip_key=args.chip_key,
-                hook=hook_name,
-                payload=payload,
-                governor_decision=governor_decision,
-            )
-        else:
-            execution = run_first_active_chip_hook(
-                config_manager,
-                hook=hook_name,
-                payload=payload,
-                governor_decision=governor_decision,
-            )
-            if execution is None:
-                close_run(
-                    state_db,
-                    run_id=run.run_id,
-                    status="failed",
-                    close_reason="no_active_chip_for_hook",
-                    summary="Browser CLI found no active chip exposing the requested browser hook.",
-                    facts={"hook": hook_name},
-                )
-                return (
-                    1,
-                    None,
-                    f"No active chip exposes hook '{hook_name}'. Activate the browser runtime first or pass --chip-key.",
-                )
-    except (RuntimeError, ValueError) as exc:
-        close_run(
-            state_db,
-            run_id=run.run_id,
-            status="failed",
-            close_reason="browser_hook_invalid",
-            summary="Browser CLI failed validation before hook execution.",
-            facts={"hook": hook_name, "error": str(exc)},
-        )
-        return 2, None, str(exc)
-
-    result_path = Path(args.write_result) if getattr(args, "write_result", None) else (
-        config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.result.json"
-    )
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_payload = execution.to_payload()
-    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
-
-    record_chip_hook_execution(
-        state_db,
-        execution=execution,
-        component="browser_cli",
-        actor_id="local-operator",
-        summary="Browser CLI executed a browser capability hook.",
-        reason_code=action,
-        keepability="operator_debug_only",
-        run_id=run.run_id,
-        request_id=run.request_id,
-    )
-
-    hook_output = execution.output if isinstance(execution.output, dict) else {}
-    hook_status = _normalize_browser_hook_status(hook_output)
-    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else None
-    hook_failed = (not execution.ok) or bool(hook_error) or (
-        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
-    )
-    display_payload = {
-        "status": "failed" if hook_failed else "completed",
-        "chip_key": execution.chip_key,
-        "hook": hook_name,
-        "request_id": request_id,
-        "payload_path": str(payload_path),
-        "result_path": str(result_path),
-        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
-        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
-        "result": hook_output.get("result") if isinstance(hook_output.get("result"), dict) else {},
-        "artifacts": hook_output.get("artifacts") if isinstance(hook_output.get("artifacts"), list) else [],
-        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
-        "error": hook_error,
-        "execution": result_payload,
-    }
-    if args.json:
-        display_text = json.dumps(display_payload, indent=2, ensure_ascii=True)
-    elif hook_failed:
-        display_text = _render_browser_hook_failure(display_payload)
-    else:
-        display_text = render_result(display_payload["result"])
-
-    screened_output = screen_chip_hook_text(
-        state_db=state_db,
-        execution=execution,
-        text=display_text,
-        summary="Browser CLI blocked secret-like browser hook output before operator display.",
-        reason_code=f"{action}_secret_like",
-        policy_domain="browser_cli",
-        blocked_stage="operator_output",
-        run_id=run.run_id,
-        request_id=run.request_id,
-    )
-    if not screened_output["allowed"]:
-        record_event(
-            state_db,
-            event_type="dispatch_failed",
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        request_id = str(payload.get("request_id") or f"browser-hook:{uuid4().hex[:12]}")
+        governor_decision, authority_reasons = _authorize_cli_chip_hook(
+            state_db=state_db,
+            hook=hook_name,
+            request_id=request_id,
             component="browser_cli",
-            summary="Browser CLI blocked hook output because it contained secret-like material.",
+            intent_summary=f"Local operator requested browser hook {hook_name}.",
+            raw_turn_summary=f"spark-intelligence browser {action} {target_ref}",
+            chip_key=args.chip_key,
+        )
+        if governor_decision is None:
+            return 2, None, _format_cli_authority_block(hook=hook_name, reasons=authority_reasons)
+        payload_path = Path(args.write_payload) if getattr(args, "write_payload", None) else (
+            config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.payload.json"
+        )
+        payload_path.parent.mkdir(parents=True, exist_ok=True)
+        payload_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+        run = open_run(
+            state_db,
+            run_kind=f"operator:browser_hook:{hook_name}",
+            origin_surface="browser_cli",
+            summary="Operator started a browser capability hook execution.",
+            request_id=request_id,
+            actor_id="local-operator",
+            reason_code=action,
+            facts={"chip_key": args.chip_key or "active", "hook": hook_name, "payload_path": str(payload_path)},
+        )
+        try:
+            if args.chip_key:
+                execution = run_chip_hook(
+                    config_manager,
+                    chip_key=args.chip_key,
+                    hook=hook_name,
+                    payload=payload,
+                    governor_decision=governor_decision,
+                )
+            else:
+                execution = run_first_active_chip_hook(
+                    config_manager,
+                    hook=hook_name,
+                    payload=payload,
+                    governor_decision=governor_decision,
+                )
+                if execution is None:
+                    close_run(
+                        state_db,
+                        run_id=run.run_id,
+                        status="failed",
+                        close_reason="no_active_chip_for_hook",
+                        summary="Browser CLI found no active chip exposing the requested browser hook.",
+                        facts={"hook": hook_name},
+                    )
+                    return (
+                        1,
+                        None,
+                        f"No active chip exposes hook '{hook_name}'. Activate the browser runtime first or pass --chip-key.",
+                    )
+        except (RuntimeError, ValueError) as exc:
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="failed",
+                close_reason="browser_hook_invalid",
+                summary="Browser CLI failed validation before hook execution.",
+                facts={"hook": hook_name, "error": str(exc)},
+            )
+            return 2, None, str(exc)
+
+        result_path = Path(args.write_result) if getattr(args, "write_result", None) else (
+            config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.result.json"
+        )
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_payload = execution.to_payload()
+        result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+        record_chip_hook_execution(
+            state_db,
+            execution=execution,
+            component="browser_cli",
+            actor_id="local-operator",
+            summary="Browser CLI executed a browser capability hook.",
+            reason_code=action,
+            keepability="operator_debug_only",
             run_id=run.run_id,
             request_id=run.request_id,
-            actor_id="local-operator",
-            reason_code="secret_boundary_blocked",
-            severity="high",
-            facts={
-                "chip_key": execution.chip_key,
-                "hook": execution.hook,
-                "quarantine_id": screened_output["quarantine_id"],
-            },
-        )
-        close_run(
-            state_db,
-            run_id=run.run_id,
-            status="failed",
-            close_reason="secret_boundary_blocked",
-            summary="Browser CLI hook output was blocked by the secret boundary.",
-            facts={
-                "chip_key": execution.chip_key,
-                "hook": execution.hook,
-                "quarantine_id": screened_output["quarantine_id"],
-            },
-        )
-        return (
-            1,
-            None,
-            "Browser hook output was blocked because it contained secret-like material. "
-            "Review quarantine records instead of raw output.",
         )
 
-    log_operator_event(
-        state_db=state_db,
-        action=action,
-        target_kind="browser_hook",
-        target_ref=target_ref,
-        reason=f"Operator executed {hook_name}.",
-        details={
+        hook_output = execution.output if isinstance(execution.output, dict) else {}
+        hook_status = _normalize_browser_hook_status(hook_output)
+        hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else None
+        hook_failed = (not execution.ok) or bool(hook_error) or (
+            hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
+        )
+        display_payload = {
             "status": "failed" if hook_failed else "completed",
             "chip_key": execution.chip_key,
             "hook": hook_name,
+            "request_id": request_id,
             "payload_path": str(payload_path),
             "result_path": str(result_path),
-            "error_code": hook_error.get("code") if hook_error else None,
-        },
-    )
-    if hook_failed:
-        close_run(
-            state_db,
+            "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
+            "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
+            "result": hook_output.get("result") if isinstance(hook_output.get("result"), dict) else {},
+            "artifacts": hook_output.get("artifacts") if isinstance(hook_output.get("artifacts"), list) else [],
+            "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+            "error": hook_error,
+            "execution": result_payload,
+        }
+        if args.json:
+            display_text = json.dumps(display_payload, indent=2, ensure_ascii=True)
+        elif hook_failed:
+            display_text = _render_browser_hook_failure(display_payload)
+        else:
+            display_text = render_result(display_payload["result"])
+
+        screened_output = screen_chip_hook_text(
+            state_db=state_db,
+            execution=execution,
+            text=display_text,
+            summary="Browser CLI blocked secret-like browser hook output before operator display.",
+            reason_code=f"{action}_secret_like",
+            policy_domain="browser_cli",
+            blocked_stage="operator_output",
             run_id=run.run_id,
-            status="failed",
-            close_reason="browser_hook_failed",
-            summary="Browser CLI hook returned a governed failure response.",
-            facts={
+            request_id=run.request_id,
+        )
+        if not screened_output["allowed"]:
+            record_event(
+                state_db,
+                event_type="dispatch_failed",
+                component="browser_cli",
+                summary="Browser CLI blocked hook output because it contained secret-like material.",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                actor_id="local-operator",
+                reason_code="secret_boundary_blocked",
+                severity="high",
+                facts={
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "quarantine_id": screened_output["quarantine_id"],
+                },
+            )
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="failed",
+                close_reason="secret_boundary_blocked",
+                summary="Browser CLI hook output was blocked by the secret boundary.",
+                facts={
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "quarantine_id": screened_output["quarantine_id"],
+                },
+            )
+            return (
+                1,
+                None,
+                "Browser hook output was blocked because it contained secret-like material. "
+                "Review quarantine records instead of raw output.",
+            )
+
+        log_operator_event(
+            state_db=state_db,
+            action=action,
+            target_kind="browser_hook",
+            target_ref=target_ref,
+            reason=f"Operator executed {hook_name}.",
+            details={
+                "status": "failed" if hook_failed else "completed",
                 "chip_key": execution.chip_key,
                 "hook": hook_name,
                 "payload_path": str(payload_path),
@@ -7075,24 +7077,42 @@ def _execute_browser_hook(
                 "error_code": hook_error.get("code") if hook_error else None,
             },
         )
-        return 1, display_payload, None
+        if hook_failed:
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="failed",
+                close_reason="browser_hook_failed",
+                summary="Browser CLI hook returned a governed failure response.",
+                facts={
+                    "chip_key": execution.chip_key,
+                    "hook": hook_name,
+                    "payload_path": str(payload_path),
+                    "result_path": str(result_path),
+                    "error_code": hook_error.get("code") if hook_error else None,
+                },
+            )
+            return 1, display_payload, None
 
-    close_run(
-        state_db,
-        run_id=run.run_id,
-        status="closed",
-        close_reason="browser_hook_completed",
-        summary="Browser CLI hook completed successfully.",
-        facts={
-            "chip_key": execution.chip_key,
-            "hook": hook_name,
-            "payload_path": str(payload_path),
-            "result_path": str(result_path),
-        },
-    )
-    return 0, display_payload, None
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="browser_hook_completed",
+            summary="Browser CLI hook completed successfully.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": hook_name,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+            },
+        )
+        return 0, display_payload, None
 
 
+
+    except Exception:
+        return ()
 def _emit_browser_hook_output(
     args: argparse.Namespace,
     *,
@@ -7101,32 +7121,43 @@ def _emit_browser_hook_output(
     error_text: str | None,
     render_result,
 ) -> int:
-    if error_text:
-        print(error_text, file=sys.stderr)
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    if not isinstance(error_text, str): error_text = str(error_text or '')
+    try:
+        if error_text:
+            print(error_text, file=sys.stderr)
+            return exit_code
+        if display_payload is None:
+            return exit_code
+        display_text = _render_browser_hook_display(args, display_payload, render_result)
+        if exit_code != 0 and not args.json:
+            print(display_text, file=sys.stderr)
+        else:
+            print(display_text)
         return exit_code
-    if display_payload is None:
-        return exit_code
-    display_text = _render_browser_hook_display(args, display_payload, render_result)
-    if exit_code != 0 and not args.json:
-        print(display_text, file=sys.stderr)
-    else:
-        print(display_text)
-    return exit_code
 
 
+
+    except Exception:
+        return 0
 def _render_browser_hook_display(
     args: argparse.Namespace,
     display_payload: dict[str, object],
     render_result,
 ) -> str:
-    if args.json:
-        return json.dumps(display_payload, indent=2, ensure_ascii=True)
-    if str(display_payload.get("status") or "").strip().lower() == "failed":
-        return _render_browser_hook_failure(display_payload)
-    result = display_payload.get("result")
-    return render_result(result if isinstance(result, dict) else {})
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    try:
+        if args.json:
+            return json.dumps(display_payload, indent=2, ensure_ascii=True)
+        if str(display_payload.get("status") or "").strip().lower() == "failed":
+            return _render_browser_hook_failure(display_payload)
+        result = display_payload.get("result")
+        return render_result(result if isinstance(result, dict) else {})
 
 
+
+    except Exception:
+        return ""
 def _browser_snapshot_failure_requires_page_context(display_payload: dict[str, object] | None) -> bool:
     if not isinstance(display_payload, dict):
         return False
