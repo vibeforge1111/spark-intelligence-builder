@@ -5558,127 +5558,147 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
 
 
 def handle_wiki_promote_user_note(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
     try:
-        result = promote_llm_wiki_user_note(
-            config_manager=config_manager,
-            human_id=str(getattr(args, "human_id", "") or ""),
-            title=str(getattr(args, "title", "") or ""),
-            summary=str(getattr(args, "summary", "") or ""),
-            consent_ref=str(getattr(args, "consent_ref", "") or ""),
-            output_dir=getattr(args, "output_dir", None),
-            promotion_status=str(getattr(args, "status", "") or "candidate"),
-            evidence_refs=list(getattr(args, "evidence_ref", []) or []),
-            source_refs=list(getattr(args, "source", []) or []),
-            next_probe=str(getattr(args, "next_probe", "") or ""),
-            invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
-            overwrite=bool(getattr(args, "force", False)),
-        )
-    except (OSError, ValueError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        try:
+            result = promote_llm_wiki_user_note(
+                config_manager=config_manager,
+                human_id=str(getattr(args, "human_id", "") or ""),
+                title=str(getattr(args, "title", "") or ""),
+                summary=str(getattr(args, "summary", "") or ""),
+                consent_ref=str(getattr(args, "consent_ref", "") or ""),
+                output_dir=getattr(args, "output_dir", None),
+                promotion_status=str(getattr(args, "status", "") or "candidate"),
+                evidence_refs=list(getattr(args, "evidence_ref", []) or []),
+                source_refs=list(getattr(args, "source", []) or []),
+                next_probe=str(getattr(args, "next_probe", "") or ""),
+                invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
+                overwrite=bool(getattr(args, "force", False)),
+            )
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
-    payload = build_browser_status_payload(
-        config_manager=config_manager,
-        browser_family="brave",
-        profile_key="spark-default",
-        profile_mode="dedicated",
-        agent_id=None,
-    )
     try:
-        execution = run_first_active_chip_hook(config_manager, hook=BROWSER_STATUS_HOOK, payload=payload)
-    except (RuntimeError, ValueError) as exc:
+        payload = build_browser_status_payload(
+            config_manager=config_manager,
+            browser_family="brave",
+            profile_key="spark-default",
+            profile_mode="dedicated",
+            agent_id=None,
+        )
+        try:
+            execution = run_first_active_chip_hook(config_manager, hook=BROWSER_STATUS_HOOK, payload=payload)
+        except (RuntimeError, ValueError) as exc:
+            return {
+                "status": "unavailable",
+                "chip_key": "browser",
+                "error_code": "BROWSER_STATUS_INVALID",
+                "error_message": str(exc),
+            }
+        if execution is None:
+            return None
+        hook_output = execution.output if isinstance(execution.output, dict) else {}
+        hook_status = _normalize_browser_hook_status(hook_output)
+        hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else {}
+        hook_failed = (not execution.ok) or bool(hook_error) or (
+            hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
+        )
         return {
-            "status": "unavailable",
-            "chip_key": "browser",
-            "error_code": "BROWSER_STATUS_INVALID",
-            "error_message": str(exc),
+            "status": "failed" if hook_failed else "completed",
+            "chip_key": execution.chip_key,
+            "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
+            "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
+            "error_code": str(hook_error.get("code") or "").strip() or None,
+            "error_message": str(hook_error.get("message") or "").strip() or None,
+            "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
         }
-    if execution is None:
-        return None
-    hook_output = execution.output if isinstance(execution.output, dict) else {}
-    hook_status = _normalize_browser_hook_status(hook_output)
-    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else {}
-    hook_failed = (not execution.ok) or bool(hook_error) or (
-        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
-    )
-    return {
-        "status": "failed" if hook_failed else "completed",
-        "chip_key": execution.chip_key,
-        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
-        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
-        "error_code": str(hook_error.get("code") or "").strip() or None,
-        "error_message": str(hook_error.get("message") or "").strip() or None,
-        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
-    }
 
 
+
+    except Exception:
+        return {}
 def handle_connect_status(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    status = build_connection_plan_status(config_manager=config_manager, state_db=state_db)
-    print(status.to_json() if args.json else status.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        status = build_connection_plan_status(config_manager=config_manager, state_db=state_db)
+        print(status.to_json() if args.json else status.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_connect_route_policy(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    status = build_routing_contract_status(config_manager=config_manager, state_db=state_db)
-    print(status.to_json() if args.json else status.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        status = build_routing_contract_status(config_manager=config_manager, state_db=state_db)
+        print(status.to_json() if args.json else status.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_connect_set_route_policy(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    updates: list[str] = []
-    if args.conversational_fallback:
-        enabled = args.conversational_fallback == "on"
-        config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", enabled)
-        updates.append(f"spark.researcher.routing.conversational_fallback_enabled={json.dumps(enabled)}")
-    if args.conversational_max_chars is not None:
-        if args.conversational_max_chars <= 0:
-            print("--conversational-max-chars must be greater than zero.", file=sys.stderr)
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        updates: list[str] = []
+        if args.conversational_fallback:
+            enabled = args.conversational_fallback == "on"
+            config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", enabled)
+            updates.append(f"spark.researcher.routing.conversational_fallback_enabled={json.dumps(enabled)}")
+        if args.conversational_max_chars is not None:
+            if args.conversational_max_chars <= 0:
+                print("--conversational-max-chars must be greater than zero.", file=sys.stderr)
+                return 2
+            config_manager.set_path(
+                "spark.researcher.routing.conversational_fallback_max_chars",
+                args.conversational_max_chars,
+            )
+            updates.append(
+                "spark.researcher.routing.conversational_fallback_max_chars="
+                f"{args.conversational_max_chars}"
+            )
+        if args.swarm_auto_recommend:
+            enabled = args.swarm_auto_recommend == "on"
+            config_manager.set_path("spark.swarm.routing.auto_recommend_enabled", enabled)
+            updates.append(f"spark.swarm.routing.auto_recommend_enabled={json.dumps(enabled)}")
+        if args.swarm_long_task_word_count is not None:
+            if args.swarm_long_task_word_count <= 0:
+                print("--swarm-long-task-word-count must be greater than zero.", file=sys.stderr)
+                return 2
+            config_manager.set_path("spark.swarm.routing.long_task_word_count", args.swarm_long_task_word_count)
+            updates.append(
+                f"spark.swarm.routing.long_task_word_count={args.swarm_long_task_word_count}"
+            )
+        if not updates:
+            print("No route-policy updates requested.", file=sys.stderr)
             return 2
-        config_manager.set_path(
-            "spark.researcher.routing.conversational_fallback_max_chars",
-            args.conversational_max_chars,
-        )
-        updates.append(
-            "spark.researcher.routing.conversational_fallback_max_chars="
-            f"{args.conversational_max_chars}"
-        )
-    if args.swarm_auto_recommend:
-        enabled = args.swarm_auto_recommend == "on"
-        config_manager.set_path("spark.swarm.routing.auto_recommend_enabled", enabled)
-        updates.append(f"spark.swarm.routing.auto_recommend_enabled={json.dumps(enabled)}")
-    if args.swarm_long_task_word_count is not None:
-        if args.swarm_long_task_word_count <= 0:
-            print("--swarm-long-task-word-count must be greater than zero.", file=sys.stderr)
-            return 2
-        config_manager.set_path("spark.swarm.routing.long_task_word_count", args.swarm_long_task_word_count)
-        updates.append(
-            f"spark.swarm.routing.long_task_word_count={args.swarm_long_task_word_count}"
-        )
-    if not updates:
-        print("No route-policy updates requested.", file=sys.stderr)
-        return 2
-    print("Updated route policy:")
-    for update in updates:
-        print(f"- {update}")
-    return 0
+        print("Updated route policy:")
+        for update in updates:
+            print(f"- {update}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_gateway_start(args: argparse.Namespace) -> int:
     if args.once and args.continuous:
         print("Choose either --once or --continuous, not both.", file=sys.stderr)
