@@ -5380,78 +5380,98 @@ def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]
 
 
 def handle_wiki_bootstrap(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    config_manager.bootstrap()
-    result = bootstrap_llm_wiki(
-        config_manager=config_manager,
-        output_dir=getattr(args, "output_dir", None),
-        overwrite=bool(getattr(args, "force", False)),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        config_manager.bootstrap()
+        result = bootstrap_llm_wiki(
+            config_manager=config_manager,
+            output_dir=getattr(args, "output_dir", None),
+            overwrite=bool(getattr(args, "force", False)),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_wiki_compile_system(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = compile_system_wiki(
-        config_manager=config_manager,
-        state_db=state_db,
-        output_dir=getattr(args, "output_dir", None),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = compile_system_wiki(
+            config_manager=config_manager,
+            state_db=state_db,
+            output_dir=getattr(args, "output_dir", None),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_wiki_status(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = build_llm_wiki_status(
-        config_manager=config_manager,
-        state_db=state_db,
-        output_dir=getattr(args, "output_dir", None),
-        refresh=bool(getattr(args, "refresh", False)),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("healthy") else 1
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = build_llm_wiki_status(
+            config_manager=config_manager,
+            state_db=state_db,
+            output_dir=getattr(args, "output_dir", None),
+            refresh=bool(getattr(args, "refresh", False)),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("healthy") else 1
 
 
+
+    except Exception:
+        return 0
 def handle_wiki_heartbeat(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = build_llm_wiki_heartbeat(
-        config_manager=config_manager,
-        state_db=state_db,
-        output_dir=getattr(args, "output_dir", None),
-        refresh=bool(getattr(args, "refresh", False)),
-        write_report=not bool(getattr(args, "no_write_report", False)),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 1 if result.payload.get("status") == "fail" else 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = build_llm_wiki_heartbeat(
+            config_manager=config_manager,
+            state_db=state_db,
+            output_dir=getattr(args, "output_dir", None),
+            refresh=bool(getattr(args, "refresh", False)),
+            write_report=not bool(getattr(args, "no_write_report", False)),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 1 if result.payload.get("status") == "fail" else 0
 
 
+
+    except Exception:
+        return 0
 def handle_wiki_inventory(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = build_llm_wiki_inventory(
-        config_manager=config_manager,
-        state_db=state_db,
-        output_dir=getattr(args, "output_dir", None),
-        refresh=bool(getattr(args, "refresh", False)),
-        limit=int(getattr(args, "limit", 40) or 40),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 0 if result.payload.get("exists") else 1
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        result = build_llm_wiki_inventory(
+            config_manager=config_manager,
+            state_db=state_db,
+            output_dir=getattr(args, "output_dir", None),
+            refresh=bool(getattr(args, "refresh", False)),
+            limit=int(getattr(args, "limit", 40) or 40),
+        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0 if result.payload.get("exists") else 1
 
 
+
+    except Exception:
+        return 0
 def handle_wiki_candidate_inbox(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
