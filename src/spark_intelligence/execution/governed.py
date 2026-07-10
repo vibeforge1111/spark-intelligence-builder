@@ -43,6 +43,7 @@ def run_governed_command(
         run_kwargs["encoding"] = encoding
     if errors:
         run_kwargs["errors"] = errors
+    run_kwargs.setdefault("timeout", 300)
     completed = subprocess.run(
         command,
         **run_kwargs,
