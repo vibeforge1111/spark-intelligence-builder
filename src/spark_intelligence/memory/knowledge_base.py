@@ -168,6 +168,10 @@ def _stable_absolute_path(path: Path) -> Path:
 
 
 def _prepare_output_dir(output_dir: Path) -> None:
+    resolved = output_dir.resolve()
+    # Guard against deleting extremely shallow paths due to config mistakes.
+    if len(resolved.parts) < 3:
+        raise RuntimeError(f"Refusing to delete shallow output_dir: {resolved}")
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
