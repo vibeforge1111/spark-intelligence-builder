@@ -155,11 +155,20 @@ class GatewayAskTelegramTests(SparkTestCase):
                 "diagnostic_question",
             },
         }
-        for phrase, expected_signals in direct_context_loss_cases.items():
-            with self.subTest(phrase=phrase):
+         for phrase, expected_signals in direct_context_loss_cases.items():
+         with self.subTest(phrase=phrase):
                 signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
                 self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
                 self.assertTrue(expected_signals.issubset(signal_names))
+
+        install_guidance_cases = [
+            "Mission 02 QA test. Do not inspect files. Do not search recursively. Do not build an app. Do not start Canvas. I only need written macOS/Linux install instructions for Spark. Use copyable bash code blocks.",
+            "From a clean macOS or Linux terminal, give me the fresh Spark install path with prerequisites, dry-run command, and install command.",
+        ]
+        for phrase in install_guidance_cases:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(_memory_doctor_distress_score(phrase), 0)
+                self.assertEqual(_memory_doctor_distress_signals(phrase), [])
 
         direct_repeat_complaint_cases = {
             "why are you asking me again": {
