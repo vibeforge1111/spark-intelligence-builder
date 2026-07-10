@@ -184,11 +184,6 @@ def prepare_outbound_text(
         cleaned = sanitized
         actions.append("replace_em_dashes")
 
-    redacted = redact_text(cleaned)
-    if redacted != cleaned:
-        cleaned = redacted
-        actions.append("redact_sensitive_text")
-
     chunk_size = max(max_reply_chars, 32)
     max_chunks = 5
     chunks = _split_text_for_delivery(cleaned, chunk_size=chunk_size, max_chunks=max_chunks)
