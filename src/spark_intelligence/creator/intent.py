@@ -248,7 +248,7 @@ def _infer_desired_outputs(lower: str) -> dict[str, bool]:
     wants_spawner = _has_any(lower, ("spawner", "canvas", "kanban", "mission", "trackable"))
 
     return {
-        "domain_chip": wants_chip or not (wants_path or wants_autoloop),
+        "domain_chip": wants_chip or not (wants_path or wants_autoloop or wants_telegram or wants_spawner),
         "specialization_path": wants_path,
         "benchmark_pack": True,
         "autoloop_policy": wants_autoloop,
