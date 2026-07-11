@@ -738,7 +738,7 @@ def _run_browser_use_json(command: list[str], *, timeout: int) -> dict[str, Any]
         payload = {}
     if completed.exit_code != 0:
         payload["success"] = False
-        payload["error"] = (completed.stderr or "").strip() or stdout or f"browser-use exited with code {completed.exit_code}"
+        payload["error"] = f"browser-use exited with code {completed.exit_code}"
     return payload
 
 
