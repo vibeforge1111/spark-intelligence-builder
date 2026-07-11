@@ -832,8 +832,25 @@ def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
 
     assert verdict.allowed is False
     assert event_id is None
-    assert verdict.tool_call_ledger is None
-    assert latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5) == []
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
+    recorded_events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(recorded_events) == 1
+    assert recorded_events[0]["status"] == "blocked"
+    with state_db.connect() as conn:
+        ledger_row = conn.execute(
+            """
+            SELECT outcome, status, request_id, turn_id
+            FROM tool_call_ledger
+            WHERE request_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            ("req:blocked-result",),
+        ).fetchone()
+    assert ledger_row is not None
+    assert ledger_row["outcome"] == "deny"
+    assert ledger_row["turn_id"] == verdict.tool_call_ledger["turn_id"]
     assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 
@@ -877,8 +894,25 @@ def test_blocked_scoped_bridge_verdict_cannot_record_success_result(tmp_path) ->
 
     assert verdict.allowed is False
     assert result_events == ()
-    assert verdict.tool_call_ledger is None
-    assert latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5) == []
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
+    recorded_events = latest_events_by_type(state_db, event_type="tool_call_ledger_recorded", limit=5)
+    assert len(recorded_events) == 1
+    assert recorded_events[0]["status"] == "blocked"
+    with state_db.connect() as conn:
+        ledger_row = conn.execute(
+            """
+            SELECT outcome, status, request_id, turn_id
+            FROM tool_call_ledger
+            WHERE request_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            ("req:blocked-scoped-result",),
+        ).fetchone()
+    assert ledger_row is not None
+    assert ledger_row["outcome"] == "deny"
+    assert ledger_row["turn_id"] == verdict.tool_call_ledger["turn_id"]
     assert latest_events_by_type(state_db, event_type="tool_call_ledger_result_recorded", limit=5) == []
 
 

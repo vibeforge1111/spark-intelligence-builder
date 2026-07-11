@@ -640,6 +640,75 @@ class _OpenRecallCurrentStateScanMemoryClient(_HybridRetrievalMemoryClient):
         }
 
 
+class _SlotTargetCurrentStateScanMemoryClient(_HybridRetrievalMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        if payload.get("predicate"):
+            return super().get_current_state(**payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_plan",
+                    "value": "Owner review plan for Spark readiness",
+                    "text": "human:test profile.current_plan Owner review plan for Spark readiness.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_decision",
+                    "value": "All agents should ask clarifying questions before missions.",
+                    "text": "human:test profile.current_decision All agents should ask clarifying questions before missions.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_status",
+                    "value": "Review marker Copper Harbor",
+                    "text": "human:test profile.current_status Review marker Copper Harbor.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+                {
+                    "subject": payload["subject"],
+                    "predicate": "profile.current_constraint",
+                    "value": "quiet two-sentence replies",
+                    "text": "human:test profile.current_constraint quiet two-sentence replies.",
+                    "memory_role": "current_state",
+                    "metadata": {"source_surface": "telegram_memory_write"},
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-slot-target-scan"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "structured_evidence",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence-empty"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "event",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-events-empty"},
+        }
+
+
 class _SupportingOnlyHybridRetrievalMemoryClient(_HybridRetrievalMemoryClient):
     def get_current_state(self, **payload):
         self.current_state_calls.append(payload)
@@ -1223,6 +1292,78 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(packet["source_mix"], {})
         self.assertEqual(packet["sections"], [])
 
+    def test_hybrid_memory_retrieve_prefers_requested_current_state_slots(self) -> None:
+        fake_client = _SlotTargetCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is my current review marker and current constraint?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        selected_predicates = [str(record.get("predicate") or "") for record in result.read_result.records]
+        self.assertEqual(selected_predicates, ["profile.current_status", "profile.current_constraint"])
+        selected_values = [str(record.get("value") or "") for record in result.read_result.records]
+        self.assertIn("Review marker Copper Harbor", selected_values)
+        self.assertIn("quiet two-sentence replies", selected_values)
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(any(candidate["reason_selected"] and "requested_current_state_slot" in candidate["reason_selected"] for candidate in scan_candidates))
+        discarded_by_slot = {
+            str(candidate["predicate"] or "")
+            for candidate in scan_candidates
+            if candidate["reason_discarded"] == "current_state_slot_query_miss"
+        }
+        self.assertIn("profile.current_plan", discarded_by_slot)
+        unselected_predicates = {
+            str(candidate["predicate"] or "")
+            for candidate in scan_candidates
+            if not candidate["selected"]
+        }
+        self.assertIn("profile.current_decision", unselected_predicates)
+        packet = trace["context_packet"]
+        self.assertEqual(packet["sections"][0]["section"], "active_current_state")
+        self.assertEqual(
+            [item["predicate"] for item in packet["sections"][0]["items"]],
+            ["profile.current_status", "profile.current_constraint"],
+        )
+
+    def test_hybrid_memory_retrieve_abstains_when_requested_current_state_slot_is_missing(self) -> None:
+        fake_client = _SlotTargetCurrentStateScanMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is my current owner?",
+                subject="human:test",
+                limit=5,
+                actor_id="test",
+            )
+
+        self.assertTrue(result.read_result.abstained)
+        self.assertEqual(result.read_result.records, [])
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        scan_candidates = [candidate for candidate in trace["candidates"] if candidate["lane"] == "current_state_scan"]
+        self.assertTrue(scan_candidates)
+        self.assertFalse(any(candidate["selected"] for candidate in scan_candidates))
+        self.assertIn(
+            "current_state_slot_query_miss",
+            {candidate["reason_discarded"] for candidate in scan_candidates},
+        )
+        packet = trace["context_packet"]
+        self.assertEqual(packet["source_mix"], {})
+        self.assertEqual(packet["sections"], [])
+
     def test_hybrid_memory_context_packet_warns_when_supporting_sources_swamp_authority(self) -> None:
         fake_client = _SupportingOnlyHybridRetrievalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -1403,6 +1544,80 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(graph_candidates), 1)
         self.assertEqual(graph_candidates[0].source_class, "graphiti_temporal_graph")
         self.assertEqual(graph_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
+
+    def test_disabled_graphiti_lane_does_not_inherit_global_provider_truth(self) -> None:
+        from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarRetrievalResult
+
+        class FakeGraphSidecar:
+            mode = "disabled"
+
+            def upsert_episode(self, episode):
+                return SimpleNamespace(trace={"mode": "disabled", "persisted": False})
+
+            def retrieve(self, request):
+                return MemorySidecarRetrievalResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    hits=[],
+                    trace={"operation": "graphiti_retrieve", "mode": "disabled", "status": "disabled"},
+                )
+
+            def health(self):
+                return MemorySidecarHealthResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    status="disabled",
+                    enabled=False,
+                    mode="disabled",
+                    details={"runtime_effect": "none", "authority": "not_authoritative"},
+                )
+
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", False)
+        self.config_manager.set_path("providers.default_provider", "openai")
+        self.config_manager.set_path(
+            "providers.records.openai",
+            {
+                "provider_kind": "openai",
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url": "https://api.openai.com/v1",
+                "default_model": "gpt-5.4",
+            },
+        )
+        self.config_manager.upsert_env_secret("OPENAI_API_KEY", "test-secret")
+        fake_client = _HybridRetrievalMemoryClient()
+
+        def fake_build_sidecars(**kwargs):
+            self.assertIsNone(kwargs.get("graphiti_llm_api_key_env"))
+            self.assertIsNone(kwargs.get("graphiti_llm_api_key"))
+            self.assertIsNone(kwargs.get("graphiti_llm_base_url"))
+            self.assertIsNone(kwargs.get("graphiti_llm_model"))
+            return {"graphiti_temporal_graph": FakeGraphSidecar()}
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ), patch("domain_chip_memory.build_default_memory_sidecars", side_effect=fake_build_sidecars):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is the current launch constraint?",
+                subject="human:test",
+                predicate="profile.current_constraint",
+                limit=5,
+                actor_id="test",
+            )
+
+        graph_lane = next(
+            lane
+            for lane in result.read_result.retrieval_trace["hybrid_memory_retrieve"]["lane_summaries"]
+            if lane["lane"] == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane["status"], "disabled")
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_disabled")
+        self.assertEqual(graph_lane["llm_provider"]["provider_id"], None)
+        self.assertEqual(graph_lane["llm_provider"]["model"], None)
+        self.assertEqual(graph_lane["llm_provider"]["small_model"], None)
+        self.assertFalse(graph_lane["llm_provider"]["api_key_configured"])
+        self.assertNotIn("gpt-5.4", str(graph_lane))
+        self.assertNotIn("test-secret", str(graph_lane))
 
     def test_hybrid_memory_retrieve_skips_graphiti_retrieve_after_upsert_error(self) -> None:
         from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarUpsertResult
@@ -4700,6 +4915,108 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertFalse(constraint_result.read_result.abstained)
         self.assertEqual(constraint_result.read_result.records[0]["value"], "budget for one engineer")
 
+    def test_domain_chip_persistence_preserves_same_turn_current_state_slots(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        subject = "human:merge:test:same-turn"
+        session_id = "session:merge:test:same-turn"
+        turn_id = "turn:merge:test:same-turn"
+        timestamp = "2026-04-21T10:00:02+00:00"
+        focus_governor = _memory_write_governor_decision(
+            request_id="req-merge-same-turn-focus",
+            session_id=session_id,
+            human_id=subject,
+            user_message="Remember that my current focus is CopperBridge.",
+        )
+        constraint_governor = _memory_write_governor_decision(
+            request_id="req-merge-same-turn-constraint",
+            session_id=session_id,
+            human_id=subject,
+            user_message="Remember that my current constraint is one response at a time.",
+        )
+
+        client = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client)
+        client.write_observation(
+            operation="update",
+            subject=subject,
+            predicate="profile.current_focus",
+            value="CopperBridge",
+            text="My current focus is CopperBridge.",
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+            retention_class="active_state",
+            governor_decision=focus_governor,
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_focus",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_focus",
+                "normalized_value": "CopperBridge",
+            },
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        client = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client)
+        client.write_observation(
+            operation="update",
+            subject=subject,
+            predicate="profile.current_constraint",
+            value="one response at a time",
+            text="My current constraint is one response at a time.",
+            session_id=session_id,
+            turn_id=turn_id,
+            timestamp=timestamp,
+            retention_class="active_state",
+            governor_decision=constraint_governor,
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_constraint",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_constraint",
+                "normalized_value": "one response at a time",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        focus_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject=subject,
+            predicate="profile.current_focus",
+            sdk_module="domain_chip_memory",
+        )
+        constraint_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject=subject,
+            predicate="profile.current_constraint",
+            sdk_module="domain_chip_memory",
+        )
+        payload_path = memory_orchestrator._domain_chip_memory_persistence_path(self.config_manager.paths.home)
+        persisted = json.loads(payload_path.read_text(encoding="utf-8"))
+        persisted_slots = {
+            entry.get("predicate"): (entry.get("metadata") or {}).get("value")
+            for entry in persisted.get("manual_observations", [])
+            if entry.get("subject") == subject
+        }
+
+        self.assertFalse(focus_result.read_result.abstained)
+        self.assertEqual(focus_result.read_result.records[0]["value"], "CopperBridge")
+        self.assertFalse(constraint_result.read_result.abstained)
+        self.assertEqual(constraint_result.read_result.records[0]["value"], "one response at a time")
+        self.assertEqual(persisted_slots["profile.current_focus"], "CopperBridge")
+        self.assertEqual(persisted_slots["profile.current_constraint"], "one response at a time")
+
     def test_domain_chip_persistence_merges_concurrent_current_state_and_event_writes(self) -> None:
         memory_orchestrator._SDK_CLIENT_CACHE.clear()
         client_a = memory_orchestrator._load_sdk_client_for_module(
@@ -5213,6 +5530,29 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert deltas is not None
         self.assertGreater(deltas.get("assertiveness", 0), 0)
         self.assertGreater(deltas.get("directness", 0), 0)
+        self.assertTrue(fake_client.observation_calls)
+        fake_client.observation_calls.clear()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            unseen_deltas = detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="Start with your strongest recommendation before alternatives.",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write-unseen",
+                channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-strongest-recommendation-preference",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
+            )
+
+        self.assertIsNotNone(unseen_deltas)
+        assert unseen_deltas is not None
+        self.assertGreater(unseen_deltas.get("assertiveness", 0), 0)
+        self.assertGreater(unseen_deltas.get("directness", 0), 0)
         self.assertTrue(fake_client.observation_calls)
 
     def test_personality_reset_deletes_memory_preferences(self) -> None:

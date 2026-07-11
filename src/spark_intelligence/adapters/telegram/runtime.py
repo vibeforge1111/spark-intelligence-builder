@@ -1394,6 +1394,7 @@ def _prepare_telegram_media_input(
     state_db: StateDB,
     normalized: Any,
     update_payload: dict[str, Any] | None,
+    request_id: str,
     client: TelegramBotApiClient | None,
 ) -> dict[str, Any]:
     if normalized.message_kind not in {"voice", "audio"}:
@@ -1409,7 +1410,7 @@ def _prepare_telegram_media_input(
         mutation_class="external_network",
         external_network=True,
         state_db=state_db,
-        request_id=f"telegram:{normalized.update_id}",
+        request_id=request_id,
         channel_id="telegram",
         component="telegram_runtime",
     )
@@ -1503,6 +1504,20 @@ def _build_voice_trace_fields(
     }
 
 
+def _telegram_request_id_for_update(
+    update_payload: dict[str, Any],
+    *,
+    normalized: Any,
+    simulation: bool,
+) -> str:
+    incoming_vnext = extract_turn_intent_envelope_vnext(update_payload)
+    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if isinstance(incoming_vnext, dict) else ""
+    if incoming_turn_id:
+        return incoming_turn_id
+    request_prefix = "sim" if simulation else "telegram"
+    return f"{request_prefix}:{normalized.update_id}"
+
+
 def simulate_telegram_update(
     *,
     config_manager: ConfigManager,
@@ -1512,10 +1527,7 @@ def simulate_telegram_update(
     simulation: bool = True,
 ) -> TelegramSimulationResult:
     normalized = normalize_telegram_update(update_payload, channel_id="telegram")
-    request_prefix = "sim" if simulation else "telegram"
-    incoming_vnext = extract_turn_intent_envelope_vnext(update_payload)
-    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if isinstance(incoming_vnext, dict) else ""
-    request_id = incoming_turn_id or f"{request_prefix}:{normalized.update_id}"
+    request_id = _telegram_request_id_for_update(update_payload, normalized=normalized, simulation=simulation)
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
     if not normalized.is_dm:
         return TelegramSimulationResult(
@@ -1569,6 +1581,7 @@ def simulate_telegram_update(
             state_db=state_db,
             normalized=normalized,
             update_payload=update_payload,
+            request_id=request_id,
             client=client,
         )
         if media_input.get("reply_text"):
@@ -2422,6 +2435,7 @@ def poll_telegram_updates_once(
 
     for update in updates:
         normalized = normalize_telegram_update(update, channel_id="telegram")
+        request_id = _telegram_request_id_for_update(update, normalized=normalized, simulation=False)
         next_offset = normalized.update_id + 1
         if is_duplicate_event(
             state_db=state_db,
@@ -2514,7 +2528,7 @@ def poll_telegram_updates_once(
             run_kind="telegram_update",
             origin_surface="telegram_runtime",
             summary=f"Telegram update {normalized.update_id} opened for user {normalized.telegram_user_id}.",
-            request_id=f"telegram:{normalized.update_id}",
+            request_id=request_id,
             channel_id="telegram",
             session_id=resolution.session_id,
             human_id=resolution.human_id,
@@ -2663,6 +2677,7 @@ def poll_telegram_updates_once(
             state_db=state_db,
             normalized=normalized,
             update_payload=update,
+            request_id=request_id,
             client=client,
         )
         if media_input.get("reply_text"):
@@ -3030,7 +3045,7 @@ def poll_telegram_updates_once(
             governor_decision=_telegram_researcher_memory_write_governor_decision(
                 researcher_update_payload,
                 state_db=state_db,
-                request_id=f"telegram:{normalized.update_id}",
+                request_id=run.request_id,
                 run_id=run.run_id,
                 session_id=resolution.session_id,
                 human_id=resolution.human_id,
@@ -3039,7 +3054,7 @@ def poll_telegram_updates_once(
             ),
             config_manager=config_manager,
             state_db=state_db,
-            request_id=f"telegram:{normalized.update_id}",
+            request_id=run.request_id,
             agent_id=resolution.agent_id,
             human_id=resolution.human_id,
             session_id=resolution.session_id,
@@ -3098,7 +3113,7 @@ def poll_telegram_updates_once(
             governor_decision=_telegram_user_instruction_governor_decision_for_message(
                 researcher_update_payload,
                 state_db=state_db,
-                request_id=f"telegram:{normalized.update_id}",
+                request_id=run.request_id,
                 run_id=run.run_id,
                 session_id=resolution.session_id,
                 human_id=resolution.human_id,
