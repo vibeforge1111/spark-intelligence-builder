@@ -160,6 +160,17 @@ _NL_TRAIT_PATTERNS: list[tuple[re.Pattern[str], dict[str, float]]] = [
     (re.compile(r"\b(?:be\s+|more\s+)confident\b", re.I), {"assertiveness": 0.3}),
     (re.compile(r"\bstop\s+(?:apologiz|saying\s+sorry)", re.I), {"assertiveness": 0.3, "directness": 0.2}),
     (re.compile(r"\bjust\s+(?:tell|give)\s+me\b", re.I), {"directness": 0.4, "assertiveness": 0.2}),
+    (
+        re.compile(
+            r"\b(?:i\s+(?:usually|generally|always)\s+(?:want|prefer)|"
+            r"for\s+(?:replies|responses|answers)[^.?!]{0,60}\bi\s+(?:want|prefer)|"
+            r"keep\s+(?:giving|leading))[^.?!]{0,80}\b(?:one|a)\s+"
+            r"(?:brave|decisive|clear)\s+(?:pick|recommendation|call)\s+"
+            r"(?:before|ahead\s+of)\s+(?:options|alternatives)\b",
+            re.I,
+        ),
+        {"directness": 0.3, "assertiveness": 0.3},
+    ),
     (re.compile(r"\bcalm(?:er)?\b|relax\b", re.I), {"assertiveness": -0.2, "warmth": 0.1}),
 ]
 

@@ -4936,6 +4936,57 @@ class MemoryOrchestratorTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=10)
         self.assertTrue(events)
 
+    def test_decisive_first_pick_preference_writes_structured_memory_observation(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _FakeMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            deltas = detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="For replies tonight, I usually want one brave pick before options.",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write",
+                channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-decisive-first-pick-preference",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
+            )
+
+        self.assertIsNotNone(deltas)
+        assert deltas is not None
+        self.assertGreater(deltas.get("assertiveness", 0), 0)
+        self.assertGreater(deltas.get("directness", 0), 0)
+        self.assertTrue(fake_client.observation_calls)
+
+    def test_one_off_brave_pick_request_is_not_saved_as_personality_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _FakeMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            deltas = detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="Give me one brave pick before options for this decision.",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write",
+                channel_kind="telegram",
+                governor_decision=_memory_write_governor_decision(
+                    request_id="req-one-off-brave-pick",
+                    session_id="session:memory",
+                    human_id="human:test",
+                ),
+            )
+
+        self.assertIsNone(deltas)
+        self.assertFalse(fake_client.observation_calls)
+
     def test_personality_reset_deletes_memory_preferences(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

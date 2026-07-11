@@ -11,6 +11,8 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
+from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
+from spark_intelligence.cli import _build_memory_direct_smoke_governor_decision
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
@@ -23,6 +25,8 @@ from spark_intelligence.identity.service import (
 from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+from spark_harness_core.schemas import validate_instance
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
 
@@ -36,6 +40,76 @@ class CliSmokeTests(SparkTestCase):
         for value in ("0", "-1", "abc", "", "5.5"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 _positive_int(value)
+
+    def test_memory_direct_smoke_builds_distinct_canonical_update_and_delete_authority(self) -> None:
+        update = _build_memory_direct_smoke_governor_decision(
+            state_db=self.state_db,
+            subject="human:authority:test",
+            predicate="system.memory.authority",
+            operation="update",
+        )
+        delete = _build_memory_direct_smoke_governor_decision(
+            state_db=self.state_db,
+            subject="human:authority:test",
+            predicate="system.memory.authority",
+            operation="delete",
+        )
+
+        self.assertIsNotNone(update)
+        self.assertIsNotNone(delete)
+        assert update is not None and delete is not None
+        validate_instance("governor-decision-v1", update)
+        validate_instance("governor-decision-v1", delete)
+        self.assertNotEqual(update["decision_id"], delete["decision_id"])
+        self.assertNotEqual(update["turn_id"], delete["turn_id"])
+        for decision in (update, delete):
+            self.assertEqual(decision["outcome"], "execute")
+            action = decision["envelope"]["proposed_actions"][0]
+            self.assertEqual(action["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(action["action_type"], "memory.write")
+            authorization = decision["authorizations"][0]
+            self.assertEqual(authorization["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(authorization["verdict"], "allow")
+            ledger = decision["tool_ledgers"][0]
+            self.assertEqual(ledger["tool_name"], DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME)
+            self.assertEqual(ledger["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(ledger["result"]["status"], "not_started")
+
+    def _telegram_memory_upstream_governor(
+        self,
+        *,
+        request_id: str = "telegram-update:1",
+        human_id: str = "human:telegram:123",
+        session_id: str = "telegram:123",
+    ) -> dict[str, object]:
+        envelope = build_vnext_tool_intent_envelope(
+            surface="telegram",
+            actor_id_ref=human_id,
+            request_id=request_id,
+            source_kind="spark-telegram-bot",
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            intent_summary="Fresh Telegram turn explicitly authorized one scoped memory write.",
+            raw_turn_summary=f"Telegram memory authority smoke request={request_id} session={session_id}.",
+        )
+        self.assertIsInstance(envelope, dict)
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="test",
+            component="test",
+        )
+        self.assertTrue(authority.allowed, authority.reason_codes)
+        self.assertIsInstance(authority.governor_decision, dict)
+        return authority.governor_decision
 
     def test_doctor_command_bootstraps_schema_before_attachment_snapshot_sync(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
