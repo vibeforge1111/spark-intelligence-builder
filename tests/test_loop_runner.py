@@ -1,4 +1,13 @@
+"""Autoloop status truth regressions."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from spark_intelligence.loops import runner
 
@@ -221,3 +230,114 @@ def test_run_chip_autoloop_binds_loop_evidence_to_chip_reports(monkeypatch, tmp_
     assert qa_packet["loop_runner_evidence"]["candidate_trend_only"] is True
     proof = runner._read_json_dict(reports / "proof-capsule-starter.json")
     assert proof["proof"]["loop_runner_evidence"]["status"] == "candidate_trend_bound"
+
+
+def read_status(root: Path, chip_key: str = "domain-chip-test") -> dict:
+    return json.loads((root / f"{chip_key}.status.json").read_text(encoding="utf-8"))
+
+
+class LoopRunnerStatusTests(unittest.TestCase):
+    def test_all_candidate_crashes_fail_without_counting_the_round(self) -> None:
+        def fake_hook(config_manager, *, chip_key, hook, payload, governor_decision):
+            if hook == "suggest":
+                return SimpleNamespace(
+                    ok=True,
+                    output={"suggestions": [{"mutations": {"candidate": 1}}]},
+                    exit_code=0,
+                    stderr="",
+                )
+            return SimpleNamespace(ok=False, output={}, exit_code=1, stderr="candidate crashed")
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(runner, "run_chip_hook", fake_hook):
+            root = Path(temp_dir)
+            result = runner.run_chip_autoloop(
+                config_manager=object(),
+                chip_key="domain-chip-test",
+                rounds=3,
+                suggest_limit=1,
+                artifacts_root=root,
+                suggest_governor_decision={"authority": "test"},
+                evaluate_governor_decision={"authority": "test"},
+            )
+            status = read_status(root)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.rounds_completed, 0)
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["rounds_completed"], 0)
+        self.assertEqual(len(status["history"]), 1)
+
+    def test_successful_run_finishes_with_completed_status(self) -> None:
+        def fake_hook(config_manager, *, chip_key, hook, payload, governor_decision):
+            if hook == "suggest":
+                return SimpleNamespace(
+                    ok=True,
+                    output={"suggestions": [{"mutations": {"candidate": 1}}]},
+                    exit_code=0,
+                    stderr="",
+                )
+            return SimpleNamespace(
+                ok=True,
+                output={"metrics": {"quality_score": 55}, "verdict": "defer"},
+                exit_code=0,
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(runner, "run_chip_hook", fake_hook):
+            root = Path(temp_dir)
+            result = runner.run_chip_autoloop(
+                config_manager=object(),
+                chip_key="domain-chip-test",
+                rounds=2,
+                suggest_limit=1,
+                artifacts_root=root,
+                suggest_governor_decision={"authority": "test"},
+                evaluate_governor_decision={"authority": "test"},
+            )
+            status = read_status(root)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.rounds_completed, 2)
+        self.assertEqual(status["status"], "completed")
+        self.assertEqual(status["rounds_completed"], 2)
+
+    def test_later_crash_counts_only_prior_successful_rounds(self) -> None:
+        def fake_hook(config_manager, *, chip_key, hook, payload, governor_decision):
+            if hook == "suggest":
+                return SimpleNamespace(
+                    ok=True,
+                    output={"suggestions": [{"mutations": {"candidate": 1}}]},
+                    exit_code=0,
+                    stderr="",
+                )
+            if payload["round"] == 1:
+                return SimpleNamespace(
+                    ok=True,
+                    output={"metrics": {"quality_score": 55}, "verdict": "defer"},
+                    exit_code=0,
+                    stderr="",
+                )
+            return SimpleNamespace(ok=False, output={}, exit_code=1, stderr="later crash")
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(runner, "run_chip_hook", fake_hook):
+            root = Path(temp_dir)
+            result = runner.run_chip_autoloop(
+                config_manager=object(),
+                chip_key="domain-chip-test",
+                rounds=3,
+                suggest_limit=1,
+                artifacts_root=root,
+                suggest_governor_decision={"authority": "test"},
+                evaluate_governor_decision={"authority": "test"},
+            )
+            status = read_status(root)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.rounds_completed, 1)
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["rounds_completed"], 1)
+        self.assertEqual(len(status["history"]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

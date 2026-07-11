@@ -49,6 +49,8 @@ jobs:
             tests/test_gateway_discord_webhook.py \
             tests/test_builder_prelaunch_contracts.py \
             tests/test_chip_discovery.py \
+            tests/test_io_protocol_contract.py \
+            tests/test_loop_runner.py \
             -q
 
       - name: Audit Python dependencies

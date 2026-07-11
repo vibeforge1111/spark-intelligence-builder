@@ -168,6 +168,45 @@ def run_first_chip_hook_supporting(
     return None
 
 
+SUPPORTED_IO_PROTOCOLS = frozenset({"spark-hook-io.v1"})
+
+
+def io_protocol_supported(declared: str | None) -> bool:
+    """Return whether Builder can safely speak a chip's declared hook protocol."""
+    return declared in {None, ""} or declared in SUPPORTED_IO_PROTOCOLS
+
+
+
+_MINIMAL_ENV_KEYS = {
+    "PATH", "HOME", "TMPDIR", "TMP", "TEMP",
+    "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
+    "PYTHONPATH", "PYTHONDONTWRITEBYTECODE",
+}
+
+
+def _build_minimal_chip_env(record: AttachmentRecord, repo_root: Path) -> dict[str, str]:
+    """Build minimal environment for chip hook subprocesses.
+
+    Only passes variables needed for execution, preventing
+    credential leakage to potentially untrusted chip code.
+    """
+    env: dict[str, str] = {}
+    for key in _MINIMAL_ENV_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    if "HOME" not in env:
+        env["HOME"] = str(Path.home())
+    src_root = repo_root / "src"
+    if src_root.exists():
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            str(src_root) if not existing else os.pathsep.join([str(src_root), existing])
+        )
+    env.update(_runtime_env_overrides(record))
+    return env
+
+
 def execute_chip_hook_record(
     record: AttachmentRecord,
     *,
@@ -179,9 +218,11 @@ def execute_chip_hook_record(
         raise ValueError(f"Attachment '{record.key}' is not a chip.")
     if _is_disabled_legacy_browser_hook(record.key, hook):
         raise ValueError(LEGACY_BROWSER_DISABLED_MESSAGE)
-    if record.io_protocol not in {None, "", "spark-hook-io.v1"}:
+    if not io_protocol_supported(record.io_protocol):
         raise ValueError(
-            f"Chip '{record.key}' uses unsupported io_protocol '{record.io_protocol}'."
+            f"Chip '{record.key}' declares io_protocol '{record.io_protocol}', which this driver "
+            f"does not support (supported: {', '.join(sorted(SUPPORTED_IO_PROTOCOLS))}). "
+            "Upgrade the driver or regenerate the chip runner from the current template."
         )
     command = list(record.commands.get(hook) or [])
     if not command:

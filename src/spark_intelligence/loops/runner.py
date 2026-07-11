@@ -374,10 +374,11 @@ def run_chip_autoloop(
 
     history: list[dict[str, Any]] = []
 
-    def _write_status(round_idx: int) -> None:
+    def _write_status(completed: int, *, status: str) -> None:
         payload = {
             "chip_key": chip_key,
-            "rounds_completed": round_idx,
+            "status": status,
+            "rounds_completed": completed,
             "total_rounds": rounds,
             "history": history,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -407,6 +408,7 @@ def run_chip_autoloop(
                 governor_decision=suggest_governor_decision,
             )
         except Exception as exc:
+            _write_status(round_idx - 1, status="failed")
             return LoopResult(
                 ok=False,
                 chip_key=chip_key,
@@ -417,6 +419,7 @@ def run_chip_autoloop(
                 error=f"suggest failed at round {round_idx}: {exc}",
             )
         if not suggest_exec.ok:
+            _write_status(round_idx - 1, status="failed")
             return LoopResult(
                 ok=False,
                 chip_key=chip_key,
@@ -484,7 +487,36 @@ def run_chip_autoloop(
             best_metric=best_metric,
         ).to_dict()
         history.append(round_record)
-        _write_status(round_idx)
+
+        successful_evaluations = [
+            evaluation
+            for evaluation in evaluations
+            if isinstance(evaluation.get("output"), dict) and not evaluation.get("error")
+        ]
+        if suggestions and not successful_evaluations:
+            _write_status(round_idx - 1, status="failed")
+            return LoopResult(
+                ok=False,
+                chip_key=chip_key,
+                rounds_completed=round_idx - 1,
+                total_rounds=rounds,
+                history=history,
+                status_path=str(status_path),
+                error=f"evaluate failed for all {len(suggestions)} candidate(s) at round {round_idx}",
+            )
+        if suggestions and best_metric is None:
+            _write_status(round_idx - 1, status="failed")
+            return LoopResult(
+                ok=False,
+                chip_key=chip_key,
+                rounds_completed=round_idx - 1,
+                total_rounds=rounds,
+                history=history,
+                status_path=str(status_path),
+                error=f"evaluate returned no primary metric for {len(successful_evaluations)} candidate(s) at round {round_idx}",
+            )
+
+        _write_status(round_idx, status="running" if round_idx < rounds else "completed")
 
         if suggestions and not successful_evaluations:
             return LoopResult(
