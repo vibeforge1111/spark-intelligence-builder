@@ -10,6 +10,7 @@ from spark_intelligence.bridge_authority import (
     build_telegram_memory_read_turn_intent_payload_vnext,
     build_telegram_memory_diagnostic_turn_intent_payload_vnext,
     build_telegram_memory_turn_intent_payload_vnext,
+    bridge_governor_decision_has_canonical_binding,
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
@@ -25,6 +26,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _authorize_researcher_memory_write,
 )
 from spark_intelligence.state.db import StateDB
+from spark_harness_core.schemas import validate_instance
 
 
 def _envelope(*, route: str = "memory.write", no_execution: bool = False) -> dict:
@@ -164,6 +166,7 @@ def test_authorizes_builder_memory_write_through_governed_legacy_adapter() -> No
     assert verdict.governor_decision["schema_version"] == "governor-decision-v1"
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+    validate_instance("governor-decision-v1", verdict.governor_decision)
 
 
 def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
@@ -194,6 +197,53 @@ def test_authorizes_builder_memory_write_with_native_vnext_envelope() -> None:
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
+    validate_instance("governor-decision-v1", verdict.governor_decision)
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
+    evidence_sources = {
+        (item.get("kind"), item.get("source"))
+        for item in verdict.governor_decision["evidence"]
+        if isinstance(item, dict)
+    }
+    assert ("policy", "issuer:spark-harness-core/governor") in evidence_sources
+    assert ("authority_binding_ref", "provenance:spark-harness-core/authorization") in evidence_sources
+    assert ("runtime_state", "current-binding:builder-bridge") in evidence_sources
+
+
+def test_bridge_governor_canonical_binding_rejects_tampered_evidence() -> None:
+    payload = build_telegram_memory_turn_intent_payload_vnext(
+        request_id="req-write-tampered-governor-evidence",
+        channel_kind="telegram",
+        session_id="session-write-tampered-governor-evidence",
+        human_id="human-write-tampered-governor-evidence",
+        user_message="My favorite color is cobalt blue.",
+        source_kind="telegram_runtime_profile_fact_observation",
+    )
+    assert payload is not None
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+    )
+    assert verdict.governor_decision is not None
+    assert bridge_governor_decision_has_canonical_binding(verdict.governor_decision) is True
+
+    missing_evidence = deepcopy(verdict.governor_decision)
+    missing_evidence["evidence"] = []
+    assert bridge_governor_decision_has_canonical_binding(missing_evidence) is False
+
+    copied_authorization_evidence = deepcopy(verdict.governor_decision)
+    copied_decision_id = copied_authorization_evidence["authorizations"][0]["decision_id"]
+    for item in copied_authorization_evidence["evidence"]:
+        if isinstance(item, dict) and item.get("source") == "provenance:spark-harness-core/authorization":
+            item["summary"] = copied_decision_id
+    assert bridge_governor_decision_has_canonical_binding(copied_authorization_evidence) is False
+
+    copied_runtime_evidence = deepcopy(verdict.governor_decision)
+    for item in copied_runtime_evidence["evidence"]:
+        if isinstance(item, dict) and item.get("source") == "current-binding:builder-bridge":
+            item["summary"] = "turn:other;action:other;ledger:other"
+    assert bridge_governor_decision_has_canonical_binding(copied_runtime_evidence) is False
 
 
 def test_bridge_governor_degrades_copied_tool_ledger() -> None:
@@ -317,6 +367,8 @@ def test_builds_memory_write_vnext_turn_intent_for_explicit_observation() -> Non
 
     assert payload is not None
     assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["turn_id"].startswith("turn:")
+    assert "turn:req-write-vnext" in payload["proposed_actions"][0]["args_ref"]["path_or_uri"]
     assert payload["selected_move"] == "execute_action"
     assert payload["action_authority"]["state"] == "executable"
     assert payload["proposed_actions"][0]["capability_id"] == "capability:domain-chip-memory:memory.write"
@@ -351,6 +403,8 @@ def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
 
     assert payload is not None
     assert payload["schema_version"] == "turn-intent-envelope-vnext"
+    assert payload["turn_id"].startswith("turn:")
+    assert "turn:req-read-vnext" in payload["proposed_actions"][0]["args_ref"]["path_or_uri"]
     assert payload["selected_move"] == "read_current_state"
     assert payload["action_authority"]["state"] == "read_only"
     assert payload["proposed_actions"][0]["action_type"] == "read"
@@ -630,10 +684,10 @@ def test_blocks_memory_write_when_vnext_action_is_not_proposed() -> None:
     assert "proposed_action_not_authorized" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
-    assert verdict.tool_call_ledger is not None
-    assert verdict.tool_call_ledger["authorization"]["verdict"] == "deny"
+    assert verdict.tool_call_ledger is None
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "deny"
+    assert verdict.governor_decision["tool_ledgers"] == []
 
 
 def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
