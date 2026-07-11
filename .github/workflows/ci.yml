@@ -51,6 +51,7 @@ jobs:
             tests/test_chip_discovery.py \
             tests/test_io_protocol_contract.py \
             tests/test_loop_runner.py \
+            tests/test_chip_manifest_repair.py \
             -q
 
       - name: Audit Python dependencies

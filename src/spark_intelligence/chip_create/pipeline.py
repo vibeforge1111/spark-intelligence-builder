@@ -3658,11 +3658,20 @@ if __name__ == "__main__":
 
 def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key: str) -> None:
     doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not doc.get("chip_key"):
+        doc["chip_key"] = chip_key
     if not doc.get("chip_name"):
         doc["chip_name"] = chip_key
     normalized = _normalize_commands(doc.get("commands"))
     if normalized:
         doc["commands"] = normalized
+    capabilities = doc.get("capabilities")
+    if (
+        (not isinstance(capabilities, list) or not capabilities)
+        and isinstance(doc.get("commands"), dict)
+        and doc["commands"]
+    ):
+        doc["capabilities"] = sorted(doc["commands"].keys())
     if not doc.get("io_protocol"):
         doc["io_protocol"] = "spark-hook-io.v1"
     for key in ("task_topics", "task_keywords", "combine_with"):
@@ -6788,6 +6797,38 @@ def _summarize_loop_proof_artifacts(chip_dir: Path) -> dict[str, Any]:
         ),
         "operator_publication_approved": qa_metadata.get("publication_approved") is True,
     }
+
+
+def repair_chip_manifest(manifest_path: Path) -> dict[str, Any]:
+    """Add missing identity/protocol fields without overwriting explicit manifest truth."""
+    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    added: list[str] = []
+    resolved_key = (
+        str(doc.get("chip_key") or "").strip()
+        or str(doc.get("chip_name") or "").strip()
+        or str(doc.get("name") or "").strip()
+        or manifest_path.parent.name
+    )
+    if not str(doc.get("chip_key") or "").strip():
+        doc["chip_key"] = resolved_key
+        added.append("chip_key")
+    if not str(doc.get("chip_name") or "").strip():
+        doc["chip_name"] = resolved_key
+        added.append("chip_name")
+    capabilities = doc.get("capabilities")
+    if (
+        (not isinstance(capabilities, list) or not capabilities)
+        and isinstance(doc.get("commands"), dict)
+        and doc["commands"]
+    ):
+        doc["capabilities"] = sorted(doc["commands"].keys())
+        added.append("capabilities")
+    if not str(doc.get("io_protocol") or "").strip():
+        doc["io_protocol"] = "spark-hook-io.v1"
+        added.append("io_protocol")
+    if added:
+        manifest_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return {"changed": bool(added), "added": added, "chip_key": doc.get("chip_key")}
 
 
 def _verify_chip_create_governor_authority(
