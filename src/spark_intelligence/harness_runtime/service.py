@@ -320,6 +320,7 @@ def execute_harness_task(
     config_manager: ConfigManager,
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    parent_run_id: str | None = None,
 ) -> HarnessExecutionResult:
     run = open_run(
         state_db,
@@ -331,6 +332,7 @@ def execute_harness_task(
         human_id=envelope.human_id,
         agent_id=envelope.agent_id,
         actor_id="harness_runtime",
+        parent_run_id=parent_run_id,
         reason_code="harness_execution_started",
         facts={
             "harness_id": envelope.harness_id,
@@ -504,6 +506,7 @@ def execute_harness_chain(
             config_manager=config_manager,
             state_db=state_db,
             envelope=next_envelope,
+            parent_run_id=primary_result.run_id,
         )
         chained_results.append(current_result)
         if current_result.status not in {"completed", "prepared"}:
