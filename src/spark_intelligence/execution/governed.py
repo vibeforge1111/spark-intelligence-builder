@@ -9,6 +9,8 @@ from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
+SPARK_INTELLIGENCE_BUILDER_RUN_GOVERNED_COMMAND_TIMEOUT_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class GovernedCommandExecution:
@@ -46,6 +48,8 @@ def run_governed_command(
     completed = subprocess.run(
         command,
         **run_kwargs,
+
+    timeout=SPARK_INTELLIGENCE_BUILDER_RUN_GOVERNED_COMMAND_TIMEOUT_SECONDS,
     )
     return GovernedCommandExecution(
         command=list(command),
