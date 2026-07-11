@@ -154,10 +154,10 @@ class AttachmentHookTests(SparkTestCase):
         self.assertIn("legacy browser extension lane is disabled", str(active.exception))
 
     def test_attachment_status_autodiscovers_generic_spark_chip_repo(self) -> None:
-        desktop_root = self.home / "Desktop"
-        desktop_root.mkdir(parents=True, exist_ok=True)
-        chip_root = create_fake_hook_chip(desktop_root, chip_key="spark-browser")
-        generic_root = desktop_root / "spark-browser-extension"
+        compatibility_root = self.home / ".spark" / "attachments"
+        compatibility_root.mkdir(parents=True, exist_ok=True)
+        chip_root = create_fake_hook_chip(compatibility_root, chip_key="spark-browser")
+        generic_root = compatibility_root / "spark-browser-extension"
         chip_root.rename(generic_root)
 
         with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch(
@@ -165,13 +165,13 @@ class AttachmentHookTests(SparkTestCase):
         ):
             scan = attachment_status(self.config_manager)
 
-        self.assertEqual(scan.chip_source, "autodiscovered")
+        self.assertIn("autodiscovered", scan.chip_source)
         self.assertTrue(any(record.key == "spark-browser" for record in scan.records))
 
     def test_attachment_status_ignores_configured_duplicate_autodiscovery_roots(self) -> None:
-        desktop_root = self.home / "Desktop"
-        canonical_root = desktop_root / "domain-chip-duplicate"
-        compare_root = desktop_root / "domain-chip-duplicate-compare"
+        compatibility_root = self.home / ".spark" / "attachments"
+        canonical_root = compatibility_root / "domain-chip-duplicate"
+        compare_root = compatibility_root / "domain-chip-duplicate-compare"
         canonical_root.mkdir(parents=True, exist_ok=True)
         compare_root.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -191,7 +191,7 @@ class AttachmentHookTests(SparkTestCase):
             scan = attachment_status(self.config_manager)
 
         duplicate_records = [record for record in scan.records if record.key == "domain-chip-duplicate"]
-        self.assertEqual(scan.chip_source, "autodiscovered")
+        self.assertIn("autodiscovered", scan.chip_source)
         self.assertEqual(len(duplicate_records), 1)
         self.assertEqual(Path(duplicate_records[0].repo_root), canonical_root)
         self.assertFalse(any("duplicate chip key 'domain-chip-duplicate'" in warning for warning in scan.warnings))

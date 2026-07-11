@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from spark_intelligence.attachments import attachment_status
+from spark_intelligence.attachments import attachment_status, chip_discovery_health
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
@@ -305,6 +305,9 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
                 f"{attachment_count} discovered ({len([r for r in attachments.records if r.kind == 'chip'])} chips, {len([r for r in attachments.records if r.kind == 'path'])} paths)",
             )
         )
+
+    discovery = chip_discovery_health(config_manager, scan=attachments)
+    checks.append(DoctorCheck("chip-discovery", bool(discovery["ok"]), str(discovery["detail"])))
 
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))

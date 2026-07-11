@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -741,7 +742,7 @@ class SparkTestCase(unittest.TestCase):
         self.home = Path(self._tempdir.name)
         self._spark_home_patcher = patch.dict(
             "os.environ",
-            {"SPARK_HOME": str(self.home / "isolated-spark")},
+            {"SPARK_HOME": str(self.home / ".spark")},
         )
         self._spark_home_patcher.start()
         self.addCleanup(self._spark_home_patcher.stop)
