@@ -602,8 +602,7 @@ def _refresh_browser_use_status_from_cli(*, status_path: Path, cli_path: str) ->
         doctor = {}
 
     if completed.exit_code != 0 or not doctor:
-        stderr = (completed.stderr or "").strip()
-        reason = stderr or stdout or f"browser-use doctor exited with code {completed.exit_code}"
+        reason = f"browser-use doctor exited with code {completed.exit_code}"
         status_doc = _browser_use_doctor_failure_doc(
             checked_at=checked_at,
             cli_path=cli_path,
