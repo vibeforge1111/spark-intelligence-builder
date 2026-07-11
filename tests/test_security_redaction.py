@@ -11,6 +11,9 @@ def test_redact_text_masks_common_credential_shapes() -> None:
         [
             f"TELEGRAM_BOT_TOKEN={telegram_fixture}",
             "Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890",
+            "Authorization: Token placeholder-token-value-1234567890",
+            "Authorization: ApiKey placeholder-api-key-value-1234567890",
+            "Authorization: OAuth placeholder-oauth-value-1234567890",
             f'"api_key": "{api_key_fixture}"',
             "db=postgres://user:pass@example.com/db",
             "call me at 555-123-4567",
@@ -21,10 +24,16 @@ def test_redact_text_masks_common_credential_shapes() -> None:
 
     assert "123456789:AAG" not in redacted
     assert "abcdefghijklmnopqrstuvwxyz1234567890" not in redacted
+    assert "placeholder-token-value-1234567890" not in redacted
+    assert "placeholder-api-key-value-1234567890" not in redacted
+    assert "placeholder-oauth-value-1234567890" not in redacted
     assert "sk-proj-" not in redacted
     assert "postgres://user:pass" not in redacted
     assert "555-123-4567" not in redacted
     assert "Bearer <redacted>" in redacted
+    assert "Token <redacted>" in redacted
+    assert "ApiKey <redacted>" in redacted
+    assert "OAuth <redacted>" in redacted
 
 
 def test_prompt_boundary_sanitizer_blocks_injection_and_invisible_unicode() -> None:
