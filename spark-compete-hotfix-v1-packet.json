@@ -1,0 +1,99 @@
+{
+  "schema": "spark-compete-hotfix-v1",
+  "event": "spark-compete-first-event",
+  "submission_mode": "public_repo_pr",
+  "submission_target_url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/768",
+  "team": {
+    "name": "esc1200",
+    "members": [
+      "esc1200",
+      "drophub_sir",
+      "spark-agent"
+    ],
+    "llm_device_holder": "esc1200",
+    "device_holder_github": "Esc1200",
+    "github_accounts": [
+      "Esc1200"
+    ]
+  },
+  "target_repo": {
+    "id": "vibeforge1111/spark-intelligence-builder",
+    "source": "https://github.com/vibeforge1111/spark-intelligence-builder",
+    "owner_surface": "spark-intelligence-builder"
+  },
+  "issue": {
+    "type": "bug",
+    "severity": "medium",
+    "title": "Bare except Exception: pass silently swallows ALL exceptions during intelligence hook execution",
+    "actual_behavior": "Six detection hooks in _detect_telegram_memory_authority_source_kind() (runtime.py lines 302-330) are wrapped in bare except Exception: pass blocks. Any exception from regex failures, encoding errors, or unexpected None values is silently swallowed with no log output, making runtime failures invisible.",
+    "expected_behavior": "Exceptions during intelligence hook execution should be logged at WARNING level with full traceback via logging.warning(exc_info=True), allowing operators to detect and diagnose hook failures.",
+    "repro_steps": [
+      "Trigger any exception inside one of the 6 detection hooks (e.g. _detect_current_plan_transition_command, detect_profile_fact_observation, etc.)",
+      "Observe: no log output, no traceback, function silently returns None",
+      "After fix: WARNING log with full traceback for each failure"
+    ],
+    "affected_workflow": "Intelligence hook execution in telegram adapter runtime - memory authority source detection"
+  },
+  "evidence": {
+    "safe_links_only": true,
+    "before_after_proof": "BEFORE: 6 bare except Exception: pass blocks in _detect_telegram_memory_authority_source_kind (lines 302-330 of src/spark_intelligence/adapters/telegram/runtime.py). AFTER: Each block replaced with except Exception: _logger.warning('intelligence hook <name> failed', exc_info=True). Added import logging and _logger = logging.getLogger(__name__). Lint passes.",
+    "links": [
+      "https://github.com/vibeforge1111/spark-intelligence-builder/pull/768"
+    ],
+    "forbidden": [
+      "pdf",
+      "zip",
+      "exe",
+      "unknown downloads",
+      "shortened links",
+      "archives",
+      "binaries",
+      "tokens",
+      "browser cookies",
+      "wallet material",
+      "raw logs",
+      "raw conversations",
+      "raw memory",
+      "raw patches",
+      "private repo maps",
+      "private scoring details"
+    ]
+  },
+  "proposed_fix": {
+    "approach": "Replace bare except Exception: pass with except Exception: _logger.warning('...', exc_info=True) in all 6 blocks of _detect_telegram_memory_authority_source_kind(). Add import logging at module top and _logger = logging.getLogger(__name__) at module level. No API surface change, no new dependencies.",
+    "files_expected": [
+      "src/spark_intelligence/adapters/telegram/runtime.py"
+    ],
+    "tests_or_smoke": "Lint passes (ast.parse ok). Existing tests exercise the happy path. Fix only adds logging to error paths \u2014 no behavioral change for successful hook detection. Verified no duplicate import logging introduced."
+  },
+  "pr": {
+    "branch": "esc1200/fix/runtime-silent-failure",
+    "title_prefix": "[spark-compete]",
+    "author_github": "Esc1200",
+    "body_must_include": [
+      "packet",
+      "team",
+      "pr_author",
+      "repo",
+      "actual_behavior",
+      "expected_behavior",
+      "repro_steps",
+      "before_after_proof",
+      "tests_or_smoke",
+      "duplicate_notes",
+      "risk_notes",
+      "review_claim"
+    ],
+    "url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/768"
+  },
+  "review_claim": {
+    "impact_claim": "medium",
+    "evidence_types": [
+      "redacted_terminal_excerpt",
+      "passing_test"
+    ],
+    "duplicate_notes": "Searched existing PRs and branches for fixes to _detect_telegram_memory_authority_source_kind or intelligence hook exception handling. No prior PR addresses silent exception swallowing in this function.",
+    "risk_notes": "Low risk: only changes error-path behavior from silent pass to logged warning. No API surface change, no new dependencies (logging is stdlib). No change to successful execution path.",
+    "review_state_requested": "pr_review"
+  }
+}
