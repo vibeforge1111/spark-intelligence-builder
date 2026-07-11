@@ -102,7 +102,7 @@ def _handle_whatsapp_verification(
         return _log_whatsapp_verification_failure(
             config_manager=config_manager,
             status_code=503,
-            message=f"WhatsApp webhook verify token ref '{verify_token_ref}' is unresolved.",
+            message="WhatsApp webhook verify token is not configured.",
         )
     mode = _query_value(query_params, "hub.mode")
     verify_token = _query_value(query_params, "hub.verify_token")
