@@ -296,3 +296,26 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
             result.payload["errors"],
             ["validator_timeout:run-spark-builder-state-telegram-intake:120s"],
         )
+
+    def test_build_telegram_state_knowledge_base_reports_typed_validator_timeout(self) -> None:
+        with patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            return_value=SimpleNamespace(
+                timed_out=True,
+                timeout_seconds=120.0,
+                exit_code=124,
+                stdout="",
+                stderr="Governed command timed out after 120 seconds.",
+            ),
+        ):
+            result = build_telegram_state_knowledge_base(
+                config_manager=self.config_manager,
+                validator_root=self.home,
+                timeout_seconds=120,
+            )
+
+        self.assertFalse(result.payload["valid"])
+        self.assertEqual(
+            result.payload["errors"],
+            ["validator_timeout:run-spark-builder-state-telegram-intake:120s"],
+        )

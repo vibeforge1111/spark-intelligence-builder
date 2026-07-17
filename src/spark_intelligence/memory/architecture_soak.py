@@ -409,6 +409,10 @@ def _run_regression_subprocess(
         raise TimeoutError(
             f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
         ) from exc
+    if bool(getattr(completed, "timed_out", False)):
+        raise TimeoutError(
+            f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
+        )
     payload: dict[str, Any] = {}
     if write_path.exists():
         payload = json.loads(write_path.read_text(encoding="utf-8"))

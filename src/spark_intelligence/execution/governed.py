@@ -10,6 +10,9 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 
+DEFAULT_GOVERNED_COMMAND_TIMEOUT_SECONDS = 120.0
+
+
 @dataclass(frozen=True)
 class GovernedCommandExecution:
     command: list[str]
@@ -17,6 +20,8 @@ class GovernedCommandExecution:
     exit_code: int
     stdout: str
     stderr: str
+    timed_out: bool = False
+    timeout_seconds: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -29,7 +34,7 @@ def run_governed_command(
     cwd: str | Path,
     env: dict[str, str] | None = None,
     input_text: str | None = None,
-    timeout_seconds: float | None = None,
+    timeout_seconds: float | None = DEFAULT_GOVERNED_COMMAND_TIMEOUT_SECONDS,
     encoding: str | None = None,
     errors: str | None = None,
 ) -> GovernedCommandExecution:
@@ -46,16 +51,30 @@ def run_governed_command(
         run_kwargs["encoding"] = encoding
     if errors:
         run_kwargs["errors"] = errors
-    completed = subprocess.run(
-        command,
-        **run_kwargs,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            **run_kwargs,
+        )
+    except subprocess.TimeoutExpired as exc:
+        effective_timeout = exc.timeout if exc.timeout is not None else timeout_seconds
+        rendered_timeout = float(effective_timeout) if effective_timeout is not None else 0.0
+        return GovernedCommandExecution(
+            command=["<redacted:timed_out>"],
+            cwd=str(cwd),
+            exit_code=124,
+            stdout="",
+            stderr=f"Governed command timed out after {rendered_timeout:g} seconds.",
+            timed_out=True,
+            timeout_seconds=rendered_timeout,
+        )
     return GovernedCommandExecution(
         command=list(command),
         cwd=str(cwd),
         exit_code=int(completed.returncode),
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -89,6 +108,8 @@ def record_governed_tool_result(
     merged_facts = {
         "exit_code": execution.exit_code,
         "ok": execution.ok,
+        "timed_out": execution.timed_out,
+        "timeout_seconds": execution.timeout_seconds,
         "stderr": execution.stderr[:200] if execution.stderr else "",
         **(facts or {}),
     }

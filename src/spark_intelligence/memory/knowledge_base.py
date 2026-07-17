@@ -127,6 +127,13 @@ def _run_domain_chip_memory_cli(
             "errors": [f"validator_timeout:{command_name}:{rendered_timeout:g}s"],
             "warnings": [],
         }
+    if bool(getattr(execution, "timed_out", False)):
+        rendered_timeout = float(timeout_seconds) if timeout_seconds is not None else 0.0
+        return {
+            "valid": False,
+            "errors": [f"validator_timeout:{command_name}:{rendered_timeout:g}s"],
+            "warnings": [],
+        }
     stdout = execution.stdout.strip()
     parsed: dict[str, Any] | None = None
     if stdout:
