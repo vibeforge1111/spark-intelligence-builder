@@ -117,14 +117,18 @@ def consume_oauth_callback_state(
             conn.commit()
             raise ValueError("OAuth callback state expired.")
         consumed_at = _format_timestamp(now)
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE oauth_callback_states
             SET status = 'consumed', consumed_at = ?
             WHERE callback_id = ?
+              AND status = 'pending'
+              AND consumed_at IS NULL
             """,
             (consumed_at, record.callback_id),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("OAuth callback state was already consumed.")
         updated = conn.execute(
             "SELECT * FROM oauth_callback_states WHERE callback_id = ? LIMIT 1",
             (record.callback_id,),

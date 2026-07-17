@@ -153,7 +153,7 @@ Both may use OAuth, but they should not share storage or callback handling casua
 Model-provider OAuth should use:
 
 - PKCE where applicable
-- one-time callback state
+- one-time callback state claimed by a conditional atomic transition, so concurrent callbacks cannot both exchange the authorization code
 - short expiry
 - locked refresh
 - explicit expiry tracking in local state
