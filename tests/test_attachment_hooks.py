@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.registry import attachment_status
-from spark_intelligence.attachments.hooks import run_chip_hook, run_first_active_chip_hook
+from spark_intelligence.attachments.hooks import ChipHookExecution, run_chip_hook, run_first_active_chip_hook
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -15,6 +15,35 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_i
 
 
 class AttachmentHookTests(SparkTestCase):
+    @staticmethod
+    def _chip_hook_execution(*, exit_code: int = 0, output: dict[str, object]) -> ChipHookExecution:
+        return ChipHookExecution(
+            chip_key="test-chip",
+            hook="evaluate",
+            repo_root="/redacted/test-chip",
+            command=["python", "hook.py"],
+            exit_code=exit_code,
+            stdout="",
+            stderr="",
+            payload={},
+            output=output,
+        )
+
+    def test_chip_hook_execution_respects_strict_structured_returncode(self) -> None:
+        self.assertFalse(self._chip_hook_execution(output={"returncode": 1}).ok)
+        self.assertFalse(self._chip_hook_execution(output={"returncode": "0"}).ok)
+        self.assertFalse(self._chip_hook_execution(output={"returncode": True}).ok)
+        self.assertTrue(self._chip_hook_execution(output={"result": {}}).ok)
+        self.assertFalse(self._chip_hook_execution(exit_code=1, output={"returncode": 0}).ok)
+        self.assertIn(
+            "output_returncode: 1",
+            self._chip_hook_execution(output={"returncode": 1}).to_text(),
+        )
+        self.assertIn(
+            "output_returncode: invalid",
+            self._chip_hook_execution(output={"returncode": "0"}).to_text(),
+        )
+
     def _governor_decision_for_hook(
         self,
         *,
