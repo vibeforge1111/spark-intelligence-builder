@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
+from spark_intelligence.auth.service import exchange_oauth_authorization_code, exchange_oauth_refresh_token
 from spark_intelligence.auth.runtime import (
     build_auth_status_report,
     resolve_runtime_provider,
@@ -14,6 +16,82 @@ from tests.test_support import SparkTestCase
 
 
 class AuthProfileTests(SparkTestCase):
+    def test_oauth_authorization_exchange_normalizes_transport_error_without_details(self) -> None:
+        failures = (
+            urllib.error.URLError("https://private.example/token?client_secret=do-not-leak"),
+            urllib.error.HTTPError(
+                "https://private.example/token?client_secret=do-not-leak",
+                500,
+                "secret-bearing-provider-error",
+                {},
+                None,
+            ),
+            TimeoutError("authorization-code-do-not-leak"),
+        )
+        for failure in failures:
+            with self.subTest(failure_type=type(failure).__name__), patch(
+                "spark_intelligence.auth.service.urllib.request.urlopen",
+                side_effect=failure,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"^OAuth token exchange for 'openai-codex' failed safely\.$",
+                ) as raised:
+                    exchange_oauth_authorization_code(
+                        provider="openai-codex",
+                        code="sensitive-authorization-code",
+                        redirect_uri="http://127.0.0.1:1455/auth/callback",
+                        code_verifier="sensitive-code-verifier",
+                    )
+
+                rendered = str(raised.exception)
+                self.assertNotIn("private.example", rendered)
+                self.assertNotIn("client_secret", rendered)
+                self.assertNotIn("authorization-code", rendered)
+                self.assertNotIn("code-verifier", rendered)
+
+    def test_oauth_authorization_exchange_normalizes_malformed_response_without_body(self) -> None:
+        invalid_bodies = (
+            b"<html>secret-token-body</html>",
+            b"\xffsecret-token-body",
+            b"[]",
+        )
+        for body in invalid_bodies:
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = body
+            with self.subTest(body=body[:1]), patch(
+                "spark_intelligence.auth.service.urllib.request.urlopen",
+                return_value=response,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"^OAuth token exchange for 'openai-codex' returned an invalid response\.$",
+                ) as raised:
+                    exchange_oauth_authorization_code(
+                        provider="openai-codex",
+                        code="authorization-code",
+                        redirect_uri="http://127.0.0.1:1455/auth/callback",
+                        code_verifier="code-verifier",
+                    )
+
+                self.assertNotIn("secret-token-body", str(raised.exception))
+
+    def test_oauth_refresh_exchange_normalizes_transport_error_without_details(self) -> None:
+        with patch(
+            "spark_intelligence.auth.service.urllib.request.urlopen",
+            side_effect=TimeoutError("refresh-token-do-not-leak"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"^OAuth refresh for 'openai-codex' failed safely\.$",
+            ) as raised:
+                exchange_oauth_refresh_token(
+                    provider="openai-codex",
+                    refresh_token="sensitive-refresh-token",
+                )
+
+        self.assertNotIn("refresh-token", str(raised.exception))
+
     def test_resolve_runtime_provider_uses_builder_codex_service_role_env_when_records_empty(self) -> None:
         env = {
             "SPARK_BUILDER_LLM_PROVIDER": "codex",

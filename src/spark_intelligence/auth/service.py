@@ -19,6 +19,25 @@ from spark_intelligence.state.db import StateDB
 DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS = 600
 
 
+def _read_oauth_token_response(
+    request: urllib.request.Request,
+    *,
+    failure_label: str,
+) -> dict[str, object]:
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw_payload = response.read()
+    except OSError:
+        raise RuntimeError(f"{failure_label} failed safely.") from None
+    try:
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise RuntimeError(f"{failure_label} returned an invalid response.") from None
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{failure_label} returned an invalid response.")
+    return payload
+
+
 @dataclass(frozen=True)
 class OAuthLoginStart:
     provider_id: str
@@ -650,8 +669,10 @@ def exchange_oauth_authorization_code(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = _read_oauth_token_response(
+        request,
+        failure_label=f"OAuth token exchange for '{provider}'",
+    )
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
     return payload
@@ -678,8 +699,10 @@ def exchange_oauth_refresh_token(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = _read_oauth_token_response(
+        request,
+        failure_label=f"OAuth refresh for '{provider}'",
+    )
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
