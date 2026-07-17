@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
@@ -34,6 +36,44 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegr
 
 
 class SelfAwarenessCapsuleTests(SparkTestCase):
+    def _memory_smoke_governor_decision(
+        self,
+        *,
+        subject: str,
+        predicate: str,
+    ) -> dict[str, object]:
+        request_id = f"self-awareness-test:{predicate}"
+        envelope = build_vnext_action_intent_envelope(
+            surface="test",
+            actor_id_ref=subject,
+            request_id=request_id,
+            source_kind="self_awareness_memory_fixture",
+            intent_summary="Seed a scoped memory fact for self-awareness verification.",
+            raw_turn_summary="The test fixture explicitly requests a local memory write.",
+            actions=[
+                {
+                    "tool_name": "memory.write",
+                    "owner_system": "domain-chip-memory",
+                    "mutation_class": "writes_memory",
+                    "args_path": f"builder://self-awareness-test/{predicate}",
+                }
+            ],
+        )
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=request_id,
+            human_id=subject,
+            actor_id="self_awareness_test",
+            component="self_awareness_memory_fixture",
+        )
+        self.assertTrue(verdict.allowed, verdict.reason_codes)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return verdict.governor_decision
+
     def test_self_awareness_capsule_separates_observed_recent_unverified_lacks_and_improvements(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -1409,6 +1449,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.current_focus",
             value="hardening Spark self-awareness",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:test-user-awareness",
+                predicate="profile.current_focus",
+            ),
         )
         run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
@@ -1418,6 +1462,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.current_decision",
             value="keep user context separate from Spark doctrine",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:test-user-awareness",
+                predicate="profile.current_decision",
+            ),
         )
         promote_llm_wiki_user_note(
             config_manager=self.config_manager,
@@ -2181,6 +2229,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="system.memory.route_detection",
             value="ok",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:self-awareness:movement",
+                predicate="system.memory.route_detection",
+            ),
         )
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -2292,6 +2344,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.favorite_color",
             value="cobalt blue",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:telegram:123",
+                predicate="profile.favorite_color",
+            ),
         )
 
         result = build_researcher_reply(
