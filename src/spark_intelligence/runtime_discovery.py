@@ -53,12 +53,10 @@ def installed_chip_parent_candidates() -> list[Path]:
 
 
 def spark_home_candidates() -> list[Path]:
-    candidates: list[Path] = []
     configured = str(os.environ.get("SPARK_HOME") or "").strip()
     if configured:
-        candidates.append(Path(configured).expanduser())
-    candidates.append(Path.home() / ".spark")
-    return _dedupe_paths(candidates)
+        return _dedupe_paths([Path(configured).expanduser()])
+    return _dedupe_paths([Path.home() / ".spark"])
 
 
 def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
