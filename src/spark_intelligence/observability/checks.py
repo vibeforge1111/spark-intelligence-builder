@@ -4,6 +4,7 @@ import ast
 import json
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -1073,10 +1074,18 @@ def _find_source_pattern_paths(pattern: str, *, allowed_paths: set[str]) -> list
     return matches
 
 
-def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+@lru_cache(maxsize=512)
+def _parsed_source_tree(text: str) -> ast.AST | None:
     try:
-        tree = ast.parse(text)
+        return ast.parse(text)
     except SyntaxError:
+        return None
+
+
+@lru_cache(maxsize=1536)
+def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+    tree = _parsed_source_tree(text)
+    if tree is None:
         return False
     if pattern == "subprocess.run(":
         for node in ast.walk(tree):
