@@ -15,6 +15,7 @@ from spark_intelligence.security.https_endpoint import (
     post_https_bytes,
     resolve_public_https_endpoint,
 )
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
@@ -102,9 +103,11 @@ def execute_direct_provider_prompt(
             )
         else:
             raise RuntimeError(
-                f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
+                "Provider uses an unsupported direct execution mode on this path. "
+                "Use the configured Researcher bridge for non-direct provider execution."
             )
     except Exception as exc:
+        failure_reason = _redact_provider_error(exc, provider)
         _record_provider_execution_event(
             state_db=state_db,
             provider=provider,
@@ -112,9 +115,9 @@ def execute_direct_provider_prompt(
             event_type="dispatch_failed",
             summary=f"Direct provider {provider.provider_id} failed.",
             route_latency_ms=_elapsed_ms(started),
-            failure_reason=_redact_provider_error(exc, provider),
+            failure_reason=failure_reason,
         )
-        raise
+        raise RuntimeError(failure_reason) from None
     _record_provider_execution_event(
         state_db=state_db,
         provider=provider,
@@ -184,7 +187,8 @@ def _redact_provider_error(exc: Exception, provider: DirectProviderRequest) -> s
     message = str(exc)
     if provider.secret_value:
         message = message.replace(provider.secret_value, "[REDACTED]")
-    return message[:240]
+    message = redact_text(message).strip()
+    return (message or "Direct provider execution failed.")[:240]
 
 
 def _execute_chat_completions(
