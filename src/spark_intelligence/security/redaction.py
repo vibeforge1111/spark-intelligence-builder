@@ -65,9 +65,7 @@ def contains_secret_shape(text: str | None, *, include_personal_data: bool = Fal
 
 
 def mask_secret(value: str) -> str:
-    if len(value) < 18:
-        return "***"
-    return f"{value[:6]}...{value[-4:]}"
+    return "***"
 
 
 def redact_text(text: str | None) -> str:

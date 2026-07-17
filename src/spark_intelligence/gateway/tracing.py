@@ -78,7 +78,7 @@ def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            traces.append(redact_trace_payload(json.loads(line)))
+            traces.append(redact_trace_payload(_decode_trace_record(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return traces
@@ -93,7 +93,7 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            records.append(redact_trace_payload(json.loads(line)))
+            records.append(redact_trace_payload(_decode_trace_record(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return records
@@ -125,7 +125,7 @@ def redact_gateway_trace_log(
             continue
         result["rows_read"] = int(result["rows_read"]) + 1
         try:
-            payload = redact_trace_payload(json.loads(line))
+            payload = redact_trace_payload(_decode_trace_record(line))
         except (json.JSONDecodeError, ValueError):
             result["parse_errors"] = int(result["parse_errors"]) + 1
             continue
@@ -174,7 +174,7 @@ def repair_gateway_trace_proof_continuity(
             continue
         result["rows_read"] = int(result["rows_read"]) + 1
         try:
-            before_payload = redact_trace_payload(json.loads(line))
+            before_payload = redact_trace_payload(_decode_trace_record(line))
         except (json.JSONDecodeError, ValueError):
             result["parse_errors"] = int(result["parse_errors"]) + 1
             repaired_lines.append(line)
@@ -258,6 +258,13 @@ def _tail_lines(path: Path, n: int) -> list[str]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _decode_trace_record(line: str) -> dict[str, Any]:
+    payload = json.loads(line)
+    if not isinstance(payload, dict):
+        raise ValueError("Gateway trace row must be a JSON object.")
+    return payload
 
 
 def redact_trace_payload(value: Any) -> Any:
