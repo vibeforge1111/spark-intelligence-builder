@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -178,6 +179,7 @@ def _build_self_awareness_capsule(*args: Any, **kwargs: Any) -> Any:
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
 _ATTACHMENT_PROMPT_CHIP_LIMIT = 12
+_RESEARCHER_IMPORT_LOCK = threading.RLock()
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
@@ -3039,21 +3041,41 @@ def _import_execute_with_research(runtime_root: Path):
 
 
 def _import_researcher_module(runtime_root: Path, module_name: str):
-    src_root = runtime_root / "src"
-    src_root_resolved = src_root.resolve(strict=False)
-    _evict_researcher_modules_from_other_roots(src_root_resolved)
-    if str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
-    importlib.invalidate_caches()
-    return importlib.import_module(module_name)
+    src_root = (runtime_root / "src").resolve(strict=False)
+    with _RESEARCHER_IMPORT_LOCK:
+        _evict_researcher_modules_from_other_roots(src_root)
+        _promote_researcher_source_root(src_root)
+        importlib.invalidate_caches()
+        return importlib.import_module(module_name)
 
 
 def _evict_researcher_modules_from_other_roots(src_root: Path) -> None:
-    package = sys.modules.get("spark_researcher")
-    if package is None or _module_loaded_from_root(package, src_root):
+    cached = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "spark_researcher" or name.startswith("spark_researcher.")
+    }
+    if not cached or all(
+        module is not None and _module_loaded_from_root(module, src_root)
+        for module in cached.values()
+    ):
         return
-    for name in ("spark_researcher.advisory", "spark_researcher.research", "spark_researcher"):
+    for name in cached:
         sys.modules.pop(name, None)
+
+
+def _promote_researcher_source_root(src_root: Path) -> None:
+    desired_key = os.path.normcase(str(src_root))
+    retained: list[str] = []
+    for raw_path in sys.path:
+        try:
+            candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            retained.append(raw_path)
+            continue
+        if os.path.normcase(str(candidate)) != desired_key:
+            retained.append(raw_path)
+    sys.path[:] = [str(src_root), *retained]
 
 
 def _module_loaded_from_root(module: Any, src_root: Path) -> bool:
