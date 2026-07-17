@@ -2651,7 +2651,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compile a Spark KB/wiki vault directly from Builder Telegram state.db events",
     )
     memory_compile_kb_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    memory_compile_kb_parser.add_argument("--output-dir", help="Knowledge-base output directory")
+    memory_compile_kb_parser.add_argument(
+        "--output-dir",
+        help="Knowledge-base output directory (must be below <home>/artifacts)",
+    )
     memory_compile_kb_parser.add_argument("--limit", type=int, default=25, help="Maximum Telegram conversations to scan from Builder state.db")
     memory_compile_kb_parser.add_argument("--chat-id", help="Restrict the compile to one Telegram chat id")
     memory_compile_kb_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")

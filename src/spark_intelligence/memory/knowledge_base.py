@@ -64,8 +64,13 @@ def build_telegram_state_knowledge_base(
     timeout_seconds: float | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_builder_home = _stable_absolute_path(config_manager.paths.home)
-    resolved_output_dir = _stable_absolute_path(Path(output_dir) if output_dir else _default_output_dir(config_manager))
-    _prepare_output_dir(resolved_output_dir)
+    resolved_output_dir = _stable_absolute_path(
+        Path(output_dir) if output_dir else _default_output_dir(config_manager)
+    )
+    _prepare_output_dir(
+        resolved_output_dir,
+        artifacts_root=config_manager.paths.home / "artifacts",
+    )
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
@@ -174,10 +179,18 @@ def _stable_absolute_path(path: Path) -> Path:
     return Path.cwd() / expanded
 
 
-def _prepare_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+def _prepare_output_dir(output_dir: Path, *, artifacts_root: Path) -> None:
+    resolved_artifacts_root = _stable_absolute_path(artifacts_root).resolve(strict=False)
+    resolved_output_dir = output_dir.resolve(strict=False)
+    if resolved_output_dir == resolved_artifacts_root or not resolved_output_dir.is_relative_to(
+        resolved_artifacts_root
+    ):
+        raise ValueError(
+            "Knowledge-base output_dir must be a strict descendant of the Spark artifacts directory."
+        )
+    if resolved_output_dir.exists():
+        shutil.rmtree(resolved_output_dir)
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_repo_source_inputs(
