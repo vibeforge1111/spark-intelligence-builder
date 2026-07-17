@@ -544,6 +544,49 @@ def test_create_chip_from_prompt_uses_supported_direct_provider_brief_parse(
     assert not any("local starter brief" in warning for warning in result.warnings)
 
 
+def test_chip_create_secret_like_brief_is_blocked_before_provider_dispatch(
+    monkeypatch, tmp_path
+):
+    home = tmp_path / "spark-intelligence-home"
+    config_manager = ConfigManager.from_home(str(home))
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    provider = SimpleNamespace(
+        provider_id="openai",
+        provider_kind="openai",
+        auth_method="api_key_env",
+        api_mode="chat_completions",
+        execution_transport="direct_http",
+        base_url="https://api.example.test/v1",
+        default_model="gpt-5.5",
+        secret_value="provider-secret",
+    )
+
+    monkeypatch.setattr(
+        "spark_intelligence.auth.runtime.resolve_runtime_provider",
+        lambda **_: provider,
+    )
+    monkeypatch.setattr(
+        "spark_intelligence.llm.direct_provider.urllib.request.urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("provider dispatch must not run")
+        ),
+    )
+
+    result = create_chip_from_prompt(
+        prompt="build a domain chip using sk-abcdefghijklmnopqrstuvwxyz123456",
+        config_manager=config_manager,
+        state_db=state_db,
+        chip_labs_root=tmp_path / "missing-chip-labs",
+        output_dir=tmp_path / "out",
+        governor_decision=_chip_create_governor(),
+    )
+
+    assert result.ok is False
+    assert "pre-model secret boundary" in str(result.error)
+
+
 def test_create_chip_from_prompt_uses_codex_external_wrapper_bridge(
     monkeypatch, tmp_path
 ):
