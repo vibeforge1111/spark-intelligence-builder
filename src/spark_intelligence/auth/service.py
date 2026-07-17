@@ -40,7 +40,10 @@ def _read_oauth_token_response(
             max_response_bytes=_MAX_OAUTH_RESPONSE_BYTES,
         )
     except (OSError, RuntimeError):
-        raise RuntimeError(f"{failure_label} failed safely.") from None
+        raise RuntimeError(
+            f"{failure_label} failed safely. "
+            "Check network connectivity and the provider OAuth configuration, then retry."
+        ) from None
     try:
         payload = json.loads(raw_payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -330,7 +333,7 @@ def complete_oauth_login(
     if not spec.supports_oauth_login or not spec.oauth:
         raise ValueError(f"Provider '{provider}' does not support OAuth login.")
 
-    parsed = urllib.parse.urlparse(callback_url)
+    parsed = _parse_oauth_callback_url(callback_url)
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     state = _required_query_value(query, "state")
     callback_error = _oauth_callback_error(query)
@@ -401,7 +404,7 @@ def complete_oauth_login_from_callback_url(
     callback_url: str,
     expected_provider: str | None = None,
 ) -> OAuthLoginResult:
-    parsed = urllib.parse.urlparse(callback_url)
+    parsed = _parse_oauth_callback_url(callback_url)
     query = urllib.parse.parse_qs(parsed.query)
     state = _required_query_value(query, "state")
     oauth_state = get_oauth_callback_state(
@@ -881,6 +884,29 @@ def _pkce_challenge(verifier: str) -> str:
 def _issuer_from_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _parse_oauth_callback_url(callback_url: str) -> urllib.parse.SplitResult:
+    contains_invalid_characters = any(
+        ord(character) <= 32 or ord(character) == 127
+        for character in callback_url
+    )
+    try:
+        parsed = urllib.parse.urlsplit(callback_url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("OAuth callback URL is malformed.") from None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("OAuth callback URL must be an absolute HTTP(S) URL.")
+    if contains_invalid_characters:
+        raise ValueError("OAuth callback URL contains invalid characters.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OAuth callback URL must not contain embedded credentials.")
+    if parsed.fragment:
+        raise ValueError("OAuth callback URL must not contain a fragment.")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("OAuth callback URL has an invalid port.")
+    return parsed
 
 
 def _required_query_value(query: dict[str, list[str]], key: str) -> str:

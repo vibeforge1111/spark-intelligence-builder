@@ -4,7 +4,11 @@ import json
 import urllib.error
 from unittest.mock import patch
 
-from spark_intelligence.auth.service import exchange_oauth_authorization_code, exchange_oauth_refresh_token
+from spark_intelligence.auth.service import (
+    complete_oauth_login,
+    exchange_oauth_authorization_code,
+    exchange_oauth_refresh_token,
+)
 from spark_intelligence.auth.runtime import (
     build_auth_status_report,
     resolve_runtime_provider,
@@ -16,6 +20,51 @@ from tests.test_support import SparkTestCase
 
 
 class AuthProfileTests(SparkTestCase):
+    def test_auth_login_rejects_non_url_callback_without_traceback(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--callback-url",
+            "not a url",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(
+            stderr.strip(),
+            "OAuth callback URL must be an absolute HTTP(S) URL.",
+        )
+        self.assertNotIn("Traceback", stderr)
+
+    def test_auth_login_rejects_ambiguous_callback_forms_before_state_lookup(self) -> None:
+        rejected = (
+            "ftp://127.0.0.1/callback?state=secret-state&code=secret-code",
+            "http://user:password@127.0.0.1/callback?state=secret-state&code=secret-code",
+            "http://127.0.0.1:99999/callback?state=secret-state&code=secret-code",
+            "http://127.0.0.1/callback?state=secret-state&code=secret-code#fragment",
+            "http://127.0.0.1/callback?state=secret-state&code=secret-code\n",
+        )
+
+        for callback_url in rejected:
+            with self.subTest(callback_url=callback_url), self.assertRaisesRegex(
+                ValueError,
+                r"^OAuth callback URL ",
+            ) as raised:
+                complete_oauth_login(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    provider="openai-codex",
+                    callback_url=callback_url,
+                )
+
+            rendered = str(raised.exception)
+            self.assertNotIn("secret-state", rendered)
+            self.assertNotIn("secret-code", rendered)
+            self.assertNotIn("password", rendered)
+
     def test_oauth_authorization_exchange_normalizes_transport_error_without_details(self) -> None:
         failures = (
             urllib.error.URLError("https://private.example/token?client_secret=do-not-leak"),
@@ -38,7 +87,10 @@ class AuthProfileTests(SparkTestCase):
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    r"^OAuth token exchange for 'openai-codex' failed safely\.$",
+                    (
+                        r"^OAuth token exchange for 'openai-codex' failed safely\. "
+                        r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                    ),
                 ) as raised:
                     exchange_oauth_authorization_code(
                         provider="openai-codex",
@@ -52,6 +104,30 @@ class AuthProfileTests(SparkTestCase):
                 self.assertNotIn("client_secret", rendered)
                 self.assertNotIn("authorization-code", rendered)
                 self.assertNotIn("code-verifier", rendered)
+
+    def test_oauth_transport_failure_includes_safe_operator_guidance(self) -> None:
+        with patch(
+            "spark_intelligence.auth.service.resolve_public_https_endpoint",
+            return_value=object(),
+        ), patch(
+            "spark_intelligence.auth.service.post_https_bytes",
+            side_effect=TimeoutError("secret-bearing-network-detail"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                (
+                    r"^OAuth refresh for 'openai-codex' failed safely\. "
+                    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                ),
+            ) as raised:
+                exchange_oauth_refresh_token(
+                    provider="openai-codex",
+                    refresh_token="sensitive-refresh-token",
+                )
+
+        rendered = str(raised.exception)
+        self.assertNotIn("secret-bearing-network-detail", rendered)
+        self.assertNotIn("sensitive-refresh-token", rendered)
 
     def test_oauth_authorization_exchange_normalizes_malformed_response_without_body(self) -> None:
         invalid_bodies = (
@@ -90,7 +166,10 @@ class AuthProfileTests(SparkTestCase):
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                r"^OAuth refresh for 'openai-codex' failed safely\.$",
+                (
+                    r"^OAuth refresh for 'openai-codex' failed safely\. "
+                    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                ),
             ) as raised:
                 exchange_oauth_refresh_token(
                     provider="openai-codex",

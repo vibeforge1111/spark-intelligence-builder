@@ -13,6 +13,15 @@ from spark_intelligence.auth.service import (
     exchange_oauth_refresh_token,
 )
 
+_TOKEN_EXCHANGE_FAILURE = (
+    r"^OAuth token exchange for 'openai-codex' failed safely\. "
+    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+)
+_REFRESH_FAILURE = (
+    r"^OAuth refresh for 'openai-codex' failed safely\. "
+    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+)
+
 
 def _addrinfo(*addresses: str) -> list[tuple[object, ...]]:
     rows: list[tuple[object, ...]] = []
@@ -82,7 +91,7 @@ def test_oauth_token_exchange_rejects_unsafe_registry_url_without_echoing_it(
     with patch("spark_intelligence.auth.service.get_provider_spec", return_value=unsafe_spec):
         with pytest.raises(
             RuntimeError,
-            match=r"^OAuth token exchange for 'openai-codex' failed safely\.$",
+            match=_TOKEN_EXCHANGE_FAILURE,
         ) as raised:
             exchange_oauth_authorization_code(
                 provider="openai-codex",
@@ -117,7 +126,7 @@ def test_oauth_token_exchange_rejects_private_or_mixed_dns_answers(
     ):
         with pytest.raises(
             RuntimeError,
-            match=r"^OAuth token exchange for 'openai-codex' failed safely\.$",
+            match=_TOKEN_EXCHANGE_FAILURE,
         ):
             exchange_oauth_authorization_code(
                 provider="openai-codex",
@@ -192,7 +201,7 @@ def test_oauth_redirect_is_blocked_without_following_location_or_leaking_secret(
     ):
         with pytest.raises(
             RuntimeError,
-            match=r"^OAuth refresh for 'openai-codex' failed safely\.$",
+            match=_REFRESH_FAILURE,
         ) as raised:
             exchange_oauth_refresh_token(
                 provider="openai-codex",
@@ -214,7 +223,7 @@ def test_oauth_response_is_bounded_before_json_parsing() -> None:
     ):
         with pytest.raises(
             RuntimeError,
-            match=r"^OAuth refresh for 'openai-codex' failed safely\.$",
+            match=_REFRESH_FAILURE,
         ):
             exchange_oauth_refresh_token(
                 provider="openai-codex",

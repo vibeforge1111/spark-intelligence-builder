@@ -157,8 +157,10 @@ Model-provider OAuth should use:
 - short expiry
 - locked refresh
 - explicit expiry tracking in local state
-- operator-visible refresh failures
+- operator-visible refresh failures with safe recovery guidance, never raw provider bodies, URLs, exceptions, or tokens
 - explicit provider and redirect matching
+- manual callback input must be an absolute HTTP(S) URL with no credentials, fragment, or control characters;
+  reject invalid input cleanly before callback-state lookup or mutation
 
 For v1, Spark should keep API-key-backed providers on a direct HTTP execution path and keep Codex/OAuth on an explicit external-wrapper path until a first-class direct OAuth runtime can match the same callback-state, expiry, and revoke guarantees.
 Short-horizon expiry should be surfaced before failure, and scheduled maintenance should remain explicit and auditable. A built-in `jobs tick` maintenance pass is acceptable in v1; hidden background refresh is not. `doctor` and `jobs list` should make stale or never-run maintenance obvious to the operator.
