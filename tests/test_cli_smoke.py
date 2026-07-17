@@ -379,6 +379,14 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.smoke")
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
         self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
+        write_authority = payload["write_result"]["retrieval_trace"]["authority"]
+        cleanup_authority = payload["cleanup_result"]["retrieval_trace"]["authority"]
+        self.assertEqual(write_authority["state"], "governor_verified")
+        self.assertEqual(cleanup_authority["state"], "governor_verified")
+        self.assertNotEqual(
+            write_authority["governor_decision_id"],
+            cleanup_authority["governor_decision_id"],
+        )
 
     def test_memory_export_movement_status_writes_compiler_artifact(self) -> None:
         smoke_exit, _, smoke_stderr = self.run_cli(

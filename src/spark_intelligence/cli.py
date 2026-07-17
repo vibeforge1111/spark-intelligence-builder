@@ -7821,11 +7821,64 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
     return 0 if int(summary.get("completed_runs") or 0) > 0 else 1
 
 
+def _authorize_cli_memory_smoke_write(
+    *,
+    state_db: StateDB,
+    subject: str,
+    operation: str,
+) -> dict[str, object] | None:
+    request_id = f"memory-direct-smoke:{operation}:{uuid4().hex}"
+    action = {
+        "tool_name": "memory.write",
+        "owner_system": "domain-chip-memory",
+        "mutation_class": "writes_memory",
+        "args_path": f"builder://memory-direct-smoke/{request_id}",
+    }
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref=str(subject),
+        request_id=request_id,
+        source_kind="cli_memory_direct_smoke",
+        intent_summary=f"Run the local memory direct-smoke {operation} step.",
+        raw_turn_summary="Local operator explicitly invoked the memory direct-smoke command.",
+        actions=[action],
+    )
+    if not isinstance(envelope, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        human_id=str(subject),
+        actor_id="memory_cli",
+        component="cli_memory_direct_smoke",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+    return None
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    write_governor = _authorize_cli_memory_smoke_write(
+        state_db=state_db,
+        subject=args.subject,
+        operation="write",
+    )
+    cleanup_governor = None
+    if not bool(args.no_cleanup):
+        cleanup_governor = _authorize_cli_memory_smoke_write(
+            state_db=state_db,
+            subject=args.subject,
+            operation="cleanup",
+        )
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -7834,6 +7887,8 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         predicate=args.predicate,
         value=args.value,
         cleanup=not bool(args.no_cleanup),
+        governor_decision=write_governor,
+        cleanup_governor_decision=cleanup_governor,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
