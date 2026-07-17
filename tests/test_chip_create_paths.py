@@ -311,6 +311,64 @@ from ..lab_hooks import (
     assert "from .evaluate import evaluate as run_evaluate" in patched
 
 
+def test_patched_generated_cli_runs_portably_without_chip_labs_src(monkeypatch, tmp_path):
+    chip_dir = tmp_path / "portable-chip"
+    package_dir = chip_dir / "src" / "portable_chip"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    cli_path = package_dir / "cli.py"
+    cli_path.write_text(
+        '''"""Generated cli."""
+from __future__ import annotations
+
+from ..lab_hooks import (
+    generate_packets,
+    generate_watchtower_pages,
+    run_evaluate,
+    run_suggest,
+)
+''',
+        encoding="utf-8",
+    )
+    (package_dir / "evaluate.py").write_text(
+        "def evaluate():\n    return 'local-evaluate'\n",
+        encoding="utf-8",
+    )
+    (package_dir / "packets.py").write_text(
+        "def generate_packets():\n    return []\n",
+        encoding="utf-8",
+    )
+    (package_dir / "suggest.py").write_text(
+        "def suggest():\n    return []\n",
+        encoding="utf-8",
+    )
+    (package_dir / "watchtower.py").write_text(
+        "def generate_watchtower_pages():\n    return []\n",
+        encoding="utf-8",
+    )
+    private_source = tmp_path / "machine-a-private" / "spark-domain-chip-labs"
+
+    _patch_generated_cli(chip_dir, private_source)
+    monkeypatch.delenv("CHIP_LABS_SRC", raising=False)
+    env = {key: value for key, value in os.environ.items() if key != "CHIP_LABS_SRC"}
+    env["PYTHONPATH"] = str(chip_dir / "src")
+    completed = subprocess.run(
+        [sys.executable, "-c", "from portable_chip.cli import run_evaluate; print(run_evaluate())"],
+        cwd=chip_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "local-evaluate"
+    patched = cli_path.read_text(encoding="utf-8")
+    assert str(private_source) not in patched
+    assert "CHIP_LABS_SRC env var is not set" not in patched
+
+
 def test_create_chip_from_prompt_uses_builtin_starter_when_chip_labs_root_missing(
     monkeypatch, tmp_path
 ):
