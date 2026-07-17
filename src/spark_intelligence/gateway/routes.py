@@ -67,7 +67,7 @@ class GatewayRouteRegistry:
             route
             for route in self._routes
             if route.match_mode == "prefix"
-            and normalized_path.startswith(route.path)
+            and _path_matches(route=route, path=normalized_path)
             and normalized_method in route.methods
         ]
         if not prefix_matches:
@@ -192,4 +192,6 @@ def _validate_registration(route: GatewayRouteRegistration) -> None:
 def _path_matches(*, route: GatewayRouteRegistration, path: str) -> bool:
     if route.match_mode == "exact":
         return route.path == path
-    return path.startswith(route.path)
+    if route.path == "/":
+        return True
+    return path == route.path or path.startswith(f"{route.path}/")
