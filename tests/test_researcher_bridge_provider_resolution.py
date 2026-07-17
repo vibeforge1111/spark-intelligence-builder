@@ -7,6 +7,10 @@ from unittest.mock import ANY, patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -39,6 +43,39 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def _memory_write_governor_decision(
+        self,
+        *,
+        turn_id: str,
+        session_id: str,
+        human_id: str,
+        evidence_text: str,
+    ) -> dict[str, object]:
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=turn_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            user_message=evidence_text,
+            source_kind="researcher_bridge_provider_resolution_test",
+        )
+        self.assertIsInstance(payload, dict)
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=turn_id,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="researcher_bridge_provider_resolution_test",
+            component="researcher_bridge_provider_resolution_test",
+        )
+        self.assertTrue(verdict.allowed, verdict.reason_codes)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return verdict.governor_decision
+
     def _browser_turn_intent(self, *, allowed_tools: list[str] | None = None) -> object:
         from spark_intelligence.harness_contract import parse_turn_intent_envelope
 
@@ -2994,6 +3031,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-city-query",
             turn_id="turn-city-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-city-query-write",
+                session_id="session-city-query",
+                human_id="human-1",
+                evidence_text="I moved to Dubai.",
+            ),
         )
 
         runtime_root = self.home / "fake-researcher"
@@ -3132,6 +3175,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-startup-explanation-founder-fallback",
             turn_id="turn-startup-explanation-founder-fallback-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-startup-explanation-founder-fallback-write",
+                session_id="session-startup-explanation-founder-fallback",
+                human_id="human-1",
+                evidence_text="I am the founder of Spark Swarm.",
+            ),
         )
 
         with patch(
@@ -3353,6 +3402,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-timezone-query",
             turn_id="turn-timezone-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-timezone-query-write",
+                session_id="session-timezone-query",
+                human_id="human-1",
+                evidence_text="My timezone is Asia/Dubai.",
+            ),
         )
 
         runtime_root = self.home / "fake-researcher"
@@ -3527,6 +3582,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-country-query",
             turn_id="turn-country-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-country-query-write",
+                session_id="session-country-query",
+                human_id="human-1",
+                evidence_text="My country is UAE.",
+            ),
         )
 
         runtime_root = self.home / "fake-researcher"
@@ -3706,6 +3767,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-name-query",
             turn_id="turn-name-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-name-query-write",
+                session_id="session-name-query",
+                human_id="human-1",
+                evidence_text="My name is Sarah.",
+            ),
         )
 
         runtime_root = self.home / "fake-researcher"
@@ -3833,6 +3900,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-query",
             turn_id="turn-identity-query-write-1",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-query-write-1",
+                session_id="session-identity-query",
+                human_id="human-1",
+                evidence_text="I am an entrepreneur.",
+            ),
         )
         write_profile_fact_to_memory(
             config_manager=self.config_manager,
@@ -3845,6 +3918,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-query",
             turn_id="turn-identity-query-write-2",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-query-write-2",
+                session_id="session-identity-query",
+                human_id="human-1",
+                evidence_text="My startup is Seedify.",
+            ),
         )
         write_profile_fact_to_memory(
             config_manager=self.config_manager,
@@ -3857,6 +3936,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-query",
             turn_id="turn-identity-query-write-3",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-query-write-3",
+                session_id="session-identity-query",
+                human_id="human-1",
+                evidence_text="I am trying to survive the hack and revive the companies.",
+            ),
         )
 
         with patch(
@@ -4540,6 +4625,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-summary-rich",
             turn_id="turn-identity-summary-rich-write-1",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-summary-rich-write-1",
+                session_id="session-identity-summary-rich",
+                human_id="human-1",
+                evidence_text="I am an entrepreneur.",
+            ),
         )
         write_profile_fact_to_memory(
             config_manager=self.config_manager,
@@ -4552,6 +4643,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-summary-rich",
             turn_id="turn-identity-summary-rich-write-2",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-summary-rich-write-2",
+                session_id="session-identity-summary-rich",
+                human_id="human-1",
+                evidence_text="I am the founder of Spark Swarm.",
+            ),
         )
         write_profile_fact_to_memory(
             config_manager=self.config_manager,
@@ -4564,6 +4661,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-summary-rich",
             turn_id="turn-identity-summary-rich-write-3",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-summary-rich-write-3",
+                session_id="session-identity-summary-rich",
+                human_id="human-1",
+                evidence_text="My timezone is Asia/Dubai.",
+            ),
         )
         write_profile_fact_to_memory(
             config_manager=self.config_manager,
@@ -4576,6 +4679,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             session_id="session-identity-summary-rich",
             turn_id="turn-identity-summary-rich-write-4",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-identity-summary-rich-write-4",
+                session_id="session-identity-summary-rich",
+                human_id="human-1",
+                evidence_text="My country is Canada.",
+            ),
         )
 
         with patch(
