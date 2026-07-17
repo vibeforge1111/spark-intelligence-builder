@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import stat
 import subprocess
-import re
+import tempfile
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -27,6 +29,55 @@ class SparkPaths:
 
 
 class ConfigManager:
+    _VALID_ENV_SECRET_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _PROCESS_CONTROL_ENV_KEYS = frozenset(
+        {
+            "ALL_PROXY",
+            "BASH_ENV",
+            "BASHOPTS",
+            "CDPATH",
+            "COMSPEC",
+            "CURL_CA_BUNDLE",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "EDITOR",
+            "ENV",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "HOME",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "IFS",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "NO_PROXY",
+            "PATH",
+            "PATHEXT",
+            "PROMPT_COMMAND",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "REQUESTS_CA_BUNDLE",
+            "SHELL",
+            "SHELLOPTS",
+            "SSL_CERT_FILE",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "TZ",
+            "USER",
+            "USERPROFILE",
+            "VISUAL",
+            "WINDIR",
+        }
+    )
+
     def __init__(self, paths: SparkPaths):
         self.paths = paths
 
@@ -291,6 +342,9 @@ class ConfigManager:
         reason_code: str = "env_secret_upsert",
         request_source: str = "config_manager.upsert_env_secret",
     ) -> None:
+        self._validate_env_secret_key(key)
+        if not isinstance(value, str):
+            raise ValueError("Env secret values must be strings.")
         env_map = self.read_env_map()
         previous = env_map.get(key)
         if previous == value:
@@ -311,7 +365,10 @@ class ConfigManager:
             )
             return
         env_map[key] = value
-        content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
+        content = "# Spark Intelligence secrets\n" + "".join(
+            f"{name}={self._serialize_env_secret_value(env_map[name])}\n"
+            for name in sorted(env_map)
+        )
         self._write_env_file(
             content,
             actor_id=actor_id,
@@ -326,21 +383,71 @@ class ConfigManager:
     def read_env_map(self) -> dict[str, str]:
         if not self.paths.env_file.exists():
             return {}
+        if self.paths.env_file.is_symlink():
+            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
         mapping: dict[str, str] = {}
-        for line in self.paths.env_file.read_text(encoding="utf-8").splitlines():
+        for line in self._read_secret_text(self.paths.env_file).splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
+            self._validate_env_secret_key(key)
             value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            if value.startswith('"'):
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    if len(value) >= 2 and value.endswith('"'):
+                        decoded = value[1:-1]
+                    else:
+                        raise ValueError(
+                            f"Env secret value for {key} has invalid quoted encoding."
+                        ) from exc
+                if not isinstance(decoded, str):
+                    raise ValueError(f"Env secret value for {key} must decode to a string.")
+                value = decoded
+            elif len(value) >= 2 and value[0] == value[-1] == "'":
                 value = value[1:-1]
             mapping[key] = value
         return mapping
 
+    @classmethod
+    def _validate_env_secret_key(cls, key: str) -> None:
+        if not isinstance(key, str) or cls._VALID_ENV_SECRET_KEY.fullmatch(key) is None:
+            raise ValueError("Env secret keys must match [A-Za-z_][A-Za-z0-9_]*.")
+        if key.upper() in cls._PROCESS_CONTROL_ENV_KEYS:
+            raise ValueError("Process-control environment names cannot be stored as Spark secrets.")
+
+    @staticmethod
+    def _serialize_env_secret_value(value: str) -> str:
+        return json.dumps(value, ensure_ascii=True)
+
+    @staticmethod
+    def _read_secret_text(path: Path) -> str:
+        flags = os.O_RDONLY
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            if path.is_symlink():
+                raise ValueError("Spark Intelligence secrets file must not be a symbolic link.") from exc
+            raise
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("Spark Intelligence secrets path must be a regular file.")
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                return handle.read()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
     def env_file_permission_status(self) -> tuple[bool, str]:
         if not self.paths.env_file.exists():
             return (False, "missing")
+        if self.paths.env_file.is_symlink():
+            return (False, "symbolic-link-rejected")
         try:
             if os.name == "nt":
                 return self._windows_env_permission_status()
@@ -367,7 +474,7 @@ class ConfigManager:
         previous_value: str | None = None,
         new_value: str | None = None,
     ) -> None:
-        self.paths.env_file.write_text(content, encoding="utf-8")
+        self._write_secret_text(self.paths.env_file, content)
         self.harden_env_file_permissions()
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
@@ -385,9 +492,45 @@ class ConfigManager:
             summary=f"Env secret mutation applied for {target_key}.",
         )
 
+    @staticmethod
+    def _write_secret_text(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
+        if path.exists() and not path.is_file():
+            raise ValueError("Spark Intelligence secrets path must be a regular file.")
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                descriptor = -1
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            temporary = ""
+            if os.name != "nt":
+                os.chmod(path, 0o600)
+                directory_descriptor = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
     def harden_env_file_permissions(self) -> None:
         if not self.paths.env_file.exists():
             return
+        if self.paths.env_file.is_symlink():
+            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
         if os.name == "nt":
             self._harden_windows_env_file_permissions()
             return

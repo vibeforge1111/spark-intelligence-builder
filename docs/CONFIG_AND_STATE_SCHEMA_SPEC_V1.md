@@ -81,6 +81,8 @@ Owns durable product configuration.
 
 Owns env-backed secret references and operator-provided secret values where needed in v1.
 
+Builder owns this as an application secret file, not as a shell script. Secret names use the portable env-key grammar and may not shadow process-control variables. Values use one JSON string literal after `=`, so quotes, slashes, whitespace, Unicode, and line breaks round-trip without creating extra keys. Reads reject symlinks and non-regular files. Writes use a same-directory atomic replacement whose temporary file is owner-only from creation; post-write permission hardening remains a backstop.
+
 ### 3.3 `state.db`
 
 Owns canonical runtime state.
