@@ -9473,7 +9473,7 @@ def build_researcher_reply(
         human_id=human_id,
         agent_id=agent_id,
         user_message=user_message,
-        allow_adapter_envelope=allow_memory_adapter_envelope,
+        allow_adapter_envelope=allow_memory_adapter_envelope and turn_intent_envelope is None,
     )
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
