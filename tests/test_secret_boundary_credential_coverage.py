@@ -34,6 +34,7 @@ def test_already_covered_shapes_still_secret_like() -> None:
 
 def test_http_url_credentials_follow_canonical_secret_authority() -> None:
     assert looks_secret_like("https://operator:aaaaaaaaaaaa@internal.example.com/status")
+    assert looks_secret_like("https://:aaaaaaaaaaaa@internal.example.com/status")
 
 
 def test_benign_text_and_phone_only_pii_are_not_secret_boundary_hits() -> None:

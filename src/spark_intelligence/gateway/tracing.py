@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.security.redaction import redact_text
 
 SENSITIVE_TEXT_PATTERNS = [
     re.compile(r"\b(?:bot)?\d{7,12}:[A-Za-z0-9_-]{30,}\b"),
@@ -288,6 +289,7 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
+        redacted = redact_text(redacted)
         for pattern in PATH_LIKE_PATTERNS:
             redacted = pattern.sub("<path>", redacted)
         redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
