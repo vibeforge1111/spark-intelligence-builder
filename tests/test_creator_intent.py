@@ -66,6 +66,32 @@ def test_creator_plan_defaults_domain_chip_to_benchmarked_local_work():
     assert packet.network_contribution_policy == "workspace_only"
 
 
+def test_creator_plan_does_not_invent_domain_chip_for_telegram_delivery_brief():
+    packet = build_creator_intent_packet("Build me a Telegram bot for customer support")
+
+    assert packet.desired_outputs["telegram_flow"] is True
+    assert packet.desired_outputs["domain_chip"] is False
+    assert packet.artifact_targets == ["benchmark_pack", "tool_integration"]
+
+
+def test_creator_plan_does_not_invent_domain_chip_for_spawner_mission_brief():
+    packet = build_creator_intent_packet("Create a Spawner mission canvas for the launch")
+
+    assert packet.desired_outputs["spawner_mission"] is True
+    assert packet.desired_outputs["domain_chip"] is False
+    assert packet.artifact_targets == ["benchmark_pack", "tool_integration"]
+
+
+def test_creator_plan_keeps_explicit_domain_chip_with_delivery_surfaces():
+    packet = build_creator_intent_packet(
+        "Create a domain chip for support triage with a Telegram bot and Spawner missions"
+    )
+
+    assert packet.desired_outputs["domain_chip"] is True
+    assert packet.desired_outputs["telegram_flow"] is True
+    assert packet.desired_outputs["spawner_mission"] is True
+
+
 def test_creator_plan_honors_explicit_private_mode():
     packet = build_creator_intent_packet(
         "Build a github repo backed benchmark for founder research but keep it private"
