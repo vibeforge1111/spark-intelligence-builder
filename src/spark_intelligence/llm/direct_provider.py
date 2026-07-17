@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import http.client
-import ipaddress
 import json
-import socket
-import ssl
-import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -13,6 +8,13 @@ from time import perf_counter
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import record_event
+from spark_intelligence.security.https_endpoint import (
+    PinnedHTTPSConnection,
+    ResolvedHTTPSEndpoint,
+    canonical_https_origin,
+    post_https_bytes,
+    resolve_public_https_endpoint,
+)
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
@@ -45,38 +47,8 @@ class DirectProviderGovernance:
     provenance: dict[str, object] | None = None
 
 
-@dataclass(frozen=True)
-class _ResolvedProviderEndpoint:
-    hostname: str
-    port: int
-    request_target: str
-    addresses: tuple[str, ...]
-
-
-class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPS connection pinned to one policy-validated address.
-
-    The TLS handshake and HTTP Host header continue to use the original
-    hostname, so certificate verification remains intact without a second DNS
-    lookup at connect time.
-    """
-
-    def __init__(self, endpoint: _ResolvedProviderEndpoint, address: str) -> None:
-        super().__init__(
-            endpoint.hostname,
-            endpoint.port,
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-            context=ssl.create_default_context(),
-        )
-        self._pinned_address = address
-
-    def connect(self) -> None:
-        self.sock = self._create_connection(
-            (self._pinned_address, self.port),
-            self.timeout,
-            self.source_address,
-        )
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+_ResolvedProviderEndpoint = ResolvedHTTPSEndpoint
+_PinnedHTTPSConnection = PinnedHTTPSConnection
 
 
 def execute_direct_provider_prompt(
@@ -298,38 +270,20 @@ def _post_json(
 ) -> dict[str, object]:
     endpoint = _resolve_provider_endpoint(url, provider=provider)
     body = json.dumps(payload).encode("utf-8")
-    last_network_error: Exception | None = None
-
-    for address in endpoint.addresses:
-        connection = _connection_for_endpoint(endpoint, address)
-        try:
-            connection.request(
-                "POST",
-                endpoint.request_target,
-                body=body,
-                headers=headers,
-            )
-            response = connection.getresponse()
-            if 300 <= response.status < 400:
-                raise RuntimeError("Provider redirect blocked by endpoint policy.")
-            if not 200 <= response.status < 300:
-                raise RuntimeError(f"Provider HTTP {response.status} failed safely.")
-            response_body = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
-            if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
-                raise RuntimeError("Provider response exceeded the safe size limit.")
-            try:
-                decoded = json.loads(response_body.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise RuntimeError("Provider returned an invalid JSON response.") from exc
-            if not isinstance(decoded, dict):
-                raise RuntimeError("Provider returned an invalid JSON response.")
-            return decoded
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
-            last_network_error = exc
-        finally:
-            connection.close()
-
-    raise RuntimeError("Provider network request failed safely.") from last_network_error
+    response_body = post_https_bytes(
+        endpoint,
+        body=body,
+        headers=headers,
+        timeout_seconds=_REQUEST_TIMEOUT_SECONDS,
+        max_response_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
+    )
+    try:
+        decoded = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Provider returned an invalid JSON response.") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("Provider returned an invalid JSON response.")
+    return decoded
 
 
 def _resolve_provider_endpoint(
@@ -337,117 +291,30 @@ def _resolve_provider_endpoint(
     *,
     provider: DirectProviderRequest,
 ) -> _ResolvedProviderEndpoint:
-    if any(ord(character) <= 32 or ord(character) == 127 for character in url):
-        raise _endpoint_policy_error("control characters are not permitted")
-    try:
-        parsed = urllib.parse.urlsplit(url)
-        port = parsed.port or 443
-    except ValueError as exc:
-        raise _endpoint_policy_error("the URL is malformed") from exc
-
-    if parsed.scheme.lower() != "https":
-        raise _endpoint_policy_error("HTTPS is required")
-    if parsed.username is not None or parsed.password is not None:
-        raise _endpoint_policy_error("embedded credentials are not permitted")
-    if parsed.query or parsed.fragment:
-        raise _endpoint_policy_error("query strings and fragments are not permitted")
-    if not parsed.hostname:
-        raise _endpoint_policy_error("a hostname is required")
-    if not 1 <= port <= 65535:
-        raise _endpoint_policy_error("the port is invalid")
-
-    hostname = _normalize_endpoint_hostname(parsed.hostname)
-    _enforce_registered_provider_origin(provider=provider, hostname=hostname, port=port)
-    addresses = _resolve_public_addresses(hostname, port)
-    request_target = urllib.parse.urlunsplit(("", "", parsed.path or "/", "", ""))
-    return _ResolvedProviderEndpoint(
-        hostname=hostname,
-        port=port,
-        request_target=request_target,
-        addresses=addresses,
+    expected_origin = _registered_provider_origin(provider=provider)
+    return resolve_public_https_endpoint(
+        url,
+        expected_origin=expected_origin,
     )
 
 
-def _normalize_endpoint_hostname(hostname: str) -> str:
-    normalized = hostname.rstrip(".")
-    if not normalized or "%" in normalized:
-        raise _endpoint_policy_error("the hostname is invalid")
-    try:
-        return normalized.encode("idna").decode("ascii").lower()
-    except UnicodeError as exc:
-        raise _endpoint_policy_error("the hostname is invalid") from exc
-
-
-def _enforce_registered_provider_origin(
+def _registered_provider_origin(
     *,
     provider: DirectProviderRequest,
-    hostname: str,
-    port: int,
-) -> None:
+) -> tuple[str, int] | None:
     if provider.provider_id == "custom":
-        return
+        return None
     try:
         spec = get_provider_spec(provider.provider_id)
     except ValueError as exc:
-        raise _endpoint_policy_error("the provider identity is not registered") from exc
+        raise RuntimeError(
+            "HTTPS endpoint policy rejected the request: the provider identity is not registered."
+        ) from exc
     if not spec.default_base_url:
-        raise _endpoint_policy_error("the provider has no registered direct origin")
-    registered = urllib.parse.urlsplit(spec.default_base_url)
-    registered_hostname = _normalize_endpoint_hostname(registered.hostname or "")
-    registered_port = registered.port or 443
-    if hostname != registered_hostname or port != registered_port:
-        raise _endpoint_policy_error("the endpoint does not match the provider's registered origin")
-
-
-def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:
-    try:
-        literal = ipaddress.ip_address(hostname)
-    except ValueError:
-        literal = None
-
-    if literal is not None:
-        addresses = (str(literal),)
-    else:
-        try:
-            address_rows = socket.getaddrinfo(
-                hostname,
-                port,
-                socket.AF_UNSPEC,
-                socket.SOCK_STREAM,
-            )
-        except OSError as exc:
-            raise _endpoint_policy_error("the hostname could not be resolved") from exc
-        addresses = tuple(dict.fromkeys(str(row[4][0]) for row in address_rows if row[4]))
-
-    if not addresses:
-        raise _endpoint_policy_error("the hostname resolved to no usable addresses")
-    for address in addresses:
-        try:
-            parsed_address = ipaddress.ip_address(address)
-        except ValueError as exc:
-            raise _endpoint_policy_error("the hostname resolved to an invalid address") from exc
-        if not _is_public_provider_address(parsed_address):
-            raise _endpoint_policy_error("the hostname resolved outside the public network")
-    return addresses
-
-
-def _is_public_provider_address(
-    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
-) -> bool:
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        address = address.ipv4_mapped
-    return bool(address.is_global and not address.is_multicast)
-
-
-def _connection_for_endpoint(
-    endpoint: _ResolvedProviderEndpoint,
-    address: str,
-) -> _PinnedHTTPSConnection:
-    return _PinnedHTTPSConnection(endpoint, address)
-
-
-def _endpoint_policy_error(reason: str) -> RuntimeError:
-    return RuntimeError(f"Provider endpoint policy rejected the request: {reason}.")
+        raise RuntimeError(
+            "HTTPS endpoint policy rejected the request: the provider has no registered direct origin."
+        )
+    return canonical_https_origin(spec.default_base_url)
 
 
 def _chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:

@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -13,21 +12,34 @@ from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, ge
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.security.https_endpoint import (
+    post_https_bytes,
+    resolve_public_https_endpoint,
+)
 from spark_intelligence.state.db import StateDB
 
 
 DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS = 600
+_OAUTH_REQUEST_TIMEOUT_SECONDS = 20
+_MAX_OAUTH_RESPONSE_BYTES = 1024 * 1024
 
 
 def _read_oauth_token_response(
-    request: urllib.request.Request,
+    token_url: str,
     *,
+    body: bytes,
     failure_label: str,
 ) -> dict[str, object]:
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            raw_payload = response.read()
-    except OSError:
+        endpoint = resolve_public_https_endpoint(token_url)
+        raw_payload = post_https_bytes(
+            endpoint,
+            body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout_seconds=_OAUTH_REQUEST_TIMEOUT_SECONDS,
+            max_response_bytes=_MAX_OAUTH_RESPONSE_BYTES,
+        )
+    except (OSError, RuntimeError):
         raise RuntimeError(f"{failure_label} failed safely.") from None
     try:
         payload = json.loads(raw_payload.decode("utf-8"))
@@ -663,14 +675,9 @@ def exchange_oauth_authorization_code(
             "code_verifier": code_verifier,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
-        spec.oauth.token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
     payload = _read_oauth_token_response(
-        request,
+        spec.oauth.token_url,
+        body=data,
         failure_label=f"OAuth token exchange for '{provider}'",
     )
     if not payload.get("access_token"):
@@ -693,14 +700,9 @@ def exchange_oauth_refresh_token(
             "client_id": spec.oauth.client_id,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
-        spec.oauth.token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
     payload = _read_oauth_token_response(
-        request,
+        spec.oauth.token_url,
+        body=data,
         failure_label=f"OAuth refresh for '{provider}'",
     )
     if not payload.get("access_token"):

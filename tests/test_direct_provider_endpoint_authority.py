@@ -88,7 +88,7 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
             ("8.8.8.8", "10.0.0.4"),
         ):
             with self.subTest(addresses=addresses), patch(
-                "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+                "spark_intelligence.security.https_endpoint.socket.getaddrinfo",
                 return_value=_addrinfo(*addresses),
             ):
                 with self.assertRaisesRegex(RuntimeError, "endpoint policy"):
@@ -99,7 +99,7 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
 
     def test_known_provider_secret_is_bound_to_registered_origin(self) -> None:
         with patch(
-            "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+            "spark_intelligence.security.https_endpoint.socket.getaddrinfo",
         ) as rejected_resolver:
             with self.assertRaisesRegex(RuntimeError, "registered origin"):
                 _resolve_provider_endpoint(
@@ -109,7 +109,7 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
         rejected_resolver.assert_not_called()
 
         with patch(
-            "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+            "spark_intelligence.security.https_endpoint.socket.getaddrinfo",
             return_value=_addrinfo("8.8.8.8"),
         ):
             endpoint = _resolve_provider_endpoint(
@@ -125,10 +125,10 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
         resolver_rows = _addrinfo("8.8.8.8")
 
         with patch(
-            "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+            "spark_intelligence.security.https_endpoint.socket.getaddrinfo",
             return_value=resolver_rows,
         ) as resolver, patch(
-            "spark_intelligence.llm.direct_provider._connection_for_endpoint",
+            "spark_intelligence.security.https_endpoint._connection_for_endpoint",
             return_value=connection,
         ) as connection_factory, patch.dict(
             "os.environ",
@@ -146,6 +146,7 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
         resolver.assert_called_once()
         endpoint = connection_factory.call_args.args[0]
         self.assertEqual(connection_factory.call_args.args[1], "8.8.8.8")
+        self.assertEqual(connection_factory.call_args.kwargs, {"timeout_seconds": 60})
         self.assertEqual(endpoint.hostname, "api.example.com")
         self.assertEqual(connection.requests[0][0:2], ("POST", "/v1/chat/completions"))
         self.assertTrue(connection.closed)
@@ -157,7 +158,7 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
         )
         from spark_intelligence.llm.direct_provider import _PinnedHTTPSConnection
 
-        connection = _PinnedHTTPSConnection(endpoint, "8.8.8.8")
+        connection = _PinnedHTTPSConnection(endpoint, "8.8.8.8", timeout_seconds=60)
         raw_socket = object()
         wrapped_socket = object()
         with patch.object(connection, "_create_connection", return_value=raw_socket) as create, patch.object(
@@ -174,10 +175,10 @@ class DirectProviderEndpointAuthorityTests(unittest.TestCase):
     def test_redirect_is_rejected_without_following_the_location(self) -> None:
         connection = _FakeConnection(_FakeResponse(status=302, payload={"location": "ignored"}))
         with patch(
-            "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
+            "spark_intelligence.security.https_endpoint.socket.getaddrinfo",
             return_value=_addrinfo("8.8.8.8"),
         ), patch(
-            "spark_intelligence.llm.direct_provider._connection_for_endpoint",
+            "spark_intelligence.security.https_endpoint._connection_for_endpoint",
             return_value=connection,
         ) as connection_factory:
             with self.assertRaisesRegex(RuntimeError, "redirect"):

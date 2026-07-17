@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from spark_intelligence.auth.service import exchange_oauth_authorization_code, exchange_oauth_refresh_token
 from spark_intelligence.auth.runtime import (
@@ -30,7 +30,10 @@ class AuthProfileTests(SparkTestCase):
         )
         for failure in failures:
             with self.subTest(failure_type=type(failure).__name__), patch(
-                "spark_intelligence.auth.service.urllib.request.urlopen",
+                "spark_intelligence.auth.service.resolve_public_https_endpoint",
+                return_value=object(),
+            ), patch(
+                "spark_intelligence.auth.service.post_https_bytes",
                 side_effect=failure,
             ):
                 with self.assertRaisesRegex(
@@ -57,11 +60,12 @@ class AuthProfileTests(SparkTestCase):
             b"[]",
         )
         for body in invalid_bodies:
-            response = MagicMock()
-            response.__enter__.return_value.read.return_value = body
             with self.subTest(body=body[:1]), patch(
-                "spark_intelligence.auth.service.urllib.request.urlopen",
-                return_value=response,
+                "spark_intelligence.auth.service.resolve_public_https_endpoint",
+                return_value=object(),
+            ), patch(
+                "spark_intelligence.auth.service.post_https_bytes",
+                return_value=body,
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
@@ -78,7 +82,10 @@ class AuthProfileTests(SparkTestCase):
 
     def test_oauth_refresh_exchange_normalizes_transport_error_without_details(self) -> None:
         with patch(
-            "spark_intelligence.auth.service.urllib.request.urlopen",
+            "spark_intelligence.auth.service.resolve_public_https_endpoint",
+            return_value=object(),
+        ), patch(
+            "spark_intelligence.auth.service.post_https_bytes",
             side_effect=TimeoutError("refresh-token-do-not-leak"),
         ):
             with self.assertRaisesRegex(

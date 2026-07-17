@@ -67,6 +67,8 @@ Rules for new code:
 - Keep CLI handlers thin: parse arguments, call a service, render result.
 - Do not introduce a second state store for identity, pairing, provider, or runtime health.
 - Do not copy another Spark repo's internals into Builder.
+- Route outbound credential-bearing HTTPS through `security/https_endpoint.py` so URL policy, public-address
+  resolution, DNS pinning, proxy avoidance, redirect rejection, and response bounds have one owner.
 - Add tests at the contract boundary, not only at the CLI text-output layer.
 
 ## Trust Boundaries
