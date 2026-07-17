@@ -2883,7 +2883,7 @@ def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
     snippet = str(episode_text or "").strip()
     if not snippet:
         return "Noted."
-    return f"Noted: \"{snippet}\""
+    return "Got it — I'll keep that in mind."
 
 
 @dataclass
