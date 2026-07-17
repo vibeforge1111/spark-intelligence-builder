@@ -24,8 +24,10 @@ from spark_intelligence.observability.store import (
 from spark_intelligence.researcher_bridge.advisory import (
     OpenMemoryRecallQuery,
     ResearcherProviderSelection,
+    _build_raw_episode_observation_answer,
     _build_open_memory_recall_answer,
     _filter_open_memory_recall_records,
+    _normalize_explicit_memory_message,
     build_researcher_reply,
 )
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
@@ -1902,6 +1904,25 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertEqual(tool_facts.get("bridge_mode"), "external_configured")
         self.assertEqual(tool_facts.get("routing_decision"), "provider_fallback_chat")
+
+    def test_raw_episode_acknowledgement_is_natural_without_echoing_saved_text(self) -> None:
+        episode_text = "The pricing page exposed customer cohort beta-17 during the private demo."
+
+        reply = _build_raw_episode_observation_answer(episode_text=episode_text)
+
+        self.assertTrue(reply)
+        self.assertNotIn(episode_text, reply)
+        self.assertNotIn("beta-17", reply)
+        self.assertLessEqual(len(reply.split()), 12)
+        self.assertFalse(any(heading in reply for heading in ("Mission\n", "Provider\n", "Move\n", "Status\n")))
+
+    def test_explicit_memory_normalization_preserves_session_scope_until_supported(self) -> None:
+        explicit, normalized = _normalize_explicit_memory_message(
+            "Please remember this: just for this conversation, my demo alias is beta-17"
+        )
+
+        self.assertTrue(explicit)
+        self.assertTrue(normalized.lower().startswith("just for this conversation"))
 
     def test_build_researcher_reply_answers_open_structured_evidence_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
