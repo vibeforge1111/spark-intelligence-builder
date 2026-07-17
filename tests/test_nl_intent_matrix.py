@@ -71,6 +71,10 @@ INSTRUCTION_REMEMBER_PHRASES = [
     "/remember I use UTC",
     "always give me citations",
     "never start with a greeting",
+    "please always use bullet points",
+    "could you always include sources",
+    "I want you to never expose raw ids",
+    "Thanks. Always keep the summary concise",
 ]
 
 INSTRUCTION_FORGET_PHRASES = [
@@ -181,6 +185,13 @@ PLAIN_CHAT_PHRASES = [
     "what's the weather tomorrow",
     "summarize this article",
     "who won the last world cup",
+    "I always go to the beach",
+    "you always say that",
+    "we never go there anymore",
+    "they always arrive late",
+    "he never listens to me",
+    "she always forgets her keys",
+    "it never works properly",
 ]
 
 
@@ -291,6 +302,19 @@ def test_plain_chat_matches_nothing(phrase: str):
     """Plain-chat anti-fixtures must not trigger ANY intent detector."""
     hits = [name for name, det in INTENT_DETECTORS.items() if det(phrase)]
     assert not hits, f"Plain chat {phrase!r} over-matched intent(s): {hits}"
+
+
+def test_instruction_directive_preserves_complete_body_with_letter_n():
+    assert detect_instruction_intent("never send notifications") == {
+        "action": "remember",
+        "instruction_text": "never send notifications",
+    }
+
+
+def test_instruction_directive_refuses_overlong_body_instead_of_truncating_it():
+    phrase = "always " + "keep this preference private " * 12
+
+    assert detect_instruction_intent(phrase) is None
 
 
 @pytest.mark.parametrize("intent_name,phrase", [

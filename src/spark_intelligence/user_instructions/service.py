@@ -53,7 +53,11 @@ _REMEMBER_PREFIXES = (
 )
 
 _INLINE_DIRECTIVE = re.compile(
-    r"\b(?:please\s+)?(?P<directive>always|never|stop)\s+(?P<body>[^.\n]{4,200})",
+    r"(?:^|(?<=[.!?]\s))"
+    r"(?:(?:please\s+)|(?:(?:could|can|would|will)\s+you\s+)"
+    r"|(?:i\s+(?:want|need)\s+you\s+to\s+))?"
+    r"(?P<directive>always|never|stop)\s+"
+    r"(?P<body>[^\n.!?]{4,200}?)(?=[.!?](?:\s|$)|$)",
     re.IGNORECASE,
 )
 
