@@ -231,6 +231,17 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS gateway_webhook_request_claims (
+        surface TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        signed_at_epoch INTEGER NOT NULL,
+        expires_at_epoch INTEGER NOT NULL,
+        claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (surface, request_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS builder_runs (
         run_id TEXT PRIMARY KEY,
         run_kind TEXT NOT NULL,

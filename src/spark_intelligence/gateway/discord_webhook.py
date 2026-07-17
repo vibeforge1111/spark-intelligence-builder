@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +26,7 @@ DISCORD_DM_COMMAND_OPTION = "message"
 DISCORD_CHAT_INPUT_COMMAND_TYPE = 1
 DISCORD_STRING_OPTION_TYPE = 3
 DISCORD_MAX_INTERACTION_RESPONSE_CHARS = 2000
+DISCORD_INTERACTION_MAX_CLOCK_SKEW_SECONDS = 300
 DISCORD_PUBLIC_AUTH_ERROR = "Discord webhook authentication failed."
 
 
@@ -99,6 +102,31 @@ def handle_discord_webhook(
             body=json.dumps({"type": 1}, indent=2),
         )
     if "type" in payload and "content" not in payload:
+        interaction_public_key = _discord_interaction_public_key(config_manager)
+        if interaction_public_key:
+            interaction_id = payload.get("id")
+            if not isinstance(interaction_id, str) or not interaction_id.strip():
+                return _json_error_response(400, "Discord interaction payload is missing its interaction id.")
+            timestamp = _header_value(headers, "X-Signature-Timestamp")
+            if timestamp is None:
+                return _json_error_response(401, DISCORD_PUBLIC_AUTH_ERROR)
+            if not _claim_discord_interaction_request(
+                state_db=state_db,
+                interaction_id=interaction_id.strip(),
+                payload_sha256=hashlib.sha256(body).hexdigest(),
+                signed_at_epoch=int(timestamp),
+            ):
+                append_gateway_trace(
+                    config_manager,
+                    {
+                        "event": "discord_interaction_replay_rejected",
+                        "channel_id": "discord",
+                        "decision": "rejected",
+                        "reason": "Discord interaction id was already claimed inside the valid signature window.",
+                        "status_code": 409,
+                    },
+                )
+                return _json_error_response(409, "Discord interaction was already received.")
         return _handle_discord_interaction_payload(
             config_manager=config_manager,
             state_db=state_db,
@@ -210,7 +238,7 @@ def _validate_discord_webhook_auth(
     record = config_manager.get_path("channels.records.discord", default={}) or {}
     if not isinstance(record, dict):
         return (503, "Discord webhook channel is not configured.")
-    interaction_public_key = str(record.get("interaction_public_key") or "").strip()
+    interaction_public_key = _discord_interaction_public_key(config_manager) or ""
     if interaction_public_key:
         return _validate_discord_interaction_signature(
             interaction_public_key=interaction_public_key,
@@ -236,6 +264,14 @@ def _validate_discord_webhook_auth(
     return None
 
 
+def _discord_interaction_public_key(config_manager: ConfigManager) -> str | None:
+    record = config_manager.get_path("channels.records.discord", default={}) or {}
+    if not isinstance(record, dict):
+        return None
+    interaction_public_key = str(record.get("interaction_public_key") or "").strip()
+    return interaction_public_key or None
+
+
 def _validate_discord_interaction_signature(
     *,
     interaction_public_key: str,
@@ -257,7 +293,50 @@ def _validate_discord_interaction_signature(
         return (401, "Discord signature header is invalid.")
     except BadSignatureError:
         return (401, "Discord request signature is invalid.")
+    if (
+        not timestamp.isascii()
+        or not timestamp.isdecimal()
+        or len(timestamp) > 20
+    ):
+        return (401, "Discord signature timestamp header is invalid.")
+    signed_at_epoch = int(timestamp)
+    if str(signed_at_epoch) != timestamp:
+        return (401, "Discord signature timestamp header is invalid.")
+    if abs(int(time.time()) - signed_at_epoch) > DISCORD_INTERACTION_MAX_CLOCK_SKEW_SECONDS:
+        return (401, "Discord request signature timestamp is outside the accepted clock-skew window.")
     return None
+
+
+def _claim_discord_interaction_request(
+    *,
+    state_db: StateDB,
+    interaction_id: str,
+    payload_sha256: str,
+    signed_at_epoch: int,
+) -> bool:
+    expires_at_epoch = signed_at_epoch + DISCORD_INTERACTION_MAX_CLOCK_SKEW_SECONDS
+    now_epoch = int(time.time())
+    with state_db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "DELETE FROM gateway_webhook_request_claims WHERE expires_at_epoch < ?",
+            (now_epoch,),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO gateway_webhook_request_claims(
+                surface,
+                request_id,
+                payload_sha256,
+                signed_at_epoch,
+                expires_at_epoch
+            )
+            VALUES ('discord_interaction', ?, ?, ?, ?)
+            ON CONFLICT(surface, request_id) DO NOTHING
+            """,
+            (interaction_id, payload_sha256, signed_at_epoch, expires_at_epoch),
+        )
+        return cursor.rowcount == 1
 
 
 def _header_value(headers: dict[str, str] | None, name: str) -> str | None:

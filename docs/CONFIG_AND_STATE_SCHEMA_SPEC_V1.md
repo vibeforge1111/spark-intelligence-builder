@@ -170,6 +170,7 @@ Recommended core tables:
 - `session_bindings`
 - `pairing_records`
 - `allowlist_entries`
+- `gateway_webhook_request_claims`
 - `provider_records`
 - `job_records`
 - `job_runs`
@@ -203,6 +204,7 @@ Recommended core tables:
 - audit history
 - pairing approvals
 - execution proof and delivery proof
+- bounded webhook replay claims, keyed by source-owned external request id
 - provenance for chip, plugin, personality, and swarm influence
 - attachment snapshot truth and active attachment selection state
 - personality preference deltas, interaction observations, and evolution history

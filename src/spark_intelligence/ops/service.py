@@ -47,6 +47,11 @@ from spark_intelligence.swarm_bridge import swarm_status
 WEBHOOK_ALERT_SUSTAINED_THRESHOLD = 3
 WEBHOOK_ALERT_RECENT_WINDOW = timedelta(minutes=15)
 WEBHOOK_ALERT_EVENT_SPECS = {
+    "discord_interaction_replay_rejected": {
+        "status": "replay_rejected",
+        "summary_prefix": "Discord interaction replay rejected",
+        "recommended_command": "spark-intelligence gateway traces --event discord_interaction_replay_rejected --limit 20",
+    },
     "discord_webhook_auth_failed": {
         "status": "auth_failed",
         "summary_prefix": "Discord webhook auth rejected",
