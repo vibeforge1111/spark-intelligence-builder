@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import (
+    _match_contextual_memory_doctor_command,
     _memory_doctor_distress_score,
     _memory_doctor_distress_signals,
     build_telegram_runtime_summary,
@@ -163,6 +164,28 @@ class GatewayAskTelegramTests(SparkTestCase):
                 signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
                 self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
                 self.assertTrue(expected_signals.issubset(signal_names))
+
+        non_identity_negation_cases = (
+            "Mission 02 QA test. Do not inspect files. I only need written macOS/Linux install instructions.",
+            "I am not sure which setup path is current.",
+            "not yet",
+            "please do not build anything",
+        )
+        for phrase in non_identity_negation_cases:
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertNotIn("identity_correction_after_wrong_name", signal_names)
+
+        identity_correction_cases = (
+            "that's not my name",
+            "you called me Maya",
+            "I am not called Maya",
+            "my name is not Maya",
+        )
+        for phrase in identity_correction_cases:
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertIn("identity_correction_after_wrong_name", signal_names)
 
         direct_repeat_complaint_cases = {
             "why are you asking me again": {
@@ -925,6 +948,166 @@ class GatewayAskTelegramTests(SparkTestCase):
         detail = output["result"]["detail"]
         self.assertNotEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
         self.assertNotIn("runtime_command_metadata", detail)
+
+    def test_gateway_ask_telegram_does_not_route_install_guidance_to_memory_doctor_after_prior_failure(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-install-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message=(
+                    "Mission 02 QA test. Do not inspect files. Do not search recursively. "
+                    "Do not build an app. I only need written macOS/Linux install instructions for Spark."
+                ),
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        self.assertNotIn("runtime_command_metadata", detail)
+        self.assertNotIn("Memory Doctor:", detail["response_text"])
+
+    def test_simulate_telegram_update_keeps_memory_write_out_of_memory_doctor_after_prior_failure(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-memory-write-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98707,
+                    "message": {
+                        "message_id": 107,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "Remember this: I prefer concise but warm replies.",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["bridge_mode"], "researcher_advisory")
+        self.assertNotIn("runtime_command_metadata", result.detail)
+        self.assertEqual(captured.get("user_message"), "Remember this: I prefer concise but warm replies.")
+
+    def test_contextual_memory_doctor_yields_to_memory_mutations_and_meta_examples(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-memory-boundary-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        cases = (
+            "Remember this: I prefer concise replies.",
+            "Please save this: remember my previous answer.",
+            "Memory update: my current plan is to stabilize R30.",
+            "For example, 'remember this previous answer' is not a request to use Memory Doctor.",
+            "This is a bug report about the phrase 'you forgot the previous context', not a diagnostic request.",
+        )
+        for index, phrase in enumerate(cases):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(
+                    _match_contextual_memory_doctor_command(
+                        inbound_text=phrase,
+                        config_manager=self.config_manager,
+                        external_user_id="111",
+                        session_id="session:telegram:dm:111",
+                        current_request_id=f"req-memory-boundary-current-{index}",
+                    )
+                )
+
+    def test_simulate_telegram_update_runs_authorized_contextual_memory_doctor_with_evidence_marker(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-contextual-evidence-prior",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+        payload = self.vnext_tool_intent_payload(
+            request_id="req-contextual-evidence",
+            tool_name="memory.diagnose",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            source_kind="telegram_runtime_memory_doctor_contextual",
+        )
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98708,
+                "turn_intent_envelope_vnext": payload,
+                "message": {
+                    "message_id": 108,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": (
+                        "what happened?\n\n"
+                        "[Spark Telegram Memory Doctor evidence]\n"
+                        "Route: memory.doctor\n"
+                        "Recent visible Telegram turns, newest last:\n"
+                        "- assistant: I do not have the previous message in context."
+                    ),
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertEqual(result.detail["runtime_command_metadata"]["command"], "/memory doctor")
 
     def test_gateway_ask_telegram_runs_memory_doctor_for_close_turn_repeat_frustration(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

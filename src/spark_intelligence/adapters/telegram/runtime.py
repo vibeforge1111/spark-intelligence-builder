@@ -42,6 +42,7 @@ from spark_intelligence.bridge_authority import (
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
+    memory_write_boundary_blocks_adapter_authority,
     record_bridge_tool_call_result_ledger,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
@@ -64,6 +65,7 @@ from spark_intelligence.identity.service import (
     record_pairing_context,
     resolve_inbound_dm,
 )
+from spark_intelligence.intent_boundary import has_conversation_only_boundary
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.llm_wiki import (
     build_llm_wiki_candidate_inbox,
@@ -135,6 +137,7 @@ from spark_intelligence.swarm_bridge import (
     swarm_status,
     sync_swarm_collective,
 )
+from spark_intelligence.user_instructions import detect_instruction_intent
 
 
 TELEGRAM_PARROT_EFFECT_VERSION = "parrot-balanced-v1"
@@ -7379,6 +7382,10 @@ def _match_contextual_memory_doctor_command(
     session_id: str,
     current_request_id: str,
 ) -> dict[str, object] | None:
+    if _contextual_memory_doctor_boundary_blocks(inbound_text):
+        return None
+    if _memory_mutation_request_preempts_contextual_doctor(inbound_text):
+        return None
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
     previous_record = _memory_doctor_previous_gateway_record(
         config_manager=config_manager,
@@ -7506,6 +7513,40 @@ def _memory_doctor_distress_score(simplified_text: str) -> int:
     return sum(int(signal["weight"]) for signal in _memory_doctor_distress_signals(simplified_text))
 
 
+def _contextual_memory_doctor_boundary_blocks(inbound_text: str) -> bool:
+    text = str(inbound_text or "").strip()
+    if not text:
+        return True
+    if has_conversation_only_boundary(text):
+        return True
+    lowered = text.casefold()
+    return bool(
+        re.search(
+            r"\b(?:for\s+example|just\s+(?:an?\s+)?example|example\s+only|quoted\s+example|"
+            r"bug\s+report|hypothetical|not\s+a\s+(?:command|request|instruction))\b",
+            lowered,
+        )
+        and re.search(r"\b(?:memory|remember|recall|context|doctor|diagnos|previous|last)\b", lowered)
+    )
+
+
+def _memory_mutation_request_preempts_contextual_doctor(inbound_text: str) -> bool:
+    text = str(inbound_text or "").strip()
+    if not text or memory_write_boundary_blocks_adapter_authority(text):
+        return False
+    if detect_instruction_intent(text) is not None:
+        return True
+    if _detect_telegram_memory_authority_source_kind(text) is not None:
+        return True
+    return bool(
+        re.match(
+            r"^(?:please\s+)?(?:remember\s+(?:this|that)|save\s+(?:this|that)|memory\s+update)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
     text = str(simplified_text or "").strip().lower()
     if not text:
@@ -7548,7 +7589,10 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
         signals.append({"name": "diagnostic_question", "weight": 1})
     if re.search(
-        r"\b(?:not\s+[a-z][a-z0-9_-]*|wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+)\b",
+        (
+            r"\b(?:wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+|"
+            r"(?:i(?:'m|\s+am)\s+)?not\s+(?:called|named)\s+\w+|my\s+name\s+is\s+not\s+\w+)\b"
+        ),
         text,
     ):
         signals.append({"name": "identity_correction_after_wrong_name", "weight": 2})
