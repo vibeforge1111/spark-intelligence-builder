@@ -4443,9 +4443,20 @@ def _build_researcher_memory_write_governor_decision(
     session_id: str,
     human_id: str,
     agent_id: str,
+    user_message: str,
+    allow_adapter_envelope: bool,
 ) -> dict[str, Any] | None:
     if isinstance(governor_decision, dict):
         return governor_decision
+    if not isinstance(turn_intent_envelope_vnext, dict) and allow_adapter_envelope:
+        turn_intent_envelope_vnext = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind="researcher_bridge_memory_adapter",
+        )
     if isinstance(turn_intent_envelope_vnext, dict):
         authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
@@ -9461,6 +9472,8 @@ def build_researcher_reply(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
+        user_message=user_message,
+        allow_adapter_envelope=allow_memory_adapter_envelope,
     )
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
