@@ -52,6 +52,43 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
 
         self.assertFalse(stale_file.exists())
 
+    def test_build_telegram_state_knowledge_base_refuses_destructive_output_boundaries(self) -> None:
+        artifacts_root = self.home / "artifacts"
+        outside_root = self.home / "artifacts-shadow"
+        outside_root.mkdir(parents=True)
+        outside_sentinel = outside_root / "keep.txt"
+        outside_sentinel.write_text("keep", encoding="utf-8")
+
+        artifacts_root.mkdir(parents=True, exist_ok=True)
+        root_sentinel = artifacts_root / "keep.txt"
+        root_sentinel.write_text("keep", encoding="utf-8")
+
+        external_target = self.home / "external-kb"
+        external_target.mkdir()
+        external_sentinel = external_target / "keep.txt"
+        external_sentinel.write_text("keep", encoding="utf-8")
+        linked_output = artifacts_root / "linked-kb"
+        try:
+            linked_output.symlink_to(external_target, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"directory symlinks unavailable: {exc}")
+
+        for output_dir in (outside_root, artifacts_root, linked_output):
+            with self.subTest(output_dir=output_dir), self.assertRaisesRegex(
+                ValueError,
+                "strict descendant of the Spark artifacts directory",
+            ), patch("spark_intelligence.memory.knowledge_base.run_governed_command") as governed:
+                build_telegram_state_knowledge_base(
+                    config_manager=self.config_manager,
+                    output_dir=output_dir,
+                    validator_root=self.home,
+                )
+            governed.assert_not_called()
+
+        self.assertEqual(outside_sentinel.read_text(encoding="utf-8"), "keep")
+        self.assertEqual(root_sentinel.read_text(encoding="utf-8"), "keep")
+        self.assertEqual(external_sentinel.read_text(encoding="utf-8"), "keep")
+
     def test_build_telegram_state_knowledge_base_invokes_domain_chip_memory_cli(self) -> None:
         output_dir = self.home / "artifacts" / "spark-memory-kb"
         write_path = self.home / "artifacts" / "spark-memory-kb.json"
