@@ -42,6 +42,7 @@ from spark_intelligence.build_quality_review import (
     looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
@@ -3008,6 +3009,10 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     if configured_root:
         path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
         return (path, "configured")
+
+    installed = resolve_installed_module_source("spark-researcher", config_manager=config_manager)
+    if installed is not None:
+        return installed, "installed_module"
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
     if autodetect.exists():

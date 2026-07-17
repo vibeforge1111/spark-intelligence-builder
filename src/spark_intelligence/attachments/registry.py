@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.runtime_discovery import installed_chip_parent_candidates
 
 
 @dataclass
@@ -153,26 +154,38 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
     if normalized:
         return _filter_ignored_roots(normalized, ignored_roots), "configured"
 
+    installed = _autodiscover_chip_roots(installed_chip_parent_candidates(), ignored_roots)
+    if installed:
+        return installed, "installed"
+
     desktop = Path.home() / "Desktop"
     if not desktop.exists():
         return [], "missing"
 
+    autodetected = _autodiscover_chip_roots([desktop], ignored_roots)
+    return autodetected, "autodiscovered" if autodetected else "missing"
+
+
+def _autodiscover_chip_roots(parents: list[Path], ignored_roots: set[str]) -> list[Path]:
     autodetected: list[Path] = []
     seen: set[str] = set()
-    candidates = list(desktop.glob("domain-chip-*"))
-    candidates.extend(
-        path
-        for path in desktop.iterdir()
-        if path.is_dir() and (path / "spark-chip.json").exists()
-    )
-    for candidate in sorted(candidates):
-        if _is_ignored_root(candidate, ignored_roots):
+    for parent in parents:
+        if not parent.is_dir():
             continue
-        key = str(candidate.resolve())
-        if key not in seen:
-            seen.add(key)
-            autodetected.append(candidate)
-    return autodetected, "autodiscovered" if autodetected else "missing"
+        candidates = list(parent.glob("domain-chip-*"))
+        candidates.extend(
+            path
+            for path in parent.iterdir()
+            if path.is_dir() and (path / "spark-chip.json").exists()
+        )
+        for candidate in sorted(candidates):
+            if _is_ignored_root(candidate, ignored_roots):
+                continue
+            key = str(candidate.resolve())
+            if key not in seen:
+                seen.add(key)
+                autodetected.append(candidate)
+    return autodetected
 
 
 def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob: str) -> tuple[list[Path], str]:

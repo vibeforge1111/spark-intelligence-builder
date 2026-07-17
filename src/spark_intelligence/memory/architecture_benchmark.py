@@ -9,6 +9,7 @@ from typing import Any, Iterator, Sequence
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import inspect_memory_sdk_runtime
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
@@ -83,7 +84,12 @@ def benchmark_memory_architectures(
     resolved_summary_path = resolved_output_dir / "memory-architecture-benchmark.md"
 
     runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
-    validator_path = Path(validator_root) if validator_root else DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
+    validator_path = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory", config_manager=config_manager)
+        or DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
+    )
     errors: list[str] = []
     try:
         resolved_baseline_names = resolve_memory_architecture_baselines(baseline_names)

@@ -160,7 +160,9 @@ class AttachmentHookTests(SparkTestCase):
         generic_root = desktop_root / "spark-browser-extension"
         chip_root.rename(generic_root)
 
-        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+        with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch(
+            "spark_intelligence.attachments.registry.Path.home", return_value=self.home
+        ):
             scan = attachment_status(self.config_manager)
 
         self.assertEqual(scan.chip_source, "autodiscovered")
@@ -183,7 +185,9 @@ class AttachmentHookTests(SparkTestCase):
         (compare_root / "spark-chip.json").write_text(json.dumps(manifest), encoding="utf-8")
         self.config_manager.set_path("spark.chips.ignored_roots", [str(compare_root)])
 
-        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+        with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch(
+            "spark_intelligence.attachments.registry.Path.home", return_value=self.home
+        ):
             scan = attachment_status(self.config_manager)
 
         duplicate_records = [record for record in scan.records if record.key == "domain-chip-duplicate"]

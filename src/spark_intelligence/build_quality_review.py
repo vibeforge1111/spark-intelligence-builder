@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
 
@@ -204,6 +205,9 @@ def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
         path = Path(str(root)).expanduser()
         if path.name == "spark-memory-quality-dashboard":
             return str(path)
+    installed = resolve_installed_module_source("spark-memory-quality-dashboard", config_manager=config_manager)
+    if installed is not None:
+        return str(installed)
     desktop_path = Path.home() / "Desktop" / "spark-memory-quality-dashboard"
     return str(desktop_path) if desktop_path.exists() else None
 

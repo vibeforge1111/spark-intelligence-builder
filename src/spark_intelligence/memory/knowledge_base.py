@@ -11,6 +11,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
 DEFAULT_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
@@ -104,7 +105,11 @@ def _run_domain_chip_memory_cli(
     validator_root: str | Path | None = None,
     timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "valid": False,

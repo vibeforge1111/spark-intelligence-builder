@@ -10,6 +10,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 
 
@@ -149,7 +150,11 @@ def _run_domain_chip_memory_cli(
     *command_args: str,
     validator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_MAINTENANCE_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_MAINTENANCE_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "errors": [f"validator_root_missing:{root}"],

@@ -38,6 +38,7 @@ from spark_intelligence.memory_contracts import (
     normalize_memory_role,
 )
 from spark_intelligence.observability.store import payload_hash, record_event, record_policy_gate_block
+from spark_intelligence.runtime_discovery import installed_module_source_candidates
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
@@ -1552,6 +1553,7 @@ def _prepend_sys_path(path: Path):
 
 def _local_domain_chip_memory_src_candidates() -> list[Path]:
     candidates = [
+        *(path / "src" for path in installed_module_source_candidates("domain-chip-memory")),
         DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src",
         DEFAULT_SPARK_MODULES_ROOT / "domain-chip-memory" / "source" / "src",
         DEFAULT_SPARK_MODULES_ROOT / "domain-chip-memory" / "src",

@@ -3369,7 +3369,9 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         original_module = sys.modules.pop("domain_chip_memory", None)
         try:
-            with patch.object(memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", self.home / "missing"), patch.object(
+            with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch.object(
+                memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", self.home / "missing"
+            ), patch.object(
                 memory_orchestrator,
                 "DEFAULT_SPARK_MODULES_ROOT",
                 modules_root,

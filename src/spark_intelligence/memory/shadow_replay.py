@@ -17,6 +17,7 @@ from spark_intelligence.memory.profile_facts import (
     build_profile_fact_query_answer,
 )
 from spark_intelligence.memory_contracts import memory_contract_reason, normalize_memory_role
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 
 
@@ -396,7 +397,11 @@ def _run_domain_chip_memory_cli(
     *command_args: str,
     validator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "valid": False,

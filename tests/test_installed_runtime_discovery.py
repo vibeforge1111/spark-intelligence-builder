@@ -34,7 +34,7 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         ):
             runtime_root, source_kind = discover_researcher_runtime_root(self.config_manager)
 
-        self.assertEqual(runtime_root, source)
+        self.assertEqual(runtime_root, source.resolve())
         self.assertEqual(source_kind, "installed_module")
 
     def test_attachment_discovery_prefers_installed_chip_root_before_legacy_desktop(self) -> None:
@@ -47,7 +47,7 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         ):
             roots, source_kind = _resolve_chip_roots(self.config_manager)
 
-        self.assertEqual(roots, [chip])
+        self.assertEqual(roots, [chip.resolve()])
         self.assertEqual(source_kind, "installed")
 
     def test_memory_tools_use_installed_domain_chip_source_before_legacy_desktop(self) -> None:
@@ -69,8 +69,8 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
                     module, "DEFAULT_MAINTENANCE_VALIDATOR_ROOT", self.user_home / "Desktop" / "missing", create=True
                 ), patch.object(module, "run_governed_command", return_value=execution) as governed:
                     result = runner("proof-command")
-                    self.assertEqual(result, {})
-                    self.assertEqual(governed.call_args.kwargs["cwd"], str(source))
+                    self.assertEqual(result.get("stderr"), "")
+                    self.assertEqual(Path(governed.call_args.kwargs["cwd"]), source.resolve())
 
     def test_architecture_benchmark_uses_installed_domain_chip_source(self) -> None:
         source = self._module_source("domain-chip-memory")
@@ -93,7 +93,7 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
                 baseline_names=["summary_synthesis_memory"],
             )
 
-        self.assertEqual(scorecards.call_args.args[0], source)
+        self.assertEqual(scorecards.call_args.args[0], source.resolve())
 
     def test_quality_dashboard_uses_installed_module_source(self) -> None:
         source = self._module_source("spark-memory-quality-dashboard")
@@ -103,7 +103,7 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         ):
             resolved = _known_dashboard_repo_path(self.config_manager)
 
-        self.assertEqual(resolved, str(source))
+        self.assertEqual(resolved, str(source.resolve()))
 
     def test_swarm_does_not_invent_unregistered_spark_home_runtime(self) -> None:
         invented = self.spark_home / "spark-swarm"
