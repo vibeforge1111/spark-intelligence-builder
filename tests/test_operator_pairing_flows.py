@@ -9176,7 +9176,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             def download_file(self, *, file_path: str) -> bytes:
                 return b"fake-m4a-bytes"
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             if hook == "voice.transcribe":
                 self.assertEqual(payload["message_kind"], "audio")
                 governor = payload["governor_decision"]
@@ -9316,7 +9316,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         voice_speak_payload: dict[str, object] | None = None
 
-        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object], **_kwargs: object):
             nonlocal voice_speak_payload
             if hook == "voice.transcribe":
                 governor = payload["governor_decision"]
