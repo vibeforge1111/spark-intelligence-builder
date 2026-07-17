@@ -568,7 +568,7 @@ def test_chip_create_secret_like_brief_is_blocked_before_provider_dispatch(
         lambda **_: provider,
     )
     monkeypatch.setattr(
-        "spark_intelligence.llm.direct_provider.urllib.request.urlopen",
+        "spark_intelligence.llm.direct_provider._post_json",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("provider dispatch must not run")
         ),

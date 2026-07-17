@@ -82,6 +82,14 @@ Builder has six high-risk boundaries:
 
 Any feature crossing one of these boundaries needs a test and a doc note.
 
+Direct provider requests enforce the provider URL boundary at dispatch time. Registered
+provider credentials are bound to their registry origin; reviewed custom providers may
+target another public HTTPS origin. Hostnames are resolved once, every answer must be a
+public unicast address, and the connection is pinned to one validated address while TLS
+continues to verify the original hostname. The transport ignores ambient proxy settings
+and does not follow redirects, preventing DNS-rebinding, proxy, and redirect bypasses of
+the preflight decision.
+
 ## Integration Flow
 
 Normal message flow:
