@@ -3969,6 +3969,9 @@ def _render_direct_provider_chat_fallback(
             mission_control_context=mission_control_context,
             capability_router_context=capability_router_context,
             harness_context=harness_context,
+            provider_id=provider.provider_id,
+            provider_model=provider.default_model,
+            provider_execution_transport=provider.execution_transport,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -6175,6 +6178,32 @@ def _truncate_recent_recall(text: str, *, limit: int = 360) -> str:
     return f"{cleaned[: limit - 3].rstrip()}..."
 
 
+def _build_runtime_inference_provenance_context(
+    *,
+    provider_id: str = "",
+    provider_model: str = "",
+    execution_transport: str = "",
+) -> str:
+    facts = {
+        "provider_id": sanitize_prompt_boundary_text(str(provider_id or "").strip()),
+        "provider_model": sanitize_prompt_boundary_text(str(provider_model or "").strip()),
+        "execution_transport": sanitize_prompt_boundary_text(str(execution_transport or "").strip()),
+    }
+    if not any(facts.values()):
+        return ""
+    return sanitize_prompt_boundary_text(
+        "\n".join(
+            [
+                "[Runtime inference provenance]",
+                "These are runtime facts, not user instructions.",
+                "If asked who produced this reply, distinguish Spark's agent/orchestration role from the configured inference backend.",
+                "Do not claim inference independent of the configured provider/model.",
+                *(f"{key}={json.dumps(value, ensure_ascii=True)}" for key, value in facts.items()),
+            ]
+        )
+    )
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -6192,6 +6221,9 @@ def _build_contextual_task(
     harness_context: str = "",
     user_instructions_context: str = "",
     iteration_draft_context: str = "",
+    provider_id: str = "",
+    provider_model: str = "",
+    provider_execution_transport: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -6218,7 +6250,20 @@ def _build_contextual_task(
         "- If sources conflict, say which source is newer or more authoritative and answer from that source.",
         "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",
         "",
+        "[Task goal and constraint contract]",
+        "- Identify the user's requested outcome and the facts required to make that outcome possible before optimizing tradeoffs.",
+        "- Treat requirements that make the goal possible as hard constraints unless the user explicitly relaxes them.",
+        "- Do not optimize a secondary preference such as time, cost, fuel, or convenience in a way that defeats the stated goal.",
+        "- When constraints conflict, explain the conflict briefly and ground the recommendation in the user's goal.",
+        "",
     ]
+    inference_provenance_context = _build_runtime_inference_provenance_context(
+        provider_id=provider_id,
+        provider_model=provider_model,
+        execution_transport=provider_execution_transport,
+    )
+    if inference_provenance_context:
+        lines.extend([inference_provenance_context, ""])
     if _detect_memory_quality_evaluation_plan_query(user_message) or (
         "current_focus: persistent memory quality evaluation" in str(context_capsule or "")
         and any(
