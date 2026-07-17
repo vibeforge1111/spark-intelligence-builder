@@ -108,6 +108,7 @@ from spark_intelligence.self_awareness import (
 )
 from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -3663,7 +3664,7 @@ def _synthesize_telegram_voice_reply(
         raise RuntimeError("The voice chip returned no audio payload.")
     mime_type = str((result or {}).get("mime_type") or "audio/mpeg").strip() or "audio/mpeg"
     payload = {
-        "audio_bytes": base64.b64decode(audio_base64),
+        "audio_bytes": base64.b64decode(audio_base64, validate=True),
         "mime_type": mime_type,
         "filename": str((result or {}).get("filename") or "").strip()
         or (
@@ -3965,6 +3966,8 @@ def _safe_voice_error_message(error: Exception) -> str:
         message,
     )
     message = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", message)
+    message = redact_text(message)
+    message = re.sub(r"https?://[^\s]+", "[URL]", message, flags=re.IGNORECASE)
     return message[:220]
 
 

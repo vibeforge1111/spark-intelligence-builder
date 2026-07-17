@@ -14,6 +14,22 @@ Transport = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^/\s]+")
 
 
+def _normalize_telegram_file_path(file_path: str) -> str:
+    raw = str(file_path)
+    if (
+        not raw
+        or raw != raw.strip()
+        or raw.startswith(("/", "\\"))
+        or "\\" in raw
+        or any(ord(character) < 32 or ord(character) == 127 for character in raw)
+    ):
+        raise RuntimeError("Telegram download_file rejected the file path returned for this media.")
+    segments = raw.split("/")
+    if any(not segment or segment in {".", ".."} for segment in segments):
+        raise RuntimeError("Telegram download_file rejected the file path returned for this media.")
+    return "/".join(parse.quote(segment, safe="-._~") for segment in segments)
+
+
 @dataclass
 class TelegramBotApiClient:
     token: str
@@ -129,7 +145,8 @@ class TelegramBotApiClient:
         return result
 
     def download_file(self, *, file_path: str) -> bytes:
-        url = f"{self.api_root}/file/bot{self.token}/{str(file_path).lstrip('/')}"
+        normalized = _normalize_telegram_file_path(file_path)
+        url = f"{self.api_root}/file/bot{self.token}/{normalized}"
         req = request.Request(url, method="GET")
         with self._urlopen(req, timeout=30) as response:
             return response.read()
