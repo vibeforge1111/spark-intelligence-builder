@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from unittest.mock import patch
 
 from spark_intelligence.llm.direct_provider import (
@@ -213,6 +214,58 @@ class DirectProviderExecutionTests(SparkTestCase):
                 system_prompt="System instructions",
                 user_prompt="User task",
             )
+
+    def test_unsupported_mode_names_the_researcher_bridge_without_raw_provider_fields(self) -> None:
+        provider = DirectProviderRequest(
+            provider_id="private-provider-name",
+            provider_kind="custom",
+            auth_method="oauth",
+            api_mode="private-mode-name",
+            base_url="https://api.example.com",
+            model="model",
+            secret_value="provider-secret",
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_direct_provider_prompt(
+                provider=provider,
+                system_prompt="System instructions",
+                user_prompt="User task",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("Researcher bridge", message)
+        self.assertNotIn("private-provider-name", message)
+        self.assertNotIn("private-mode-name", message)
+
+    def test_provider_failure_redacts_message_and_suppresses_secret_cause(self) -> None:
+        secret = "provider-secret-value-123456"
+        provider = DirectProviderRequest(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            base_url="https://api.example.com/v1",
+            model="model",
+            secret_value=secret,
+        )
+
+        with patch(
+            "spark_intelligence.llm.direct_provider._execute_chat_completions",
+            side_effect=RuntimeError(f"provider echoed {secret}"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                execute_direct_provider_prompt(
+                    provider=provider,
+                    system_prompt="System instructions",
+                    user_prompt="User task",
+                )
+
+        rendered_traceback = "".join(traceback.format_exception(ctx.exception))
+        self.assertNotIn(secret, str(ctx.exception))
+        self.assertNotIn(secret, rendered_traceback)
+        self.assertIn("[REDACTED]", str(ctx.exception))
+        self.assertTrue(ctx.exception.__suppress_context__)
 
     def test_provider_wrapper_blocks_secret_like_prompt_with_state_db_context(self) -> None:
         system_prompt_path = self.home / "system.txt"

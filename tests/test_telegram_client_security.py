@@ -81,3 +81,67 @@ def test_telegram_api_error_description_is_redacted() -> None:
     message = str(exc_info.value)
     assert "sk-proj-" not in message
     assert "<redacted api key>" in message
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    (
+        "../etc/passwd",
+        "/etc/passwd",
+        "documents/../secret.txt",
+        "documents//secret.txt",
+        "documents\\secret.txt",
+        "https://evil.example/file",
+    ),
+)
+def test_download_file_rejects_nonrelative_or_ambiguous_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    file_path: str,
+) -> None:
+    def fail_if_network_runs(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("network must not run for a rejected Telegram file path")
+
+    monkeypatch.setattr(telegram_client.request, "urlopen", fail_if_network_runs)
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    with pytest.raises(RuntimeError, match="rejected the file path") as ctx:
+        client.download_file(file_path=file_path)
+
+    assert file_path not in str(ctx.value)
+
+
+@pytest.mark.parametrize(
+    ("file_path", "encoded_path"),
+    (
+        ("documents/file 123.bin", "documents/file%20123.bin"),
+        ("photos/photo_456.jpg", "photos/photo_456.jpg"),
+        ("voice/voice_789.oga", "voice/voice_789.oga"),
+        ("videos/video-1.mp4", "videos/video-1.mp4"),
+    ),
+)
+def test_download_file_accepts_and_encodes_general_telegram_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    file_path: str,
+    encoded_path: str,
+) -> None:
+    captured: dict[str, str] = {}
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return b"content"
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        captured["url"] = req.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(telegram_client.request, "urlopen", fake_urlopen)
+    client = TelegramBotApiClient(token="123456:secret-token")
+
+    assert client.download_file(file_path=file_path) == b"content"
+    assert captured["url"].endswith(f"/{encoded_path}")

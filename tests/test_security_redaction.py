@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from spark_intelligence.security.redaction import redact_text
+from spark_intelligence.security.redaction import mask_secret, redact_text
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text, scan_prompt_boundary_text
 
 
@@ -25,6 +25,16 @@ def test_redact_text_masks_common_credential_shapes() -> None:
     assert "postgres://user:pass" not in redacted
     assert "555-123-4567" not in redacted
     assert "Bearer <redacted>" in redacted
+
+
+def test_mask_secret_never_preserves_secret_fragments() -> None:
+    secret = "abcdefghijklmnopqrstuv"
+
+    masked = mask_secret(secret)
+
+    assert masked == "***"
+    assert secret[:3] not in masked
+    assert secret[-2:] not in masked
 
 
 def test_prompt_boundary_sanitizer_blocks_injection_and_invisible_unicode() -> None:
