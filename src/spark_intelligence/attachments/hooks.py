@@ -43,7 +43,10 @@ class ChipHookExecution:
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0
+        returncode_present, output_returncode = _structured_output_returncode(self.output)
+        return self.exit_code == 0 and (
+            not returncode_present or output_returncode == 0
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -78,7 +81,20 @@ class ChipHookExecution:
             lines.append(f"- stderr: {self.stderr.strip()}")
         if isinstance(result, dict):
             lines.append(f"- result keys: {', '.join(sorted(result.keys())) if result else 'none'}")
+        returncode_present, output_returncode = _structured_output_returncode(self.output)
+        if returncode_present:
+            rendered_returncode = output_returncode if output_returncode is not None else "invalid"
+            lines.append(f"- output_returncode: {rendered_returncode}")
         return "\n".join(lines)
+
+
+def _structured_output_returncode(output: dict[str, Any]) -> tuple[bool, int | None]:
+    if not isinstance(output, dict) or "returncode" not in output:
+        return False, None
+    value = output.get("returncode")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return True, None
+    return True, value
 
 
 def list_active_chip_records(config_manager: ConfigManager) -> list[AttachmentRecord]:
