@@ -15,13 +15,6 @@ class DoctorSourceTruthTests(SparkTestCase):
         return {check.name: check for check in run_doctor(self.config_manager, self.state_db).checks}
 
     def _use_modules_root(self) -> Path:
-        if not hasattr(self, "_spark_home_patcher"):
-            self._spark_home_patcher = patch.dict(
-                "os.environ",
-                {"SPARK_HOME": str(self.home / "isolated-spark")},
-            )
-            self._spark_home_patcher.start()
-            self.addCleanup(self._spark_home_patcher.stop)
         root = self.home / "module-registry"
         root.mkdir(parents=True, exist_ok=True)
         self.config_manager.set_path("spark.local_projects.module_roots", [str(root)])

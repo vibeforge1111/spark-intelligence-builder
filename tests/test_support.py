@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.cli import main
@@ -738,6 +739,12 @@ class SparkTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self.home = Path(self._tempdir.name)
+        self._spark_home_patcher = patch.dict(
+            "os.environ",
+            {"SPARK_HOME": str(self.home / "isolated-spark")},
+        )
+        self._spark_home_patcher.start()
+        self.addCleanup(self._spark_home_patcher.stop)
         self.config_manager = ConfigManager.from_home(str(self.home))
         self.config_manager.bootstrap()
         self.state_db = StateDB(self.config_manager.paths.state_db)
