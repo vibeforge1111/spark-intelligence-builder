@@ -20,6 +20,12 @@ from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
+_CAPSULE_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_CAPSULE_TOKEN_STOPWORDS = frozenset(
+    {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
+)
+
+
 _STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
     ("profile.current_focus", "current_focus"),
     ("profile.current_plan", "current_plan"),
@@ -634,11 +640,10 @@ def _compact(text: str, max_chars: int) -> str:
 
 
 def _capsule_tokens(text: str) -> set[str]:
-    stopwords = {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
     return {
         token
-        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(text or "").casefold())
-        if token and token not in stopwords
+        for token in _CAPSULE_TOKEN_PATTERN.findall(str(text or "").casefold())
+        if token and token not in _CAPSULE_TOKEN_STOPWORDS
     }
 
 
