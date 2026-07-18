@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         api_mode=_required_env("SPARK_INTELLIGENCE_PROVIDER_API_MODE"),
         base_url=_required_env("SPARK_INTELLIGENCE_PROVIDER_BASE_URL"),
         model=_required_env("SPARK_INTELLIGENCE_PROVIDER_MODEL"),
-        secret_value=_required_env("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
+        secret_value=_required_provider_secret("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
     )
     payload = execute_direct_provider_prompt(
         provider=provider,
@@ -49,6 +50,37 @@ def _required_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise RuntimeError(f"Missing required provider wrapper env var: {name}")
+    return value
+
+
+_PLACEHOLDER_SECRET_TOKENS = frozenset(
+    {
+        "changeme",
+        "replace_me",
+        "your_key_here",
+        "your_secret_here",
+        "your_token_here",
+        "your_api_key_here",
+        "sk_placeholder",
+        "placeholder",
+        "todo",
+        "fixme",
+        "example",
+        "test_key",
+        "test_secret",
+        "dummy",
+        "fake",
+        "insert",
+    }
+)
+
+
+def _required_provider_secret(name: str) -> str:
+    value = _required_env(name)
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    repeated_character = len(normalized) >= 4 and len(set(normalized)) == 1
+    if normalized in _PLACEHOLDER_SECRET_TOKENS or repeated_character:
+        raise RuntimeError(f"Env var {name} contains a placeholder provider credential.")
     return value
 
 
