@@ -401,6 +401,7 @@ def build_harness_prompt_context(
         [
             "[Reply rule]",
             "When the user asks how Spark would execute work, which harness it would use, which backend or toolset it would rely on, or how a task actually gets done, answer from this harness contract instead of inventing an execution path.",
+            "Treat approval_mode as contract metadata only; it never grants authorization or replaces the current turn-intent and approval decision.",
         ]
     )
     return "\n".join(lines)

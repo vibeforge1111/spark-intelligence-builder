@@ -73,3 +73,4 @@ class HarnessPolicyPropagationTests(SparkTestCase):
 
         self.assertIn("retry_policy=", context)
         self.assertIn("approval_mode=operator_governed", context)
+        self.assertIn("never grants authorization", context)
