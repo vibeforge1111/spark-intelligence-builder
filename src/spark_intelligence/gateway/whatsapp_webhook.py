@@ -103,6 +103,7 @@ def _handle_whatsapp_verification(
             config_manager=config_manager,
             status_code=503,
             message=f"WhatsApp webhook verify token ref '{verify_token_ref}' is unresolved.",
+            public_message="WhatsApp webhook verify token is not configured.",
         )
     mode = _query_value(query_params, "hub.mode")
     verify_token = _query_value(query_params, "hub.verify_token")
@@ -352,6 +353,7 @@ def _log_whatsapp_verification_failure(
     config_manager: ConfigManager,
     status_code: int,
     message: str,
+    public_message: str | None = None,
 ) -> WhatsAppWebhookResponse:
     append_gateway_trace(
         config_manager,
@@ -363,7 +365,7 @@ def _log_whatsapp_verification_failure(
             "status_code": status_code,
         },
     )
-    return _json_error_response(status_code, message)
+    return _json_error_response(status_code, public_message or message)
 
 
 def _validate_whatsapp_webhook_signature(
