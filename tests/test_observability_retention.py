@@ -1,8 +1,11 @@
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
+from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.observability.store import prune_observability_store, record_event
 from spark_intelligence.state.db import StateDB
 from tests.test_support import SparkTestCase
@@ -93,6 +96,47 @@ def test_retention_apply_requires_exact_preview_and_keeps_verified_backup(tmp_pa
 
 
 class ObservabilityRetentionCliTests(SparkTestCase):
+    def test_jobs_tick_observes_retention_without_deleting(self) -> None:
+        old_event_id = record_event(
+            self.state_db,
+            event_type="retention_job_probe",
+            component="test",
+            summary="Old scheduled preview mirror",
+        )
+        _age_event(self.state_db, old_event_id, "2025-01-01T00:00:00+00:00")
+        fake_memory = SimpleNamespace(
+            status="succeeded",
+            reason=None,
+            maintenance={
+                "manual_observations_before": 0,
+                "manual_observations_after": 0,
+                "active_deletion_count": 0,
+                "active_state_still_current_count": 0,
+                "active_state_stale_preserved_count": 0,
+                "active_state_superseded_count": 0,
+                "active_state_archived_count": 0,
+            },
+        )
+
+        with patch(
+            "spark_intelligence.jobs.service.run_oauth_refresh_maintenance",
+            return_value={"scanned": 0, "due": 0, "refreshed": [], "failed": [], "skipped": []},
+        ), patch(
+            "spark_intelligence.jobs.service.run_memory_sdk_maintenance",
+            return_value=fake_memory,
+        ):
+            output = jobs_tick(self.config_manager, self.state_db)
+
+        self.assertIn("observability:retention-preview", output)
+        self.assertIn("mode=preview", output)
+        with self.state_db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM event_log WHERE event_id = ?", (old_event_id,)).fetchone()[0], 1)
+            job = conn.execute(
+                "SELECT last_result FROM job_records WHERE job_id = 'observability:retention-preview'"
+            ).fetchone()
+        self.assertIsNotNone(job)
+        self.assertIn("mode=preview", job["last_result"])
+
     def test_jobs_prune_observability_defaults_to_preview(self) -> None:
         old_event_id = record_event(
             self.state_db,
