@@ -26,9 +26,24 @@ class HarnessCommandTokenAuthorityTests(SparkTestCase):
         argv_key = f"{kind}_argv"
         command_key = f"{kind}_command"
         self.assertEqual(token[argv_key], expected_argv)
-        self.assertEqual(token["command_platform"], "windows_cmd" if os.name == "nt" else "posix_shell")
+        self.assertEqual(
+            token["command_platform"],
+            "windows_powershell" if os.name == "nt" else "posix_shell",
+        )
         if os.name != "nt":
             self.assertEqual(shlex.split(str(token[command_key])), expected_argv)
+
+    def test_windows_copy_rendering_uses_literal_powershell_arguments(self) -> None:
+        platform, command = harness_service._render_cli_command(
+            ["python.exe", "say 'hello'; Remove-Item should-never-run", "$(Get-Secret)"],
+            platform_name="nt",
+        )
+
+        self.assertEqual(platform, "windows_powershell")
+        self.assertEqual(
+            command,
+            "& 'python.exe' 'say ''hello''; Remove-Item should-never-run' '$(Get-Secret)'",
+        )
 
     def test_resume_token_keeps_task_home_harness_and_channel_as_exact_argv(self) -> None:
         task = 'say "hello"; $(touch should-never-run)'

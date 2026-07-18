@@ -3,7 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
+import shlex
+import sys
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -665,10 +668,22 @@ def _execute_voice_io_harness(
                 envelope=envelope,
                 step="voice_speak_retry",
             )
-            artifacts["retry_token"] = {
-                "retry_command": f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} --home {config_manager.paths.home} --harness-id voice.io",
-                "reason": str(exc),
-            }
+            artifacts["retry_token"] = _build_cli_command_token(
+                command_kind="retry",
+                argv=[
+                    sys.executable,
+                    "-m",
+                    "spark_intelligence.cli",
+                    "harness",
+                    "execute",
+                    envelope.task,
+                    "--home",
+                    str(config_manager.paths.home),
+                    "--harness-id",
+                    "voice.io",
+                ],
+                metadata={"reason": str(exc)},
+            )
             return (
                 artifacts,
                 "Voice I/O harness could not synthesize speech with the current provider/hook state.",
@@ -759,10 +774,19 @@ def _execute_swarm_escalation_harness(
             envelope=envelope,
             step="swarm_payload_repair",
         )
-        artifacts["retry_token"] = {
-            "retry_command": f"python -m spark_intelligence.cli swarm status --home {config_manager.paths.home}",
-            "reason": "Inspect Swarm bridge readiness before retrying this harness.",
-        }
+        artifacts["retry_token"] = _build_cli_command_token(
+            command_kind="retry",
+            argv=[
+                sys.executable,
+                "-m",
+                "spark_intelligence.cli",
+                "swarm",
+                "status",
+                "--home",
+                str(config_manager.paths.home),
+            ],
+            metadata={"reason": "Inspect Swarm bridge readiness before retrying this harness."},
+        )
         return (
             artifacts,
             "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
@@ -784,15 +808,36 @@ def _execute_swarm_escalation_harness(
         "accepted": sync_result.accepted,
         "response_body": sync_result.response_body,
     }
-    artifacts["resume_token"] = {
-        "resume_kind": "swarm_dispatch",
-        "resume_command": f"python -m spark_intelligence.cli swarm sync --home {config_manager.paths.home}",
-        "reason": "Dispatch the prepared Spark Swarm collective payload when you want to move from dry-run to upload.",
-    }
-    artifacts["retry_token"] = {
-        "retry_command": f"python -m spark_intelligence.cli swarm sync --dry-run --home {config_manager.paths.home}",
-        "reason": "Rebuild the latest collective payload before retrying if the Swarm state changes.",
-    }
+    artifacts["resume_token"] = _build_cli_command_token(
+        command_kind="resume",
+        argv=[
+            sys.executable,
+            "-m",
+            "spark_intelligence.cli",
+            "swarm",
+            "sync",
+            "--home",
+            str(config_manager.paths.home),
+        ],
+        metadata={
+            "resume_kind": "swarm_dispatch",
+            "reason": "Dispatch the prepared Spark Swarm collective payload when you want to move from dry-run to upload.",
+        },
+    )
+    artifacts["retry_token"] = _build_cli_command_token(
+        command_kind="retry",
+        argv=[
+            sys.executable,
+            "-m",
+            "spark_intelligence.cli",
+            "swarm",
+            "sync",
+            "--dry-run",
+            "--home",
+            str(config_manager.paths.home),
+        ],
+        metadata={"reason": "Rebuild the latest collective payload before retrying if the Swarm state changes."},
+    )
     if sync_result.ok:
         return (
             artifacts,
@@ -980,18 +1025,55 @@ def _build_harness_resume_token(
     envelope: HarnessTaskEnvelope,
     step: str,
 ) -> dict[str, Any]:
-    command = (
-        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
-        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
-    )
+    argv = [
+        sys.executable,
+        "-m",
+        "spark_intelligence.cli",
+        "harness",
+        "execute",
+        envelope.task,
+        "--home",
+        str(config_manager.paths.home),
+        "--harness-id",
+        envelope.harness_id,
+    ]
     if envelope.channel_kind:
-        command += f" --channel-kind {envelope.channel_kind}"
-    return {
-        "resume_kind": step,
-        "resume_command": command,
-        "harness_id": envelope.harness_id,
-        "envelope_id": envelope.envelope_id,
-    }
+        argv.extend(["--channel-kind", envelope.channel_kind])
+    return _build_cli_command_token(
+        command_kind="resume",
+        argv=argv,
+        metadata={
+            "resume_kind": step,
+            "harness_id": envelope.harness_id,
+            "envelope_id": envelope.envelope_id,
+        },
+    )
+
+
+def _build_cli_command_token(
+    *,
+    command_kind: str,
+    argv: list[str],
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if command_kind not in {"resume", "retry"}:
+        raise ValueError("Harness command token kind must be 'resume' or 'retry'.")
+    exact_argv = [str(argument) for argument in argv]
+    if not exact_argv or any("\x00" in argument for argument in exact_argv):
+        raise ValueError("Harness command token argv must contain non-NUL arguments.")
+    command_platform, rendered_command = _render_cli_command(exact_argv, platform_name=os.name)
+    token = dict(metadata or {})
+    token[f"{command_kind}_argv"] = exact_argv
+    token[f"{command_kind}_command"] = rendered_command
+    token["command_platform"] = command_platform
+    return token
+
+
+def _render_cli_command(argv: list[str], *, platform_name: str) -> tuple[str, str]:
+    if platform_name == "nt":
+        quoted = [f"'{argument.replace(chr(39), chr(39) * 2)}'" for argument in argv]
+        return ("windows_powershell", "& " + " ".join(quoted))
+    return ("posix_shell", shlex.join(argv))
 
 
 def _derive_follow_up_task(
