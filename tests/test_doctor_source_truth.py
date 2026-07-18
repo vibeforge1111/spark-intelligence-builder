@@ -15,6 +15,13 @@ class DoctorSourceTruthTests(SparkTestCase):
         return {check.name: check for check in run_doctor(self.config_manager, self.state_db).checks}
 
     def _use_modules_root(self) -> Path:
+        if not hasattr(self, "_spark_home_patcher"):
+            self._spark_home_patcher = patch.dict(
+                "os.environ",
+                {"SPARK_HOME": str(self.home / "isolated-spark")},
+            )
+            self._spark_home_patcher.start()
+            self.addCleanup(self._spark_home_patcher.stop)
         root = self.home / "module-registry"
         root.mkdir(parents=True, exist_ok=True)
         self.config_manager.set_path("spark.local_projects.module_roots", [str(root)])
@@ -165,6 +172,19 @@ class DoctorSourceTruthTests(SparkTestCase):
         self.assertIn("stale_editable", stale_check.detail)
         self.assertTrue(installed_check.ok, installed_check.detail)
         self.assertIn("installed_distribution", installed_check.detail)
+
+        sibling_harness = Path(__file__).resolve().parents[2] / "spark-harness-core" / "src"
+        if sibling_harness.is_dir():
+            with patch(
+                "spark_intelligence.doctor.checks._imported_package_src_roots",
+                return_value={
+                    "spark_intelligence": Path(__file__).resolve().parents[1] / "src",
+                    "spark_harness_core": sibling_harness,
+                },
+                create=True,
+            ):
+                sibling_check = self._checks()["python-import-source"]
+            self.assertTrue(sibling_check.ok, sibling_check.detail)
 
     def test_manifests_declare_pinned_harness_core_dependency(self) -> None:
         root = Path(__file__).resolve().parents[1]

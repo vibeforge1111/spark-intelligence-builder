@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import sqlite3
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -25,8 +29,34 @@ from spark_intelligence.observability.store import (
     repair_non_promotable_chip_hook_dispositions,
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
+from spark_intelligence.runtime_discovery import spark_module_roots
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
+
+
+EXPECTED_BUILDER_LICENSE = "MIT"
+REQUIRED_BUILDER_DEPENDENCIES = ("jsonschema", "referencing")
+
+
+def harness_core_runtime_status() -> dict[str, object]:
+    from spark_intelligence import harness_contract
+
+    if not harness_contract.HARNESS_CORE_AVAILABLE:
+        return {
+            "ok": False,
+            "detail": harness_contract.HARNESS_CORE_IMPORT_ERROR or "spark_harness_core unavailable",
+            "repair_hint": "install the pinned spark-harness-core dependency or repair its registered module source",
+        }
+    try:
+        module = importlib.import_module("spark_harness_core")
+        module_file = str(getattr(module, "__file__", "") or "")
+    except Exception as exc:  # pragma: no cover - defensive mismatch with the contract flag.
+        return {"ok": False, "detail": str(exc), "repair_hint": "repair the Harness Core import"}
+    return {
+        "ok": True,
+        "detail": f"spark_harness_core importable source={module_file or 'unknown'}",
+        "repair_hint": "",
+    }
 
 
 @dataclass
@@ -121,6 +151,16 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         checks.append(DoctorCheck("operator-authority", bool(row), "local operator present"))
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("operator-authority", False, str(exc)))
+
+    harness_core = harness_core_runtime_status()
+    harness_detail = str(harness_core.get("detail") or "unknown")
+    harness_repair = str(harness_core.get("repair_hint") or "").strip()
+    if harness_repair:
+        harness_detail = f"{harness_detail}; repair={harness_repair}"
+    checks.append(DoctorCheck("harness-core", bool(harness_core.get("ok")), harness_detail))
+    checks.append(_builder_source_truth_check(config_manager))
+    checks.append(_python_import_source_check(config_manager))
+    checks.append(_tool_call_ledger_adoption_check(state_db))
 
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     if auth_report.providers:
@@ -269,6 +309,257 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
     return DoctorReport(checks=checks)
+
+
+def _tool_call_ledger_adoption_check(state_db: StateDB) -> DoctorCheck:
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT target_surface, facts_json
+                FROM builder_events
+                WHERE event_type = 'tool_call_ledger_recorded'
+                """
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return DoctorCheck("tool-call-ledger-adoption", False, str(exc))
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        surface = str(row["target_surface"] or "").strip()
+        try:
+            facts = json.loads(str(row["facts_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            facts = {}
+        ledger = facts.get("tool_call_ledger") if isinstance(facts, dict) else None
+        if isinstance(ledger, dict):
+            surface = str(ledger.get("surface") or surface).strip()
+        surface = surface or "builder"
+        counts[surface] = counts.get(surface, 0) + 1
+    total = sum(counts.values())
+    if total == 0:
+        return DoctorCheck(
+            "tool-call-ledger-adoption",
+            True,
+            "total=0 surfaces=none; fresh runtime has no governed tool-call ledgers yet",
+        )
+    detail = ", ".join(f"{surface}={counts[surface]}" for surface in sorted(counts))
+    return DoctorCheck("tool-call-ledger-adoption", True, f"total={total} surfaces={detail}")
+
+
+def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
+    roots = [root for root in spark_module_roots(config_manager) if root.is_dir()]
+    if not roots:
+        return DoctorCheck("builder-source-truth", True, "module registry not configured")
+    records = _builder_install_records(roots)
+    if not records:
+        return DoctorCheck("builder-source-truth", True, "no Builder installs in registered module roots")
+
+    canonical = [record for record in records if record["canonical"]]
+    mirrors = [record for record in records if not record["canonical"]]
+    if not canonical:
+        return DoctorCheck(
+            "builder-source-truth",
+            False,
+            f"no canonical Builder install; mirrors={_builder_install_summary(mirrors) or 'none'}",
+        )
+
+    issues: list[str] = []
+    commits = {str(record["commit"]) for record in canonical if record["commit"] != "unknown"}
+    if len(commits) > 1:
+        issues.append("commit_drift=" + ",".join(sorted(commits)))
+    bad_licenses = [
+        f"{record['name']}:{record['license'] or 'missing'}"
+        for record in records
+        if record["license"] != EXPECTED_BUILDER_LICENSE
+    ]
+    if bad_licenses:
+        issues.append("license_mismatch=" + ",".join(bad_licenses))
+    missing_harness_modules = [
+        str(record["name"])
+        for record in canonical
+        if "spark-harness-core" not in record["needs_modules"]
+    ]
+    if missing_harness_modules:
+        issues.append("missing_harness_module=" + ",".join(missing_harness_modules))
+    missing_harness_dependencies: list[str] = []
+    missing_python_dependencies: list[str] = []
+    for record in canonical:
+        dependencies = tuple(str(item) for item in record["dependencies"])
+        if not any(item.startswith("spark-harness-core") for item in dependencies):
+            missing_harness_dependencies.append(str(record["name"]))
+        missing = [
+            required
+            for required in REQUIRED_BUILDER_DEPENDENCIES
+            if not any(item.startswith(required) for item in dependencies)
+        ]
+        if missing:
+            missing_python_dependencies.append(f"{record['name']}:{'+'.join(missing)}")
+    if missing_harness_dependencies:
+        issues.append("missing_harness_dependency=" + ",".join(missing_harness_dependencies))
+    if missing_python_dependencies:
+        issues.append("missing_python_dependency=" + ",".join(missing_python_dependencies))
+
+    canonical_summary = _builder_install_summary(canonical)
+    detail = f"installs={canonical_summary}"
+    mirror_summary = _builder_install_summary(mirrors)
+    if mirror_summary:
+        detail = f"{detail}; mirrors={mirror_summary}"
+    if issues:
+        return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; {detail}")
+    return DoctorCheck("builder-source-truth", True, detail)
+
+
+def _python_import_source_check(config_manager: ConfigManager) -> DoctorCheck:
+    imported = _imported_package_src_roots()
+    records = _builder_install_records([root for root in spark_module_roots(config_manager) if root.is_dir()])
+    current_builder_src = Path(__file__).resolve().parents[2]
+    expected_builder = [
+        current_builder_src,
+        *[
+            Path(record["path"]) / "src"
+            for record in records
+            if record["canonical"]
+        ],
+    ]
+    expected_harness = [
+        root / "spark-harness-core" / "source" / "src"
+        for root in spark_module_roots(config_manager)
+        if (root / "spark-harness-core" / "source" / "src").is_dir()
+    ]
+    configured_harness = str(os.environ.get("SPARK_HARNESS_CORE_SOURCE") or "").strip()
+    if configured_harness:
+        configured_path = Path(configured_harness).expanduser()
+        expected_harness.append(configured_path / "src" if configured_path.name != "src" else configured_path)
+    sibling_harness = Path(__file__).resolve().parents[4] / "spark-harness-core" / "src"
+    if sibling_harness.is_dir():
+        expected_harness.append(sibling_harness)
+
+    issues: list[str] = []
+    details: list[str] = []
+    for package_name, imported_root in imported.items():
+        candidates = expected_builder if package_name == "spark_intelligence" else expected_harness
+        if _is_installed_distribution_root(imported_root):
+            details.append(f"{package_name}=installed_distribution:{imported_root}")
+        elif _path_matches_any(imported_root, candidates):
+            details.append(f"{package_name}=registered_source:{imported_root}")
+        else:
+            expected = "|".join(str(path) for path in candidates) or "registered source or installed distribution"
+            issues.append(f"stale_editable:{package_name}={imported_root} expected={expected}")
+    if issues:
+        return DoctorCheck("python-import-source", False, "; ".join([*issues, *details]))
+    return DoctorCheck("python-import-source", True, "; ".join(details) or "no import sources resolved")
+
+
+def _imported_package_src_roots() -> dict[str, Path]:
+    roots: dict[str, Path] = {}
+    for package_name in ("spark_intelligence", "spark_harness_core"):
+        try:
+            module = importlib.import_module(package_name)
+        except Exception:
+            continue
+        module_file = str(getattr(module, "__file__", "") or "")
+        if module_file:
+            roots[package_name] = Path(module_file).resolve().parents[1]
+    return roots
+
+
+def _is_installed_distribution_root(path: Path) -> bool:
+    return path.name in {"site-packages", "dist-packages"}
+
+
+def _path_matches_any(path: Path, candidates: list[Path]) -> bool:
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return False
+    for candidate in candidates:
+        try:
+            if resolved == candidate.resolve(strict=False):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for root in roots:
+        for manifest in sorted(root.glob("spark-intelligence-builder*/source/spark.toml")):
+            source = manifest.parent
+            key = str(source.resolve(strict=False))
+            if key in seen:
+                continue
+            seen.add(key)
+            spark_manifest = _read_toml(manifest)
+            module = spark_manifest.get("module") if isinstance(spark_manifest.get("module"), dict) else {}
+            needs = spark_manifest.get("needs") if isinstance(spark_manifest.get("needs"), dict) else {}
+            source_truth = (
+                spark_manifest.get("source_truth") if isinstance(spark_manifest.get("source_truth"), dict) else {}
+            )
+            pyproject = _read_toml(source / "pyproject.toml")
+            project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
+            records.append(
+                {
+                    "name": source.parent.name,
+                    "path": source,
+                    "commit": _git_head_short(source),
+                    "license": str(module.get("license") or ""),
+                    "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
+                    "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
+                    "canonical": source_truth.get("canonical") is not False,
+                }
+            )
+    return records
+
+
+def _builder_install_summary(records: list[dict[str, object]]) -> str:
+    return "; ".join(
+        f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
+        for record in records
+    )
+
+
+def _read_toml(path: Path) -> dict[str, object]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _git_head_short(repo_root: Path) -> str:
+    git_path = repo_root / ".git"
+    if git_path.is_file():
+        try:
+            marker = git_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return "unknown"
+        if marker.startswith("gitdir:"):
+            git_path = (repo_root / marker.removeprefix("gitdir:").strip()).resolve(strict=False)
+    try:
+        head = (git_path / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
+    if not head.startswith("ref:"):
+        return head[:7] if head else "unknown"
+    ref_name = head.removeprefix("ref:").strip()
+    try:
+        ref_value = (git_path / ref_name).read_text(encoding="utf-8").strip()
+        return ref_value[:7] if ref_value else "unknown"
+    except OSError:
+        pass
+    try:
+        packed_lines = (git_path / "packed-refs").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return "unknown"
+    for line in packed_lines:
+        if line.startswith(("#", "^")):
+            continue
+        value, _, packed_ref = line.partition(" ")
+        if packed_ref == ref_name:
+            return value[:7]
+    return "unknown"
 
 
 def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
