@@ -3960,13 +3960,9 @@ def _safe_voice_error_message(error: Exception) -> str:
         return "ElevenLabs could not synthesize because the account quota or billing status needs attention."
     if "elevenlabs" in lowered and ("voice_id" in lowered or "voice id" in lowered or "not_found" in lowered):
         return "ElevenLabs could not find the configured voice. Pick another voice or update the saved voice ID in local config."
-    message = re.sub(
-        r"(?i)\b(api[_-]?key|token|secret|authorization)\b\s*[:=]\s*[^,\n ]+",
-        r"\1=***",
-        message,
-    )
-    message = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", message)
     message = redact_text(message)
+    message = re.sub(r"(?i)\b(api[_-]?key|token|secret)\b\s*[:=]\s*[^,\n ]+", r"\1=***", message)
+    message = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", message)
     message = re.sub(r"https?://[^\s]+", "[URL]", message, flags=re.IGNORECASE)
     return message[:220]
 

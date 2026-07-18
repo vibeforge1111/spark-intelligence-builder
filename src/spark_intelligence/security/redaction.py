@@ -24,6 +24,13 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?P<scheme>\bhttps?://)[^/\s:@]*:[^/\s@]+@", re.I),
         r"\g<scheme><redacted url credentials>@",
     ),
+    (
+        re.compile(
+            r"(?P<prefix>\bAuthorization\s*[:=]\s*[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s+)(?P<value>[^,\r\n]+)",
+            re.I,
+        ),
+        "authorization_header",
+    ),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "Bearer <redacted>"),
     (
         re.compile(
@@ -75,6 +82,8 @@ def redact_text(text: str | None) -> str:
     for pattern, replacement in SECRET_PATTERNS:
         if replacement == "assignment":
             redacted = pattern.sub(lambda match: f"{match.group('key')}{mask_secret(match.group('value'))}", redacted)
+        elif replacement == "authorization_header":
+            redacted = pattern.sub(lambda match: f"{match.group('prefix')}<redacted>", redacted)
         elif replacement == "json_field":
             redacted = pattern.sub(
                 lambda match: f"{match.group('prefix')}{mask_secret(match.group('value'))}{match.group('suffix')}",
