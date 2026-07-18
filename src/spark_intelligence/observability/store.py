@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -61,6 +62,177 @@ class EnvironmentSnapshotRecord:
     snapshot_id: str
     surface: str
     summary: str
+
+
+@dataclass(frozen=True)
+class ObservabilityPruneResult:
+    cutoff: str
+    mode: str
+    eligible_counts: dict[str, int]
+    deleted_counts: dict[str, int]
+    protected_tables: tuple[str, ...]
+    plan_sha256: str
+    backup_path: Path | None
+    backup_sha256: str | None
+    recovery_verified: bool
+
+
+def _normalize_retention_cutoff(value: str | datetime) -> str:
+    if isinstance(value, datetime):
+        cutoff = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            raise ValueError("older_than is required")
+        try:
+            cutoff = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("older_than must be a valid ISO-8601 timestamp") from exc
+    if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        raise ValueError("older_than must include a timezone")
+    normalized = cutoff.astimezone(timezone.utc)
+    if normalized > datetime.now(timezone.utc):
+        raise ValueError("older_than cannot be in the future")
+    return normalized.isoformat(timespec="seconds")
+
+
+def _retention_mirror_event_ids(conn: sqlite3.Connection, *, cutoff: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT mirror.event_id
+        FROM event_log AS mirror
+        WHERE mirror.recorded_at < ?
+          AND EXISTS (
+              SELECT 1
+              FROM builder_events AS canonical
+              WHERE canonical.event_id = mirror.event_id
+          )
+        ORDER BY mirror.event_id
+        """,
+        (cutoff,),
+    ).fetchall()
+    return [str(row["event_id"]) for row in rows]
+
+
+def _retention_plan_sha256(*, cutoff: str, event_ids: list[str]) -> str:
+    payload = json.dumps(
+        {"cutoff": cutoff, "event_log_event_ids": event_ids},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _backup_state_db(state_db: StateDB, *, backup_dir: Path, cutoff: str, expected_count: int) -> tuple[Path, str]:
+    backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = backup_dir / f"{state_db.path.stem}.before-observability-prune.{timestamp}.{uuid4().hex[:8]}.sqlite"
+    source = sqlite3.connect(state_db.path)
+    destination = sqlite3.connect(backup_path)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    backup_path.chmod(0o600)
+    with sqlite3.connect(backup_path) as check:
+        integrity = str(check.execute("PRAGMA integrity_check").fetchone()[0])
+        mirrored = int(
+            check.execute(
+                """
+                SELECT COUNT(*)
+                FROM event_log AS mirror
+                WHERE mirror.recorded_at < ?
+                  AND EXISTS (SELECT 1 FROM builder_events AS canonical WHERE canonical.event_id = mirror.event_id)
+                """,
+                (cutoff,),
+            ).fetchone()[0]
+        )
+    if integrity != "ok" or mirrored != expected_count:
+        backup_path.unlink(missing_ok=True)
+        raise RuntimeError("observability retention backup verification failed")
+    return backup_path, _sha256_file(backup_path)
+
+
+def prune_observability_store(
+    state_db: StateDB,
+    *,
+    older_than: str | datetime,
+    apply: bool = False,
+    confirm_plan_sha256: str | None = None,
+    backup_dir: str | Path | None = None,
+) -> ObservabilityPruneResult:
+    """Preview or remove recoverable event-log mirrors without touching canonical audit truth."""
+
+    cutoff = _normalize_retention_cutoff(older_than)
+    protected_tables = ("builder_events", "provider_runtime_events")
+    with state_db.connect() as conn:
+        event_ids = _retention_mirror_event_ids(conn, cutoff=cutoff)
+    plan_sha256 = _retention_plan_sha256(cutoff=cutoff, event_ids=event_ids)
+    eligible_counts = {"event_log": len(event_ids)}
+    if not apply:
+        return ObservabilityPruneResult(
+            cutoff=cutoff,
+            mode="preview",
+            eligible_counts=eligible_counts,
+            deleted_counts={"event_log": 0},
+            protected_tables=protected_tables,
+            plan_sha256=plan_sha256,
+            backup_path=None,
+            backup_sha256=None,
+            recovery_verified=False,
+        )
+    if not confirm_plan_sha256 or not hmac.compare_digest(confirm_plan_sha256, plan_sha256):
+        raise ValueError("apply requires the exact preview digest from the current retention plan")
+
+    resolved_backup_dir = Path(backup_dir).expanduser() if backup_dir else state_db.path.parent / "backups"
+    backup_path, backup_sha256 = _backup_state_db(
+        state_db,
+        backup_dir=resolved_backup_dir,
+        cutoff=cutoff,
+        expected_count=len(event_ids),
+    )
+    with state_db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        locked_event_ids = _retention_mirror_event_ids(conn, cutoff=cutoff)
+        locked_plan = _retention_plan_sha256(cutoff=cutoff, event_ids=locked_event_ids)
+        if not hmac.compare_digest(locked_plan, plan_sha256):
+            conn.rollback()
+            raise RuntimeError("observability retention plan changed after backup; preview again")
+        cursor = conn.execute(
+            """
+            DELETE FROM event_log
+            WHERE recorded_at < ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM builder_events AS canonical
+                  WHERE canonical.event_id = event_log.event_id
+              )
+            """,
+            (cutoff,),
+        )
+        deleted = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+    return ObservabilityPruneResult(
+        cutoff=cutoff,
+        mode="applied",
+        eligible_counts=eligible_counts,
+        deleted_counts={"event_log": deleted},
+        protected_tables=protected_tables,
+        plan_sha256=plan_sha256,
+        backup_path=backup_path,
+        backup_sha256=backup_sha256,
+        recovery_verified=True,
+    )
 
 
 def open_run(

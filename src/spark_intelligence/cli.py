@@ -145,6 +145,7 @@ from spark_intelligence.observability.store import (
     close_run,
     latest_events_by_type,
     open_run,
+    prune_observability_store,
     record_event,
     record_observer_handoff_record,
 )
@@ -2840,6 +2841,16 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_parser = jobs_subparsers.add_parser(
+        "prune-observability",
+        help="Preview or apply recoverable observability-mirror retention",
+    )
+    jobs_prune_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_parser.add_argument("--older-than", required=True, help="Timezone-aware ISO-8601 retention cutoff")
+    jobs_prune_parser.add_argument("--apply", action="store_true", help="Apply the exact previously previewed plan")
+    jobs_prune_parser.add_argument("--confirm-plan", help="Exact SHA-256 digest emitted by preview")
+    jobs_prune_parser.add_argument("--backup-dir", help="Directory for the mandatory verified SQLite backup")
+    jobs_prune_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
     harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
@@ -8238,6 +8249,46 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = prune_observability_store(
+        state_db,
+        older_than=args.older_than,
+        apply=bool(args.apply),
+        confirm_plan_sha256=args.confirm_plan,
+        backup_dir=args.backup_dir,
+    )
+    payload = {
+        "cutoff": result.cutoff,
+        "mode": result.mode,
+        "eligible_counts": result.eligible_counts,
+        "deleted_counts": result.deleted_counts,
+        "protected_tables": list(result.protected_tables),
+        "plan_sha256": result.plan_sha256,
+        "backup_path": str(result.backup_path) if result.backup_path else None,
+        "backup_sha256": result.backup_sha256,
+        "recovery_verified": result.recovery_verified,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    elif result.mode == "preview":
+        print(
+            "Retention preview is ready. "
+            f"{result.eligible_counts['event_log']} recoverable event-log mirror row(s) are eligible; "
+            "canonical Builder events and provider security events remain protected.\n"
+            f"To apply this exact plan, pass --apply --confirm-plan {result.plan_sha256}."
+        )
+    else:
+        print(
+            f"Retention applied to {result.deleted_counts['event_log']} recoverable mirror row(s). "
+            f"Recovery backup verified at {result.backup_path}."
+        )
+    return 0
+
+
 def handle_harness_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9739,6 +9790,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "jobs" and args.jobs_command == "prune-observability":
+        return handle_jobs_prune_observability(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
     if args.command == "harness" and args.harness_command == "plan":
