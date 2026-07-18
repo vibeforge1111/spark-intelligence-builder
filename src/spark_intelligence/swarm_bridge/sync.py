@@ -18,8 +18,16 @@ from spark_intelligence.attachments import build_attachment_context
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import latest_events_by_type, record_environment_snapshot, record_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
+from spark_intelligence.security.https_endpoint import (
+    post_https_bytes,
+    resolve_public_https_endpoint,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+
+
+_SWARM_AUTH_REQUEST_TIMEOUT_SECONDS = 15
+_MAX_SWARM_AUTH_RESPONSE_BYTES = 1024 * 1024
 
 
 @dataclass
@@ -2364,35 +2372,58 @@ def _refresh_swarm_access_token(
         raise RuntimeError("Swarm auth client key is missing.")
     if not session.supabase_url:
         raise RuntimeError("Swarm Supabase URL is missing.")
-    request = urllib.request.Request(
-        url=urllib.parse.urljoin(f"{session.supabase_url}/", "auth/v1/token?grant_type=refresh_token"),
-        data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
-        headers={
-            "apikey": session.auth_client_key,
-            "Authorization": f"Bearer {session.auth_client_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        body = _read_http_error_body(exc)
-        message = f"Swarm session refresh failed with HTTP {exc.code}."
-        if isinstance(body, dict) and body.get("msg"):
-            message = f"{message} {body['msg']}"
+        parsed = urllib.parse.urlsplit(session.supabase_url)
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise RuntimeError("Swarm Supabase URL must be an origin URL.")
+        token_url = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, "/auth/v1/token", "", "")
+        )
+        endpoint = resolve_public_https_endpoint(token_url)
+        raw = post_https_bytes(
+            endpoint,
+            body=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
+            headers={
+                "apikey": session.auth_client_key,
+                "Authorization": f"Bearer {session.auth_client_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout_seconds=_SWARM_AUTH_REQUEST_TIMEOUT_SECONDS,
+            max_response_bytes=_MAX_SWARM_AUTH_RESPONSE_BYTES,
+            query={"grant_type": "refresh_token"},
+        )
+    except (OSError, RuntimeError, ValueError):
+        message = (
+            "Swarm session refresh failed safely. Check the Swarm auth endpoint "
+            "configuration and network connectivity, then retry."
+        )
         _record_swarm_refresh_state(state_db, error=message)
-        raise RuntimeError(message) from exc
-    except urllib.error.URLError as exc:
-        message = f"Could not reach Swarm auth endpoint: {exc.reason}"
-        _record_swarm_refresh_state(state_db, error=message)
-        raise RuntimeError(message) from exc
+        raise RuntimeError(message) from None
 
-    payload = json.loads(raw) if raw.strip() else {}
-    access_token = str(payload.get("access_token") or "").strip()
-    refresh_token = str(payload.get("refresh_token") or session.refresh_token or "").strip()
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if not isinstance(payload, dict):
+        message = "Swarm session refresh returned an invalid response."
+        _record_swarm_refresh_state(state_db, error=message)
+        raise RuntimeError(message) from None
+
+    access_token_value = payload.get("access_token")
+    refresh_token_value = payload.get("refresh_token")
+    if not isinstance(access_token_value, str):
+        access_token = ""
+    else:
+        access_token = access_token_value.strip()
+    if refresh_token_value is None:
+        refresh_token = session.refresh_token
+    elif isinstance(refresh_token_value, str):
+        refresh_token = refresh_token_value.strip() or session.refresh_token
+    else:
+        message = "Swarm session refresh returned an invalid response."
+        _record_swarm_refresh_state(state_db, error=message)
+        raise RuntimeError(message) from None
     if not access_token:
         message = "Swarm refresh completed without returning a new access token."
         _record_swarm_refresh_state(state_db, error=message)

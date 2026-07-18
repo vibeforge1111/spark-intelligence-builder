@@ -6,6 +6,7 @@ import socket
 import ssl
 import urllib.parse
 from dataclasses import dataclass
+from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,11 @@ def post_https_bytes(
     headers: dict[str, str],
     timeout_seconds: int,
     max_response_bytes: int,
+    query: Mapping[str, str] | None = None,
 ) -> bytes:
+    request_target = endpoint.request_target
+    if query:
+        request_target = f"{request_target}?{urllib.parse.urlencode(query)}"
     last_network_error: Exception | None = None
     for address in endpoint.addresses:
         connection = _connection_for_endpoint(
@@ -88,7 +93,7 @@ def post_https_bytes(
         try:
             connection.request(
                 "POST",
-                endpoint.request_target,
+                request_target,
                 body=body,
                 headers=headers,
             )

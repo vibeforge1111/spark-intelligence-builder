@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spark_intelligence.security.https_endpoint import ResolvedHTTPSEndpoint
+from spark_intelligence.security.https_endpoint import (
+    ResolvedHTTPSEndpoint,
+    post_https_bytes,
+)
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSession,
     _refresh_swarm_access_token,
@@ -98,6 +101,37 @@ class SwarmRefreshEndpointSecurityTests(SparkTestCase):
         assert post_mock.call_args.kwargs["max_response_bytes"] == 1024 * 1024
         assert refreshed.access_token == "fresh-access-token"
         assert refreshed.refresh_token == "rotated-refresh-token"
+
+    def test_pinned_transport_percent_encodes_structured_query(self) -> None:
+        endpoint = ResolvedHTTPSEndpoint(
+            hostname="auth.example.com",
+            port=443,
+            request_target="/auth/v1/token",
+            addresses=("93.184.216.34",),
+        )
+        response = MagicMock(status=200)
+        response.read.return_value = b"{}"
+        connection = MagicMock()
+        connection.getresponse.return_value = response
+
+        with patch(
+            "spark_intelligence.security.https_endpoint._connection_for_endpoint",
+            return_value=connection,
+        ):
+            body = post_https_bytes(
+                endpoint,
+                body=b"{}",
+                headers={"Content-Type": "application/json"},
+                timeout_seconds=15,
+                max_response_bytes=1024,
+                query={"grant type": "refresh/token"},
+            )
+
+        assert body == b"{}"
+        assert connection.request.call_args.args[:2] == (
+            "POST",
+            "/auth/v1/token?grant+type=refresh%2Ftoken",
+        )
 
     def test_refresh_normalizes_malformed_responses_without_payload_lineage(self) -> None:
         responses = [
