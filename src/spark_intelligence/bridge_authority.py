@@ -14,6 +14,7 @@ from spark_intelligence.harness_contract import (
     build_vnext_tool_intent_envelope,
     finalize_legacy_tool_call_ledger,
     parse_turn_intent_envelope,
+    validate_vnext_turn_intent_envelope,
 )
 
 
@@ -483,8 +484,9 @@ def extract_turn_intent_envelope_vnext(update_payload: dict[str, Any] | None) ->
             candidates.append(message.get(key))
 
     for candidate in candidates:
-        if isinstance(candidate, dict) and candidate.get("schema_version") == "turn-intent-envelope-vnext":
-            return candidate
+        validated = validate_vnext_turn_intent_envelope(candidate if isinstance(candidate, dict) else None)
+        if validated is not None:
+            return validated
     return None
 
 

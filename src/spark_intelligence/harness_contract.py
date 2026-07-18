@@ -55,6 +55,7 @@ _ensure_harness_core_importable()
 
 
 try:
+    from spark_harness_core import validate_instance
     from spark_harness_core.legacy_turn_intent import (
         HarnessDirective,
         HarnessExecutionPolicy,
@@ -212,6 +213,19 @@ except Exception as exc:  # pragma: no cover - exercised only when the core pack
             "ledger_id": None,
         }
 
+    def validate_instance(schema_name_or_id: str, instance: dict[str, Any]) -> dict[str, Any]:
+        raise ValueError(f"Spark Harness Core unavailable: {HARNESS_CORE_IMPORT_ERROR}")
+
+
+def validate_vnext_turn_intent_envelope(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a schema-valid VNext envelope, never a schema-label-only object."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return validate_instance("turn-intent-envelope-vnext", payload)
+    except Exception:
+        return None
+
 
 __all__ = [
     "HARNESS_CORE_AVAILABLE",
@@ -231,5 +245,6 @@ __all__ = [
     "build_vnext_tool_intent_envelope",
     "finalize_legacy_tool_call_ledger",
     "parse_turn_intent_envelope",
+    "validate_vnext_turn_intent_envelope",
     "verify_governor_tool_authority",
 ]
