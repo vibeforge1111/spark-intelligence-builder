@@ -7,13 +7,15 @@ from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
-from spark_intelligence.observability.store import close_run, open_run, record_environment_snapshot
+from spark_intelligence.observability.store import close_run, open_run, prune_observability_store, record_environment_snapshot
 from spark_intelligence.state.db import StateDB
 
 
 OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
 MEMORY_MAINTENANCE_JOB_ID = "memory:sdk-maintenance"
+OBSERVABILITY_RETENTION_JOB_ID = "observability:retention-preview"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
+DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,35 @@ def _run_job(
                 },
             )
             return result
+        if job_kind == "observability_retention_preview":
+            retention_days = _observability_retention_days(config_manager)
+            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+            payload = prune_observability_store(state_db, older_than=cutoff)
+            eligible = payload.eligible_counts.get("event_log", 0)
+            result = (
+                f"mode=preview retention_days={retention_days} cutoff={payload.cutoff} "
+                f"eligible_event_log={eligible} plan={payload.plan_sha256}"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="job_completed",
+                summary=f"Job {job_id} completed without deleting data.",
+                facts={
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "result": result,
+                    "mode": payload.mode,
+                    "retention_days": retention_days,
+                    "cutoff": payload.cutoff,
+                    "eligible_counts": payload.eligible_counts,
+                    "protected_tables": list(payload.protected_tables),
+                    "plan_sha256": payload.plan_sha256,
+                },
+            )
+            return result
         result = "unsupported_job_kind"
         _record_job_result(state_db=state_db, job_id=job_id, result=result)
         close_run(
@@ -241,6 +272,18 @@ def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _observability_retention_days(config_manager: ConfigManager) -> int:
+    raw = config_manager.get_path(
+        "observability.retention.days",
+        default=DEFAULT_OBSERVABILITY_RETENTION_DAYS,
+    )
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_OBSERVABILITY_RETENTION_DAYS
+    return max(1, min(value, 3650))
 
 
 def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:
