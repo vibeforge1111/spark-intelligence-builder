@@ -10,6 +10,7 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
+from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    system_prompt = Path(args[0]).read_text(encoding="utf-8")
+    system_prompt = sanitize_prompt_boundary_text(Path(args[0]).read_text(encoding="utf-8"))
     user_prompt = Path(args[1]).read_text(encoding="utf-8")
     response_path = Path(args[2])
 
