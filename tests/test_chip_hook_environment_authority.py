@@ -126,7 +126,7 @@ def test_chip_subprocess_gets_disposable_home_temp_and_repo_pythonpath(
     assert child_env["HOME"] == child_env["USERPROFILE"]
     assert child_env["TMPDIR"] == child_env["TMP"] == child_env["TEMP"]
     assert child_env["PYTHONPATH"] == str(src_root)
-    assert str(Path(sys.executable).parent) in child_env["PATH"].split(os.pathsep)
+    assert str(Path(sys.executable).resolve().parent) in child_env["PATH"].split(os.pathsep)
     assert child_env["PYTHONUTF8"] == "1"
     assert child_env["PYTHONDONTWRITEBYTECODE"] == "1"
 

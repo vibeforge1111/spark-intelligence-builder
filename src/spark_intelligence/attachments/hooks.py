@@ -195,17 +195,14 @@ def execute_chip_hook_record(
 
     repo_root = Path(record.repo_root)
     final_command = _normalize_command(command)
-    env = os.environ.copy()
-    src_root = repo_root / "src"
-    if src_root.exists():
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            str(src_root) if not existing_pythonpath else os.pathsep.join([str(src_root), existing_pythonpath])
-        )
-    env.update(_runtime_env_overrides(record))
 
     with tempfile.TemporaryDirectory(prefix=f"spark-chip-{record.key}-{hook}-") as temp_dir:
         temp_root = Path(temp_dir)
+        env = _build_chip_hook_environment(
+            record=record,
+            repo_root=repo_root,
+            temp_root=temp_root,
+        )
         input_path = temp_root / "input.json"
         output_path = temp_root / "output.json"
         input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -409,6 +406,68 @@ def _normalize_command(command: list[str]) -> list[str]:
     if first in {"python", "python3"}:
         return [sys.executable, *command[1:]]
     return command
+
+
+def _build_chip_hook_environment(
+    *,
+    record: AttachmentRecord,
+    repo_root: Path,
+    temp_root: Path,
+) -> dict[str, str]:
+    disposable_home = temp_root / "home"
+    disposable_temp = temp_root / "tmp"
+    disposable_home.mkdir(mode=0o700)
+    disposable_temp.mkdir(mode=0o700)
+    env = {
+        "HOME": str(disposable_home),
+        "USERPROFILE": str(disposable_home),
+        "XDG_CONFIG_HOME": str(disposable_home / ".config"),
+        "APPDATA": str(disposable_home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(disposable_home / "AppData" / "Local"),
+        "TMPDIR": str(disposable_temp),
+        "TMP": str(disposable_temp),
+        "TEMP": str(disposable_temp),
+        "PATH": _chip_hook_executable_path(),
+        "PYTHONUTF8": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+    src_root = repo_root / "src"
+    if src_root.exists():
+        env["PYTHONPATH"] = str(src_root)
+    env.update(_windows_chip_runtime_environment())
+    env.update(_runtime_env_overrides(record))
+    return env
+
+
+def _chip_hook_executable_path() -> str:
+    candidates = [str(Path(sys.executable).resolve().parent), *os.defpath.split(os.pathsep)]
+    entries: list[str] = []
+    for candidate in candidates:
+        normalized = str(candidate or "").strip()
+        if normalized and normalized not in entries:
+            entries.append(normalized)
+    return os.pathsep.join(entries)
+
+
+def _windows_chip_runtime_environment() -> dict[str, str]:
+    if os.name != "nt":
+        return {}
+    raw_root = str(os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR") or "").strip()
+    if not raw_root:
+        return {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    system_root = Path(raw_root)
+    if not system_root.is_absolute() or not system_root.is_dir():
+        return {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    env = {
+        "SYSTEMROOT": str(system_root),
+        "WINDIR": str(system_root),
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+    command_shell = system_root / "System32" / "cmd.exe"
+    if command_shell.is_file():
+        env["COMSPEC"] = str(command_shell)
+    return env
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
