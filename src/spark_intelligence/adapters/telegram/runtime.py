@@ -4852,6 +4852,16 @@ def _render_telegram_route_probe_help(*, route_name: str) -> str:
 def _render_telegram_route_probe_reply(probe: Any) -> str:
     status = str(getattr(probe, "status", "") or "unknown")
     capability_key = str(getattr(probe, "capability_key", "") or "unknown")
+    if capability_key == "spark_swarm":
+        if status == "success":
+            return (
+                "✨ Swarm's local payload route is ready. "
+                "That proves local shaping, not a hosted sync."
+            )
+        return (
+            "⚠️ Swarm's local payload isn't ready yet. "
+            "Connect a specialization path, then run `/probe swarm` again."
+        )
     lines = [
         f"Route probe: {capability_key}",
         f"Status: {status}",

@@ -375,7 +375,14 @@ def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
     ok = bool(status.payload_ready)
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
+        "failure_reason": (
+            ""
+            if ok
+            else (
+                "Spark Swarm's local payload is not ready. Connect or activate a "
+                "specialization path, then run the probe again."
+            )
+        ),
         "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
     }
 
