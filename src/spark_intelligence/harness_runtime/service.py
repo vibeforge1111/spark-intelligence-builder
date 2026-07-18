@@ -19,6 +19,10 @@ from spark_intelligence.state.db import StateDB
 
 
 _URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
+_BUILDER_DIRECT_TOOL = "builder.direct"
+_BUILDER_OWNER_SYSTEM = "spark-intelligence-builder"
+_BROWSER_NAVIGATE_TOOL = "browser.navigate"
+_BROWSER_OWNER_SYSTEM = "spark-browser"
 _VOICE_SPEAK_RE = re.compile(
     r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
     re.IGNORECASE | re.DOTALL,
@@ -202,6 +206,30 @@ def build_harness_task_envelope(
 
 
 def build_harness_local_operator_turn_intent(envelope: HarnessTaskEnvelope) -> dict[str, Any] | None:
+    if envelope.harness_id in {"builder.direct", "browser.grounded"}:
+        from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+
+        browser_action = envelope.harness_id == "browser.grounded"
+        return build_vnext_tool_intent_envelope(
+            surface=envelope.channel_kind or "cli",
+            actor_id_ref=envelope.human_id or "human:local-operator",
+            request_id=envelope.envelope_id,
+            source_kind="local_operator_harness_execute",
+            tool_name=_BROWSER_NAVIGATE_TOOL if browser_action else _BUILDER_DIRECT_TOOL,
+            owner_system=_BROWSER_OWNER_SYSTEM if browser_action else _BUILDER_OWNER_SYSTEM,
+            mutation_class="external_network" if browser_action else "read_only",
+            external_network=browser_action,
+            intent_summary=(
+                "Local operator explicitly requested governed browser navigation through the Builder harness runtime."
+                if browser_action
+                else "Local operator explicitly requested governed Builder direct execution through the harness runtime."
+            ),
+            raw_turn_summary=(
+                f"Builder harness runtime summarized local operator task {envelope.envelope_id}; raw task stays offloaded."
+            ),
+            confidence=0.95,
+        )
+
     if envelope.harness_id != "voice.io":
         return None
 
@@ -295,18 +323,11 @@ def execute_harness_task(
     )
     try:
         if envelope.harness_id == "builder.direct":
-            summary = "Task retained in Builder direct harness."
-            artifacts = {
-                "execution_contract": {
-                    "reply_mode": "builder_local_runtime",
-                    "owner_system": envelope.owner_system,
-                    "prompt_strategy": envelope.prompt_strategy,
-                    "retry_policy": envelope.retry_policy,
-                    "approval_mode": envelope.approval_mode,
-                    "required_capabilities": envelope.required_capabilities,
-                }
-            }
-            status = "prepared"
+            artifacts, summary, status = _execute_builder_direct_harness(
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run.run_id,
+            )
         elif envelope.harness_id == "researcher.advisory":
             artifacts, summary, status = _execute_researcher_advisory_harness(
                 config_manager=config_manager,
@@ -316,7 +337,9 @@ def execute_harness_task(
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
                 config_manager=config_manager,
+                state_db=state_db,
                 envelope=envelope,
+                run_id=run.run_id,
             )
         elif envelope.harness_id == "voice.io":
             artifacts, summary, status = _execute_voice_io_harness(
@@ -520,7 +543,9 @@ def build_harness_runtime_snapshot(
 def _execute_browser_grounded_harness(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     envelope: HarnessTaskEnvelope,
+    run_id: str,
 ) -> tuple[dict[str, Any], str, str]:
     from spark_intelligence.browser import build_browser_navigate_payload, build_browser_status_payload
 
@@ -537,16 +562,170 @@ def _execute_browser_grounded_harness(
             "Browser grounded harness needs an explicit URL before it can prepare a navigate payload.",
             "needs_input",
         )
+
+    authority = _authorize_harness_action(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+        tool_name=_BROWSER_NAVIGATE_TOOL,
+        owner_system=_BROWSER_OWNER_SYSTEM,
+        mutation_class="external_network",
+        external_network=True,
+    )
+    if not authority.allowed:
+        return (
+            {"harness_authority": _harness_authority_artifact(authority, _BROWSER_NAVIGATE_TOOL)},
+            "Browser grounded harness is blocked because executable authority was not present.",
+            "blocked",
+        )
+
+    navigate_payload = build_browser_navigate_payload(
+        config_manager=config_manager,
+        url=url,
+        agent_id=envelope.agent_id,
+        request_id=envelope.envelope_id,
+    )
+    navigate_payload["governor_decision"] = authority.governor_decision
+    navigate_payload["turn_intent_envelope_vnext"] = authority.harness_core_envelope
+    _record_harness_preparation_result(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        summary="Browser grounded harness prepared a governed navigate payload; navigation has not started.",
+    )
     return (
         {
-            "browser_navigate_payload": build_browser_navigate_payload(
-                config_manager=config_manager,
-                url=url,
-            )
+            "harness_authority": _harness_authority_artifact(authority, _BROWSER_NAVIGATE_TOOL),
+            "browser_navigate_payload": navigate_payload,
         },
         f"Prepared a governed browser navigate payload for {url}.",
         "prepared",
     )
+
+
+def _execute_builder_direct_harness(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    authority = _authorize_harness_action(
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+        tool_name=_BUILDER_DIRECT_TOOL,
+        owner_system=_BUILDER_OWNER_SYSTEM,
+        mutation_class="read_only",
+    )
+    if not authority.allowed:
+        return (
+            {"harness_authority": _harness_authority_artifact(authority, _BUILDER_DIRECT_TOOL)},
+            "Builder direct harness is blocked because executable authority was not present.",
+            "blocked",
+        )
+
+    _record_harness_preparation_result(
+        state_db=state_db,
+        verdict=authority,
+        envelope=envelope,
+        run_id=run_id,
+        summary="Builder direct harness prepared an execution contract; execution has not started.",
+    )
+    return (
+        {
+            "harness_authority": _harness_authority_artifact(authority, _BUILDER_DIRECT_TOOL),
+            "execution_contract": {
+                "reply_mode": "builder_local_runtime",
+                "owner_system": envelope.owner_system,
+                "prompt_strategy": envelope.prompt_strategy,
+                "retry_policy": envelope.retry_policy,
+                "approval_mode": envelope.approval_mode,
+                "required_capabilities": envelope.required_capabilities,
+            },
+        },
+        "Task retained in Builder direct harness.",
+        "prepared",
+    )
+
+
+def _authorize_harness_action(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    tool_name: str,
+    owner_system: str,
+    mutation_class: str,
+    external_network: bool = False,
+):
+    from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+
+    verdict = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope.turn_intent_payload},
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class=mutation_class,
+        external_network=external_network,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        component="harness_runtime",
+    )
+    if verdict.allowed and not isinstance(verdict.governor_decision, dict):
+        return replace(
+            verdict,
+            allowed=False,
+            reason_codes=(*verdict.reason_codes, "missing_governor_decision"),
+        )
+    return verdict
+
+
+def _record_harness_preparation_result(
+    *,
+    state_db: StateDB,
+    verdict: Any,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    summary: str,
+) -> None:
+    from spark_intelligence.bridge_authority import record_bridge_tool_call_result_ledger
+
+    record_bridge_tool_call_result_ledger(
+        state_db,
+        verdict,
+        status="partial",
+        summary=summary,
+        component="harness_runtime",
+        request_id=envelope.envelope_id,
+        run_id=run_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+        initial_ledger_event_id=verdict.ledger_event_id,
+    )
+
+
+def _harness_authority_artifact(verdict: Any, fallback_tool_name: str) -> dict[str, Any]:
+    ledger = verdict.tool_call_ledger if isinstance(getattr(verdict, "tool_call_ledger", None), dict) else {}
+    governor = verdict.governor_decision if isinstance(getattr(verdict, "governor_decision", None), dict) else {}
+    return {
+        "allowed": bool(getattr(verdict, "allowed", False)),
+        "reason_codes": list(getattr(verdict, "reason_codes", ()) or ()),
+        "outcome": governor.get("outcome"),
+        "decision_id": governor.get("decision_id"),
+        "turn_id": ledger.get("turn_id") or governor.get("turn_id"),
+        "ledger_id": ledger.get("ledger_id"),
+        "tool_name": ledger.get("tool_name") or fallback_tool_name,
+        "ledger_event_id": getattr(verdict, "ledger_event_id", None),
+    }
 
 
 def _execute_researcher_advisory_harness(

@@ -35,7 +35,8 @@ class HarnessRuntimeAuthorityTests(SparkTestCase):
 
         self.assertEqual(result.status, "blocked")
         self.assertNotIn("execution_contract", result.artifacts)
-        self.assertEqual(len(self._ledger_events("tool_call_ledger_recorded")), 1)
+        self.assertIn("missing", " ".join(result.artifacts["harness_authority"]["reason_codes"]))
+        self.assertEqual(self._ledger_events("tool_call_ledger_recorded"), [])
         self.assertEqual(self._ledger_events("tool_call_ledger_result_recorded"), [])
 
     def test_builder_direct_authority_records_linked_partial_result(self) -> None:
@@ -51,7 +52,7 @@ class HarnessRuntimeAuthorityTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertIn("execution_contract", result.artifacts)
-        self.assertEqual(result.artifacts["authority"]["outcome"], "execute")
+        self.assertEqual(result.artifacts["harness_authority"]["outcome"], "execute")
         initial = self._ledger_events("tool_call_ledger_recorded")
         final = self._ledger_events("tool_call_ledger_result_recorded")
         self.assertEqual(len(initial), 1)
@@ -68,7 +69,8 @@ class HarnessRuntimeAuthorityTests(SparkTestCase):
 
         self.assertEqual(result.status, "blocked")
         self.assertNotIn("browser_navigate_payload", result.artifacts)
-        self.assertEqual(len(self._ledger_events("tool_call_ledger_recorded")), 1)
+        self.assertIn("missing", " ".join(result.artifacts["harness_authority"]["reason_codes"]))
+        self.assertEqual(self._ledger_events("tool_call_ledger_recorded"), [])
         self.assertEqual(self._ledger_events("tool_call_ledger_result_recorded"), [])
 
     def test_browser_url_authority_is_carried_into_payload_and_result_ledger(self) -> None:
