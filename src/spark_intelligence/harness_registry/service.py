@@ -93,6 +93,8 @@ class HarnessSelectionDecision:
     artifacts: list[str]
     route_mode: str
     reason: str
+    retry_policy: str
+    approval_mode: str
     next_actions: list[str]
     limitations: list[str]
 
@@ -110,6 +112,8 @@ class HarnessSelectionDecision:
             "artifacts": self.artifacts,
             "route_mode": self.route_mode,
             "reason": self.reason,
+            "retry_policy": self.retry_policy,
+            "approval_mode": self.approval_mode,
             "next_actions": self.next_actions,
             "limitations": self.limitations,
         }
@@ -338,6 +342,8 @@ def build_harness_selection(
         artifacts=[str(item) for item in (contract.get("artifacts") or []) if str(item)],
         route_mode=route_decision.route_mode,
         reason=route_decision.reason,
+        retry_policy=str(contract["retry_policy"]),
+        approval_mode=str(contract["approval_mode"]),
         next_actions=_dedupe_preserve_order(next_actions)[:4],
         limitations=_dedupe_preserve_order(limitations)[:6],
     )
@@ -365,6 +371,8 @@ def build_harness_prompt_context(
     lines.append(f"- prompt_strategy={selection['prompt_strategy']}")
     lines.append(f"- route_mode={selection['route_mode']}")
     lines.append(f"- reason={selection['reason']}")
+    lines.append(f"- retry_policy={selection['retry_policy']}")
+    lines.append(f"- approval_mode={selection['approval_mode']}")
     toolsets = [str(item) for item in (selection.get("toolsets") or []) if str(item)]
     if toolsets:
         lines.append(f"- toolsets={','.join(toolsets)}")

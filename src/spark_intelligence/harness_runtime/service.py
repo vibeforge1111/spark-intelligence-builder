@@ -34,6 +34,8 @@ class HarnessTaskEnvelope:
     backend_kind: str
     session_scope: str
     prompt_strategy: str
+    retry_policy: str
+    approval_mode: str
     route_mode: str
     required_capabilities: list[str]
     artifacts_expected: list[str]
@@ -54,6 +56,8 @@ class HarnessTaskEnvelope:
             "backend_kind": self.backend_kind,
             "session_scope": self.session_scope,
             "prompt_strategy": self.prompt_strategy,
+            "retry_policy": self.retry_policy,
+            "approval_mode": self.approval_mode,
             "route_mode": self.route_mode,
             "required_capabilities": self.required_capabilities,
             "artifacts_expected": self.artifacts_expected,
@@ -146,6 +150,8 @@ def build_harness_task_envelope(
             "backend_kind": contract.backend_kind,
             "session_scope": contract.session_scope,
             "prompt_strategy": contract.prompt_strategy,
+            "retry_policy": contract.retry_policy,
+            "approval_mode": contract.approval_mode,
             "route_mode": "forced_harness",
             "required_capabilities": list(contract.required_capabilities),
             "artifacts": list(contract.artifacts),
@@ -164,6 +170,8 @@ def build_harness_task_envelope(
             "backend_kind": selection.backend_kind,
             "session_scope": selection.session_scope,
             "prompt_strategy": selection.prompt_strategy,
+            "retry_policy": selection.retry_policy,
+            "approval_mode": selection.approval_mode,
             "route_mode": selection.route_mode,
             "required_capabilities": list(selection.required_capabilities),
             "artifacts": list(selection.artifacts),
@@ -178,6 +186,8 @@ def build_harness_task_envelope(
         backend_kind=str(selection_payload["backend_kind"]),
         session_scope=str(selection_payload["session_scope"]),
         prompt_strategy=str(selection_payload["prompt_strategy"]),
+        retry_policy=str(selection_payload["retry_policy"]),
+        approval_mode=str(selection_payload["approval_mode"]),
         route_mode=str(selection_payload["route_mode"]),
         required_capabilities=list(selection_payload["required_capabilities"]),
         artifacts_expected=list(selection_payload["artifacts"]),
@@ -291,6 +301,8 @@ def execute_harness_task(
                     "reply_mode": "builder_local_runtime",
                     "owner_system": envelope.owner_system,
                     "prompt_strategy": envelope.prompt_strategy,
+                    "retry_policy": envelope.retry_policy,
+                    "approval_mode": envelope.approval_mode,
                     "required_capabilities": envelope.required_capabilities,
                 }
             }
@@ -327,6 +339,8 @@ def execute_harness_task(
                     "owner_system": envelope.owner_system,
                     "backend_kind": envelope.backend_kind,
                     "session_scope": envelope.session_scope,
+                    "retry_policy": envelope.retry_policy,
+                    "approval_mode": envelope.approval_mode,
                     "required_capabilities": envelope.required_capabilities,
                 }
             }
