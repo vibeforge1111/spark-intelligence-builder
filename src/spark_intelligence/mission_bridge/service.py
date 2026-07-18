@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
 import re
-import urllib.error
-import urllib.request
 from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+from spark_intelligence.security.spawner_endpoint import (
+    request_local_spawner_json,
+    resolve_local_spawner_endpoint,
+)
 
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
@@ -45,12 +46,19 @@ def detect_board_intent(message: str) -> dict | None:
 
 
 def fetch_board(spawner_url: str | None = None, *, timeout: float = 5.0) -> dict[str, Any]:
-    base = (spawner_url or _SPAWNER_URL).rstrip("/")
-    req = urllib.request.Request(f"{base}/api/mission-control/board", method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        endpoint = resolve_local_spawner_endpoint(
+            configured_url=_SPAWNER_URL,
+            requested_url=spawner_url,
+            route_path="/api/mission-control/board",
+        )
+        data = request_local_spawner_json(
+            endpoint,
+            method="GET",
+            timeout_seconds=timeout,
+            max_response_bytes=1024 * 1024,
+        )
+    except RuntimeError:
         return {"ok": False, "board": {}}
     if not isinstance(data, dict):
         return {"ok": False, "board": {}}
