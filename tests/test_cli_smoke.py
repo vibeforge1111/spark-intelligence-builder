@@ -27,6 +27,15 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._spark_home_patcher = patch.dict(
+            "os.environ",
+            {"SPARK_HOME": str(self.home / "isolated-spark")},
+        )
+        self._spark_home_patcher.start()
+        self.addCleanup(self._spark_home_patcher.stop)
+
     def test_doctor_command_bootstraps_schema_before_attachment_snapshot_sync(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "doctor",

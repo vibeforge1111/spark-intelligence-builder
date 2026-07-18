@@ -29,7 +29,6 @@ from spark_intelligence.observability.store import (
     repair_non_promotable_chip_hook_dispositions,
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
-from spark_intelligence.runtime_discovery import spark_module_roots
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
@@ -348,7 +347,7 @@ def _tool_call_ledger_adoption_check(state_db: StateDB) -> DoctorCheck:
 
 
 def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
-    roots = [root for root in spark_module_roots(config_manager) if root.is_dir()]
+    roots = _doctor_module_roots(config_manager)
     if not roots:
         return DoctorCheck("builder-source-truth", True, "module registry not configured")
     records = _builder_install_records(roots)
@@ -412,7 +411,8 @@ def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
 
 def _python_import_source_check(config_manager: ConfigManager) -> DoctorCheck:
     imported = _imported_package_src_roots()
-    records = _builder_install_records([root for root in spark_module_roots(config_manager) if root.is_dir()])
+    module_roots = _doctor_module_roots(config_manager)
+    records = _builder_install_records(module_roots)
     current_builder_src = Path(__file__).resolve().parents[2]
     expected_builder = [
         current_builder_src,
@@ -424,7 +424,7 @@ def _python_import_source_check(config_manager: ConfigManager) -> DoctorCheck:
     ]
     expected_harness = [
         root / "spark-harness-core" / "source" / "src"
-        for root in spark_module_roots(config_manager)
+        for root in module_roots
         if (root / "spark-harness-core" / "source" / "src").is_dir()
     ]
     configured_harness = str(os.environ.get("SPARK_HARNESS_CORE_SOURCE") or "").strip()
@@ -512,6 +512,35 @@ def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
                 }
             )
     return records
+
+
+def _doctor_module_roots(config_manager: ConfigManager) -> list[Path]:
+    candidates: list[Path] = []
+    for config_key in ("spark.local_projects.module_roots", "spark.diagnostics.module_search_roots"):
+        configured = config_manager.get_path(config_key, default=[]) or []
+        if isinstance(configured, (str, Path)):
+            configured = [configured]
+        if isinstance(configured, list):
+            candidates.extend(Path(str(item)).expanduser() for item in configured if str(item).strip())
+    home = config_manager.paths.home
+    candidates.extend((home / "modules", home.parent / "modules", home.parent / ".spark" / "modules"))
+    spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
+    if spark_home:
+        candidates.append(Path(spark_home).expanduser() / "modules")
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        key = str(resolved).casefold()
+        if key in seen or not resolved.is_dir():
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return roots
 
 
 def _builder_install_summary(records: list[dict[str, object]]) -> str:
