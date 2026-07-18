@@ -296,6 +296,7 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
+        redacted = redacted.replace("<redacted>", "[REDACTED]")
         for pattern in PATH_LIKE_PATTERNS:
             redacted = pattern.sub("<path>", redacted)
         redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
