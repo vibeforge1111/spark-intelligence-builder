@@ -40,3 +40,22 @@ def test_trace_still_redacts_sensitive_keys_and_known_shapes() -> None:
     assert redacted["token"] == "[REDACTED]"
     assert redacted["api_key"] == "[REDACTED]"
     assert "sk-proj-" + "C" * 30 not in str(redacted["detail"])
+
+
+def test_trace_applies_canonical_authorization_redaction_before_local_patterns() -> None:
+    secrets = {
+        "Token": "placeholder-token-value-123456",
+        "ApiKey": "placeholder-apikey-value-123456",
+        "OAuth": "placeholder-oauth-value-123456",
+        "Bearer": "placeholder-bearer-value-123456",
+    }
+    record = {
+        "failure": ", ".join(
+            f"Authorization: {scheme} {secret}" for scheme, secret in secrets.items()
+        )
+    }
+
+    redacted = redact_trace_payload(record)
+
+    for secret in secrets.values():
+        assert secret not in str(redacted)
