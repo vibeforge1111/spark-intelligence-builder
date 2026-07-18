@@ -11,7 +11,11 @@ from datetime import UTC, datetime, timedelta
 from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, get_oauth_callback_state, issue_oauth_callback_state
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
-from spark_intelligence.auth.token_crypto import decrypt_token, encrypt_token
+from spark_intelligence.auth.token_crypto import (
+    decrypt_token,
+    encrypt_token,
+    validate_oauth_token_store_for_write,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.security.https_endpoint import (
     post_https_bytes,
@@ -797,6 +801,7 @@ def _persist_oauth_tokens(
     )
     refreshed_at = _utc_now_iso() if refreshed else None
     with state_db.connect() as conn:
+        validate_oauth_token_store_for_write(conn, state_db.path.parent)
         conn.execute(
             """
             INSERT INTO oauth_credentials(

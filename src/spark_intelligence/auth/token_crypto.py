@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sqlite3
 import stat
@@ -26,7 +27,8 @@ def encrypt_token(state_dir: Path, plaintext: str) -> str:
 def decrypt_token(state_dir: Path, value: str) -> str:
     if not value.startswith(_ENVELOPE_PREFIX):
         raise RuntimeError(
-            "OAuth token store contains an unsupported token envelope. Reconnect the provider."
+            "OAuth token store contains an unsupported token envelope. "
+            "Log out and reconnect the provider."
         )
     key = _load_existing_key(state_dir)
     return _decrypt_with_key(key, value)
@@ -38,11 +40,16 @@ def migrate_and_validate_oauth_tokens(
 ) -> int:
     rows = conn.execute(
         """
-        SELECT auth_profile_id, access_token_ciphertext, refresh_token_ciphertext
-        FROM oauth_credentials
-        WHERE access_token_ciphertext IS NOT NULL
-           OR refresh_token_ciphertext IS NOT NULL
-        ORDER BY auth_profile_id
+        SELECT
+            oc.auth_profile_id,
+            COALESCE(ap.provider_id, 'unknown') AS provider_id,
+            oc.access_token_ciphertext,
+            oc.refresh_token_ciphertext
+        FROM oauth_credentials oc
+        LEFT JOIN auth_profiles ap ON ap.auth_profile_id = oc.auth_profile_id
+        WHERE oc.access_token_ciphertext IS NOT NULL
+           OR oc.refresh_token_ciphertext IS NOT NULL
+        ORDER BY oc.auth_profile_id
         """
     ).fetchall()
     if not rows:
@@ -60,18 +67,20 @@ def migrate_and_validate_oauth_tokens(
                 encrypted_values.append(value)
             elif value.startswith(_ENVELOPE_FAMILY_PREFIX):
                 raise RuntimeError(
-                    "OAuth token store contains an unsupported token envelope. Reconnect the provider."
+                    "OAuth token store contains an unsupported token envelope. "
+                    "Log out and reconnect the provider."
                 )
             else:
                 has_legacy = True
+
+    if not has_legacy:
+        return 0
 
     key: bytes | None = None
     if encrypted_values:
         key = _load_existing_key(state_dir)
         for value in encrypted_values:
             _decrypt_with_key(key, value)
-    if not has_legacy:
-        return 0
     if key is None:
         key = _load_or_create_key(state_dir)
 
@@ -94,8 +103,68 @@ def migrate_and_validate_oauth_tokens(
             """,
             (access_value, refresh_value, str(row["auth_profile_id"])),
         )
+        migrated_fields = [
+            column
+            for column, before, after in (
+                ("access_token", row["access_token_ciphertext"], access_value),
+                ("refresh_token", row["refresh_token_ciphertext"], refresh_value),
+            )
+            if before != after
+        ]
+        conn.execute(
+            """
+            INSERT INTO provider_runtime_events(
+                provider_id,
+                auth_profile_id,
+                event_kind,
+                detail
+            )
+            VALUES (?, ?, 'oauth_tokens_encrypted_at_rest', ?)
+            """,
+            (
+                str(row["provider_id"]),
+                str(row["auth_profile_id"]),
+                json.dumps(
+                    {
+                        "envelope": "spark.oauth.v1",
+                        "migrated_fields": migrated_fields,
+                    },
+                    sort_keys=True,
+                ),
+            ),
+        )
         migrated += 1
     return migrated
+
+
+def validate_oauth_token_store_for_write(
+    conn: sqlite3.Connection,
+    state_dir: Path,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT access_token_ciphertext, refresh_token_ciphertext
+        FROM oauth_credentials
+        WHERE access_token_ciphertext LIKE 'spark.oauth.%'
+           OR refresh_token_ciphertext LIKE 'spark.oauth.%'
+        """
+    ).fetchall()
+    values = [
+        str(row[column])
+        for row in rows
+        for column in ("access_token_ciphertext", "refresh_token_ciphertext")
+        if row[column] is not None and str(row[column]) != ""
+    ]
+    if not values:
+        return
+    key = _load_existing_key(state_dir)
+    for value in values:
+        if not value.startswith(_ENVELOPE_PREFIX):
+            raise RuntimeError(
+                "OAuth token store contains an unsupported token envelope. "
+                "Log out and reconnect the provider."
+            )
+        _decrypt_with_key(key, value)
 
 
 def key_path(state_dir: Path) -> Path:
@@ -124,7 +193,8 @@ def _decrypt_with_key(key: bytes, value: str) -> str:
         return SecretBox(key).decrypt(encrypted).decode("utf-8")
     except (ValueError, UnicodeError, CryptoError):
         raise RuntimeError(
-            "OAuth token store could not be decrypted safely. Reconnect the provider."
+            "OAuth token store could not be decrypted safely. "
+            "Log out and reconnect the provider."
         ) from None
 
 
@@ -137,13 +207,15 @@ def _load_or_create_key(state_dir: Path) -> bytes:
 
     state_dir.mkdir(parents=True, exist_ok=True)
     key = random_bytes(SecretBox.KEY_SIZE)
+    temporary = state_dir / (
+        f".{_KEY_FILE_NAME}.tmp.{os.getpid()}."
+        f"{base64.urlsafe_b64encode(random_bytes(9)).decode('ascii').rstrip('=')}"
+    )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(path, flags, 0o600)
-    except FileExistsError:
-        return _load_existing_key(state_dir)
+        descriptor = os.open(temporary, flags, 0o600)
     except OSError:
         raise RuntimeError(
             "OAuth token encryption key could not be created safely."
@@ -156,10 +228,12 @@ def _load_or_create_key(state_dir: Path) -> bytes:
             if written <= 0:
                 raise OSError("short key write")
             view = view[written:]
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         os.fsync(descriptor)
     except OSError:
         try:
-            path.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
         except OSError:
             pass
         raise RuntimeError(
@@ -168,8 +242,19 @@ def _load_or_create_key(state_dir: Path) -> bytes:
     finally:
         os.close(descriptor)
 
-    if os.name != "nt":
-        os.chmod(path, 0o600)
+    try:
+        os.link(temporary, path, follow_symlinks=False)
+    except FileExistsError:
+        return _load_existing_key(state_dir)
+    except OSError:
+        raise RuntimeError(
+            "OAuth token encryption key could not be published safely."
+        ) from None
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
     return key
 
 
@@ -178,24 +263,39 @@ def _load_existing_key(state_dir: Path) -> bytes:
         return _read_key(key_path(state_dir))
     except FileNotFoundError:
         raise RuntimeError(
-            "OAuth token encryption key is missing. Restore the workspace key or reconnect the provider."
+            "OAuth token encryption key is missing. Restore the workspace key, "
+            "or log out and reconnect the provider."
         ) from None
 
 
 def _read_key(path: Path) -> bytes:
     if path.is_symlink():
         raise RuntimeError("OAuth token encryption key must not be a symbolic link.")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
     try:
-        metadata = path.stat()
-        data = path.read_bytes()
+        descriptor = os.open(path, flags)
     except FileNotFoundError:
         raise
     except OSError:
         raise RuntimeError("OAuth token encryption key could not be read safely.") from None
-    if not stat.S_ISREG(metadata.st_mode):
-        raise RuntimeError("OAuth token encryption key must be a regular file.")
-    if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise RuntimeError("OAuth token encryption key permissions are too broad.")
-    if len(data) != SecretBox.KEY_SIZE:
-        raise RuntimeError("OAuth token encryption key has an invalid format.")
-    return data
+    try:
+        try:
+            metadata = os.fstat(descriptor)
+            data = os.read(descriptor, SecretBox.KEY_SIZE + 1)
+        except OSError:
+            raise RuntimeError(
+                "OAuth token encryption key could not be read safely."
+            ) from None
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("OAuth token encryption key must be a regular file.")
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise RuntimeError("OAuth token encryption key permissions are too broad.")
+        if len(data) != SecretBox.KEY_SIZE:
+            raise RuntimeError("OAuth token encryption key has an invalid format.")
+        return data
+    finally:
+        os.close(descriptor)

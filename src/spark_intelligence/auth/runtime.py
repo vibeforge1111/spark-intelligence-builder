@@ -192,6 +192,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                 secret_ref=secret_ref,
                 oauth_row=oauth_row,
                 env_map=env_map,
+                state_dir=state_db.path.parent,
             )
             token_expired = _oauth_token_expired(oauth_row)
             token_expiring_soon = _oauth_token_expiring_soon(oauth_row)
@@ -451,14 +452,25 @@ def _has_resolved_secret(
     secret_ref: StaticSecretRef | None,
     oauth_row: object,
     env_map: dict[str, str],
+    state_dir: Path,
 ) -> bool:
     if auth_method == "oauth":
-        return bool(
+        if not (
             oauth_row
             and oauth_row["access_token_ciphertext"]
             and str(oauth_row["status"]) == "active"
             and not _oauth_token_expired(oauth_row)
-        )
+        ):
+            return False
+        try:
+            return bool(
+                decrypt_token(
+                    state_dir,
+                    str(oauth_row["access_token_ciphertext"]),
+                )
+            )
+        except RuntimeError:
+            return False
     if secret_ref and secret_ref.source == "env":
         return secret_ref.ref_id in env_map and bool(env_map[secret_ref.ref_id])
     return False
