@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from spark_intelligence.security.redaction import mask_secret, redact_text
+from spark_intelligence.security.redaction import contains_secret_shape, mask_secret, redact_text
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text, scan_prompt_boundary_text
 
 
@@ -35,6 +35,39 @@ def test_mask_secret_never_preserves_secret_fragments() -> None:
     assert masked == "***"
     assert secret[:3] not in masked
     assert secret[-2:] not in masked
+
+
+def test_authorization_scheme_credentials_use_canonical_contextual_redaction() -> None:
+    source = "\n".join(
+        (
+            "Authorization: Token placeholder-token-value-123456",
+            "Authorization=ApiKey placeholder-apikey-value-123456",
+            "Authorization: OAuth placeholder-oauth-value-123456",
+            "Authorization: Bearer placeholder-bearer-value-123456",
+        )
+    )
+
+    redacted = redact_text(source)
+
+    for secret in (
+        "placeholder-token-value-123456",
+        "placeholder-apikey-value-123456",
+        "placeholder-oauth-value-123456",
+        "placeholder-bearer-value-123456",
+    ):
+        assert secret not in redacted
+    assert "Authorization: Token <redacted>" in redacted
+    assert "Authorization=ApiKey <redacted>" in redacted
+    assert "Authorization: OAuth <redacted>" in redacted
+    assert "Authorization: Bearer <redacted>" in redacted
+    assert contains_secret_shape(source)
+
+
+def test_authorization_scheme_redaction_preserves_ordinary_auth_prose() -> None:
+    source = "OAuth authentication is configured. Token counting remains advisory."
+
+    assert redact_text(source) == source
+    assert not contains_secret_shape(source)
 
 
 def test_prompt_boundary_sanitizer_blocks_injection_and_invisible_unicode() -> None:

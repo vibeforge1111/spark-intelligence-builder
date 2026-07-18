@@ -79,6 +79,22 @@ class TelegramVoicePayloadSafetyTests(SparkTestCase):
         self.assertNotIn("internal.example", rendered)
         self.assertNotIn(secret, rendered)
 
+    def test_voice_error_uses_canonical_authorization_scheme_redaction(self) -> None:
+        secrets = {
+            "Token": "placeholder-token-value-123456",
+            "ApiKey": "placeholder-apikey-value-123456",
+            "OAuth": "placeholder-oauth-value-123456",
+        }
+        rendered = _safe_voice_error_message(
+            RuntimeError(
+                ", ".join(f"Authorization: {scheme} {secret}" for scheme, secret in secrets.items())
+            )
+        )
+
+        for scheme, secret in secrets.items():
+            self.assertNotIn(secret, rendered)
+            self.assertIn(f"Authorization: {scheme} <redacted>", rendered)
+
     def test_invalid_internal_json_does_not_echo_raw_text(self) -> None:
         malformed = '{"token":"secret-value-should-not-return"'
 
