@@ -11144,8 +11144,27 @@ def build_researcher_reply(
                 detected_entity_state_summary_query = None
                 detected_open_memory_recall_query = None
                 detected_belief_recall_query = None
-        except Exception:
-            pass
+        except Exception as exc:
+            record_event(
+                state_db,
+                event_type="researcher_memory_query_detection_failed",
+                component="researcher_bridge",
+                summary="Researcher memory-query detection failed; the turn continued without that optional route.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="memory_query_detection_failed",
+                severity="medium",
+                facts={
+                    "exception_type": type(exc).__name__[:80],
+                    "recovery": "continue_without_memory_query_detection",
+                },
+            )
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
