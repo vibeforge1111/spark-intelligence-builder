@@ -67,7 +67,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.intent_boundary import has_conversation_only_boundary
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
-from spark_intelligence.security import sanitize_prompt_boundary_text
+from spark_intelligence.security.prompt_boundaries import INVISIBLE_UNICODE_CHARS
 from spark_intelligence.llm_wiki import (
     build_llm_wiki_candidate_inbox,
     build_llm_wiki_candidate_scan,
@@ -11466,12 +11466,24 @@ def _render_direct_chip_execution_reply(
 
 
 def _render_direct_chip_output_preview(output: dict[str, Any], *, limit: int = 1500) -> str:
-    encoded = sanitize_prompt_boundary_text(
+    encoded = _mark_unsafe_chip_preview_unicode(
         json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
     )
     if len(encoded) <= limit:
         return encoded
     return encoded[: max(limit - 1, 0)] + "…"
+
+
+def _mark_unsafe_chip_preview_unicode(text: str) -> str:
+    rendered = text
+    for character, name in INVISIBLE_UNICODE_CHARS.items():
+        if character in {"\u200c", "\u200d"}:
+            continue
+        rendered = rendered.replace(
+            character,
+            f"[blocked invisible unicode U+{ord(character):04X} {name}]",
+        )
+    return rendered
 
 
 def _render_direct_chip_evaluate_reply(

@@ -78,6 +78,23 @@ def test_unicode_preview_marks_invisible_direction_controls_explicitly() -> None
     assert "[blocked invisible unicode U+202E RIGHT-TO-LEFT OVERRIDE]" in reply
 
 
+def test_unicode_preview_preserves_joined_emoji_sequences() -> None:
+    execution = SimpleNamespace(
+        ok=True,
+        chip_key="domain-chip-launcher",
+        output={"result": {"status": "ready", "message": "👩‍💻 shipped"}},
+    )
+
+    reply = _render_direct_chip_execution_reply(
+        execution=execution,
+        hook="launch",
+        payload_mode="explicit_payload",
+    )
+
+    assert "👩‍💻 shipped" in reply
+    assert "blocked invisible unicode" not in reply
+
+
 def test_generic_chip_failure_is_one_plain_attention_line() -> None:
     execution = SimpleNamespace(
         ok=False,
