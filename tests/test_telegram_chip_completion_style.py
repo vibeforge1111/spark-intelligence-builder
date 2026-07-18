@@ -61,6 +61,23 @@ def test_long_unicode_preview_marks_truncation_without_breaking_the_reply_shape(
     assert "\\ud83d" not in preview
 
 
+def test_unicode_preview_marks_invisible_direction_controls_explicitly() -> None:
+    execution = SimpleNamespace(
+        ok=True,
+        chip_key="domain-chip-launcher",
+        output={"result": {"status": "ready", "message": "safe\u202eevil"}},
+    )
+
+    reply = _render_direct_chip_execution_reply(
+        execution=execution,
+        hook="launch",
+        payload_mode="explicit_payload",
+    )
+
+    assert "\u202e" not in reply
+    assert "[blocked invisible unicode U+202E RIGHT-TO-LEFT OVERRIDE]" in reply
+
+
 def test_generic_chip_failure_is_one_plain_attention_line() -> None:
     execution = SimpleNamespace(
         ok=False,

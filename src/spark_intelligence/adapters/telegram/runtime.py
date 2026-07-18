@@ -67,6 +67,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.intent_boundary import has_conversation_only_boundary
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
+from spark_intelligence.security import sanitize_prompt_boundary_text
 from spark_intelligence.llm_wiki import (
     build_llm_wiki_candidate_inbox,
     build_llm_wiki_candidate_scan,
@@ -11465,7 +11466,9 @@ def _render_direct_chip_execution_reply(
 
 
 def _render_direct_chip_output_preview(output: dict[str, Any], *, limit: int = 1500) -> str:
-    encoded = json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
+    encoded = sanitize_prompt_boundary_text(
+        json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
+    )
     if len(encoded) <= limit:
         return encoded
     return encoded[: max(limit - 1, 0)] + "…"
