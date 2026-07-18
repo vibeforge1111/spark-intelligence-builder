@@ -152,6 +152,46 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "WhatsApp webhook verify token is not configured.")
 
+    def test_unresolved_verify_token_ref_stays_out_of_public_error(self) -> None:
+        verify_token_ref = "INTERNAL_WHATSAPP_VERIFY_TOKEN_REF"
+        self._add_whatsapp_channel(webhook_verify_token=None)
+        self.config_manager.set_path(
+            "channels.records.whatsapp.webhook_verify_token_ref",
+            verify_token_ref,
+        )
+
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="GET",
+            content_type=None,
+            headers={},
+            body=b"",
+            query_params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "whatsapp-verify-token",
+                "hub.challenge": "challenge-code",
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "WhatsApp webhook verify token is not configured.")
+        self.assertNotIn(verify_token_ref, response.body)
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_verification_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertIn(verify_token_ref, traces[0]["reason"])
+
     def test_rejects_missing_signature_header(self) -> None:
         self._add_whatsapp_channel()
         response = handle_whatsapp_webhook(

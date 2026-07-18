@@ -165,6 +165,38 @@ class DiscordWebhookIngressTests(SparkTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
+    def test_unresolved_webhook_secret_ref_stays_out_of_public_error(self) -> None:
+        secret_ref = "INTERNAL_DISCORD_WEBHOOK_SECRET_REF"
+        self._add_discord_channel(webhook_secret=None, allow_legacy_message_webhook=True)
+        self.config_manager.set_path("channels.records.discord.webhook_auth_ref", secret_ref)
+
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={"X-Spark-Webhook-Secret": "discord-webhook-secret"},
+            body=b"{}",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
+        self.assertNotIn(secret_ref, response.body)
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="discord",
+                event="discord_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertIn(secret_ref, traces[0]["reason"])
+
     def test_rejects_legacy_message_webhook_when_compatibility_is_disabled(self) -> None:
         self._add_discord_channel(allow_legacy_message_webhook=False)
         response = handle_discord_webhook(
