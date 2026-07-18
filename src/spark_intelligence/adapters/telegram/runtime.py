@@ -11438,10 +11438,9 @@ def _render_direct_chip_execution_reply(
     payload_mode: str,
 ) -> str:
     if not getattr(execution, "ok", False):
-        return (
-            f"Chip `{execution.chip_key}` `{hook}` failed.\n"
-            f"Reason: {_with_terminal_period(_extract_chip_execution_error(execution))}"
-        )
+        reason = _with_terminal_period(_extract_chip_execution_error(execution))
+        reason = reason[:1].upper() + reason[1:]
+        return f"⚠️ {execution.chip_key} couldn’t finish `{hook}`. {reason}"
     output = execution.output if isinstance(getattr(execution, "output", None), dict) else {}
     result = output.get("result") if isinstance(output.get("result"), dict) else {}
     reply_text = str(result.get("reply_text") or output.get("reply_text") or "").strip()
@@ -11459,12 +11458,17 @@ def _render_direct_chip_execution_reply(
             output=output,
             payload_mode=payload_mode,
         )
-    visible_output = json.dumps(output, indent=2, sort_keys=True)[:1500] if output else "No result payload."
-    return (
-        f"Chip `{execution.chip_key}` `{hook}` completed.\n"
-        f"Input mode: {payload_mode}.\n"
-        f"Output:\n{visible_output}"
-    )
+    if not output:
+        return f"✨ {execution.chip_key} finished `{hook}`. It didn’t return a result payload."
+    visible_output = _render_direct_chip_output_preview(output)
+    return f"✨ {execution.chip_key} finished `{hook}`. Here’s what it returned:\n\n{visible_output}"
+
+
+def _render_direct_chip_output_preview(output: dict[str, Any], *, limit: int = 1500) -> str:
+    encoded = json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
+    if len(encoded) <= limit:
+        return encoded
+    return encoded[: max(limit - 1, 0)] + "…"
 
 
 def _render_direct_chip_evaluate_reply(

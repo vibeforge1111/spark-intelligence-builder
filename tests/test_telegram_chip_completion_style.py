@@ -78,3 +78,20 @@ def test_generic_chip_failure_is_one_plain_attention_line() -> None:
 
     assert reply == "⚠️ domain-chip-launcher couldn’t finish `launch`. Provider is still warming up."
     assert "\n" not in reply
+
+
+def test_generic_chip_completion_without_output_stays_one_plain_line() -> None:
+    execution = SimpleNamespace(
+        ok=True,
+        chip_key="domain-chip-launcher",
+        output={},
+    )
+
+    reply = _render_direct_chip_execution_reply(
+        execution=execution,
+        hook="launch",
+        payload_mode="explicit_payload",
+    )
+
+    assert reply == "✨ domain-chip-launcher finished `launch`. It didn’t return a result payload."
+    assert "\n" not in reply
