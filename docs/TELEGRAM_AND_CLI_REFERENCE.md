@@ -9,17 +9,23 @@ through the 2026-04-23 session that added `/chip create`, `/loop`, and
 
 ## 1. Boot the stack
 
-Three services must be up for the full feature set.
+The launcher resolves sibling repositories from its own checkout, or from the
+documented `SPARK_*_DIR` overrides. Telegram polling is never started by
+default.
 
 ```bash
-# One command, from any cwd
-/c/Users/USER/Desktop/spark-intelligence-builder/scripts/boot-spark.sh
+# Inspect exactly which local checkouts would be used; changes nothing
+scripts/boot-spark.sh --plan
+
+# Start the local Spawner UI only
+scripts/boot-spark.sh
+
+# Explicitly request a Telegram launch after the local-owner check
+scripts/boot-spark.sh --with-bot
 
 # Check what's up
 scripts/boot-spark.sh --status
 
-# Clean teardown
-scripts/kill-spark.sh
 ```
 
 Ports the script manages:
@@ -30,15 +36,9 @@ Ports the script manages:
 | 8788 | mission relay | Inside telegram-bot; listens for spawner events |
 | 8907 | telegram webhook | Optional; polling mode doesn't use it |
 
-If the bot refuses to start:
-
-1. `taskkill /IM node.exe /F` or PowerShell `Stop-Process` the orphan.
-2. Remove stale lock: `rm spark-telegram-bot/.spark-telegram-owner-lock-*.json`
-3. Clear DB row:
-   ```bash
-   python -c "import sqlite3; c=sqlite3.connect('spark-telegram-bot/.spark-gateway-state.db'); c.execute(\"DELETE FROM gateway_state WHERE state_key LIKE '%owner-lock%'\"); c.commit()"
-   ```
-4. Re-run the boot script.
+If the bot refuses to start, do not kill every Node process or delete its
+owner-lock state. Inspect the already-running Telegram process and use its
+supervised stop/recovery path before making another explicit launch request.
 
 Launch config boundaries that matter:
 
