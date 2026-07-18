@@ -5,8 +5,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from spark_intelligence.harness_contract import verify_governor_tool_authority
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.state.db import StateDB
+
+
+BOT_DRAFT_WRITE_TOOL = "bot_draft.write"
+BOT_DRAFT_OWNER_SYSTEM = "spark-intelligence-builder"
+
+
+class BotDraftAuthorityError(PermissionError):
+    """Raised when a draft mutation lacks matching Governor authority."""
 
 
 DRAFT_HANDLE_PATTERN = re.compile(r"\bD-([0-9a-f]{6,12})\b", re.IGNORECASE)
@@ -125,6 +134,7 @@ def save_draft(
     session_id: str | None = None,
     chip_used: str | None = None,
     min_length: int = DRAFT_MIN_LENGTH,
+    governor_decision: dict | None = None,
 ) -> BotDraft | None:
     text = str(content or "")
     if not text.strip():
@@ -135,6 +145,7 @@ def save_draft(
     channel = str(channel_kind or "").strip()
     if not user or not channel:
         return None
+    _require_bot_draft_authority(governor_decision)
     draft_id = f"D-{uuid4().hex[:12]}"
     handle = _short_handle_from_id(draft_id)
     topic_hint = _topic_hint_from_content(text)
@@ -170,10 +181,12 @@ def update_draft_content(
     draft_id: str,
     content: str,
     chip_used: str | None = None,
+    governor_decision: dict | None = None,
 ) -> bool:
     text = str(content or "")
     if not text or not draft_id:
         return False
+    _require_bot_draft_authority(governor_decision)
     topic_hint = _topic_hint_from_content(text)
     updated_at = datetime.now(UTC).isoformat()
     with state_db.connect() as conn:
@@ -187,6 +200,22 @@ def update_draft_content(
             (text, len(text), chip_used, topic_hint, updated_at, draft_id),
         )
         return cur.rowcount > 0
+
+
+def _require_bot_draft_authority(governor_decision: dict | None) -> dict:
+    verification = verify_governor_tool_authority(
+        governor_decision,
+        tool_name=BOT_DRAFT_WRITE_TOOL,
+        owner_system=BOT_DRAFT_OWNER_SYSTEM,
+        mutation_class="writes_memory",
+    )
+    if verification.get("allowed") is True:
+        return verification
+    reasons = ",".join(str(reason) for reason in verification.get("reason_codes") or [])
+    raise BotDraftAuthorityError(
+        "Bot draft mutation requires Harness Core Governor authority: "
+        f"{reasons or 'governor_consumer_verification_failed'}"
+    )
 
 
 def list_recent_drafts(

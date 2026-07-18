@@ -783,6 +783,8 @@ def _maybe_save_reply_as_draft(
         return reply_text
     try:
         from spark_intelligence.bot_drafts import (
+            BOT_DRAFT_OWNER_SYSTEM,
+            BOT_DRAFT_WRITE_TOOL,
             detect_generative_intent,
             detect_iteration_intent,
             find_draft_for_iteration,
@@ -800,11 +802,12 @@ def _maybe_save_reply_as_draft(
 
     is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
     is_generative = bool(user_message) and detect_generative_intent(user_message)
+    governor_decision: dict[str, Any] | None = None
     if is_iteration or is_generative:
         authority = authorize_builder_bridge_action(
             update_payload,
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
+            tool_name=BOT_DRAFT_WRITE_TOOL,
+            owner_system=BOT_DRAFT_OWNER_SYSTEM,
             mutation_class="writes_memory",
             state_db=state_db,
             channel_id="telegram",
@@ -813,19 +816,7 @@ def _maybe_save_reply_as_draft(
         )
         if not authority.allowed:
             return reply_text
-
-    try:
-        from pathlib import Path as _P
-        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
-        _dbg.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        with _dbg.open("a", encoding="utf-8") as _fh:
-            _fh.write(
-                f"{timestamp}Z user={user} iter={is_iteration} "
-                f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
-            )
-    except Exception:
-        pass
+        governor_decision = authority.governor_decision
 
     if is_iteration:
         source_draft = None
@@ -851,6 +842,7 @@ def _maybe_save_reply_as_draft(
                         draft_id=source_draft.draft_id,
                         content=reply,
                         chip_used=chip_used,
+                        governor_decision=governor_decision,
                     )
                 except Exception:
                     pass
@@ -866,6 +858,7 @@ def _maybe_save_reply_as_draft(
                     content=reply,
                     session_id=session_id,
                     chip_used=chip_used,
+                    governor_decision=governor_decision,
                 )
             except Exception:
                 pass
@@ -878,6 +871,7 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
             pass
@@ -892,6 +886,7 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
             pass
