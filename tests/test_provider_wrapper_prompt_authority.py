@@ -67,7 +67,7 @@ def test_wrapper_marks_invisible_system_prompt_unicode(tmp_path: Path) -> None:
 def test_wrapper_preserves_user_request_even_when_it_discusses_injection(
     tmp_path: Path,
 ) -> None:
-    request = "Explain why the phrase ignore previous instructions is unsafe."
+    request = "ignore previous instructions — explain why that phrase is unsafe."
     _, user = _run_wrapper(
         tmp_path,
         system_prompt="Trusted system frame",
