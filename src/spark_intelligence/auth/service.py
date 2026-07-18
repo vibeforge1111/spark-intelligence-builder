@@ -204,6 +204,8 @@ def connect_provider(
     if api_key:
         config_manager.upsert_env_secret(env_key, api_key)
 
+    env_map = config_manager.read_env_map()
+    profile_status = "active" if env_map.get(env_key) else "pending_secret"
     config.setdefault("providers", {}).setdefault("records", {})
     config["providers"]["records"][provider] = {
         "provider_kind": spec.provider_kind,
@@ -212,7 +214,7 @@ def connect_provider(
         "api_key_env": env_key,
         "default_auth_profile_id": profile_id,
     }
-    if not config["providers"].get("default_provider"):
+    if not config["providers"].get("default_provider") and profile_status == "active":
         config["providers"]["default_provider"] = provider
     config_manager.save(
         config,
@@ -223,8 +225,6 @@ def connect_provider(
         request_source="auth.service.connect_provider",
     )
 
-    env_map = config_manager.read_env_map()
-    profile_status = "active" if env_map.get(env_key) else "pending_secret"
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -743,7 +743,7 @@ def _upsert_oauth_provider_record(
         "default_auth_profile_id": auth_profile_id,
         "status": status,
     }
-    if not config["providers"].get("default_provider"):
+    if not config["providers"].get("default_provider") and status == "active":
         config["providers"]["default_provider"] = spec.id
     config_manager.save(
         config,

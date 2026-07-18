@@ -342,7 +342,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(status_exit, 1, status_stderr)
         payload = json.loads(status_stdout)
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload["default_provider"], "openrouter")
+        self.assertIsNone(payload["default_provider"])
         self.assertEqual(payload["providers"][0]["provider_id"], "openrouter")
         self.assertEqual(payload["providers"][0]["auth_profile_id"], "openrouter:default")
         self.assertEqual(payload["providers"][0]["secret_ref"]["source"], "env")
