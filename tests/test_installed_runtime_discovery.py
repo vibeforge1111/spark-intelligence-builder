@@ -86,7 +86,7 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
                     module, "DEFAULT_MAINTENANCE_VALIDATOR_ROOT", self.user_home / "Desktop" / "missing", create=True
                 ), patch.object(module, "run_governed_command", return_value=execution) as governed:
                     result = runner("proof-command")
-                    self.assertEqual(result.get("stderr"), "")
+                    self.assertEqual(result.get("stderr", ""), "")
                     self.assertEqual(Path(governed.call_args.kwargs["cwd"]), source.resolve())
 
     def test_architecture_benchmark_uses_installed_domain_chip_source(self) -> None:

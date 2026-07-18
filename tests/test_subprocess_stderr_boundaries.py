@@ -90,6 +90,22 @@ class SubprocessStderrBoundaryTests(SparkTestCase):
         self.assertEqual(status["last_failure_reason"], "browser-use doctor could not be started.")
         self.assertNotIn(secret, json.dumps(status))
 
+    def test_browser_doctor_invalid_output_is_generic(self) -> None:
+        secret = "TOKEN=super-secret-value /private/operator/browser-doctor"
+        status_path = self.home / "browser-use-status.json"
+        execution = self._execution(exit_code=0, stdout=secret, stderr=secret)
+
+        with patch.object(browser_service, "run_governed_command", return_value=execution):
+            status = browser_service._refresh_browser_use_status_from_cli(
+                status_path=status_path,
+                cli_path="browser-use",
+            )
+
+        self.assertEqual(status["last_failure_reason"], "browser-use doctor returned invalid status output.")
+        self.assertEqual(status["error_code"], "BROWSER_USE_DOCTOR_INVALID_OUTPUT")
+        self.assertNotIn(secret, json.dumps(status))
+        self.assertNotIn(secret, status_path.read_text(encoding="utf-8"))
+
     def test_swarm_failure_is_one_conversational_reply_without_raw_output(self) -> None:
         secret = "TOKEN=super-secret-value /private/operator/swarm.log"
         result = SimpleNamespace(exit_code=2, stdout=secret, stderr=secret)
@@ -138,7 +154,16 @@ class SubprocessStderrBoundaryTests(SparkTestCase):
         secret = "SECRET_KEY=super-secret-value /private/operator/memory"
         execution = self._execution(
             exit_code=0,
-            stdout=json.dumps({"valid": True, "errors": [], "warnings": ["safe"], "count": 2}),
+            stdout=json.dumps(
+                {
+                    "valid": True,
+                    "errors": [],
+                    "warnings": ["safe"],
+                    "count": 2,
+                    "stdout": secret,
+                    "stderr": secret,
+                }
+            ),
             stderr=secret,
         )
 
@@ -151,6 +176,7 @@ class SubprocessStderrBoundaryTests(SparkTestCase):
 
         self.assertEqual(result, {"valid": True, "errors": [], "warnings": ["safe"], "count": 2})
         self.assertNotIn("stderr", result)
+        self.assertNotIn("stdout", result)
         self.assertNotIn(secret, json.dumps(result))
 
     def test_memory_malformed_failure_discards_stdout_and_stderr(self) -> None:

@@ -173,6 +173,13 @@ def _run_domain_chip_memory_cli(
         cwd=str(root),
         env=command_env,
     )
+    if execution.exit_code != 0:
+        return {
+            "valid": False,
+            "errors": ["sdk_maintenance_report_failed"],
+            "warnings": [],
+        }
+
     stdout = execution.stdout.strip()
     if stdout:
         try:
@@ -180,14 +187,13 @@ def _run_domain_chip_memory_cli(
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
-            payload.setdefault("stderr", execution.stderr.strip())
+            payload.pop("stderr", None)
+            payload.pop("stdout", None)
             return payload
     return {
-        "valid": execution.exit_code == 0,
-        "errors": [] if execution.exit_code == 0 else [execution.stderr.strip() or stdout or "sdk_maintenance_report_failed"],
+        "valid": False,
+        "errors": ["sdk_maintenance_report_invalid_output"],
         "warnings": [],
-        "stdout": stdout,
-        "stderr": execution.stderr.strip(),
     }
 
 

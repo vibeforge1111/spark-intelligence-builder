@@ -4404,6 +4404,41 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Next: `/swarm autoloop startup-operator` or `/swarm session startup-operator`.", str(result.detail["response_text"]))
         self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
 
+    def test_swarm_run_failure_hides_raw_command_output_at_telegram_boundary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        secret = "TOKEN=super-secret-value /private/operator/swarm.log"
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_bridge_run_specialization_path",
+            return_value=SimpleNamespace(
+                ok=False,
+                exit_code=2,
+                path_key="startup-operator",
+                stdout=secret,
+                stderr=secret,
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=_with_swarm_turn_intent(
+                    make_telegram_update(
+                        update_id=23020,
+                        user_id="111",
+                        username="alice",
+                        text="/swarm run startup-operator",
+                    ),
+                    tool_name="swarm.path.run",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        response_text = str(result.detail["response_text"])
+        self.assertNotIn(secret, response_text)
+        self.assertNotIn("Exit code:", response_text)
+        self.assertIn("exit code 2", response_text)
+        self.assertLessEqual(len(response_text.splitlines()), 2)
+
     def test_swarm_run_command_without_turn_intent_does_not_execute(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

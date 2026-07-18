@@ -12350,15 +12350,11 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
 
 
 def _render_swarm_bridge_failure(action: str, result: Any) -> str:
-    stdout = str(getattr(result, "stdout", "") or "").strip()
-    stderr = str(getattr(result, "stderr", "") or "").strip()
-    detail = stderr or stdout or "Command failed without stdout or stderr."
-    lines = [
-        f"Swarm {action} failed.",
-        f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
-        detail[:800],
-    ]
-    return "\n".join(lines)
+    exit_code = int(getattr(result, "exit_code", 1) or 1)
+    return (
+        f"Swarm couldn’t complete the {action} (exit code {exit_code}). "
+        "I kept the raw command output out of this chat."
+    )
 
 
 def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:

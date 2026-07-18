@@ -105,13 +105,18 @@ def record_governed_tool_result(
         "command": execution.command,
         **(provenance or {}),
     }
+    caller_facts = {
+        key: value
+        for key, value in (facts or {}).items()
+        if key not in {"stderr", "stdout"}
+    }
     merged_facts = {
+        **caller_facts,
         "exit_code": execution.exit_code,
         "ok": execution.ok,
         "timed_out": execution.timed_out,
         "timeout_seconds": execution.timeout_seconds,
-        "stderr": execution.stderr[:200] if execution.stderr else "",
-        **(facts or {}),
+        "stderr_present": bool(execution.stderr),
     }
     record_event(
         state_db,
