@@ -924,6 +924,11 @@ class StateDB:
                     updated_at=CURRENT_TIMESTAMP
                 """
             )
+            from spark_intelligence.auth.token_crypto import (
+                migrate_and_validate_oauth_tokens,
+            )
+
+            migrate_and_validate_oauth_tokens(conn, self.path.parent)
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:

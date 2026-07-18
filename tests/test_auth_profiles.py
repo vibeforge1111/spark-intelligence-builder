@@ -14,6 +14,7 @@ from spark_intelligence.auth.runtime import (
     resolve_runtime_provider,
     runtime_provider_health,
 )
+from spark_intelligence.auth.token_crypto import decrypt_token
 from spark_intelligence.gateway.oauth_callback import GatewayOAuthCallbackResult, OAuthCallbackCapture
 
 from tests.test_support import SparkTestCase
@@ -576,8 +577,8 @@ class AuthProfileTests(SparkTestCase):
 
         self.assertEqual(oauth_row["issuer"], "https://auth.openai.com")
         self.assertEqual(oauth_row["scope"], "openid profile")
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token")
         self.assertEqual(oauth_row["status"], "active")
         self.assertTrue(oauth_row["access_expires_at"])
         self.assertTrue(oauth_row["refresh_expires_at"])
@@ -831,8 +832,8 @@ class AuthProfileTests(SparkTestCase):
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token-refreshed")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token-rotated")
         self.assertTrue(oauth_row["last_refresh_at"])
         self.assertEqual(oauth_row["last_refresh_error"], None)
 
@@ -1222,8 +1223,8 @@ class AuthProfileTests(SparkTestCase):
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token-refreshed")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token-rotated")
         self.assertEqual(event_row["event_kind"], "oauth_refresh_completed")
         self.assertIn('"trigger": "job"', event_row["detail"])
         self.assertTrue(job_row["last_run_at"])
