@@ -56,6 +56,7 @@ class HarnessRuntimeTests(SparkTestCase):
             state_db=self.state_db,
             task="What chips are active right now?",
         )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         result = execute_harness_task(
             config_manager=self.config_manager,
@@ -82,6 +83,7 @@ class HarnessRuntimeTests(SparkTestCase):
                 state_db=self.state_db,
                 task="Open https://example.com and inspect it.",
             )
+        envelope = with_harness_local_operator_turn_intent(envelope)
 
         result = execute_harness_task(
             config_manager=self.config_manager,
