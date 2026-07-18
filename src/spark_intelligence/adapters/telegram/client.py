@@ -12,6 +12,23 @@ from spark_intelligence.security.redaction import redact_text
 
 Transport = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^/\s]+")
+MULTIPART_MEDIA_TYPE_PATTERN = re.compile(
+    r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\-.^_`|~0-9A-Za-z]+$"
+)
+
+
+def _quoted_multipart_filename(filename: str) -> str:
+    raw = str(filename)
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw):
+        raise RuntimeError("Telegram rejected multipart metadata before upload.")
+    return raw.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _validated_multipart_media_type(mime_type: str) -> str:
+    raw = str(mime_type)
+    if not MULTIPART_MEDIA_TYPE_PATTERN.fullmatch(raw):
+        raise RuntimeError("Telegram rejected multipart metadata before upload.")
+    return raw
 
 
 def _normalize_telegram_file_path(file_path: str) -> str:
@@ -176,6 +193,8 @@ class TelegramBotApiClient:
         mime_type: str,
         file_bytes: bytes,
     ) -> dict[str, Any]:
+        safe_filename = _quoted_multipart_filename(filename)
+        safe_mime_type = _validated_multipart_media_type(mime_type)
         boundary = f"----SparkTelegram{uuid.uuid4().hex}"
         body_parts: list[bytes] = []
         for name, value in fields.items():
@@ -194,9 +213,9 @@ class TelegramBotApiClient:
                 f"--{boundary}\r\n".encode("utf-8"),
                 (
                     f'Content-Disposition: form-data; name="{file_field}"; '
-                    f'filename="{filename}"\r\n'
+                    f'filename="{safe_filename}"\r\n'
                 ).encode("utf-8"),
-                f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+                f"Content-Type: {safe_mime_type}\r\n\r\n".encode("utf-8"),
                 file_bytes,
                 b"\r\n",
                 f"--{boundary}--\r\n".encode("utf-8"),
