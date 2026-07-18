@@ -288,7 +288,7 @@ def redact_trace_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [redact_trace_payload(item) for item in value]
     if isinstance(value, str):
-        redacted = value
+        redacted = redact_text(value)
         for pattern in SENSITIVE_TEXT_PATTERNS:
             if pattern.pattern.startswith("(?i)(api"):
                 redacted = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", redacted)
@@ -296,7 +296,6 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
-        redacted = redact_text(redacted)
         for pattern in PATH_LIKE_PATTERNS:
             redacted = pattern.sub("<path>", redacted)
         redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
