@@ -170,18 +170,35 @@ def _autodiscover_chip_roots(parents: list[Path], ignored_roots: set[str]) -> li
     autodetected: list[Path] = []
     seen: set[str] = set()
     for parent in parents:
-        if not parent.is_dir():
-            continue
-        candidates = list(parent.glob("domain-chip-*"))
-        candidates.extend(
-            path
-            for path in parent.iterdir()
-            if path.is_dir() and (path / "spark-chip.json").exists()
-        )
-        for candidate in sorted(candidates):
-            if _is_ignored_root(candidate, ignored_roots):
+        try:
+            if not parent.is_dir():
                 continue
-            key = str(candidate.resolve())
+        except OSError:
+            continue
+
+        candidates: list[Path] = []
+        try:
+            candidates.extend(parent.glob("domain-chip-*"))
+        except OSError:
+            pass
+
+        try:
+            for path in parent.iterdir():
+                try:
+                    if path.is_dir() and (path / "spark-chip.json").exists():
+                        candidates.append(path)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+
+        for candidate in sorted(candidates):
+            try:
+                key = _root_key(candidate)
+            except OSError:
+                continue
+            if key in ignored_roots:
+                continue
             if key not in seen:
                 seen.add(key)
                 autodetected.append(candidate)

@@ -73,3 +73,27 @@ class AttachmentRegistryUnreadableRootTests(SparkTestCase):
             roots = registry._autodiscover_chip_roots([parent], set())
 
         self.assertEqual(roots, [expected])
+
+    def test_iterdir_failure_preserves_domain_chip_glob_results(self) -> None:
+        parent = self.home / "chips"
+        expected = self._chip(parent, "domain-chip-proof")
+
+        with patch.object(Path, "iterdir", side_effect=PermissionError("parent is unreadable")):
+            roots = registry._autodiscover_chip_roots([parent], set())
+
+        self.assertEqual(roots, [expected])
+
+    def test_glob_failure_preserves_manifest_discovery(self) -> None:
+        parent = self.home / "chips"
+        expected = self._chip(parent, "custom-chip-proof")
+        real_glob = Path.glob
+
+        def guarded_glob(path: Path, pattern: str):
+            if path == parent:
+                raise PermissionError("glob is unavailable")
+            return real_glob(path, pattern)
+
+        with patch.object(Path, "glob", guarded_glob):
+            roots = registry._autodiscover_chip_roots([parent], set())
+
+        self.assertEqual(roots, [expected])
