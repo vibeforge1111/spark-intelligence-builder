@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,12 @@ from tests.test_support import SparkTestCase
 
 
 class SwarmRefreshEndpointSecurityTests(SparkTestCase):
+    def _access_token(self, *, issuer: str) -> str:
+        encode = lambda value: base64.urlsafe_b64encode(
+            json.dumps(value).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        return f"{encode({'alg': 'none'})}.{encode({'iss': issuer})}."
+
     def _session(self, *, supabase_url: str) -> SwarmSession:
         return SwarmSession(
             access_token_env="SPARK_SWARM_ACCESS_TOKEN",
@@ -94,13 +101,35 @@ class SwarmRefreshEndpointSecurityTests(SparkTestCase):
                 session=self._session(supabase_url="https://auth.example.com"),
             )
 
-        resolve_mock.assert_called_once_with("https://auth.example.com/auth/v1/token")
+        resolve_mock.assert_called_once_with(
+            "https://auth.example.com/auth/v1/token",
+            expected_origin=None,
+        )
         post_mock.assert_called_once()
         assert post_mock.call_args.kwargs["query"] == {"grant_type": "refresh_token"}
         assert post_mock.call_args.kwargs["timeout_seconds"] == 15
         assert post_mock.call_args.kwargs["max_response_bytes"] == 1024 * 1024
         assert refreshed.access_token == "fresh-access-token"
         assert refreshed.refresh_token == "rotated-refresh-token"
+
+    def test_refresh_binds_configured_origin_to_access_token_issuer(self) -> None:
+        session = self._session(supabase_url="https://1.1.1.1")
+        session.access_token = self._access_token(
+            issuer="https://93.184.216.34/auth/v1"
+        )
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.post_https_bytes",
+            side_effect=AssertionError("credential POST must not run"),
+        ):
+            with pytest.raises(RuntimeError) as raised:
+                _refresh_swarm_access_token(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    session=session,
+                )
+
+        assert str(raised.value).startswith("Swarm session refresh failed safely.")
 
     def test_pinned_transport_percent_encodes_structured_query(self) -> None:
         endpoint = ResolvedHTTPSEndpoint(

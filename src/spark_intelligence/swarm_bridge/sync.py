@@ -19,6 +19,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import latest_events_by_type, record_environment_snapshot, record_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.security.https_endpoint import (
+    canonical_https_origin,
     post_https_bytes,
     resolve_public_https_endpoint,
 )
@@ -2379,7 +2380,11 @@ def _refresh_swarm_access_token(
         token_url = urllib.parse.urlunsplit(
             (parsed.scheme, parsed.netloc, "/auth/v1/token", "", "")
         )
-        endpoint = resolve_public_https_endpoint(token_url)
+        expected_origin = _swarm_access_token_issuer_origin(session.access_token)
+        endpoint = resolve_public_https_endpoint(
+            token_url,
+            expected_origin=expected_origin,
+        )
         raw = post_https_bytes(
             endpoint,
             body=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
@@ -2465,6 +2470,19 @@ def _refresh_swarm_access_token(
     )
     _record_swarm_refresh_state(state_db, refreshed=True)
     return _resolve_swarm_session(config_manager, state_db=state_db)
+
+
+def _swarm_access_token_issuer_origin(
+    access_token: str | None,
+) -> tuple[str, int] | None:
+    claims = _decode_jwt_claims(access_token)
+    issuer = claims.get("iss") if isinstance(claims, dict) else None
+    if not isinstance(issuer, str) or not issuer.strip():
+        return None
+    normalized = issuer.strip().rstrip("/")
+    if normalized.endswith("/auth/v1"):
+        normalized = normalized[: -len("/auth/v1")]
+    return canonical_https_origin(normalized)
 
 
 def _record_swarm_refresh_state(
