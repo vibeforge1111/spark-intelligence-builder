@@ -772,12 +772,92 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
+def _telegram_bot_draft_governor_decision(
+    *,
+    state_db,
+    update_payload: dict[str, Any] | None,
+    external_user_id: str,
+    session_id: str | None,
+    request_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    user_message: str,
+    source_kind: str,
+    tool_name: str,
+    owner_system: str,
+) -> dict[str, Any] | None:
+    existing_vnext = extract_turn_intent_envelope_vnext(update_payload)
+    existing_legacy = extract_turn_intent_envelope(update_payload)
+    if existing_vnext is not None or existing_legacy is not None:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class="writes_memory",
+            state_db=state_db,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="telegram_runtime",
+            component="telegram_runtime.bot_draft",
+        )
+        return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+    if not isinstance(update_payload, dict):
+        return None
+    update_id = str(update_payload.get("update_id") or "").strip()
+    message = update_payload.get("message")
+    if not update_id or not isinstance(message, dict):
+        return None
+    inbound_text = " ".join(str(message.get("text") or message.get("caption") or "").split())
+    clean_user_message = " ".join(str(user_message or "").split())
+    if not inbound_text or inbound_text != clean_user_message:
+        return None
+
+    actor_ref = str(human_id or "").strip() or f"human:telegram:{external_user_id}"
+    resolved_request_id = str(request_id or "").strip() or f"telegram:{update_id}"
+    vnext_payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=resolved_request_id,
+        source_kind=source_kind,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class="writes_memory",
+        intent_summary="Fresh Telegram turn explicitly requested draft generation or iteration.",
+        raw_turn_summary="Telegram draft request remains offloaded from the authority envelope.",
+        confidence=0.95,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=resolved_request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime.bot_draft",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def _maybe_save_reply_as_draft(
     *,
     state_db,
     update_payload: dict[str, Any] | None = None,
     external_user_id: str,
     session_id: str | None,
+    request_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
     chip_used: str | None,
     reply_text: str,
     user_message: str = "",
@@ -807,19 +887,25 @@ def _maybe_save_reply_as_draft(
     is_generative = bool(user_message) and detect_generative_intent(user_message)
     governor_decision: dict[str, Any] | None = None
     if is_iteration or is_generative:
-        authority = authorize_builder_bridge_action(
-            update_payload,
+        governor_decision = _telegram_bot_draft_governor_decision(
+            state_db=state_db,
+            update_payload=update_payload,
+            external_user_id=user,
+            session_id=session_id,
+            request_id=request_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            source_kind=(
+                "telegram_runtime_bot_draft_iteration"
+                if is_iteration
+                else "telegram_runtime_bot_draft_generation"
+            ),
             tool_name=BOT_DRAFT_WRITE_TOOL,
             owner_system=BOT_DRAFT_OWNER_SYSTEM,
-            mutation_class="writes_memory",
-            state_db=state_db,
-            channel_id="telegram",
-            session_id=session_id,
-            component="telegram_bridge",
         )
-        if not authority.allowed:
+        if not isinstance(governor_decision, dict):
             return reply_text
-        governor_decision = authority.governor_decision
 
     if is_iteration:
         source_draft = None
@@ -2399,6 +2485,9 @@ def simulate_telegram_update(
                         update_payload=researcher_update_payload,
                         external_user_id=normalized.telegram_user_id,
                         session_id=resolution.session_id,
+                        request_id=request_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
                         chip_used=bridge_result.active_chip_key,
                         reply_text=outbound_text,
                         user_message=effective_text,
@@ -3382,6 +3471,9 @@ def poll_telegram_updates_once(
             update_payload=researcher_update_payload,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
+            request_id=run.request_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
             chip_used=bridge_result.active_chip_key,
             reply_text=outbound_text,
             user_message=effective_text,

@@ -169,6 +169,48 @@ class BotDraftAuthorityTests(SparkTestCase):
             ["A fresh Telegram turn produced this governed draft."],
         )
 
+    def test_plain_iteration_turn_mints_fresh_authority_and_updates_in_place(self) -> None:
+        _maybe_save_reply_as_draft(
+            state_db=self.state_db,
+            update_payload={"update_id": 722, "message": {"text": "write me a post"}},
+            external_user_id=self.USER,
+            session_id=f"session:{self.USER}",
+            chip_used=None,
+            reply_text="First governed draft.",
+            user_message="write me a post",
+        )
+        first = self._drafts()
+        self.assertEqual(len(first), 1)
+
+        _maybe_save_reply_as_draft(
+            state_db=self.state_db,
+            update_payload={"update_id": 723, "message": {"text": "make it punchier"}},
+            external_user_id=self.USER,
+            session_id=f"session:{self.USER}",
+            chip_used=None,
+            reply_text="Punchier governed draft.",
+            user_message="make it punchier",
+        )
+
+        updated = self._drafts()
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated[0].draft_id, first[0].draft_id)
+        self.assertEqual(updated[0].content, "Punchier governed draft.")
+
+    def test_mismatched_raw_message_cannot_mint_draft_authority(self) -> None:
+        returned = _maybe_save_reply_as_draft(
+            state_db=self.state_db,
+            update_payload={"update_id": 724, "message": {"text": "tell me the weather"}},
+            external_user_id=self.USER,
+            session_id=f"session:{self.USER}",
+            chip_used=None,
+            reply_text="This must remain reply-only.",
+            user_message="write me a post",
+        )
+
+        self.assertEqual(returned, "This must remain reply-only.")
+        self.assertEqual(self._drafts(), [])
+
     def test_telegram_rejects_legacy_memory_authority(self) -> None:
         update_payload = self._turn_payload(
             tool_name="memory.write",
