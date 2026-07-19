@@ -82,9 +82,7 @@ jobs:
           SPARK_HARNESS_CORE_SOURCE: ${{ github.workspace }}/spark-harness-core/src
           DOMAIN_CHIP_MEMORY_REPO: ${{ github.workspace }}/domain-chip-memory
           PYTHONPATH: ${{ github.workspace }}/domain-chip-memory/src
-        run: |
-          mapfile -t SHARD_NODEIDS < .pytest-shard-nodeids
-          uv run --with pytest python -m pytest "${SHARD_NODEIDS[@]}" -q
+        run: uv run --with pytest python -m pytest @.pytest-shard-nodeids -q
 
       - name: Audit Python dependencies
         if: matrix.shard == 0
