@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import time
 import json
 import urllib.error
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
+from secrets import compare_digest
 from time import sleep
-from typing import Any
+from typing import Any, TextIO
 
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary, simulate_discord_message
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
@@ -57,6 +60,10 @@ GATEWAY_BLOCKING_DOCTOR_CHECKS = {
     "discord-runtime",
     "whatsapp-runtime",
 }
+
+GATEWAY_STDIO_PROTOCOL = "spark.gateway.stdio.v2"
+GATEWAY_STDIO_MAX_REQUEST_BYTES = 1024 * 1024
+_GATEWAY_STDIO_REQUEST_ID = re.compile(r"^telegram:[A-Za-z0-9_.:-]{1,112}$")
 
 
 @dataclass
@@ -456,6 +463,145 @@ def gateway_simulate_telegram_update(
         simulation=simulation,
     )
     return result.to_json() if as_json else result.to_text()
+
+
+def gateway_serve_stdio(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    input_stream: TextIO,
+    output_stream: TextIO,
+    error_stream: TextIO | None = None,
+    simulation: bool = True,
+    session_token: str,
+    session_id: str | None = None,
+    max_request_bytes: int = GATEWAY_STDIO_MAX_REQUEST_BYTES,
+) -> int:
+    """Serve one parent-owned Telegram bridge session over bounded NDJSON.
+
+    The parent fixes the runtime origin when it starts this process. Per-message
+    input cannot promote simulation traffic to runtime traffic, and every data
+    or control request must prove possession of the inherited session token.
+    """
+    normalized_token = str(session_token or "")
+    if len(normalized_token) < 32:
+        raise ValueError("Gateway stdio needs a strong inherited session token.")
+    normalized_session_id = str(session_id or secrets.token_urlsafe(24)).strip()
+    if len(normalized_session_id) < 16 or len(normalized_session_id) > 128:
+        raise ValueError("Gateway stdio session id is invalid.")
+    if max_request_bytes < 1024:
+        raise ValueError("Gateway stdio request limit is too small.")
+
+    def write_response(payload: dict[str, Any]) -> None:
+        output_stream.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=True) + "\n")
+        output_stream.flush()
+
+    def write_error(code: str, *, request_id: str = "", retryable: bool = False) -> None:
+        write_response(
+            {
+                "ok": False,
+                "protocol": GATEWAY_STDIO_PROTOCOL,
+                "request_id": request_id,
+                "error": {"code": code, "retryable": retryable},
+            }
+        )
+
+    write_response(
+        {
+            "ok": True,
+            "protocol": GATEWAY_STDIO_PROTOCOL,
+            "ready": True,
+            "session_id": normalized_session_id,
+            "max_request_bytes": max_request_bytes,
+        }
+    )
+    while True:
+        raw_line = input_stream.readline(max_request_bytes + 2)
+        if not raw_line:
+            break
+        if len(raw_line.encode("utf-8")) > max_request_bytes:
+            while raw_line and not raw_line.endswith("\n"):
+                raw_line = input_stream.readline(max_request_bytes + 2)
+            write_error("request_too_large")
+            continue
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        request_id = ""
+        try:
+            request = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            write_error("invalid_json")
+            continue
+        if not isinstance(request, dict):
+            write_error("invalid_request")
+            continue
+
+        candidate_request_id = str(request.get("request_id") or "").strip()
+        if _GATEWAY_STDIO_REQUEST_ID.fullmatch(candidate_request_id):
+            request_id = candidate_request_id
+        else:
+            write_error("invalid_request_id")
+            continue
+        if str(request.get("protocol") or "") != GATEWAY_STDIO_PROTOCOL:
+            write_error("unsupported_protocol", request_id=request_id)
+            continue
+        candidate_token = str(request.get("session_token") or "")
+        candidate_session_id = str(request.get("session_id") or "")
+        if not compare_digest(candidate_token, normalized_token) or not compare_digest(
+            candidate_session_id, normalized_session_id
+        ):
+            write_error("unauthorized", request_id=request_id)
+            continue
+
+        command = str(request.get("command") or "").strip()
+        if command == "shutdown":
+            write_response(
+                {
+                    "ok": True,
+                    "protocol": GATEWAY_STDIO_PROTOCOL,
+                    "request_id": request_id,
+                    "status": "shutdown",
+                }
+            )
+            break
+        if command != "telegram_update":
+            write_error("unsupported_command", request_id=request_id)
+            continue
+        update_payload = request.get("update_payload")
+        if not isinstance(update_payload, dict):
+            write_error("invalid_update_payload", request_id=request_id)
+            continue
+
+        try:
+            if error_stream is None:
+                result = simulate_telegram_update(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    update_payload=update_payload,
+                    simulation=simulation,
+                )
+            else:
+                with redirect_stdout(error_stream):
+                    result = simulate_telegram_update(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        update_payload=update_payload,
+                        simulation=simulation,
+                    )
+            write_response(
+                {
+                    "ok": bool(result.ok),
+                    "protocol": GATEWAY_STDIO_PROTOCOL,
+                    "request_id": request_id,
+                    "decision": result.decision,
+                    "detail": result.detail,
+                }
+            )
+        except Exception:
+            write_error("turn_failed", request_id=request_id, retryable=True)
+    return 0
 
 
 def gateway_ask_telegram(
