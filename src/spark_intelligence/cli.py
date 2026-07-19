@@ -69,6 +69,10 @@ from spark_intelligence.gateway.runtime import (
 from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log, repair_gateway_trace_proof_continuity
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+from spark_intelligence.harness_evolution import (
+    build_harness_self_evolution_snapshot,
+    review_harness_change_manifests,
+)
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -2857,6 +2861,26 @@ def build_parser() -> argparse.ArgumentParser:
     harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
     harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_evolution_parser = harness_subparsers.add_parser(
+        "self-evolution-snapshot",
+        help="Observe canonical Harness evidence without executing or promoting changes",
+    )
+    harness_evolution_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_evolution_parser.add_argument("--limit", type=int, default=20, help="Maximum canonical ledgers to observe")
+    harness_evolution_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_manifest_review_parser = harness_subparsers.add_parser(
+        "change-manifest-review",
+        help="Validate and review Harness change manifests without running their commands",
+    )
+    harness_manifest_review_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_manifest_review_parser.add_argument(
+        "--manifest",
+        action="append",
+        required=True,
+        help="Path to a change-manifest-v1 JSON file; repeat for multiple files",
+    )
+    harness_manifest_review_parser.add_argument("--limit", type=int, default=20, help="Maximum canonical ledgers to observe")
+    harness_manifest_review_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
     harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
     harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -8316,6 +8340,43 @@ def handle_harness_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_harness_self_evolution_snapshot(state_db, limit=args.limit)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "Harness evidence snapshot recorded in observe-only mode. "
+            f"It found {payload['ledger_count']} canonical governed ledger(s); "
+            "execution, promotion, rollback, and publication remain blocked."
+        )
+    return 0
+
+
+def handle_harness_change_manifest_review(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = review_harness_change_manifests(
+        state_db,
+        manifest_paths=args.manifest,
+        limit=args.limit,
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            f"Reviewed {payload['manifest_count']} Harness change manifest(s) as proposals only. "
+            "No requested command ran, and no promotion or publication authority was issued."
+        )
+    return 0
+
+
 def handle_harness_plan(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -9794,6 +9855,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_prune_observability(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
+        return handle_harness_self_evolution_snapshot(args)
+    if args.command == "harness" and args.harness_command == "change-manifest-review":
+        return handle_harness_change_manifest_review(args)
     if args.command == "harness" and args.harness_command == "plan":
         return handle_harness_plan(args)
     if args.command == "harness" and args.harness_command == "execute":
