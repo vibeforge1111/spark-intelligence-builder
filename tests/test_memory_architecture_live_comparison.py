@@ -7,6 +7,7 @@ from spark_intelligence.memory.architecture_live_comparison import (
     _baseline_row,
     _leader_rows,
     _required_live_match_fragments,
+    _resolve_default_validator_root,
     build_telegram_regression_sample_specs,
     compare_telegram_memory_architectures,
 )
@@ -16,6 +17,29 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryArchitectureLiveComparisonTests(SparkTestCase):
+    def test_explicit_domain_memory_repo_outranks_installed_default(self) -> None:
+        configured = self.home / "configured-domain-memory"
+        installed = self.home / "installed-domain-memory"
+        configured.mkdir()
+        installed.mkdir()
+
+        with patch.dict("os.environ", {"DOMAIN_CHIP_MEMORY_REPO": str(configured)}, clear=False), patch(
+            "spark_intelligence.memory.architecture_live_comparison.DEFAULT_DOMAIN_CHIP_MEMORY_ROOT",
+            installed,
+        ):
+            self.assertEqual(_resolve_default_validator_root(), configured)
+
+    def test_missing_explicit_domain_memory_repo_fails_closed(self) -> None:
+        configured = self.home / "missing-domain-memory"
+        installed = self.home / "installed-domain-memory"
+        installed.mkdir()
+
+        with patch.dict("os.environ", {"DOMAIN_CHIP_MEMORY_REPO": str(configured)}, clear=False), patch(
+            "spark_intelligence.memory.architecture_live_comparison.DEFAULT_DOMAIN_CHIP_MEMORY_ROOT",
+            installed,
+        ):
+            self.assertEqual(_resolve_default_validator_root(), configured)
+
     def test_leader_rows_uses_grounding_before_scorecard_tiebreaks(self) -> None:
         leaders = _leader_rows(
             [
