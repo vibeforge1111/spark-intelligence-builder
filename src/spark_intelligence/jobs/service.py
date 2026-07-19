@@ -14,6 +14,7 @@ from spark_intelligence.state.db import StateDB
 OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
 MEMORY_MAINTENANCE_JOB_ID = "memory:sdk-maintenance"
 OBSERVABILITY_RETENTION_JOB_ID = "observability:retention-preview"
+HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID = "harness:self-evolution-observe"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
 DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
 
@@ -231,6 +232,34 @@ def _run_job(
                     "eligible_counts": payload.eligible_counts,
                     "protected_tables": list(payload.protected_tables),
                     "plan_sha256": payload.plan_sha256,
+                },
+            )
+            return result
+        if job_kind == "harness_self_evolution_observe":
+            from spark_intelligence.harness_evolution import build_harness_self_evolution_snapshot
+
+            payload = build_harness_self_evolution_snapshot(state_db)
+            result = (
+                f"mode=observe ledgers={payload['ledger_count']} "
+                f"readiness={payload['readiness_score']['overall']['status']} "
+                f"evidence={payload['evidence_digest']} commands_executed=false"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="job_completed",
+                summary=f"Job {job_id} recorded observe-only Harness evidence.",
+                facts={
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "result": result,
+                    "mode": "observe",
+                    "ledger_count": payload["ledger_count"],
+                    "evidence_digest": payload["evidence_digest"],
+                    "commands_executed": False,
+                    "promotion_allowed": False,
                 },
             )
             return result
