@@ -147,6 +147,28 @@ class BotDraftAuthorityTests(SparkTestCase):
         self.assertEqual(returned, "A governed Telegram draft.")
         self.assertEqual([draft.content for draft in self._drafts()], ["A governed Telegram draft."])
 
+    def test_plain_generative_telegram_turn_mints_fresh_draft_authority(self) -> None:
+        returned = _maybe_save_reply_as_draft(
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 721,
+                "message": {
+                    "text": "write me a post about R30 authority",
+                },
+            },
+            external_user_id=self.USER,
+            session_id=f"session:{self.USER}",
+            chip_used=None,
+            reply_text="A fresh Telegram turn produced this governed draft.",
+            user_message="write me a post about R30 authority",
+        )
+
+        self.assertEqual(returned, "A fresh Telegram turn produced this governed draft.")
+        self.assertEqual(
+            [draft.content for draft in self._drafts()],
+            ["A fresh Telegram turn produced this governed draft."],
+        )
+
     def test_telegram_rejects_legacy_memory_authority(self) -> None:
         update_payload = self._turn_payload(
             tool_name="memory.write",
