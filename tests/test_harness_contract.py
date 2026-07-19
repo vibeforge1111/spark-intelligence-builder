@@ -1,4 +1,8 @@
+import sys
+
 import pytest
+
+import spark_intelligence.harness_contract as harness_contract
 
 from spark_intelligence.harness_contract import (
     HARNESS_CORE_AVAILABLE,
@@ -168,3 +172,32 @@ def test_rejects_invalid_schema() -> None:
 
     with pytest.raises(ValueError, match="Unsupported"):
         parse_turn_intent_envelope(payload)
+
+
+def test_explicit_harness_source_outranks_other_local_sources(tmp_path, monkeypatch) -> None:
+    configured = tmp_path / "configured-harness" / "src"
+    spark_home_source = tmp_path / "spark-home" / "modules" / "spark-harness-core" / "source" / "src"
+    configured.mkdir(parents=True)
+    spark_home_source.mkdir(parents=True)
+    monkeypatch.setenv("SPARK_HARNESS_CORE_SOURCE", str(configured.parent))
+    monkeypatch.setenv("SPARK_HOME", str(tmp_path / "spark-home"))
+    original_path = list(sys.path)
+
+    try:
+        harness_contract._ensure_harness_core_importable()
+
+        assert sys.path[0] == str(configured)
+        assert str(spark_home_source) not in sys.path
+    finally:
+        sys.path[:] = original_path
+
+
+def test_missing_explicit_harness_source_fails_closed(tmp_path, monkeypatch) -> None:
+    fallback = tmp_path / "spark-home" / "modules" / "spark-harness-core" / "source" / "src"
+    fallback.mkdir(parents=True)
+    missing = tmp_path / "missing-harness"
+    monkeypatch.setenv("SPARK_HARNESS_CORE_SOURCE", str(missing))
+    monkeypatch.setenv("SPARK_HOME", str(tmp_path / "spark-home"))
+
+    with pytest.raises(FileNotFoundError, match="SPARK_HARNESS_CORE_SOURCE"):
+        harness_contract._ensure_harness_core_importable()
