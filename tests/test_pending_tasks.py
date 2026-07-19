@@ -18,6 +18,26 @@ from tests.test_support import SparkTestCase
 
 
 class PendingTaskLedgerTests(SparkTestCase):
+    def test_unknown_close_is_actionable_without_disclosing_other_task_keys(self) -> None:
+        upsert_pending_task(
+            self.state_db,
+            task_key="private:other-human-task",
+            original_request="Private work from another scope.",
+            human_id="human:other",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            close_pending_task(
+                self.state_db,
+                task_key="memory:typo",
+                completion_summary="Should not run.",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("unknown_pending_task:memory:typo", message)
+        self.assertIn("inspect authorized open tasks", message)
+        self.assertNotIn("private:other-human-task", message)
+
     def test_upsert_pending_task_records_resumable_work_context(self) -> None:
         record = upsert_pending_task(
             self.state_db,

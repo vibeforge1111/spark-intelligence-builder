@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from spark_intelligence.memory.approval_inbox import (
+    REVIEW_ACTIONS,
+    _normalize_decision,
     build_memory_approval_inbox,
     record_memory_approval_decision,
 )
@@ -16,6 +18,14 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryApprovalInboxTests(SparkTestCase):
+    def test_unsupported_decision_names_only_the_fixed_review_actions(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_decision("aprove")
+
+        message = str(ctx.exception)
+        self.assertIn("unsupported_memory_approval_decision:aprove", message)
+        self.assertIn(f"known: {', '.join(REVIEW_ACTIONS)}", message)
+
     def test_inbox_lists_agent_memory_candidate_until_decided(self) -> None:
         candidate_event_id = record_agent_event(
             self.state_db,

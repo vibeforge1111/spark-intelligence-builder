@@ -21,6 +21,27 @@ from tests.test_support import SparkTestCase
 
 
 class ProceduralLessonMemoryTests(SparkTestCase):
+    def test_unknown_retirement_is_actionable_without_disclosing_other_lesson_keys(self) -> None:
+        upsert_procedural_lesson(
+            self.state_db,
+            lesson_key="private:other-human-lesson",
+            lesson_kind="timeout_recovery",
+            trigger_pattern="private trigger",
+            corrective_action="private correction",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            retire_procedural_lesson(
+                self.state_db,
+                lesson_key="self-review:typo",
+                reason="Correct the typo.",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("unknown_procedural_lesson:self-review:typo", message)
+        self.assertIn("inspect authorized active lessons", message)
+        self.assertNotIn("private:other-human-lesson", message)
+
     def test_upsert_procedural_lesson_records_actionable_correction(self) -> None:
         lesson = upsert_procedural_lesson(
             self.state_db,
