@@ -230,16 +230,17 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
 
 
 def _resolve_default_validator_root() -> Path:
-    candidates = [DEFAULT_DOMAIN_CHIP_MEMORY_ROOT]
     env_root = os.environ.get("DOMAIN_CHIP_MEMORY_REPO", "").strip()
     if env_root:
-        candidates.append(Path(env_root))
+        return Path(env_root).expanduser()
+    candidates: list[Path] = []
     for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
         if not entry:
             continue
-        path = Path(entry)
+        path = Path(entry).expanduser()
         if path.name == "src" and path.parent.name == "domain-chip-memory":
             candidates.append(path.parent)
+    candidates.append(DEFAULT_DOMAIN_CHIP_MEMORY_ROOT)
     for candidate in candidates:
         if candidate.exists():
             return candidate
