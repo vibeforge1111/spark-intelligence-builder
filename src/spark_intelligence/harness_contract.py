@@ -42,13 +42,27 @@ def _harness_core_source_candidates() -> list[Path]:
     return candidates
 
 
+def _select_harness_core_source() -> Path | None:
+    configured = os.environ.get("SPARK_HARNESS_CORE_SOURCE")
+    candidates = _harness_core_source_candidates()
+    if configured:
+        source = candidates[0]
+        if not source.exists():
+            raise FileNotFoundError(
+                f"SPARK_HARNESS_CORE_SOURCE does not contain an importable src directory: {source}"
+            )
+        return source
+    return next((candidate for candidate in candidates if candidate.exists()), None)
+
+
 def _ensure_harness_core_importable() -> None:
-    for candidate in _harness_core_source_candidates():
-        if not candidate.exists():
-            continue
-        raw = str(candidate)
-        if raw not in sys.path:
-            sys.path.insert(0, raw)
+    source = _select_harness_core_source()
+    if source is None:
+        return
+    raw = str(source)
+    while raw in sys.path:
+        sys.path.remove(raw)
+    sys.path.insert(0, raw)
 
 
 _ensure_harness_core_importable()
