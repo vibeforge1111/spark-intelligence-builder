@@ -230,7 +230,10 @@ def close_pending_task(
 ) -> PendingTaskRecord:
     existing = get_pending_task(state_db, task_key=task_key)
     if existing is None:
-        raise ValueError(f"unknown_pending_task:{task_key}")
+        raise ValueError(
+            f"unknown_pending_task:{task_key} "
+            "(inspect authorized open tasks before retrying)"
+        )
     evidence = dict(existing.evidence)
     evidence["completion_summary"] = completion_summary
     record = upsert_pending_task(

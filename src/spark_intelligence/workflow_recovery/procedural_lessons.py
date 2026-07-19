@@ -508,7 +508,10 @@ def retire_procedural_lesson(
 ) -> ProceduralLessonRecord:
     existing = get_procedural_lesson(state_db, lesson_key=lesson_key)
     if existing is None:
-        raise ValueError(f"unknown_procedural_lesson:{lesson_key}")
+        raise ValueError(
+            f"unknown_procedural_lesson:{lesson_key} "
+            "(inspect authorized active lessons before retrying)"
+        )
     evidence = dict(existing.evidence)
     evidence["retirement_reason"] = reason
     now = utc_now_iso()
