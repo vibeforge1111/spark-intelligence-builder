@@ -38,6 +38,8 @@ def test_builder_ci_runs_the_complete_collected_suite_without_quarantines() -> N
 
     assert "python -m pytest tests --collect-only -q" in workflow
     assert "scripts/pytest_shard.py" in workflow
+    assert "@.pytest-shard-nodeids" in workflow
+    assert "mapfile" not in workflow
     assert "--ignore=" not in workflow
     assert "--deselect=" not in workflow
     assert "matrix:" in workflow
