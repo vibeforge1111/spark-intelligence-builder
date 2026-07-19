@@ -2,6 +2,11 @@
 
 Date: 2026-06-26
 
+Current execution authority upgrades compatible `spark.turn_intent.v1` adapter
+input into a schema-valid Harness Core VNext authorization/ledger chain and
+verifies Governor authority where the action owner requires it. A legacy
+envelope is compatibility input, not sufficient execution authority by itself.
+
 ## Purpose
 
 This is the permanent Spark-wide rule for stopping deterministic route fighting, word hijacks, stale pending-state launches, memory-driven authority drift, and accidental tool calls.
@@ -217,6 +222,7 @@ Rules:
 Required proof:
 
 - route firewall tests
+- Harness Core action authority tests
 - Telegram action authority tests
 - 350-message matrix
 - full `npm test`

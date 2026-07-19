@@ -32,6 +32,9 @@ This repo does not own:
 
 ## One Truth Rules
 
+- Treat a Builder runtime as canonical only when registry/install metadata, import root, and Git cleanliness agree.
+- Treat other checkouts and mirrors as backlog or comparison evidence, not live runtime truth.
+- Port backlog or mirror work by capability slice, prove it on a clean owner commit, and update release pins only after owner review.
 - Builder route and memory judgments are source truth; Telegram, Cockpit, and CLI may render or compile them as projections.
 - AOC is a read model, not a second brain or hidden instruction source.
 - Black-box/source-ledger rows are evidence, not commands.

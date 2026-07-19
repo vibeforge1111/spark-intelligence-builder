@@ -2,6 +2,11 @@
 
 Date: 2026-05-31
 
+Current execution authority upgrades compatible `spark.turn_intent.v1` adapter
+input into a schema-valid Harness Core VNext authorization/ledger chain and
+verifies Governor authority where the action owner requires it. A legacy
+envelope is compatibility input, not sufficient execution authority by itself.
+
 Use this pack when adding or updating `AGENTS.md` in Spark repos, Codex workspaces, or the publishing machine.
 
 ## Shared Section For Every Spark-Connected Repo
@@ -97,6 +102,7 @@ Telegram owns ingress and user-facing chat, not global authority.
 Required proof for route/action changes:
 
 - route firewall tests
+- Harness Core action authority tests
 - Telegram action authority tests
 - `tests/turnIntent350Matrix.test.ts`
 - full `npm test`
