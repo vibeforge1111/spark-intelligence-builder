@@ -1,6 +1,8 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.harness_evolution import (
     build_harness_self_evolution_snapshot,
     review_harness_change_manifests,
@@ -121,3 +123,35 @@ class HarnessSelfEvolutionTests(SparkTestCase):
         self.assertEqual(payload["mode"], "propose")
         self.assertFalse(payload["commands_executed"])
         self.assertEqual(payload["self_evolution_run"]["promotion_decision"]["verdict"], "not_ready")
+
+    def test_jobs_tick_observes_same_evidence_idempotently(self) -> None:
+        self._persist_ledger()
+        fake_memory = SimpleNamespace(
+            status="succeeded",
+            reason=None,
+            maintenance={
+                "manual_observations_before": 0,
+                "manual_observations_after": 0,
+                "active_deletion_count": 0,
+                "active_state_still_current_count": 0,
+                "active_state_stale_preserved_count": 0,
+                "active_state_superseded_count": 0,
+                "active_state_archived_count": 0,
+            },
+        )
+        with patch(
+            "spark_intelligence.jobs.service.run_oauth_refresh_maintenance",
+            return_value={"scanned": 0, "due": 0, "refreshed": [], "failed": [], "skipped": []},
+        ), patch(
+            "spark_intelligence.jobs.service.run_memory_sdk_maintenance",
+            return_value=fake_memory,
+        ), patch("subprocess.run") as subprocess_run:
+            first = jobs_tick(self.config_manager, self.state_db)
+            second = jobs_tick(self.config_manager, self.state_db)
+
+        subprocess_run.assert_not_called()
+        self.assertIn("harness:self-evolution-observe", first)
+        self.assertIn("mode=observe", first)
+        self.assertIn("harness:self-evolution-observe", second)
+        events = latest_events_by_type(self.state_db, event_type="harness_self_evolution_observed", limit=10)
+        self.assertEqual(len(events), 1)
