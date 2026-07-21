@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -278,6 +279,81 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "needs_input")
         self.assertEqual(result.artifacts["needs_input"]["mode"], "unspecified")
         self.assertIn("resume_command", result.artifacts["resume_token"])
+
+    def test_voice_status_block_records_sanitized_observability(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: status failure test.",
+            forced_harness_id="voice.io",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=RuntimeError("token=top-secret /private/operator/path"),
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertNotIn("top-secret", json.dumps(result.to_payload()))
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT reason_code, facts_json
+                FROM builder_events
+                WHERE request_id = ? AND event_type = 'harness_execution_blocked'
+                """,
+                (envelope.envelope_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["reason_code"], "voice_status_hook_failed")
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(facts, {"exception_type": "RuntimeError", "hook": "voice.status"})
+
+    def test_voice_speak_block_records_sanitized_observability(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: speak failure test.",
+            forced_harness_id="voice.io",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        def fake_voice_hook(*, hook, **kwargs):
+            if hook == "voice.status":
+                return ({"result": {"ready": True}}, "domain-chip-voice-comms")
+            raise RuntimeError("api-key=top-secret /private/provider/path")
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_voice_hook",
+            side_effect=fake_voice_hook,
+        ):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertNotIn("top-secret", json.dumps(result.to_payload()))
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT reason_code, facts_json
+                FROM builder_events
+                WHERE request_id = ? AND event_type = 'harness_execution_blocked'
+                """,
+                (envelope.envelope_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["reason_code"], "voice_speak_hook_failed")
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(facts, {"exception_type": "RuntimeError", "hook": "voice.speak"})
 
     def test_execute_swarm_escalation_harness_builds_dry_run_payload(self) -> None:
         envelope = build_harness_task_envelope(

@@ -29,6 +29,10 @@ _VOICE_SPEAK_RE = re.compile(
 )
 
 
+class HarnessVoiceAuthorityError(RuntimeError):
+    """Voice hook was blocked by the governed turn-intent boundary."""
+
+
 @dataclass(frozen=True)
 class HarnessTaskEnvelope:
     envelope_id: str
@@ -784,6 +788,47 @@ def _run_researcher_bridge_reply(
     )
 
 
+def _voice_harness_failure_reason(exc: Exception, *, hook: str) -> str:
+    if isinstance(exc, HarnessVoiceAuthorityError):
+        return f"{hook} blocked (missing Spark authority)"
+    exception_type = type(exc).__name__[:80] or "Exception"
+    return f"{hook} failed ({exception_type})"
+
+
+def _record_voice_harness_block(
+    *,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+    hook: str,
+    reason_code: str,
+    summary: str,
+    exc: Exception,
+) -> None:
+    try:
+        record_event(
+            state_db,
+            event_type="harness_execution_blocked",
+            component="harness_runtime",
+            summary=summary,
+            run_id=run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code=reason_code,
+            facts={
+                "hook": hook,
+                "exception_type": type(exc).__name__[:80] or "Exception",
+            },
+        )
+    except Exception:
+        # Observability is best-effort inside an already handled provider/hook
+        # failure. A telemetry write must not erase the resumable blocked result.
+        return
+
+
 def _execute_voice_io_harness(
     *,
     config_manager: ConfigManager,
@@ -801,12 +846,26 @@ def _execute_voice_io_harness(
             run_id=run_id,
         )
     except Exception as exc:
+        summary = "Voice I/O harness is blocked because no healthy voice status hook is available."
+        _record_voice_harness_block(
+            state_db=state_db,
+            envelope=envelope,
+            run_id=run_id,
+            hook="voice.status",
+            reason_code=(
+                "voice_status_authority_missing"
+                if isinstance(exc, HarnessVoiceAuthorityError)
+                else "voice_status_hook_failed"
+            ),
+            summary=summary,
+            exc=exc,
+        )
         return (
             {
                 "voice_status": {
                     "chip_key": None,
                     "ready": False,
-                    "reason": str(exc),
+                    "reason": _voice_harness_failure_reason(exc, hook="voice.status"),
                     "reply_text": "",
                 },
                 "resume_token": _build_harness_resume_token(
@@ -815,7 +874,7 @@ def _execute_voice_io_harness(
                     step="voice_status_repair",
                 ),
             },
-            "Voice I/O harness is blocked because no healthy voice status hook is available.",
+            summary,
             "blocked",
         )
     status_result = status_output.get("result") if isinstance(status_output.get("result"), dict) else {}
@@ -856,6 +915,20 @@ def _execute_voice_io_harness(
                 run_id=run_id,
             )
         except Exception as exc:
+            summary = "Voice I/O harness could not synthesize speech with the current provider/hook state."
+            _record_voice_harness_block(
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run_id,
+                hook="voice.speak",
+                reason_code=(
+                    "voice_speak_authority_missing"
+                    if isinstance(exc, HarnessVoiceAuthorityError)
+                    else "voice_speak_hook_failed"
+                ),
+                summary=summary,
+                exc=exc,
+            )
             artifacts["resume_token"] = _build_harness_resume_token(
                 config_manager=config_manager,
                 envelope=envelope,
@@ -875,11 +948,11 @@ def _execute_voice_io_harness(
                     "--harness-id",
                     "voice.io",
                 ],
-                metadata={"reason": str(exc)},
+                metadata={"reason": _voice_harness_failure_reason(exc, hook="voice.speak")},
             )
             return (
                 artifacts,
-                "Voice I/O harness could not synthesize speech with the current provider/hook state.",
+                summary,
                 "blocked",
             )
         speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
@@ -1149,7 +1222,9 @@ def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -
         if authorization.verdict == "allowed":
             return authorization
         reason_text = ", ".join(authorization.reason_codes) if authorization.reason_codes else "turn_not_authorized"
-        raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+        raise HarnessVoiceAuthorityError(
+            f"Harness runtime missing Spark authority for `{hook}`: {reason_text}"
+        )
 
     if isinstance(payload, dict):
         try:
@@ -1167,7 +1242,9 @@ def _authorize_harness_voice_hook(*, envelope: HarnessTaskEnvelope, hook: str) -
     )
     if verdict != "allowed":
         reason_text = ", ".join(reasons) if reasons else "turn_not_authorized"
-        raise RuntimeError(f"Harness runtime missing Spark authority for `{hook}`: {reason_text}")
+        raise HarnessVoiceAuthorityError(
+            f"Harness runtime missing Spark authority for `{hook}`: {reason_text}"
+        )
     return None
 
 
