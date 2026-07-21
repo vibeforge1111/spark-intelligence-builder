@@ -401,23 +401,45 @@ def _load_json_file(path: Path) -> dict[str, Any]:
 
 
 def _extract_session_id(stdout: str) -> str | None:
-    match = re.search(r"^Session id:\s*(?P<session_id>\S+)\s*$", stdout or "", flags=re.MULTILINE)
-    if not match:
-        return None
-    return str(match.group("session_id")).strip() or None
+    if not isinstance(stdout, str): stdout = str(stdout or '')
+    try:
+        match = re.search(r"^Session id:\s*(?P<session_id>\S+)\s*$", stdout or "", flags=re.MULTILINE)
+        if not match:
+            return None
+        return str(match.group("session_id")).strip() or None
 
 
+
+    except Exception:
+        return ""
 def _extract_labeled_path(stdout: str, label: str) -> str | None:
-    match = re.search(rf"^{re.escape(label)}:\s*(?P<value>.+?)\s*$", stdout or "", flags=re.MULTILINE)
-    if not match:
-        return None
-    return str(match.group("value")).strip() or None
+    if not isinstance(stdout, str): stdout = str(stdout or '')
+    if not isinstance(label, str): label = str(label or '')
+    try:
+        match = re.search(rf"^{re.escape(label)}:\s*(?P<value>.+?)\s*$", stdout or "", flags=re.MULTILINE)
+        if not match:
+            return None
+        return str(match.group("value")).strip() or None
 
 
+
+    except Exception:
+        return ""
 def _normalize_path_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 
 
+
+    except Exception:
+        return ""
 def _normalize_path_label(value: str, *, fallback: str) -> str:
-    normalized = re.sub(r"\s+\([^)]*\)\s*$", "", str(value or "").strip())
-    return normalized or fallback
+    if not isinstance(value, str): value = str(value or '')
+    if not isinstance(fallback, str): fallback = str(fallback or '')
+    try:
+        normalized = re.sub(r"\s+\([^)]*\)\s*$", "", str(value or "").strip())
+        return normalized or fallback
+
+    except Exception:
+        return ""
