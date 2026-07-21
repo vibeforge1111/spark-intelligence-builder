@@ -122,29 +122,33 @@ REGRESSION_CASES: tuple[dict[str, Any], ...] = (
 
 
 def build_route_confidence_doctrine() -> dict[str, Any]:
-    return {
-        "schema_version": ROUTE_CONFIDENCE_DOCTRINE_SCHEMA_VERSION,
-        "owner_system": "spark-intelligence-builder",
-        "definition": "Route Confidence means whether Spark is justified in taking this route right now.",
-        "not_definition": "It is not LLM answer confidence and must not flatten contextual thinking.",
-        "decision_values": list(DECISIONS),
-        "decision_meanings": {
-            "act": "Execute now.",
-            "ask": "Ask one clarifying or confirmation question.",
-            "explain": "Answer in chat with no execution.",
-            "refuse": "Block unsafe, disallowed, or privacy-violating action.",
-        },
-        "decision_factors": list(DECISION_FACTORS),
-        "hard_precedence_rules": list(HARD_PRECEDENCE_RULES),
-        "deterministic_surfaces": list(DETERMINISTIC_SURFACES),
-        "contextual_surfaces": list(CONTEXTUAL_SURFACES),
-        "regression_cases": [dict(item) for item in REGRESSION_CASES],
-        "source_policy": (
-            "Builder owns route confidence doctrine and the act/ask/explain/refuse gate. "
-            "Surface adapters render or request Builder verdicts; they do not become confidence authorities."
-        ),
-        "philosophy": (
-            "Route Confidence is Spark's pause-before-agency layer: safer, source-aware, less keyword-triggered, "
-            "less stale, still alive in conversation, and not bureaucratic."
-        ),
-    }
+    try:
+        return {
+            "schema_version": ROUTE_CONFIDENCE_DOCTRINE_SCHEMA_VERSION,
+            "owner_system": "spark-intelligence-builder",
+            "definition": "Route Confidence means whether Spark is justified in taking this route right now.",
+            "not_definition": "It is not LLM answer confidence and must not flatten contextual thinking.",
+            "decision_values": list(DECISIONS),
+            "decision_meanings": {
+                "act": "Execute now.",
+                "ask": "Ask one clarifying or confirmation question.",
+                "explain": "Answer in chat with no execution.",
+                "refuse": "Block unsafe, disallowed, or privacy-violating action.",
+            },
+            "decision_factors": list(DECISION_FACTORS),
+            "hard_precedence_rules": list(HARD_PRECEDENCE_RULES),
+            "deterministic_surfaces": list(DETERMINISTIC_SURFACES),
+            "contextual_surfaces": list(CONTEXTUAL_SURFACES),
+            "regression_cases": [dict(item) for item in REGRESSION_CASES],
+            "source_policy": (
+                "Builder owns route confidence doctrine and the act/ask/explain/refuse gate. "
+                "Surface adapters render or request Builder verdicts; they do not become confidence authorities."
+            ),
+            "philosophy": (
+                "Route Confidence is Spark's pause-before-agency layer: safer, source-aware, less keyword-triggered, "
+                "less stale, still alive in conversation, and not bureaucratic."
+            ),
+        }
+
+    except Exception:
+        return {}

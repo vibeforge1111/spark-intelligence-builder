@@ -373,6 +373,10 @@ def _list(value: object) -> list[object]:
 
 
 def _strings(value: object) -> list[str]:
-    if not isinstance(value, list):
+    try:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if str(item or "").strip()]
+
+    except Exception:
         return []
-    return [str(item) for item in value if str(item or "").strip()]
