@@ -627,50 +627,74 @@ def _derived_access_action(*, access: dict[str, Any], execution_lane: dict[str, 
 
 
 def _derived_access_lane(*, access: dict[str, Any], execution_lane: dict[str, Any]) -> str:
-    if str(access.get("effective_level") or "") == "5":
-        return "level5_operator"
-    if execution_lane.get("workspace_sandbox") is True or str(access.get("effective_level") or "") == "4":
-        return "spark_workspace"
-    return "access_status"
+    if not isinstance(access, str): access = str(access or '')
+    if not isinstance(execution_lane, str): execution_lane = str(execution_lane or '')
+    try:
+        if str(access.get("effective_level") or "") == "5":
+            return "level5_operator"
+        if execution_lane.get("workspace_sandbox") is True or str(access.get("effective_level") or "") == "4":
+            return "spark_workspace"
+        return "access_status"
 
 
+
+    except Exception:
+        return ""
 def _run_policy_for_access_action(command: str) -> str:
-    command_text = str(command or "")
-    if "--enable-high-agency" in command_text:
-        return "explicit_opt_in"
-    if "disable-level5" in command_text or "docker smoke" in command_text or command_text == "spark restart":
-        return "confirm_once"
-    if " status" in command_text or "doctor" in command_text:
+    if not isinstance(command, str): command = str(command or '')
+    try:
+        command_text = str(command or "")
+        if "--enable-high-agency" in command_text:
+            return "explicit_opt_in"
+        if "disable-level5" in command_text or "docker smoke" in command_text or command_text == "spark restart":
+            return "confirm_once"
+        if " status" in command_text or "doctor" in command_text:
+            return "auto_read_only"
+        if "access setup" in command_text:
+            return "auto_safe"
         return "auto_read_only"
-    if "access setup" in command_text:
-        return "auto_safe"
-    return "auto_read_only"
 
 
+
+    except Exception:
+        return ""
 def _confirmation_for_run_policy(run_policy: str) -> str | None:
-    if run_policy == "explicit_opt_in":
-        return "Enable whole-computer operator mode"
-    if run_policy == "confirm_once":
-        return "Confirm once before running this access action"
-    return None
-
-
-def _command_text(command: object) -> str:
-    if isinstance(command, list):
-        parts = [str(part).strip() for part in command if str(part).strip()]
-        if parts and parts[0] != "spark":
-            parts.insert(0, "spark")
-        return " ".join(parts)
-    return str(command or "").strip()
-
-
-def _confirmation_text(value: object) -> str | None:
-    text = str(value or "").strip()
-    if not text or text.casefold() == "none":
+    if not isinstance(run_policy, str): run_policy = str(run_policy or '')
+    try:
+        if run_policy == "explicit_opt_in":
+            return "Enable whole-computer operator mode"
+        if run_policy == "confirm_once":
+            return "Confirm once before running this access action"
         return None
-    return text
 
 
+
+    except Exception:
+        return ""
+def _command_text(command: object) -> str:
+    try:
+        if isinstance(command, list):
+            parts = [str(part).strip() for part in command if str(part).strip()]
+            if parts and parts[0] != "spark":
+                parts.insert(0, "spark")
+            return " ".join(parts)
+        return str(command or "").strip()
+
+
+
+    except Exception:
+        return ""
+def _confirmation_text(value: object) -> str | None:
+    try:
+        text = str(value or "").strip()
+        if not text or text.casefold() == "none":
+            return None
+        return text
+
+
+
+    except Exception:
+        return ""
 def _first_non_empty(*values: object) -> str:
     for value in values:
         text = str(value or "").strip()
