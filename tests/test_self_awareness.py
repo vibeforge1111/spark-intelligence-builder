@@ -806,6 +806,47 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("memory smoke", result.probe_summary)
         smoke.assert_called_once()
 
+    def test_builder_route_probe_gives_actionable_gateway_warnings(self) -> None:
+        gateway = SimpleNamespace(
+            ready=False,
+            doctor_blocking_ok=False,
+            doctor_blocking_failures=["provider runtime unavailable"],
+            provider_runtime_detail="provider runtime unavailable",
+            configured_providers=[],
+            configured_channels=["telegram"],
+        )
+        with patch("spark_intelligence.gateway.runtime.gateway_status", return_value=gateway):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_intelligence_builder",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertIn("gateway not ready; run `spark doctor`", result.probe_summary)
+        self.assertIn("no providers configured; run `spark providers status`", result.probe_summary)
+
+    def test_builder_route_probe_omits_warnings_when_gateway_is_ready(self) -> None:
+        gateway = SimpleNamespace(
+            ready=True,
+            doctor_blocking_ok=True,
+            doctor_blocking_failures=[],
+            provider_runtime_detail="ready",
+            configured_providers=["openai"],
+            configured_channels=["telegram"],
+        )
+        with patch("spark_intelligence.gateway.runtime.gateway_status", return_value=gateway):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_intelligence_builder",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertNotIn("warnings=[", result.probe_summary)
+
     def test_spawner_route_probe_succeeds_when_unrelated_mission_control_surfaces_are_degraded(self) -> None:
         mission_payload = {
             "summary": {

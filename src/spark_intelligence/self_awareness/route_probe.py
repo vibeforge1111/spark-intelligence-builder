@@ -257,12 +257,19 @@ def _run_builder_status_probe(config_manager: ConfigManager, state_db: StateDB) 
 
     status = gateway_status(config_manager, state_db)
     ok = bool(status.doctor_blocking_ok)
+    warnings: list[str] = []
+    if not status.ready:
+        warnings.append("gateway not ready; run `spark doctor`")
+    if not status.configured_providers:
+        warnings.append("no providers configured; run `spark providers status`")
+    warning_summary = f" warnings=[{' | '.join(warnings)}]" if warnings else ""
     return {
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else _first_nonempty(status.doctor_blocking_failures) or status.provider_runtime_detail,
         "summary": (
             f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} "
             f"providers={len(status.configured_providers)} channels={len(status.configured_channels)}"
+            f"{warning_summary}"
         ),
     }
 
