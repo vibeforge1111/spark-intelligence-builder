@@ -27,26 +27,31 @@ _LOOP_PATTERNS = (
 
 
 def extract_chip_key(message: str) -> str | None:
-    """Pull a chip key out of a natural-language message.
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        """Pull a chip key out of a natural-language message.
 
-    Looks for 'domain-chip-<slug>' first, then bare slug words that are
-    likely chip references (e.g. 'startup-yc', 'spark-browser').
-    """
-    text = str(message or "").strip()
-    if not text:
+        Looks for 'domain-chip-<slug>' first, then bare slug words that are
+        likely chip references (e.g. 'startup-yc', 'spark-browser').
+        """
+        text = str(message or "").strip()
+        if not text:
+            return None
+        # Exact fully-qualified key
+        m = re.search(r"\b(domain-chip-[\w\-]+)\b", text, re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+        # Known shorter chip keys (no domain-chip- prefix). Conservative list.
+        known_bare = ("startup-yc", "spark-browser", "spark-swarm", "spark-personality-chip-labs")
+        for key in known_bare:
+            if re.search(rf"\b{re.escape(key)}\b", text, re.IGNORECASE):
+                return key
         return None
-    # Exact fully-qualified key
-    m = re.search(r"\b(domain-chip-[\w\-]+)\b", text, re.IGNORECASE)
-    if m:
-        return m.group(1).lower()
-    # Known shorter chip keys (no domain-chip- prefix). Conservative list.
-    known_bare = ("startup-yc", "spark-browser", "spark-swarm", "spark-personality-chip-labs")
-    for key in known_bare:
-        if re.search(rf"\b{re.escape(key)}\b", text, re.IGNORECASE):
-            return key
-    return None
 
 
+
+    except Exception:
+        return ""
 def _extract_rounds(message: str) -> int | None:
     m = re.search(r"\b(\d+)\s+(?:times|rounds|iterations)\b", message, re.IGNORECASE)
     if m:
