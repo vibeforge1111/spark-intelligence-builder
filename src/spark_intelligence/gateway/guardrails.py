@@ -174,16 +174,14 @@ def prepare_outbound_text(
         cleaned = rewritten
         actions.append("normalize_score_percentages")
 
-    redacted = redact_text(cleaned)
-    if redacted != cleaned:
-        cleaned = redacted
-        actions.append("redact_sensitive_text")
-
     sanitized = _strip_em_dashes(cleaned)
     if sanitized != cleaned:
         cleaned = sanitized
         actions.append("replace_em_dashes")
 
+    # Redact once, at the final content-transform boundary. This avoids a
+    # duplicate full-pattern scan while keeping future normalizers inside the
+    # secret-safety envelope.
     redacted = redact_text(cleaned)
     if redacted != cleaned:
         cleaned = redacted

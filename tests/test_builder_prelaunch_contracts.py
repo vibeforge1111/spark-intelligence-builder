@@ -9,6 +9,7 @@ from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply, record_telegram_auth_result
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.identity.service import (
@@ -446,6 +447,24 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("redact_sensitive_text", guarded["actions"])
         self.assertNotIn("sk-proj-", guarded["text"])
         self.assertIn("<redacted api key>", guarded["text"])
+
+    def test_outbound_redacts_once_after_content_normalization(self) -> None:
+        api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
+        with patch(
+            "spark_intelligence.gateway.guardrails.redact_text",
+            wraps=redact_text,
+        ) as redact:
+            guarded = prepare_outbound_text(
+                text=f"Use this key — {api_key_fixture}",
+                bridge_mode=None,
+                max_reply_chars=4000,
+                redact_secret_like_replies=False,
+            )
+
+        redact.assert_called_once()
+        self.assertNotIn("—", redact.call_args.args[0])
+        self.assertNotIn(api_key_fixture, guarded["text"])
+        self.assertEqual(guarded["actions"].count("redact_sensitive_text"), 1)
 
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
