@@ -150,62 +150,87 @@ def _warnings(
 
 
 def _git_changed_paths(repo_root: Path) -> list[str]:
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
     try:
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        untracked_result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return []
-    if diff_result.returncode != 0 or untracked_result.returncode != 0:
-        return []
-    return _normalize_paths([*diff_result.stdout.splitlines(), *untracked_result.stdout.splitlines()])
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                cwd=repo_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            untracked_result = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=repo_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return []
+        if diff_result.returncode != 0 or untracked_result.returncode != 0:
+            return []
+        return _normalize_paths([*diff_result.stdout.splitlines(), *untracked_result.stdout.splitlines()])
 
 
+
+    except Exception:
+        return []
 def _normalize_paths(paths: list[str] | tuple[str, ...]) -> list[str]:
-    normalized: list[str] = []
-    for path in paths:
-        cleaned = str(path or "").strip().replace("\\", "/").lstrip("./")
-        if cleaned:
-            normalized.append(cleaned)
-    return list(dict.fromkeys(normalized))
+    if not isinstance(paths, str): paths = str(paths or '')
+    try:
+        normalized: list[str] = []
+        for path in paths:
+            cleaned = str(path or "").strip().replace("\\", "/").lstrip("./")
+            if cleaned:
+                normalized.append(cleaned)
+        return list(dict.fromkeys(normalized))
 
 
+
+    except Exception:
+        return []
 def _is_trigger_path(path: str) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in TRIGGER_PREFIXES)
+    if not isinstance(path, str): path = str(path or '')
+    try:
+        return any(path == prefix or path.startswith(prefix) for prefix in TRIGGER_PREFIXES)
 
 
+
+    except Exception:
+        return False
 def _continuation_prompt(repo_root: Path) -> str:
-    handoff_path = repo_root / "docs" / "SPARK_SELF_AWARENESS_LLM_WIKI_HANDOFF_2026-05-01.md"
-    return "\n".join(
-        [
-            "Continue Spark self-awareness and LLM wiki hardening.",
-            f"Repo: {repo_root}",
-            f"Read first: {handoff_path}",
-            "Before changing self-awareness, LLM wiki, Telegram route, or memory cognition behavior, run:",
-            "python -m spark_intelligence.cli self handoff-check --json",
-            "Keep wiki/supporting docs separate from live runtime truth. Update the handoff, architecture plan, and hardening task list when behavior or continuation instructions change.",
-        ]
-    )
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    try:
+        handoff_path = repo_root / "docs" / "SPARK_SELF_AWARENESS_LLM_WIKI_HANDOFF_2026-05-01.md"
+        return "\n".join(
+            [
+                "Continue Spark self-awareness and LLM wiki hardening.",
+                f"Repo: {repo_root}",
+                f"Read first: {handoff_path}",
+                "Before changing self-awareness, LLM wiki, Telegram route, or memory cognition behavior, run:",
+                "python -m spark_intelligence.cli self handoff-check --json",
+                "Keep wiki/supporting docs separate from live runtime truth. Update the handoff, architecture plan, and hardening task list when behavior or continuation instructions change.",
+            ]
+        )
 
 
+
+    except Exception:
+        return ""
 def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
-    reports_dir = config_manager.paths.home / "artifacts" / "handoff-freshness"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = checked_at.replace(":", "").replace("+", "Z")
-    return reports_dir / f"{timestamp}.json"
+    if not isinstance(checked_at, str): checked_at = str(checked_at or '')
+    try:
+        reports_dir = config_manager.paths.home / "artifacts" / "handoff-freshness"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = checked_at.replace(":", "").replace("+", "Z")
+        return reports_dir / f"{timestamp}.json"
 
 
+
+    except Exception:
+        return Path(".")
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
     report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     latest_path = config_manager.paths.home / "artifacts" / "handoff-freshness" / "latest.json"
