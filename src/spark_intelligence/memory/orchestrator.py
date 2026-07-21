@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import re
 import sys
@@ -48,6 +49,8 @@ from spark_intelligence.memory.retention_policy import (
     RAW_EPISODE_ARCHIVE_DAYS,
     STRUCTURED_EVIDENCE_ARCHIVE_DAYS,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
@@ -3558,8 +3561,11 @@ def write_structured_evidence_to_memory(
                 actor_id=f"{actor_id}_belief_consolidator",
                 governor_decision=governor_decision,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.warning(
+                "structured_evidence_belief_consolidation_failed error_type=%s",
+                type(exc).__name__,
+            )
     if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
         observation=current_state_observation,
         corroborating_evidence_records=corroborating_evidence_records,
@@ -3580,8 +3586,11 @@ def write_structured_evidence_to_memory(
                     actor_id=f"{actor_id}_current_state_consolidator",
                     governor_decision=governor_decision,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _LOGGER.warning(
+                    "structured_evidence_current_state_consolidation_failed error_type=%s",
+                    type(exc).__name__,
+                )
     return result
 
 

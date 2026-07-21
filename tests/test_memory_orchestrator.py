@@ -2129,6 +2129,63 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(promoted_call["value"], "Stripe verification fails and the retry flow is confusing")
         self.assertEqual(promoted_call["metadata"]["fact_name"], "current_blocker")
 
+    def test_structured_evidence_followup_failures_log_safe_diagnostics(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep dropping during onboarding because Stripe verification fails.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-1",
+                "metadata": {"value": "Users keep dropping during onboarding because Stripe verification fails."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        belief_secret = "belief writer token=top-secret"
+        profile_secret = "profile writer path=/private/runtime.sqlite"
+        with (
+            patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client),
+            patch(
+                "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+                side_effect=retrieve_results,
+            ),
+            patch(
+                "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+                side_effect=RuntimeError(belief_secret),
+            ),
+            patch(
+                "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+                side_effect=OSError(profile_secret),
+            ),
+            self.assertLogs("spark_intelligence.memory.orchestrator", level="WARNING") as captured,
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:followup-failure",
+                turn_id="turn:evidence:followup-failure",
+                channel_kind="telegram",
+            )
+
+        rendered = "\n".join(captured.output)
+        self.assertEqual(result.status, "succeeded")
+        self.assertIn("structured_evidence_belief_consolidation_failed error_type=RuntimeError", rendered)
+        self.assertIn("structured_evidence_current_state_consolidation_failed error_type=OSError", rendered)
+        self.assertNotIn(belief_secret, rendered)
+        self.assertNotIn(profile_secret, rendered)
+
     def test_structured_evidence_write_promotes_corroborated_current_dependency(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
