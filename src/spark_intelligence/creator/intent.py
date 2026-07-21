@@ -278,55 +278,83 @@ def _infer_tools(lower: str) -> list[str]:
 
 
 def _infer_privacy_mode(lower: str) -> str:
-    if _has_any(lower, ("private", "local only", "local-only", "do not share", "don't share")):
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        if _has_any(lower, ("private", "local only", "local-only", "do not share", "don't share")):
+            return "local_only"
+        if _has_any(lower, ("spark swarm", "swarm", "network", "collective", "share with other agents")):
+            return "swarm_shared"
+        if _has_any(lower, ("github", "pull request", " pr ", "repo")):
+            return "github_pr"
         return "local_only"
-    if _has_any(lower, ("spark swarm", "swarm", "network", "collective", "share with other agents")):
-        return "swarm_shared"
-    if _has_any(lower, ("github", "pull request", " pr ", "repo")):
-        return "github_pr"
-    return "local_only"
 
 
+
+    except Exception:
+        return ""
 def _infer_risk_level(
     lower: str,
     privacy_mode: str,
     desired_outputs: dict[str, bool],
 ) -> str:
-    if _has_any(lower, ("secret", "token", "auth", "security", "money", "finance", "trading", "production")):
-        return "high"
-    if privacy_mode != "local_only" or desired_outputs.get("autoloop_policy"):
-        return "medium"
-    return "low"
+    if not isinstance(lower, str): lower = str(lower or '')
+    if not isinstance(privacy_mode, str): privacy_mode = str(privacy_mode or '')
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        if _has_any(lower, ("secret", "token", "auth", "security", "money", "finance", "trading", "production")):
+            return "high"
+        if privacy_mode != "local_only" or desired_outputs.get("autoloop_policy"):
+            return "medium"
+        return "low"
 
 
+
+    except Exception:
+        return ""
 def _operator_surface(tools: list[str], desired_outputs: dict[str, bool]) -> str:
-    surfaces: list[str] = []
-    if "spark_telegram_bot" in tools or desired_outputs.get("telegram_flow"):
-        surfaces.append("telegram")
-    surfaces.append("builder")
-    if "spawner_ui" in tools or "spark_canvas" in tools or "kanban" in tools or desired_outputs.get("spawner_mission"):
-        surfaces.append("spawner")
-    if "spark_swarm" in tools or desired_outputs.get("swarm_publish_packet"):
-        surfaces.append("swarm")
-    return "+".join(dict.fromkeys(surfaces))
+    if not isinstance(tools, str): tools = str(tools or '')
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        surfaces: list[str] = []
+        if "spark_telegram_bot" in tools or desired_outputs.get("telegram_flow"):
+            surfaces.append("telegram")
+        surfaces.append("builder")
+        if "spawner_ui" in tools or "spark_canvas" in tools or "kanban" in tools or desired_outputs.get("spawner_mission"):
+            surfaces.append("spawner")
+        if "spark_swarm" in tools or desired_outputs.get("swarm_publish_packet"):
+            surfaces.append("swarm")
+        return "+".join(dict.fromkeys(surfaces))
 
 
+
+    except Exception:
+        return ""
 def _usage_surfaces(target_operator_surface: str) -> list[str]:
-    return [surface for surface in target_operator_surface.split("+") if surface]
+    if not isinstance(target_operator_surface, str): target_operator_surface = str(target_operator_surface or '')
+    try:
+        return [surface for surface in target_operator_surface.split("+") if surface]
 
 
+
+    except Exception:
+        return []
 def _artifact_targets(desired_outputs: dict[str, bool]) -> list[str]:
-    targets: list[str] = []
-    for key in ("domain_chip", "benchmark_pack", "specialization_path", "autoloop_policy"):
-        if desired_outputs.get(key):
-            targets.append(key)
-    if desired_outputs.get("telegram_flow") or desired_outputs.get("spawner_mission"):
-        targets.append("tool_integration")
-    if desired_outputs.get("swarm_publish_packet"):
-        targets.append("swarm_publish_packet")
-    return targets
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        targets: list[str] = []
+        for key in ("domain_chip", "benchmark_pack", "specialization_path", "autoloop_policy"):
+            if desired_outputs.get(key):
+                targets.append(key)
+        if desired_outputs.get("telegram_flow") or desired_outputs.get("spawner_mission"):
+            targets.append("tool_integration")
+        if desired_outputs.get("swarm_publish_packet"):
+            targets.append("swarm_publish_packet")
+        return targets
 
 
+
+    except Exception:
+        return []
 def _infer_data_sources(lower: str, privacy_mode: str) -> list[str]:
     sources = ["local_repo"]
     if _has_any(lower, ("github", "repo", "pull request", " pr ")):
