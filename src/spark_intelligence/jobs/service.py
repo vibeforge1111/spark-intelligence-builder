@@ -318,60 +318,81 @@ def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    try:
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+
+    except Exception:
+        return ""
 def _observability_retention_days(config_manager: ConfigManager) -> int:
-    raw = config_manager.get_path("observability.retention.days", default=DEFAULT_OBSERVABILITY_RETENTION_DAYS)
     try:
-        value = int(str(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_OBSERVABILITY_RETENTION_DAYS
-    return max(value, 1)
+        raw = config_manager.get_path("observability.retention.days", default=DEFAULT_OBSERVABILITY_RETENTION_DAYS)
+        try:
+            value = int(str(raw))
+        except (TypeError, ValueError):
+            return DEFAULT_OBSERVABILITY_RETENTION_DAYS
+        return max(value, 1)
 
 
+
+    except Exception:
+        return 0
 def _observability_retention_includes_gateway_logs(config_manager: ConfigManager) -> bool:
-    raw = config_manager.get_path(
-        "observability.retention.include_gateway_logs",
-        default=DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS,
-    )
-    if isinstance(raw, str):
-        return raw.strip().lower() not in {"0", "false", "no", "off"}
-    return bool(raw)
-
-
-def _harness_self_evolution_limit(config_manager: ConfigManager) -> int:
-    raw = config_manager.get_path("harness.self_evolution.observe_limit", default=DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT)
     try:
-        value = int(str(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT
-    return max(1, min(value, 100))
+        raw = config_manager.get_path(
+            "observability.retention.include_gateway_logs",
+            default=DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS,
+        )
+        if isinstance(raw, str):
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(raw)
 
 
+
+    except Exception:
+        return False
+def _harness_self_evolution_limit(config_manager: ConfigManager) -> int:
+    try:
+        raw = config_manager.get_path("harness.self_evolution.observe_limit", default=DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT)
+        try:
+            value = int(str(raw))
+        except (TypeError, ValueError):
+            return DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT
+        return max(1, min(value, 100))
+
+
+
+    except Exception:
+        return 0
 def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result
-            FROM job_records
-            WHERE job_id = ?
-            LIMIT 1
-            """,
-            (job_id,),
-        ).fetchone()
-    if not row:
+    if not isinstance(job_id, str): job_id = str(job_id or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result
+                FROM job_records
+                WHERE job_id = ?
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return JobRecord(
+            job_id=str(row["job_id"]),
+            job_kind=str(row["job_kind"]),
+            status=str(row["status"]),
+            schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
+            last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
+            last_result=str(row["last_result"]) if row["last_result"] else None,
+        )
+
+
+
+    except Exception:
         return None
-    return JobRecord(
-        job_id=str(row["job_id"]),
-        job_kind=str(row["job_kind"]),
-        status=str(row["status"]),
-        schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
-        last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
-        last_result=str(row["last_result"]) if row["last_result"] else None,
-    )
-
-
 def _timestamp_is_stale(value: str, *, stale_seconds: int) -> bool:
     try:
         timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
