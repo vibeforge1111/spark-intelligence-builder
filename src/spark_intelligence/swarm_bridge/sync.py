@@ -2103,44 +2103,56 @@ def _record_swarm_decision_state(
     agent_id: str | None = None,
     actor_id: str = "swarm_bridge",
 ) -> None:
-    facts = {
-        "swarm_operation": "decision",
-        "mode": result.mode,
-        "escalate": result.escalate,
-        "reason": result.reason,
-        "triggers": result.triggers,
-        "task": result.task,
-        "swarm_available": result.swarm_available,
-        "api_ready": result.api_ready,
-    }
-    with state_db.connect() as conn:
-        _set_runtime_state(
-            conn,
-            "swarm:last_decision",
-            json.dumps(facts, sort_keys=True),
-            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        facts = {
+            "swarm_operation": "decision",
+            "mode": result.mode,
+            "escalate": result.escalate,
+            "reason": result.reason,
+            "triggers": result.triggers,
+            "task": result.task,
+            "swarm_available": result.swarm_available,
+            "api_ready": result.api_ready,
+        }
+        with state_db.connect() as conn:
+            _set_runtime_state(
+                conn,
+                "swarm:last_decision",
+                json.dumps(facts, sort_keys=True),
+                guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+            )
+            conn.commit()
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="swarm_bridge",
+            summary=f"Swarm escalation decision recorded as {result.mode}.",
+            reason_code=f"swarm_decision_{result.mode}",
+            facts=facts,
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
         )
-        conn.commit()
-    record_event(
-        state_db,
-        event_type="tool_result_received",
-        component="swarm_bridge",
-        summary=f"Swarm escalation decision recorded as {result.mode}.",
-        reason_code=f"swarm_decision_{result.mode}",
-        facts=facts,
-        **_swarm_event_context(
-            run_id=run_id,
-            request_id=request_id,
-            trace_ref=trace_ref,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id=actor_id,
-        ),
-    )
 
 
+
+    except Exception:
+        return None
 def _record_swarm_failure_state(
     state_db: StateDB,
     *,
@@ -2155,89 +2167,116 @@ def _record_swarm_failure_state(
     agent_id: str | None = None,
     actor_id: str = "swarm_bridge",
 ) -> None:
-    with state_db.connect() as conn:
-        failure_count = _read_failure_count(conn, "swarm:failure_count")
-        _set_runtime_state(conn, "swarm:failure_count", str(failure_count + 1))
-        if isinstance(result, SwarmSyncResult):
-            payload = {
-                "kind": kind,
-                "mode": result.mode,
-                "message": result.message,
-                "api_url": result.api_url,
-                "workspace_id": result.workspace_id,
-                "payload_path": result.payload_path,
-                "response_body": result.response_body,
-                "recorded_at": _utc_now_iso(),
-            }
-        else:
-            payload = {
-                "kind": kind,
-                "mode": result.mode,
-                "message": result.reason,
-                "api_ready": result.api_ready,
-                "swarm_available": result.swarm_available,
-                "triggers": result.triggers,
-                "recorded_at": _utc_now_iso(),
-            }
-        _set_runtime_state(
-            conn,
-            "swarm:last_failure",
-            json.dumps(payload, sort_keys=True),
-            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+    if not isinstance(kind, str): kind = str(kind or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        with state_db.connect() as conn:
+            failure_count = _read_failure_count(conn, "swarm:failure_count")
+            _set_runtime_state(conn, "swarm:failure_count", str(failure_count + 1))
+            if isinstance(result, SwarmSyncResult):
+                payload = {
+                    "kind": kind,
+                    "mode": result.mode,
+                    "message": result.message,
+                    "api_url": result.api_url,
+                    "workspace_id": result.workspace_id,
+                    "payload_path": result.payload_path,
+                    "response_body": result.response_body,
+                    "recorded_at": _utc_now_iso(),
+                }
+            else:
+                payload = {
+                    "kind": kind,
+                    "mode": result.mode,
+                    "message": result.reason,
+                    "api_ready": result.api_ready,
+                    "swarm_available": result.swarm_available,
+                    "triggers": result.triggers,
+                    "recorded_at": _utc_now_iso(),
+                }
+            _set_runtime_state(
+                conn,
+                "swarm:last_failure",
+                json.dumps(payload, sort_keys=True),
+                guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+            )
+            conn.commit()
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="swarm_bridge",
+            summary=f"Swarm {kind} failed in mode {payload.get('mode') or 'unknown'}.",
+            reason_code=f"swarm_{kind}_{payload.get('mode') or 'failed'}",
+            severity="high",
+            facts={
+                "swarm_operation": kind,
+                "failure_count": failure_count + 1,
+                **payload,
+            },
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
         )
-        conn.commit()
-    record_event(
-        state_db,
-        event_type="dispatch_failed",
-        component="swarm_bridge",
-        summary=f"Swarm {kind} failed in mode {payload.get('mode') or 'unknown'}.",
-        reason_code=f"swarm_{kind}_{payload.get('mode') or 'failed'}",
-        severity="high",
-        facts={
-            "swarm_operation": kind,
-            "failure_count": failure_count + 1,
-            **payload,
-        },
-        **_swarm_event_context(
-            run_id=run_id,
-            request_id=request_id,
-            trace_ref=trace_ref,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id=actor_id,
-        ),
-    )
 
 
+
+    except Exception:
+        return None
 def _read_swarm_runtime_state(state_db: StateDB) -> dict[str, str]:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            "SELECT state_key, value FROM runtime_state WHERE state_key LIKE 'swarm:%'"
-        ).fetchall()
-    return {str(row["state_key"]): str(row["value"] or "") for row in rows}
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                "SELECT state_key, value FROM runtime_state WHERE state_key LIKE 'swarm:%'"
+            ).fetchall()
+        return {str(row["state_key"]): str(row["value"] or "") for row in rows}
 
 
+
+    except Exception:
+        return {}
 def _loads_json_object(value: str | None) -> dict[str, Any] | None:
-    if not value:
-        return None
+    if not isinstance(value, str): value = str(value or '')
     try:
-        data = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+        if not value:
+            return None
+        try:
+            data = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
 
 
+
+    except Exception:
+        return {}
 def _parse_int(value: str | None) -> int:
-    if value is None or value == "":
-        return 0
+    if not isinstance(value, str): value = str(value or '')
     try:
-        return int(value)
-    except ValueError:
+        if value is None or value == "":
+            return 0
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+
+
+
+    except Exception:
         return 0
-
-
 def _read_failure_count(conn: Any, state_key: str) -> int:
     row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
     if not row or row["value"] is None:
