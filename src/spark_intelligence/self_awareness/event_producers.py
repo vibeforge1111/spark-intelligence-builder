@@ -26,63 +26,80 @@ def record_source_used_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    normalized_source = str(source or "").strip() or "unknown"
-    normalized_role = str(role or "").strip() or "supporting_evidence"
-    normalized_freshness = _normalize_source_freshness(freshness)
-    normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
-    facts: dict[str, Any] = {
-        "source": normalized_source,
-        "role": normalized_role,
-        "freshness": normalized_freshness,
-        "source_ref": str(source_ref or "").strip() or None,
-    }
-    if normalized_source == "memory_preflight" or normalized_role == "memory_boundary":
-        facts.update(
-            {
-                "keepability": "ephemeral_context",
-                "promotion_disposition": "not_promotable",
-                "memory_role": "preflight_boundary",
-                **memory_preflight_facts(
-                    source=normalized_source,
-                    role=normalized_role,
-                    freshness=normalized_freshness,
-                    source_ref=str(source_ref or "").strip(),
-                    selected_route=str(selected_route or "").strip(),
-                    confidence=str(confidence or "").strip(),
-                    request_id=str(request_id or "").strip(),
-                    trace_ref=str(trace_ref or "").strip(),
-                    summary=normalized_summary,
-                ),
-            }
+    if not isinstance(source, str): source = str(source or '')
+    if not isinstance(role, str): role = str(role or '')
+    if not isinstance(freshness, str): freshness = str(freshness or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    if not isinstance(summary, str): summary = str(summary or '')
+    if not isinstance(user_intent, str): user_intent = str(user_intent or '')
+    if not isinstance(selected_route, str): selected_route = str(selected_route or '')
+    if not isinstance(confidence, str): confidence = str(confidence or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        normalized_source = str(source or "").strip() or "unknown"
+        normalized_role = str(role or "").strip() or "supporting_evidence"
+        normalized_freshness = _normalize_source_freshness(freshness)
+        normalized_summary = str(summary or "").strip() or f"Source used: {normalized_source}."
+        facts: dict[str, Any] = {
+            "source": normalized_source,
+            "role": normalized_role,
+            "freshness": normalized_freshness,
+            "source_ref": str(source_ref or "").strip() or None,
+        }
+        if normalized_source == "memory_preflight" or normalized_role == "memory_boundary":
+            facts.update(
+                {
+                    "keepability": "ephemeral_context",
+                    "promotion_disposition": "not_promotable",
+                    "memory_role": "preflight_boundary",
+                    **memory_preflight_facts(
+                        source=normalized_source,
+                        role=normalized_role,
+                        freshness=normalized_freshness,
+                        source_ref=str(source_ref or "").strip(),
+                        selected_route=str(selected_route or "").strip(),
+                        confidence=str(confidence or "").strip(),
+                        request_id=str(request_id or "").strip(),
+                        trace_ref=str(trace_ref or "").strip(),
+                        summary=normalized_summary,
+                    ),
+                }
+            )
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="source_used",
+                summary=normalized_summary,
+                user_intent=str(user_intent or "").strip() or None,
+                selected_route=str(selected_route or "").strip() or None,
+                route_confidence=str(confidence or "").strip() or None,
+                facts=facts,
+                sources=[
+                    AgentSourceRef(
+                        source=normalized_source,
+                        role=normalized_role,
+                        freshness=normalized_freshness,  # type: ignore[arg-type]
+                        source_ref=str(source_ref or "").strip() or None,
+                        summary=normalized_summary,
+                    )
+                ],
+                changed=["source_ledger_updated"],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            trace_ref=str(trace_ref or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
         )
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="source_used",
-            summary=normalized_summary,
-            user_intent=str(user_intent or "").strip() or None,
-            selected_route=str(selected_route or "").strip() or None,
-            route_confidence=str(confidence or "").strip() or None,
-            facts=facts,
-            sources=[
-                AgentSourceRef(
-                    source=normalized_source,
-                    role=normalized_role,
-                    freshness=normalized_freshness,  # type: ignore[arg-type]
-                    source_ref=str(source_ref or "").strip() or None,
-                    summary=normalized_summary,
-                )
-            ],
-            changed=["source_ledger_updated"],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        trace_ref=str(trace_ref or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-    )
 
 
+
+    except Exception:
+        return ""
 def record_capability_probe_agent_event(
     state_db: StateDB,
     *,
@@ -99,45 +116,60 @@ def record_capability_probe_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    normalized_status = str(status or "").strip().casefold()
-    success = normalized_status == "success"
-    capability = str(capability_key or "").strip()
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="capability_probed",
-            summary=f"Capability probe {normalized_status or 'unknown'}: {capability}.",
-            selected_route=capability,
-            route_confidence="high" if success else "blocked",
-            facts={
-                "capability_key": capability,
-                "probe_status": normalized_status,
-                "route_probe_event_id": str(route_probe_event_id or "").strip(),
-                "route_latency_ms": route_latency_ms,
-                "eval_ref": str(eval_ref or "").strip() or None,
-                "failure_reason": str(failure_reason or "").strip() or None,
-                "probe_summary": str(probe_summary or "").strip() or None,
-            },
-            sources=[
-                AgentSourceRef(
-                    source="route_probe",
-                    role="capability_evidence",
-                    freshness="live_probed",
-                    source_ref=str(source_ref or route_probe_event_id or "").strip() or None,
-                    summary=str(probe_summary or failure_reason or status or "").strip(),
-                )
-            ],
-            blockers=[str(failure_reason or "route_probe_failed").strip()] if not success else [],
-            changed=[f"{capability}:last_probe={normalized_status}"],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-        correlation_id=str(route_probe_event_id or "").strip() or None,
-    )
+    if not isinstance(capability_key, str): capability_key = str(capability_key or '')
+    if not isinstance(status, str): status = str(status or '')
+    if not isinstance(route_probe_event_id, str): route_probe_event_id = str(route_probe_event_id or '')
+    if not isinstance(eval_ref, str): eval_ref = str(eval_ref or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    if not isinstance(failure_reason, str): failure_reason = str(failure_reason or '')
+    if not isinstance(probe_summary, str): probe_summary = str(probe_summary or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        normalized_status = str(status or "").strip().casefold()
+        success = normalized_status == "success"
+        capability = str(capability_key or "").strip()
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="capability_probed",
+                summary=f"Capability probe {normalized_status or 'unknown'}: {capability}.",
+                selected_route=capability,
+                route_confidence="high" if success else "blocked",
+                facts={
+                    "capability_key": capability,
+                    "probe_status": normalized_status,
+                    "route_probe_event_id": str(route_probe_event_id or "").strip(),
+                    "route_latency_ms": route_latency_ms,
+                    "eval_ref": str(eval_ref or "").strip() or None,
+                    "failure_reason": str(failure_reason or "").strip() or None,
+                    "probe_summary": str(probe_summary or "").strip() or None,
+                },
+                sources=[
+                    AgentSourceRef(
+                        source="route_probe",
+                        role="capability_evidence",
+                        freshness="live_probed",
+                        source_ref=str(source_ref or route_probe_event_id or "").strip() or None,
+                        summary=str(probe_summary or failure_reason or status or "").strip(),
+                    )
+                ],
+                blockers=[str(failure_reason or "route_probe_failed").strip()] if not success else [],
+                changed=[f"{capability}:last_probe={normalized_status}"],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
+            correlation_id=str(route_probe_event_id or "").strip() or None,
+        )
 
 
+
+    except Exception:
+        return ""
 def record_route_selection_agent_event(
     state_db: StateDB,
     *,
@@ -152,28 +184,42 @@ def record_route_selection_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    route = str(selected_route or "").strip()
-    source_refs = [_source_ref_from_payload(source) for source in list(sources or [])]
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="route_selected",
-            summary=f"Route selected: {route}.",
-            user_intent=str(user_intent or "").strip() or None,
-            selected_route=route,
-            route_confidence=str(confidence or "").strip() or None,
-            facts={"reason": str(reason or "").strip()},
-            sources=source_refs,
-            assumptions=[str(reason or "").strip()] if reason else [],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        trace_ref=str(trace_ref or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-    )
+    if not isinstance(selected_route, str): selected_route = str(selected_route or '')
+    if not isinstance(user_intent, str): user_intent = str(user_intent or '')
+    if not isinstance(confidence, str): confidence = str(confidence or '')
+    if not isinstance(reason, str): reason = str(reason or '')
+    if not isinstance(sources, str): sources = str(sources or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        route = str(selected_route or "").strip()
+        source_refs = [_source_ref_from_payload(source) for source in list(sources or [])]
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="route_selected",
+                summary=f"Route selected: {route}.",
+                user_intent=str(user_intent or "").strip() or None,
+                selected_route=route,
+                route_confidence=str(confidence or "").strip() or None,
+                facts={"reason": str(reason or "").strip()},
+                sources=source_refs,
+                assumptions=[str(reason or "").strip()] if reason else [],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            trace_ref=str(trace_ref or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
+        )
 
 
+
+    except Exception:
+        return ""
 def record_mission_state_agent_event(
     state_db: StateDB,
     *,
@@ -187,36 +233,49 @@ def record_mission_state_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    mission = str(mission_id or "").strip()
-    previous = str(from_state or "").strip()
-    current = str(to_state or "").strip()
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="mission_changed_state",
-            summary=str(summary or f"Mission {mission} changed state from {previous or 'unknown'} to {current or 'unknown'}."),
-            selected_route="mission_control",
-            route_confidence="medium",
-            facts={"mission_id": mission, "from_state": previous or None, "to_state": current or None},
-            sources=[
-                AgentSourceRef(
-                    source="mission_trace",
-                    role="work_state_evidence",
-                    freshness="fresh",
-                    source_ref=mission or None,
-                    summary=str(summary or current or previous or "").strip(),
-                )
-            ],
-            changed=[f"{mission}:state={current}"] if mission and current else [],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        trace_ref=str(trace_ref or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-    )
+    if not isinstance(mission_id, str): mission_id = str(mission_id or '')
+    if not isinstance(from_state, str): from_state = str(from_state or '')
+    if not isinstance(to_state, str): to_state = str(to_state or '')
+    if not isinstance(summary, str): summary = str(summary or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        mission = str(mission_id or "").strip()
+        previous = str(from_state or "").strip()
+        current = str(to_state or "").strip()
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="mission_changed_state",
+                summary=str(summary or f"Mission {mission} changed state from {previous or 'unknown'} to {current or 'unknown'}."),
+                selected_route="mission_control",
+                route_confidence="medium",
+                facts={"mission_id": mission, "from_state": previous or None, "to_state": current or None},
+                sources=[
+                    AgentSourceRef(
+                        source="mission_trace",
+                        role="work_state_evidence",
+                        freshness="fresh",
+                        source_ref=mission or None,
+                        summary=str(summary or current or previous or "").strip(),
+                    )
+                ],
+                changed=[f"{mission}:state={current}"] if mission and current else [],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            trace_ref=str(trace_ref or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
+        )
 
 
+
+    except Exception:
+        return ""
 def record_user_override_agent_event(
     state_db: StateDB,
     *,
@@ -227,31 +286,41 @@ def record_user_override_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="user_override_received",
-            summary=str(override_summary or "User override received.").strip(),
-            selected_route=str(corrected_route or "").strip() or None,
-            route_confidence="high",
-            sources=[
-                AgentSourceRef(
-                    source="current_user_message",
-                    role="operator_override",
-                    freshness="fresh",
-                    source_ref=str(request_id or "").strip() or None,
-                    summary=str(override_summary or "").strip(),
-                )
-            ],
-            changed=["latest_user_message_overrides_prior_context"],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-    )
+    if not isinstance(override_summary, str): override_summary = str(override_summary or '')
+    if not isinstance(corrected_route, str): corrected_route = str(corrected_route or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="user_override_received",
+                summary=str(override_summary or "User override received.").strip(),
+                selected_route=str(corrected_route or "").strip() or None,
+                route_confidence="high",
+                sources=[
+                    AgentSourceRef(
+                        source="current_user_message",
+                        role="operator_override",
+                        freshness="fresh",
+                        source_ref=str(request_id or "").strip() or None,
+                        summary=str(override_summary or "").strip(),
+                    )
+                ],
+                changed=["latest_user_message_overrides_prior_context"],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
+        )
 
 
+
+    except Exception:
+        return ""
 def record_contradiction_agent_event(
     state_db: StateDB,
     *,
