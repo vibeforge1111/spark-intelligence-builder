@@ -2080,46 +2080,56 @@ def detect_and_persist_nl_preferences(
     channel_kind: str | None = None,
     governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, float] | None:
-    """Detect NL personality preferences in a user message and persist them.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(turn_id, str): turn_id = str(turn_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(governor_decision, str): governor_decision = str(governor_decision or '')
+    try:
+        """Detect NL personality preferences in a user message and persist them.
 
-    Returns the extracted trait deltas if any were found, None otherwise.
-    """
-    if not _has_personality_signal(user_message):
-        return None
+        Returns the extracted trait deltas if any were found, None otherwise.
+        """
+        if not _has_personality_signal(user_message):
+            return None
 
-    deltas = _extract_trait_deltas(user_message)
-    if not deltas:
-        return None
+        deltas = _extract_trait_deltas(user_message)
+        if not deltas:
+            return None
 
-    # Load existing user deltas
-    existing = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+        # Load existing user deltas
+        existing = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
 
-    # Merge: additive with clamping
-    merged = dict(existing)
-    for trait, delta in deltas.items():
-        merged[trait] = max(-0.5, min(0.5, merged.get(trait, 0.0) + delta))
+        # Merge: additive with clamping
+        merged = dict(existing)
+        for trait, delta in deltas.items():
+            merged[trait] = max(-0.5, min(0.5, merged.get(trait, 0.0) + delta))
 
-    # Persist
-    _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
-    if config_manager is not None:
-        try:
-            write_personality_preferences_to_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                detected_deltas=deltas,
-                merged_deltas=merged,
-                session_id=session_id,
-                turn_id=turn_id,
-                channel_kind=channel_kind,
-                governor_decision=governor_decision,
-            )
-        except (OSError, ValueError, TypeError):
-            pass
+        # Persist
+        _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
+        if config_manager is not None:
+            try:
+                write_personality_preferences_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    detected_deltas=deltas,
+                    merged_deltas=merged,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    channel_kind=channel_kind,
+                    governor_decision=governor_decision,
+                )
+            except (OSError, ValueError, TypeError):
+                pass
 
-    return deltas
+        return deltas
 
 
+
+    except Exception:
+        return {}
 def detect_and_persist_agent_persona_preferences(
     *,
     agent_id: str,
@@ -2130,172 +2140,197 @@ def detect_and_persist_agent_persona_preferences(
     source_ref: str | None = None,
     push_undo_snapshot: bool = False,
 ) -> AgentPersonaMutationResult | None:
-    if not _is_agent_persona_authoring_message(user_message):
-        return None
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(source_surface, str): source_surface = str(source_surface or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        if not _is_agent_persona_authoring_message(user_message):
+            return None
 
-    trait_deltas = _extract_trait_deltas(user_message)
-    behavioral_rules = _extract_behavioral_rules(user_message)
-    current_profile = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
-    existing_traits = current_profile.get("base_traits") or dict(_DEFAULT_TRAITS)
-    next_traits = dict(existing_traits)
-    for trait, delta in trait_deltas.items():
-        next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
+        trait_deltas = _extract_trait_deltas(user_message)
+        behavioral_rules = _extract_behavioral_rules(user_message)
+        current_profile = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
+        existing_traits = current_profile.get("base_traits") or dict(_DEFAULT_TRAITS)
+        next_traits = dict(existing_traits)
+        for trait, delta in trait_deltas.items():
+            next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
 
-    new_name = _extract_agent_name(user_message)
-    merged_rules = _merge_behavioral_rules(
-        list(current_profile.get("behavioral_rules") or []),
-        behavioral_rules,
-    )
-    if new_name:
-        rename_agent_identity(
-            state_db=state_db,
-            human_id=human_id,
-            new_name=new_name,
-            source_surface=source_surface,
-            source_ref=source_ref,
+        new_name = _extract_agent_name(user_message)
+        merged_rules = _merge_behavioral_rules(
+            list(current_profile.get("behavioral_rules") or []),
+            behavioral_rules,
         )
+        if new_name:
+            rename_agent_identity(
+                state_db=state_db,
+                human_id=human_id,
+                new_name=new_name,
+                source_surface=source_surface,
+                source_ref=source_ref,
+            )
 
-    persona_profile = current_profile
-    if trait_deltas or behavioral_rules:
-        persona_summary = current_profile.get("persona_summary")
+        persona_profile = current_profile
+        if trait_deltas or behavioral_rules:
+            persona_summary = current_profile.get("persona_summary")
+            if trait_deltas:
+                persona_summary = _compact_persona_summary(next_traits)
+            if behavioral_rules:
+                persona_summary = _behavioral_rule_summary(merged_rules) or persona_summary
+            persona_profile = save_agent_persona_profile(
+                agent_id=agent_id,
+                human_id=human_id,
+                state_db=state_db,
+                base_traits=next_traits,
+                persona_name=current_profile.get("persona_name") or new_name,
+                persona_summary=persona_summary,
+                behavioral_rules=merged_rules,
+                provenance={
+                    "source_surface": source_surface,
+                    "source_ref": source_ref,
+                    "authoring_text": user_message,
+                    "behavioral_rules": merged_rules,
+                },
+                mutation_kind="explicit_authoring",
+                source_surface=source_surface,
+                source_ref=source_ref,
+                push_undo_snapshot=push_undo_snapshot,
+            )
+
+        if not new_name and not trait_deltas and not behavioral_rules:
+            return None
+
+        parts: list[str] = ["[Personality action: AGENT_PERSONA_UPDATED]"]
+        if new_name:
+            parts.append(
+                f"The agent's saved name is now '{new_name}'. Acknowledge the rename briefly and continue naturally."
+            )
         if trait_deltas:
-            persona_summary = _compact_persona_summary(next_traits)
+            changes = ", ".join(
+                f"{'more' if delta > 0 else 'less'} {trait.replace('_', ' ')}"
+                for trait, delta in sorted(trait_deltas.items())
+            )
+            parts.append(
+                "The user updated the agent's base persona. "
+                f"Acknowledge this briefly and adopt the saved agent persona going forward: {changes}."
+            )
         if behavioral_rules:
-            persona_summary = _behavioral_rule_summary(merged_rules) or persona_summary
-        persona_profile = save_agent_persona_profile(
+            parts.append(
+                "The user added saved style rules for the agent. "
+                "Acknowledge this briefly and apply them going forward: "
+                + " | ".join(merged_rules[:5])
+                + "."
+            )
+        return AgentPersonaMutationResult(
             agent_id=agent_id,
-            human_id=human_id,
-            state_db=state_db,
-            base_traits=next_traits,
-            persona_name=current_profile.get("persona_name") or new_name,
-            persona_summary=persona_summary,
+            agent_name=new_name,
+            trait_deltas=trait_deltas,
             behavioral_rules=merged_rules,
-            provenance={
-                "source_surface": source_surface,
-                "source_ref": source_ref,
-                "authoring_text": user_message,
-                "behavioral_rules": merged_rules,
-            },
-            mutation_kind="explicit_authoring",
-            source_surface=source_surface,
-            source_ref=source_ref,
-            push_undo_snapshot=push_undo_snapshot,
+            persona_profile=persona_profile if isinstance(persona_profile, dict) else {},
+            context_injection="\n".join(parts),
         )
 
-    if not new_name and not trait_deltas and not behavioral_rules:
+
+    # ── Per-user delta persistence via runtime_state ──
+
+
+
+    except Exception:
         return None
-
-    parts: list[str] = ["[Personality action: AGENT_PERSONA_UPDATED]"]
-    if new_name:
-        parts.append(
-            f"The agent's saved name is now '{new_name}'. Acknowledge the rename briefly and continue naturally."
-        )
-    if trait_deltas:
-        changes = ", ".join(
-            f"{'more' if delta > 0 else 'less'} {trait.replace('_', ' ')}"
-            for trait, delta in sorted(trait_deltas.items())
-        )
-        parts.append(
-            "The user updated the agent's base persona. "
-            f"Acknowledge this briefly and adopt the saved agent persona going forward: {changes}."
-        )
-    if behavioral_rules:
-        parts.append(
-            "The user added saved style rules for the agent. "
-            "Acknowledge this briefly and apply them going forward: "
-            + " | ".join(merged_rules[:5])
-            + "."
-        )
-    return AgentPersonaMutationResult(
-        agent_id=agent_id,
-        agent_name=new_name,
-        trait_deltas=trait_deltas,
-        behavioral_rules=merged_rules,
-        persona_profile=persona_profile if isinstance(persona_profile, dict) else {},
-        context_injection="\n".join(parts),
-    )
-
-
-# ── Per-user delta persistence via runtime_state ──
-
-
 def _state_key(human_id: str) -> str:
-    return f"personality:{human_id}:trait_deltas"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        return f"personality:{human_id}:trait_deltas"
 
 
+
+    except Exception:
+        return ""
 def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[str, float]:
-    """Load persisted per-user trait deltas from typed storage or compatibility state."""
-    if state_db is None:
-        return {}
+    if not isinstance(human_id, str): human_id = str(human_id or '')
     try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT deltas_json
-                FROM personality_trait_profiles
-                WHERE human_id = ?
-                LIMIT 1
-                """,
-                (human_id,),
-            ).fetchone()
-        if row and row["deltas_json"]:
-            data = json.loads(row["deltas_json"])
-            return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (_state_key(human_id),),
-            ).fetchone()
-        if not row or not row["value"]:
+        """Load persisted per-user trait deltas from typed storage or compatibility state."""
+        if state_db is None:
             return {}
-        data = json.loads(row["value"])
-        # Deltas are nested under "deltas" key
-        deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
-        return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+        try:
+            with state_db.connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT deltas_json
+                    FROM personality_trait_profiles
+                    WHERE human_id = ?
+                    LIMIT 1
+                    """,
+                    (human_id,),
+                ).fetchone()
+            if row and row["deltas_json"]:
+                data = json.loads(row["deltas_json"])
+                return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            pass
+        try:
+            with state_db.connect() as conn:
+                row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                    (_state_key(human_id),),
+                ).fetchone()
+            if not row or not row["value"]:
+                return {}
+            data = json.loads(row["value"])
+            # Deltas are nested under "deltas" key
+            deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
+            return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            return {}
+
+
+
+    except Exception:
         return {}
-
-
 def _save_user_trait_deltas(
     *,
     human_id: str,
     deltas: dict[str, float],
     state_db: StateDB,
 ) -> None:
-    """Persist per-user trait deltas to typed storage and a compatibility mirror."""
-    updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    normalized = {k: round(v, 3) for k, v in deltas.items() if k in _DEFAULT_TRAITS}
-    payload = json.dumps(
-        {
-            "deltas": normalized,
-            "updated_at": updated_at,
-        },
-        sort_keys=True,
-    )
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO personality_trait_profiles(human_id, deltas_json, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(human_id) DO UPDATE SET
-                deltas_json=excluded.deltas_json,
-                updated_at=excluded.updated_at
-            """,
-            (human_id, json.dumps(normalized, sort_keys=True), updated_at),
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(deltas, str): deltas = str(deltas or '')
+    try:
+        """Persist per-user trait deltas to typed storage and a compatibility mirror."""
+        updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        normalized = {k: round(v, 3) for k, v in deltas.items() if k in _DEFAULT_TRAITS}
+        payload = json.dumps(
+            {
+                "deltas": normalized,
+                "updated_at": updated_at,
+            },
+            sort_keys=True,
         )
-        upsert_runtime_state(
-            conn,
-            state_key=_state_key(human_id),
-            value=payload,
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
-        )
-        conn.commit()
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO personality_trait_profiles(human_id, deltas_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(human_id) DO UPDATE SET
+                    deltas_json=excluded.deltas_json,
+                    updated_at=excluded.updated_at
+                """,
+                (human_id, json.dumps(normalized, sort_keys=True), updated_at),
+            )
+            upsert_runtime_state(
+                conn,
+                state_key=_state_key(human_id),
+                value=payload,
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def _compact_persona_summary(traits: dict[str, float]) -> str:
     labels = [_label_for_trait(trait, float(traits.get(trait, _DEFAULT_TRAITS[trait]))) for trait in _DEFAULT_TRAITS]
     return ", ".join(labels)
