@@ -611,99 +611,106 @@ def _write_rollup_summary_to_memory(
     channel_kind: str | None,
     actor_id: str,
 ) -> MemoryWriteResult:
-    domain_pack = f"{summary.scope}_summary"
-    if summary.event_count <= 0:
-        result = MemoryWriteResult(
-            status="skipped",
-            operation="create",
-            method="write_observation",
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        domain_pack = f"{summary.scope}_summary"
+        if summary.event_count <= 0:
+            result = MemoryWriteResult(
+                status="skipped",
+                operation="create",
+                method="write_observation",
+                memory_role="structured_evidence",
+                accepted_count=0,
+                rejected_count=0,
+                skipped_count=1,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=f"no_{summary.scope}_events",
+            )
+            record_event(
+                state_db,
+                event_type=f"memory_{summary.scope}_summary_skipped",
+                component="memory_orchestrator",
+                summary=f"Spark memory skipped {summary.scope} summary because no matching ledger events were found.",
+                request_id=f"{summary.scope}:{summary.scope_key}:summary",
+                human_id=human_id,
+                actor_id=actor_id,
+                reason_code=f"no_{summary.scope}_events",
+                facts=summary.to_dict(),
+                provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
+            )
+            return result
+
+        text = summary.to_text()
+        salience_decision = evaluate_generic_memory_salience(
+            outcome="structured_evidence",
             memory_role="structured_evidence",
-            accepted_count=0,
-            rejected_count=0,
-            skipped_count=1,
-            abstained=False,
-            retrieval_trace=None,
-            provenance=[],
-            reason=f"no_{summary.scope}_events",
+            retention_class="episodic_archive",
+            predicate=f"evidence.telegram.{domain_pack}",
+            value=text,
+            evidence_text=text,
+            reason=domain_pack,
+        )
+        result = write_structured_evidence_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            evidence_text=text,
+            domain_pack=domain_pack,
+            evidence_kind=domain_pack,
+            session_id=None,
+            turn_id=f"{summary.scope}:{summary.scope_key}:summary",
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+            salience_decision=salience_decision,
         )
         record_event(
             state_db,
-            event_type=f"memory_{summary.scope}_summary_skipped",
+            event_type=f"memory_{summary.scope}_summary_written",
             component="memory_orchestrator",
-            summary=f"Spark memory skipped {summary.scope} summary because no matching ledger events were found.",
+            summary=f"Spark memory wrote a durable {summary.scope} summary for episodic continuity.",
             request_id=f"{summary.scope}:{summary.scope_key}:summary",
             human_id=human_id,
             actor_id=actor_id,
-            reason_code=f"no_{summary.scope}_events",
-            facts=summary.to_dict(),
+            reason_code=f"{summary.scope}_summary_written",
+            facts={
+                **summary.to_dict(),
+                "write_status": result.status,
+                "accepted_count": result.accepted_count,
+                "memory_role": "structured_evidence",
+                "domain_pack": domain_pack,
+                **salience_decision.metadata(),
+            },
             provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
         )
+        if result.accepted_count > 0:
+            _record_summary_compaction_transition(
+                state_db=state_db,
+                scope=summary.scope,
+                scope_key=summary.scope_key,
+                human_id=human_id,
+                session_id=None,
+                actor_id=actor_id,
+                channel_kind=channel_kind,
+                source_event_count=summary.event_count,
+                source_session_count=summary.session_count,
+                source_event_ids=summary.source_event_ids,
+                destination_predicate=f"evidence.telegram.{domain_pack}",
+                source_text=(
+                    f"Compacted {summary.event_count} event(s) across {summary.session_count} session(s) "
+                    f"into a durable {summary.scope} summary."
+                ),
+                accepted_count=result.accepted_count,
+            )
         return result
 
-    text = summary.to_text()
-    salience_decision = evaluate_generic_memory_salience(
-        outcome="structured_evidence",
-        memory_role="structured_evidence",
-        retention_class="episodic_archive",
-        predicate=f"evidence.telegram.{domain_pack}",
-        value=text,
-        evidence_text=text,
-        reason=domain_pack,
-    )
-    result = write_structured_evidence_to_memory(
-        config_manager=config_manager,
-        state_db=state_db,
-        human_id=human_id,
-        evidence_text=text,
-        domain_pack=domain_pack,
-        evidence_kind=domain_pack,
-        session_id=None,
-        turn_id=f"{summary.scope}:{summary.scope_key}:summary",
-        channel_kind=channel_kind,
-        actor_id=actor_id,
-        salience_decision=salience_decision,
-    )
-    record_event(
-        state_db,
-        event_type=f"memory_{summary.scope}_summary_written",
-        component="memory_orchestrator",
-        summary=f"Spark memory wrote a durable {summary.scope} summary for episodic continuity.",
-        request_id=f"{summary.scope}:{summary.scope_key}:summary",
-        human_id=human_id,
-        actor_id=actor_id,
-        reason_code=f"{summary.scope}_summary_written",
-        facts={
-            **summary.to_dict(),
-            "write_status": result.status,
-            "accepted_count": result.accepted_count,
-            "memory_role": "structured_evidence",
-            "domain_pack": domain_pack,
-            **salience_decision.metadata(),
-        },
-        provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
-    )
-    if result.accepted_count > 0:
-        _record_summary_compaction_transition(
-            state_db=state_db,
-            scope=summary.scope,
-            scope_key=summary.scope_key,
-            human_id=human_id,
-            session_id=None,
-            actor_id=actor_id,
-            channel_kind=channel_kind,
-            source_event_count=summary.event_count,
-            source_session_count=summary.session_count,
-            source_event_ids=summary.source_event_ids,
-            destination_predicate=f"evidence.telegram.{domain_pack}",
-            source_text=(
-                f"Compacted {summary.event_count} event(s) across {summary.session_count} session(s) "
-                f"into a durable {summary.scope} summary."
-            ),
-            accepted_count=result.accepted_count,
-        )
-    return result
 
 
+    except Exception:
+        return None
 def _record_summary_compaction_transition(
     *,
     state_db: StateDB,
@@ -720,93 +727,122 @@ def _record_summary_compaction_transition(
     source_text: str,
     accepted_count: int,
 ) -> None:
-    record_event(
-        state_db,
-        event_type="memory_lifecycle_transition",
-        component="memory_orchestrator",
-        summary=f"Spark memory lifecycle transition: episodic {scope} summary compaction.",
-        request_id=f"{scope}:{scope_key}:summary",
-        session_id=session_id,
-        human_id=human_id,
-        channel_id=channel_kind,
-        actor_id=actor_id,
-        status="recorded",
-        reason_code=f"{scope}_summary_compaction",
-        facts={
-            "transition_kind": "compaction",
-            "memory_role": "episodic_summary",
-            "source_predicate": f"builder_events.{scope}",
-            "source_text": source_text,
-            "source_observation_id": None,
-            "reason": f"{scope}_summary_compaction",
-            "archive_reason": f"{scope}_summary_compaction",
-            "retention_class": "episodic_archive",
-            "lifecycle_action": "compacted",
-            "destination": destination_predicate,
-            "transition_count": source_event_count,
-            "source_event_count": source_event_count,
-            "source_session_count": source_session_count,
-            "source_event_ids": list(source_event_ids[:20]),
-            "accepted_count": accepted_count,
-            "scope": scope,
-            "scope_key": scope_key,
-            "readable_summary": (
-                f"{source_event_count} event(s) were compacted into {destination_predicate} "
-                f"for {scope} {scope_key}."
-            ),
-        },
-        provenance={"memory_role": "episodic_summary", "source_kind": "session_event_ledger"},
-    )
+    if not isinstance(scope, str): scope = str(scope or '')
+    if not isinstance(scope_key, str): scope_key = str(scope_key or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(source_event_ids, str): source_event_ids = str(source_event_ids or '')
+    if not isinstance(destination_predicate, str): destination_predicate = str(destination_predicate or '')
+    if not isinstance(source_text, str): source_text = str(source_text or '')
+    try:
+        record_event(
+            state_db,
+            event_type="memory_lifecycle_transition",
+            component="memory_orchestrator",
+            summary=f"Spark memory lifecycle transition: episodic {scope} summary compaction.",
+            request_id=f"{scope}:{scope_key}:summary",
+            session_id=session_id,
+            human_id=human_id,
+            channel_id=channel_kind,
+            actor_id=actor_id,
+            status="recorded",
+            reason_code=f"{scope}_summary_compaction",
+            facts={
+                "transition_kind": "compaction",
+                "memory_role": "episodic_summary",
+                "source_predicate": f"builder_events.{scope}",
+                "source_text": source_text,
+                "source_observation_id": None,
+                "reason": f"{scope}_summary_compaction",
+                "archive_reason": f"{scope}_summary_compaction",
+                "retention_class": "episodic_archive",
+                "lifecycle_action": "compacted",
+                "destination": destination_predicate,
+                "transition_count": source_event_count,
+                "source_event_count": source_event_count,
+                "source_session_count": source_session_count,
+                "source_event_ids": list(source_event_ids[:20]),
+                "accepted_count": accepted_count,
+                "scope": scope,
+                "scope_key": scope_key,
+                "readable_summary": (
+                    f"{source_event_count} event(s) were compacted into {destination_predicate} "
+                    f"for {scope} {scope_key}."
+                ),
+            },
+            provenance={"memory_role": "episodic_summary", "source_kind": "session_event_ledger"},
+        )
 
 
+
+    except Exception:
+        return None
 def _clean_value(value: Any) -> str:
-    return " ".join(str(value or "").strip().split())
+    try:
+        return " ".join(str(value or "").strip().split())
 
 
+
+    except Exception:
+        return ""
 def _source_event_ids(rows: list[dict[str, Any]]) -> tuple[str, ...]:
-    return tuple(str(row.get("event_id") or "").strip() for row in rows if str(row.get("event_id") or "").strip())
+    if not isinstance(rows, str): rows = str(rows or '')
+    try:
+        return tuple(str(row.get("event_id") or "").strip() for row in rows if str(row.get("event_id") or "").strip())
 
 
+
+    except Exception:
+        return ()
 def _row_matches_project(*, row: dict[str, Any], facts: dict[str, Any], project_key: str) -> bool:
-    haystack_parts = [
-        str(row.get("summary") or ""),
-        str(row.get("component") or ""),
-        str(row.get("request_id") or ""),
-        str(row.get("session_id") or ""),
-    ]
-    project_keys = {
-        "project",
-        "project_key",
-        "active_project",
-        "entity_key",
-        "repo",
-        "repository",
-        "repository_full_name",
-        "repo_full_name",
-        "target_repo",
-        "repo_path",
-        "workspace",
-        "cwd",
-    }
-    for key, value in facts.items():
-        normalized_key = str(key or "").strip()
-        if normalized_key in project_keys:
-            haystack_parts.append(str(value or ""))
-    for observation in _iter_observations(facts):
-        haystack_parts.append(str(observation.get("entity_key") or ""))
-        haystack_parts.append(str(observation.get("subject") or ""))
-        haystack_parts.append(str(observation.get("predicate") or ""))
-        haystack_parts.append(str(observation.get("value") or ""))
-        metadata = observation.get("metadata")
-        if isinstance(metadata, dict):
-            haystack_parts.append(json.dumps(metadata, sort_keys=True, default=str))
-    haystack = " ".join(part for part in haystack_parts if part).casefold()
-    normalized_project = project_key.casefold()
-    slug_project = normalized_project.replace(" ", "-")
-    spaced_project = normalized_project.replace("-", " ")
-    return normalized_project in haystack or slug_project in haystack or spaced_project in haystack
+    if not isinstance(row, str): row = str(row or '')
+    if not isinstance(facts, str): facts = str(facts or '')
+    if not isinstance(project_key, str): project_key = str(project_key or '')
+    try:
+        haystack_parts = [
+            str(row.get("summary") or ""),
+            str(row.get("component") or ""),
+            str(row.get("request_id") or ""),
+            str(row.get("session_id") or ""),
+        ]
+        project_keys = {
+            "project",
+            "project_key",
+            "active_project",
+            "entity_key",
+            "repo",
+            "repository",
+            "repository_full_name",
+            "repo_full_name",
+            "target_repo",
+            "repo_path",
+            "workspace",
+            "cwd",
+        }
+        for key, value in facts.items():
+            normalized_key = str(key or "").strip()
+            if normalized_key in project_keys:
+                haystack_parts.append(str(value or ""))
+        for observation in _iter_observations(facts):
+            haystack_parts.append(str(observation.get("entity_key") or ""))
+            haystack_parts.append(str(observation.get("subject") or ""))
+            haystack_parts.append(str(observation.get("predicate") or ""))
+            haystack_parts.append(str(observation.get("value") or ""))
+            metadata = observation.get("metadata")
+            if isinstance(metadata, dict):
+                haystack_parts.append(json.dumps(metadata, sort_keys=True, default=str))
+        haystack = " ".join(part for part in haystack_parts if part).casefold()
+        normalized_project = project_key.casefold()
+        slug_project = normalized_project.replace(" ", "-")
+        spaced_project = normalized_project.replace("-", " ")
+        return normalized_project in haystack or slug_project in haystack or spaced_project in haystack
 
 
+
+    except Exception:
+        return False
 def _compact_line(value: str, *, limit: int = 180) -> str:
     cleaned = _clean_value(value)
     return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 3].rstrip()}..."
