@@ -2297,51 +2297,66 @@ def _save_user_trait_deltas(
 
 
 def _compact_persona_summary(traits: dict[str, float]) -> str:
-    labels = [_label_for_trait(trait, float(traits.get(trait, _DEFAULT_TRAITS[trait]))) for trait in _DEFAULT_TRAITS]
-    return ", ".join(labels)
+    if not isinstance(traits, str): traits = str(traits or '')
+    try:
+        labels = [_label_for_trait(trait, float(traits.get(trait, _DEFAULT_TRAITS[trait]))) for trait in _DEFAULT_TRAITS]
+        return ", ".join(labels)
 
 
-def _compact_onboarding_persona_summary(text: str, *, limit: int = 240) -> str:
-    compact = " ".join(str(text or "").strip().split())
-    if not compact:
+
+    except Exception:
         return ""
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[: limit - 3].rstrip()}..."
+def _compact_onboarding_persona_summary(text: str, *, limit: int = 240) -> str:
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        compact = " ".join(str(text or "").strip().split())
+        if not compact:
+            return ""
+        if len(compact) <= limit:
+            return compact
+        return f"{compact[: limit - 3].rstrip()}..."
 
 
+
+    except Exception:
+        return ""
 def _extract_onboarding_descriptor_deltas(text: str) -> dict[str, float]:
-    lowered = str(text or "").lower()
-    deltas: dict[str, float] = {}
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        lowered = str(text or "").lower()
+        deltas: dict[str, float] = {}
 
-    def add(trait: str, delta: float) -> None:
-        deltas[trait] = round(deltas.get(trait, 0.0) + delta, 3)
+        def add(trait: str, delta: float) -> None:
+            deltas[trait] = round(deltas.get(trait, 0.0) + delta, 3)
 
-    if "direct" in lowered:
-        add("directness", 0.35)
-    if "concise" in lowered or "low-fluff" in lowered or "low fluff" in lowered or "no-fluff" in lowered:
-        add("directness", 0.2)
-        add("pacing", 0.15)
-    if "warm" in lowered or "friendly" in lowered:
-        add("warmth", 0.25)
-    if "playful" in lowered:
-        add("playfulness", 0.3)
-    if "serious" in lowered:
-        add("playfulness", -0.25)
-    if "calm" in lowered:
-        add("warmth", 0.1)
-        add("assertiveness", -0.1)
-    if "assertive" in lowered or "confident" in lowered:
-        add("assertiveness", 0.3)
-    if "gentle" in lowered or "cautious" in lowered:
-        add("assertiveness", -0.2)
-    if "strategic" in lowered:
-        add("pacing", -0.1)
-        add("assertiveness", 0.1)
+        if "direct" in lowered:
+            add("directness", 0.35)
+        if "concise" in lowered or "low-fluff" in lowered or "low fluff" in lowered or "no-fluff" in lowered:
+            add("directness", 0.2)
+            add("pacing", 0.15)
+        if "warm" in lowered or "friendly" in lowered:
+            add("warmth", 0.25)
+        if "playful" in lowered:
+            add("playfulness", 0.3)
+        if "serious" in lowered:
+            add("playfulness", -0.25)
+        if "calm" in lowered:
+            add("warmth", 0.1)
+            add("assertiveness", -0.1)
+        if "assertive" in lowered or "confident" in lowered:
+            add("assertiveness", 0.3)
+        if "gentle" in lowered or "cautious" in lowered:
+            add("assertiveness", -0.2)
+        if "strategic" in lowered:
+            add("pacing", -0.1)
+            add("assertiveness", 0.1)
 
-    return deltas
+        return deltas
 
 
+
+    except Exception:
+        return {}
 _ONBOARDING_NAME_STOPWORDS = frozenset(
     {
         # Pronouns / articles
@@ -2373,41 +2388,51 @@ _ONBOARDING_NAME_STOPWORDS = frozenset(
 
 
 def _extract_onboarding_agent_name(text: str) -> str | None:
-    """Extract a candidate agent name from a free-text onboarding reply.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Extract a candidate agent name from a free-text onboarding reply.
 
-    Conservative by design: rejects anything that looks like a sentence
-    rather than a name. Historical bug: this accepted any 2-40 char
-    alphanumeric string, so a message like 'we actually have a spark
-    swarm agent' got captured as the agent's literal name. Now we
-    require 1 or 2 tokens and reject any response containing common
-    English function words. The explicit naming path
-    (`_extract_agent_name`) still handles 'call me X' / 'my name is X'
-    patterns separately, so users who phrase their answer naturally
-    still get their name picked up.
-    """
-    compact = " ".join(str(text or "").strip().split()).strip("\"'")
-    if not compact or compact.startswith("/"):
-        return None
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,39}", compact):
-        return None
-
-    tokens = compact.split()
-    if not tokens or len(tokens) > 2:
-        return None
-
-    # Reject if any token is a common function word / stopword — those
-    # are signals the user is answering in a sentence, not naming.
-    for token in tokens:
-        if token.lower() in _ONBOARDING_NAME_STOPWORDS:
+        Conservative by design: rejects anything that looks like a sentence
+        rather than a name. Historical bug: this accepted any 2-40 char
+        alphanumeric string, so a message like 'we actually have a spark
+        swarm agent' got captured as the agent's literal name. Now we
+        require 1 or 2 tokens and reject any response containing common
+        English function words. The explicit naming path
+        (`_extract_agent_name`) still handles 'call me X' / 'my name is X'
+        patterns separately, so users who phrase their answer naturally
+        still get their name picked up.
+        """
+        compact = " ".join(str(text or "").strip().split()).strip("\"'")
+        if not compact or compact.startswith("/"):
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,39}", compact):
             return None
 
-    return compact
+        tokens = compact.split()
+        if not tokens or len(tokens) > 2:
+            return None
+
+        # Reject if any token is a common function word / stopword — those
+        # are signals the user is answering in a sentence, not naming.
+        for token in tokens:
+            if token.lower() in _ONBOARDING_NAME_STOPWORDS:
+                return None
+
+        return compact
 
 
+
+    except Exception:
+        return ""
 def _agent_onboarding_state_key(human_id: str) -> str:
-    return f"agent_onboarding:{human_id}"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        return f"agent_onboarding:{human_id}"
 
 
+
+    except Exception:
+        return ""
 def _load_agent_onboarding_state(*, human_id: str, state_db: StateDB) -> dict[str, Any]:
     with state_db.connect() as conn:
         row = conn.execute(
