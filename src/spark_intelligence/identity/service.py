@@ -1303,26 +1303,52 @@ def _parse_pairing_code_timestamp(value: Any) -> datetime | None:
 
 
 def _normalize_pairing_code(code: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+    if not isinstance(code, str): code = str(code or '')
+    try:
+        return re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
 
 
+
+    except Exception:
+        return ""
 def _pairing_code_hash(code: str) -> str:
-    normalized = _normalize_pairing_code(code)
-    return hashlib.sha256(f"spark-pairing-code-v1:{normalized}".encode("utf-8")).hexdigest()
+    if not isinstance(code, str): code = str(code or '')
+    try:
+        normalized = _normalize_pairing_code(code)
+        return hashlib.sha256(f"spark-pairing-code-v1:{normalized}".encode("utf-8")).hexdigest()
 
 
+
+    except Exception:
+        return ""
 def _new_pairing_code() -> str:
-    return "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH))
+    try:
+        return "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH))
 
 
+
+    except Exception:
+        return ""
 def _pairing_code_rate_key(channel_id: str, external_user_id: str) -> str:
-    return f"pairing_code_rate:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"pairing_code_rate:{channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _pairing_code_lock_key(channel_id: str, external_user_id: str) -> str:
-    return f"pairing_code_lock:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"pairing_code_lock:{channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _pairing_code_state_prefix(channel_id: str) -> str:
     return f"pairing_code:{channel_id}:"
 
