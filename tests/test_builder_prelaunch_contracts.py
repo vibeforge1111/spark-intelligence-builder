@@ -31,6 +31,7 @@ from spark_intelligence.observability.store import (
     open_run,
     recent_contradictions,
     recent_memory_lane_records,
+    recent_observer_handoff_records,
     recent_runs,
     record_observer_handoff_record,
     recent_observer_packet_records,
@@ -2653,6 +2654,57 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["counts"]["observer_handoffs"], 1)
         self.assertEqual(report.payload["counts"]["observer_handoff_failures"], 1)
         self.assertTrue(any("observer handoff" in item["summary"].lower() for item in report.payload["items"]))
+
+    def test_duplicate_observer_handoff_preserves_first_historical_record(self) -> None:
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-history",
+            chip_key="startup-yc",
+            hook="packets",
+            run_id="run:first",
+            request_id="req:first",
+            bundle_path="/first/bundle.json",
+            result_path=None,
+            packet_count=2,
+            packet_kind_filter="incident",
+            active_only=True,
+            status="failed",
+            summary="The original observer handoff failed.",
+            exit_code=1,
+            error_text="original_failure",
+            payload={"attempt": "first"},
+            created_at="2026-06-02T21:14:00Z",
+        )
+        original = recent_observer_handoff_records(self.state_db, limit=1)[0]
+
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-history",
+            chip_key="replacement-chip",
+            hook="packets",
+            run_id="run:replacement",
+            request_id="req:replacement",
+            bundle_path="/replacement/bundle.json",
+            result_path="/replacement/result.json",
+            packet_count=9,
+            packet_kind_filter=None,
+            active_only=False,
+            status="completed",
+            summary="A duplicate attempted to replace the historical failure.",
+            exit_code=0,
+            payload={"attempt": "replacement"},
+            output={"ok": True},
+            created_at="2099-01-01T00:00:00Z",
+            completed_at="2099-01-01T00:00:01Z",
+        )
+
+        preserved = recent_observer_handoff_records(self.state_db, limit=1)[0]
+
+        self.assertEqual(preserved, original)
+        self.assertEqual(preserved["status"], "failed")
+        self.assertEqual(preserved["error_text"], "original_failure")
+        self.assertEqual(preserved["run_id"], "run:first")
+        self.assertEqual(preserved["payload_json"], {"attempt": "first"})
 
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
