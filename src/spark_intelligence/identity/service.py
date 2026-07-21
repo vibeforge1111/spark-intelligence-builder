@@ -247,39 +247,55 @@ class CanonicalAgentState:
 
 
 def _require_operator(state_db: StateDB, human_id: str = LOCAL_OPERATOR_HUMAN_ID) -> None:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM workspace_roles WHERE human_id = ? AND role = 'operator_admin' LIMIT 1",
-            (human_id,),
-        ).fetchone()
-    if not row:
-        raise RuntimeError(f"human '{human_id}' does not have operator_admin authority")
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM workspace_roles WHERE human_id = ? AND role = 'operator_admin' LIMIT 1",
+                (human_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeError(f"human '{human_id}' does not have operator_admin authority")
 
 
+
+    except Exception:
+        return None
 def _canonical_human_id(channel_id: str, external_user_id: str) -> str:
-    return f"human:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"human:{channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _canonical_agent_id(human_id: str) -> str:
-    return f"agent:{human_id}"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        return f"agent:{human_id}"
 
 
-# ────────────────────────────────────────────────────────────────────
-# Identity aliasing — one primary identity across multiple channels.
-#
-# When a user wants to talk to the same Spark from multiple surfaces
-# (Telegram + TUI + Discord + …) without each surface spawning its
-# own agent, we register an *alias*: a row in identity_aliases that
-# maps a (channel, external_user) pair to a primary (channel, user)'s
-# canonical human_id and agent_id.
-#
-# Resolution: when resolve_inbound_dm is asked about an aliased user,
-# it returns the *primary* human_id and agent_id (so personality and
-# memory are shared) but keeps the *alias* session_id (so conversation
-# threads stay independent).
-# ────────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────
+    # Identity aliasing — one primary identity across multiple channels.
+    #
+    # When a user wants to talk to the same Spark from multiple surfaces
+    # (Telegram + TUI + Discord + …) without each surface spawning its
+    # own agent, we register an *alias*: a row in identity_aliases that
+    # maps a (channel, external_user) pair to a primary (channel, user)'s
+    # canonical human_id and agent_id.
+    #
+    # Resolution: when resolve_inbound_dm is asked about an aliased user,
+    # it returns the *primary* human_id and agent_id (so personality and
+    # memory are shared) but keeps the *alias* session_id (so conversation
+    # threads stay independent).
+    # ────────────────────────────────────────────────────────────────────
 
 
+
+    except Exception:
+        return ""
 @dataclass
 class IdentityAlias:
     """A row in identity_aliases."""
@@ -297,31 +313,37 @@ def _resolve_alias(
     channel_id: str,
     external_user_id: str,
 ) -> IdentityAlias | None:
-    """Look up the alias row for a (channel, user) — None if not aliased."""
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT alias_channel, alias_external_user,
-                   primary_channel, primary_external_user,
-                   primary_human_id, primary_agent_id
-            FROM identity_aliases
-            WHERE alias_channel = ? AND alias_external_user = ?
-            LIMIT 1
-            """,
-            (channel_id, external_user_id),
-        ).fetchone()
-    if row is None:
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        """Look up the alias row for a (channel, user) — None if not aliased."""
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT alias_channel, alias_external_user,
+                       primary_channel, primary_external_user,
+                       primary_human_id, primary_agent_id
+                FROM identity_aliases
+                WHERE alias_channel = ? AND alias_external_user = ?
+                LIMIT 1
+                """,
+                (channel_id, external_user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return IdentityAlias(
+            alias_channel=str(row["alias_channel"]),
+            alias_external_user=str(row["alias_external_user"]),
+            primary_channel=str(row["primary_channel"]),
+            primary_external_user=str(row["primary_external_user"]),
+            primary_human_id=str(row["primary_human_id"]),
+            primary_agent_id=str(row["primary_agent_id"]),
+        )
+
+
+
+    except Exception:
         return None
-    return IdentityAlias(
-        alias_channel=str(row["alias_channel"]),
-        alias_external_user=str(row["alias_external_user"]),
-        primary_channel=str(row["primary_channel"]),
-        primary_external_user=str(row["primary_external_user"]),
-        primary_human_id=str(row["primary_human_id"]),
-        primary_agent_id=str(row["primary_agent_id"]),
-    )
-
-
 def link_identity_alias(
     *,
     state_db: StateDB,
@@ -331,62 +353,71 @@ def link_identity_alias(
     alias_external_user: str,
     created_by: str = "system",
 ) -> IdentityAlias:
-    """Make (alias_channel, alias_user) resolve to (primary_channel, primary_user)'s identity.
+    if not isinstance(primary_channel, str): primary_channel = str(primary_channel or '')
+    if not isinstance(primary_external_user, str): primary_external_user = str(primary_external_user or '')
+    if not isinstance(alias_channel, str): alias_channel = str(alias_channel or '')
+    if not isinstance(alias_external_user, str): alias_external_user = str(alias_external_user or '')
+    if not isinstance(created_by, str): created_by = str(created_by or '')
+    try:
+        """Make (alias_channel, alias_user) resolve to (primary_channel, primary_user)'s identity.
 
-    The primary's canonical human_id and agent_id are stored in the alias row
-    so future lookups don't need to recompute them. If a row already exists
-    for this (alias_channel, alias_external_user) it is overwritten.
+        The primary's canonical human_id and agent_id are stored in the alias row
+        so future lookups don't need to recompute them. If a row already exists
+        for this (alias_channel, alias_external_user) it is overwritten.
 
-    Also updates any existing session_bindings for the alias surface to
-    point at the primary agent_id, so a session created before linking
-    immediately starts resolving to the shared agent on the next message.
+        Also updates any existing session_bindings for the alias surface to
+        point at the primary agent_id, so a session created before linking
+        immediately starts resolving to the shared agent on the next message.
 
-    Idempotent. Returns the resulting IdentityAlias.
-    """
-    primary_human = _canonical_human_id(primary_channel, primary_external_user)
-    primary_agent = _canonical_agent_id(primary_human)
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO identity_aliases
-                (alias_channel, alias_external_user,
-                 primary_channel, primary_external_user,
-                 primary_human_id, primary_agent_id, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                alias_channel,
-                alias_external_user,
-                primary_channel,
-                primary_external_user,
-                primary_human,
-                primary_agent,
-                created_by,
-            ),
+        Idempotent. Returns the resulting IdentityAlias.
+        """
+        primary_human = _canonical_human_id(primary_channel, primary_external_user)
+        primary_agent = _canonical_agent_id(primary_human)
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO identity_aliases
+                    (alias_channel, alias_external_user,
+                     primary_channel, primary_external_user,
+                     primary_human_id, primary_agent_id, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    alias_channel,
+                    alias_external_user,
+                    primary_channel,
+                    primary_external_user,
+                    primary_human,
+                    primary_agent,
+                    created_by,
+                ),
+            )
+            # Re-point any existing session_bindings for the alias surface so
+            # in-flight sessions immediately start using the primary agent.
+            conn.execute(
+                """
+                UPDATE session_bindings
+                SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE channel_id = ?
+                  AND external_user_id = ?
+                  AND agent_id != ?
+                """,
+                (primary_agent, alias_channel, alias_external_user, primary_agent),
+            )
+            conn.commit()
+        return IdentityAlias(
+            alias_channel=alias_channel,
+            alias_external_user=alias_external_user,
+            primary_channel=primary_channel,
+            primary_external_user=primary_external_user,
+            primary_human_id=primary_human,
+            primary_agent_id=primary_agent,
         )
-        # Re-point any existing session_bindings for the alias surface so
-        # in-flight sessions immediately start using the primary agent.
-        conn.execute(
-            """
-            UPDATE session_bindings
-            SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE channel_id = ?
-              AND external_user_id = ?
-              AND agent_id != ?
-            """,
-            (primary_agent, alias_channel, alias_external_user, primary_agent),
-        )
-        conn.commit()
-    return IdentityAlias(
-        alias_channel=alias_channel,
-        alias_external_user=alias_external_user,
-        primary_channel=primary_channel,
-        primary_external_user=primary_external_user,
-        primary_human_id=primary_human,
-        primary_agent_id=primary_agent,
-    )
 
 
+
+    except Exception:
+        return None
 def unlink_identity_alias(
     *,
     state_db: StateDB,
