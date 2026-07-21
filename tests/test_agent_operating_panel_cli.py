@@ -6,6 +6,21 @@ from tests.test_support import SparkTestCase
 
 
 class AgentOperatingPanelCliTests(SparkTestCase):
+    def test_self_panel_invalid_json_names_the_actual_flag(self) -> None:
+        with self.assertRaisesRegex(
+            SystemExit,
+            r"--execution-lane-json must be valid JSON:.*line 1 column 2",
+        ):
+            self.run_cli(
+                "self",
+                "panel",
+                "--home",
+                str(self.home),
+                "--execution-lane-json",
+                "{broken",
+                "--json",
+            )
+
     def test_self_panel_cli_emits_shared_read_model(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",

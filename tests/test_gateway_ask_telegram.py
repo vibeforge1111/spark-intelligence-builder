@@ -28,6 +28,22 @@ from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def test_shadow_telegram_json_reports_invalid_runtime_payload(self) -> None:
+        with patch("spark_intelligence.cli.gateway_ask_telegram", return_value="{broken"):
+            exit_code, stdout, stderr = self.run_cli(
+                "gateway",
+                "shadow-telegram",
+                "hello",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("Builder Telegram shadow validation returned invalid JSON", stderr)
+        self.assertIn("line 1 column 2", stderr)
+
     def vnext_tool_intent_payload(
         self,
         *,

@@ -4693,8 +4693,14 @@ def handle_self_context(args: argparse.Namespace) -> int:
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
-        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
-        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
+        execution_lane_state=_parse_optional_json_object(
+            str(getattr(args, "execution_lane_json", "") or ""),
+            arg_name="--execution-lane-json",
+        ),
+        live_state=_parse_optional_json_object(
+            str(getattr(args, "live_state_json", "") or ""),
+            arg_name="--live-state-json",
+        ),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
@@ -4716,11 +4722,23 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
-        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
-        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
+        execution_lane_state=_parse_optional_json_object(
+            str(getattr(args, "execution_lane_json", "") or ""),
+            arg_name="--execution-lane-json",
+        ),
+        live_state=_parse_optional_json_object(
+            str(getattr(args, "live_state_json", "") or ""),
+            arg_name="--live-state-json",
+        ),
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
-        stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
-        stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        stale_live_claims=_parse_json_object_values(
+            list(getattr(args, "live_claim_json", []) or []),
+            arg_name="--live-claim-json",
+        ),
+        stale_context_claims=_parse_json_object_values(
+            list(getattr(args, "context_claim_json", []) or []),
+            arg_name="--context-claim-json",
+        ),
     )
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
     return 0
@@ -4731,8 +4749,14 @@ def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    latest_spawner_job = _parse_optional_json_object(str(getattr(args, "latest_spawner_job_json", "") or ""))
-    route_context = _parse_optional_json_object(str(getattr(args, "route_context_json", "") or ""))
+    latest_spawner_job = _parse_optional_json_object(
+        str(getattr(args, "latest_spawner_job_json", "") or ""),
+        arg_name="--latest-spawner-job-json",
+    )
+    route_context = _parse_optional_json_object(
+        str(getattr(args, "route_context_json", "") or ""),
+        arg_name="--route-context-json",
+    )
     if not latest_spawner_job:
         context = build_agent_operating_context(
             config_manager=config_manager,
@@ -4956,20 +4980,25 @@ def handle_self_mission_state(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
+def _parse_optional_json_object(raw: str, *, arg_name: str) -> dict[str, object] | None:
     text = str(raw or "").strip()
     if not text:
         return None
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"{arg_name} must be valid JSON: {exc.msg} at line {exc.lineno} column {exc.colno}"
+        ) from exc
     if not isinstance(value, dict):
-        raise SystemExit("--memory-candidate-json must be a JSON object")
+        raise SystemExit(f"{arg_name} must be a JSON object")
     return value
 
 
-def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
+def _parse_json_object_values(values: list[str], *, arg_name: str) -> list[dict[str, object]]:
     parsed: list[dict[str, object]] = []
     for raw in values:
-        value = _parse_optional_json_object(raw)
+        value = _parse_optional_json_object(raw, arg_name=arg_name)
         if value is not None:
             parsed.append(value)
     return parsed
@@ -4991,8 +5020,14 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
         proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
         draft_answer=getattr(args, "draft_answer", None),
-        source_refs=_parse_json_object_values(list(getattr(args, "source_json", []) or [])),
-        memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
+        source_refs=_parse_json_object_values(
+            list(getattr(args, "source_json", []) or []),
+            arg_name="--source-json",
+        ),
+        memory_candidate=_parse_optional_json_object(
+            str(getattr(args, "memory_candidate_json", "") or ""),
+            arg_name="--memory-candidate-json",
+        ),
     )
     payload = trace.to_payload()
     if args.json:
@@ -5017,8 +5052,14 @@ def handle_self_stale_sweep(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = build_stale_context_sweep(
-        live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
-        context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        live_claims=_parse_json_object_values(
+            list(getattr(args, "live_claim_json", []) or []),
+            arg_name="--live-claim-json",
+        ),
+        context_claims=_parse_json_object_values(
+            list(getattr(args, "context_claim_json", []) or []),
+            arg_name="--context-claim-json",
+        ),
         state_db=state_db if bool(getattr(args, "record_contradictions", False)) else None,
         record_contradictions=bool(getattr(args, "record_contradictions", False)),
         request_id=str(getattr(args, "request_id", "") or ""),
@@ -5648,12 +5689,21 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     if args.json:
+        try:
+            parsed_result = json.loads(result)
+        except json.JSONDecodeError as exc:
+            print(
+                "Builder Telegram shadow validation returned invalid JSON: "
+                f"{exc.msg} at line {exc.lineno} column {exc.colno}",
+                file=sys.stderr,
+            )
+            return 1
         print(
             json.dumps(
                 {
                     "ingress_owner": "spark-telegram-bot",
                     "migration_status": "builder_shadow_validation_only",
-                    "result": json.loads(result),
+                    "result": parsed_result,
                 },
                 indent=2,
             )
@@ -8087,7 +8137,10 @@ def handle_config_show(args: argparse.Namespace) -> int:
 def handle_config_set(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    parsed_value = yaml.safe_load(args.value)
+    try:
+        parsed_value = yaml.safe_load(args.value)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"Invalid YAML value for {args.path}: {exc}") from exc
     config_manager.set_path(args.path, parsed_value)
     print(f"Set {args.path} = {json.dumps(parsed_value)}")
     return 0

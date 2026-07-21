@@ -269,6 +269,19 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(applied_event["parent_event_id"], requested_event["event_id"])
         self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
 
+    def test_config_set_rejects_invalid_yaml_without_mutating_config(self) -> None:
+        with self.assertRaisesRegex(SystemExit, r"Invalid YAML value for runtime\.test\.invalid"):
+            self.run_cli(
+                "config",
+                "set",
+                "runtime.test.invalid",
+                "[",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertIsNone(self.config_manager.get_path("runtime.test.invalid"))
+
     def test_config_mutation_preserves_supplied_request_trace_lineage(self) -> None:
         mutation_id = record_config_mutation(
             self.state_db,
