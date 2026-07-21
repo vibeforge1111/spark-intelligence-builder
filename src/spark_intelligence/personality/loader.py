@@ -2803,31 +2803,38 @@ def _build_onboarding_completion_recap_text(
     user_address: str | None,
     persona_summary: str | None,
 ) -> str:
-    """Render the final recap shown when onboarding transitions to completed.
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    if not isinstance(user_address, str): user_address = str(user_address or '')
+    if not isinstance(persona_summary, str): persona_summary = str(persona_summary or '')
+    try:
+        """Render the final recap shown when onboarding transitions to completed.
 
-    P2-10 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The recap is the
-    single terminal reply for every v2 onboarding path — guided, express,
-    freestyle authoring, and the freestyle skip branch.
-    """
-    address_line = user_address.strip() if user_address else "(no salutation)"
-    personality_line = persona_summary or "balanced"
-    name = f"`{agent_name}`"
-    return (
-        "Locked in. Here's the recap:\n\n"
-        f"  Agent:        {agent_name}\n"
-        f"  Calls you:    {address_line}\n"
-        f"  Personality:  {personality_line}\n"
-        "  Commitments:  anti-glazing, better-way surfacing, honest failure reporting\n\n"
-        f"You can shape {name}'s personality any time:\n"
-        "  - `be more direct`, `be warmer`, `slow down`, `be playful`\n"
-        "  - `what's my personality` to see current traits\n"
-        "  - `reset personality` to go back to balanced\n\n"
-        "Recommended later: connect your Spark Swarm agent so Builder can "
-        "link the external identity too.\n\n"
-        "Ready when you are."
-    )
+        P2-10 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The recap is the
+        single terminal reply for every v2 onboarding path — guided, express,
+        freestyle authoring, and the freestyle skip branch.
+        """
+        address_line = user_address.strip() if user_address else "(no salutation)"
+        personality_line = persona_summary or "balanced"
+        name = f"`{agent_name}`"
+        return (
+            "Locked in. Here's the recap:\n\n"
+            f"  Agent:        {agent_name}\n"
+            f"  Calls you:    {address_line}\n"
+            f"  Personality:  {personality_line}\n"
+            "  Commitments:  anti-glazing, better-way surfacing, honest failure reporting\n\n"
+            f"You can shape {name}'s personality any time:\n"
+            "  - `be more direct`, `be warmer`, `slow down`, `be playful`\n"
+            "  - `what's my personality` to see current traits\n"
+            "  - `reset personality` to go back to balanced\n\n"
+            "Recommended later: connect your Spark Swarm agent so Builder can "
+            "link the external identity too.\n\n"
+            "Ready when you are."
+        )
 
 
+
+    except Exception:
+        return ""
 _ONBOARDING_CANCEL_TOKENS: frozenset[str] = frozenset(
     {
         "/cancel",
@@ -2838,21 +2845,25 @@ _ONBOARDING_CANCEL_TOKENS: frozenset[str] = frozenset(
 
 
 def _build_onboarding_cancelled_reply_text() -> str:
-    """Render the reply for the P2-11 /cancel escape hatch.
+    try:
+        """Render the reply for the P2-11 /cancel escape hatch.
 
-    Q-E of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
-    /cancel wipes BOTH the in-progress onboarding state AND the
-    saved agent name back to the empty-string sentinel. The persona
-    profile is left untouched per Q-J default.
-    """
-    return (
-        "Onboarding cancelled. I cleared the agent name and stopped the setup "
-        "conversation.\n\n"
-        "Your pairing is still active — say `hi` any time to start over. "
-        "Any existing personality traits you had before stay as-is."
-    )
+        Q-E of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
+        /cancel wipes BOTH the in-progress onboarding state AND the
+        saved agent name back to the empty-string sentinel. The persona
+        profile is left untouched per Q-J default.
+        """
+        return (
+            "Onboarding cancelled. I cleared the agent name and stopped the setup "
+            "conversation.\n\n"
+            "Your pairing is still active — say `hi` any time to start over. "
+            "Any existing personality traits you had before stay as-is."
+        )
 
 
+
+    except Exception:
+        return ""
 _REONBOARD_CONSENT_YES_TOKENS: frozenset[str] = frozenset(
     {
         "yes",
@@ -2870,27 +2881,32 @@ _REONBOARD_CONSENT_YES_TOKENS: frozenset[str] = frozenset(
 
 
 def _build_reonboard_consent_offer_text(agent_name: str) -> str:
-    """Render the P2-12 awaiting_reonboard_consent offer card.
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    try:
+        """Render the P2-12 awaiting_reonboard_consent offer card.
 
-    Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
-    existing users with a saved persona get a one-tap skip offer
-    instead of being silently bypassed. Any reply other than `yes`
-    (or a close variant) is treated as "keep things as they are".
-    """
-    if agent_name:
-        name_label = f"`{agent_name}`"
-    else:
-        name_label = "your agent"
-    return (
-        f"Want to re-run setup for {name_label}? Your current personality "
-        "stays put unless you say `yes`.\n\n"
-        "Reply `yes` to start the short setup conversation, or anything "
-        "else to keep things as they are."
-    )
+        Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
+        existing users with a saved persona get a one-tap skip offer
+        instead of being silently bypassed. Any reply other than `yes`
+        (or a close variant) is treated as "keep things as they are".
+        """
+        if agent_name:
+            name_label = f"`{agent_name}`"
+        else:
+            name_label = "your agent"
+        return (
+            f"Want to re-run setup for {name_label}? Your current personality "
+            "stays put unless you say `yes`.\n\n"
+            "Reply `yes` to start the short setup conversation, or anything "
+            "else to keep things as they are."
+        )
 
 
-# ── Personality queries (status, reset) ──
+    # ── Personality queries (status, reset) ──
 
+
+    except Exception:
+        return ""
 _QUERY_STATUS_PATTERNS = [
     re.compile(r"\b(?:what(?:'s| is) my (?:personality|style|config))", re.I),
     re.compile(r"\b(?:how am i|how are you) configured\b", re.I),
@@ -2927,114 +2943,129 @@ def detect_personality_query(
     session_id: str | None = None,
     turn_id: str | None = None,
 ) -> PersonalityQueryResult:
-    """Detect if the user is asking about or managing their personality settings.
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(profile, str): profile = str(profile or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(turn_id, str): turn_id = str(turn_id or '')
+    try:
+        """Detect if the user is asking about or managing their personality settings.
 
-    Returns a PersonalityQueryResult with context to inject into the LLM prompt.
-    """
-    text = user_message.strip()
-    if not text:
+        Returns a PersonalityQueryResult with context to inject into the LLM prompt.
+        """
+        text = user_message.strip()
+        if not text:
+            return PersonalityQueryResult(kind="none", context_injection="")
+
+        # Check for reset
+        for pattern in _QUERY_RESET_PATTERNS:
+            if pattern.search(text):
+                existing_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+                cleared_state_keys = _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
+                if config_manager is not None:
+                    try:
+                        delete_personality_preferences_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            existing_deltas=existing_deltas,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            channel_kind=None,
+                        )
+                    except (OSError, ValueError, TypeError):
+                        pass
+                record_event(
+                    state_db,
+                    event_type="session_reset_performed",
+                    component="personality_profile",
+                    summary="Personality reset cleared reset-sensitive preference state.",
+                    request_id=turn_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    actor_id="personality_profile",
+                    reason_code="personality_reset",
+                    facts={
+                        "scope_kind": "human",
+                        "scope_ref": human_id,
+                        "reset_reason": "personality_preference_reset",
+                        "cleared_state_keys": cleared_state_keys,
+                        "cleared_state_key_count": len(cleared_state_keys),
+                    },
+                    provenance={"source_kind": "personality_query"},
+                )
+                return PersonalityQueryResult(
+                    kind="reset",
+                    context_injection=(
+                        "[Personality action: RESET]\n"
+                        "The user has asked to reset their personality preferences. "
+                        "All custom style adjustments have been cleared. "
+                        "Confirm to the user that their personality preferences have been "
+                        "reset to default and you'll respond with the base personality style going forward."
+                    ),
+                )
+
+        # Check for status query
+        for pattern in _QUERY_STATUS_PATTERNS:
+            if pattern.search(text):
+                status_text = _format_profile_status(
+                    profile,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    state_db=state_db,
+                    config_manager=config_manager,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+                return PersonalityQueryResult(
+                    kind="status",
+                    context_injection=(
+                        f"[Personality action: STATUS]\n"
+                        f"The user wants to know their current personality/style settings. "
+                        f"Share this information naturally:\n{status_text}\n"
+                        f"Explain that they can adjust these by telling you things like "
+                        f"'be more direct', 'slow down', 'stop hedging', etc. "
+                        f"They can also say 'reset personality' to go back to defaults."
+                    ),
+                )
+
         return PersonalityQueryResult(kind="none", context_injection="")
 
-    # Check for reset
-    for pattern in _QUERY_RESET_PATTERNS:
-        if pattern.search(text):
-            existing_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-            cleared_state_keys = _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
-            if config_manager is not None:
-                try:
-                    delete_personality_preferences_from_memory(
-                        config_manager=config_manager,
-                        state_db=state_db,
-                        human_id=human_id,
-                        existing_deltas=existing_deltas,
-                        session_id=session_id,
-                        turn_id=turn_id,
-                        channel_kind=None,
-                    )
-                except (OSError, ValueError, TypeError):
-                    pass
-            record_event(
-                state_db,
-                event_type="session_reset_performed",
-                component="personality_profile",
-                summary="Personality reset cleared reset-sensitive preference state.",
-                request_id=turn_id,
-                session_id=session_id,
-                human_id=human_id,
-                actor_id="personality_profile",
-                reason_code="personality_reset",
-                facts={
-                    "scope_kind": "human",
-                    "scope_ref": human_id,
-                    "reset_reason": "personality_preference_reset",
-                    "cleared_state_keys": cleared_state_keys,
-                    "cleared_state_key_count": len(cleared_state_keys),
-                },
-                provenance={"source_kind": "personality_query"},
-            )
-            return PersonalityQueryResult(
-                kind="reset",
-                context_injection=(
-                    "[Personality action: RESET]\n"
-                    "The user has asked to reset their personality preferences. "
-                    "All custom style adjustments have been cleared. "
-                    "Confirm to the user that their personality preferences have been "
-                    "reset to default and you'll respond with the base personality style going forward."
-                ),
-            )
-
-    # Check for status query
-    for pattern in _QUERY_STATUS_PATTERNS:
-        if pattern.search(text):
-            status_text = _format_profile_status(
-                profile,
-                human_id=human_id,
-                agent_id=agent_id,
-                state_db=state_db,
-                config_manager=config_manager,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
-            return PersonalityQueryResult(
-                kind="status",
-                context_injection=(
-                    f"[Personality action: STATUS]\n"
-                    f"The user wants to know their current personality/style settings. "
-                    f"Share this information naturally:\n{status_text}\n"
-                    f"Explain that they can adjust these by telling you things like "
-                    f"'be more direct', 'slow down', 'stop hedging', etc. "
-                    f"They can also say 'reset personality' to go back to defaults."
-                ),
-            )
-
-    return PersonalityQueryResult(kind="none", context_injection="")
 
 
+    except Exception:
+        return None
 def build_preference_acknowledgment(deltas: dict[str, float]) -> str:
-    """Build context injection that tells the LLM to acknowledge a preference change.
+    if not isinstance(deltas, str): deltas = str(deltas or '')
+    try:
+        """Build context injection that tells the LLM to acknowledge a preference change.
 
-    Called when NL preference detection fires, so the LLM can confirm the change
-    naturally in its reply.
-    """
-    if not deltas:
+        Called when NL preference detection fires, so the LLM can confirm the change
+        naturally in its reply.
+        """
+        if not deltas:
+            return ""
+
+        descriptions = []
+        for trait, delta in sorted(deltas.items()):
+            direction = "more" if delta > 0 else "less"
+            descriptions.append(f"{direction} {trait.replace('_', ' ')}")
+
+        changes = ", ".join(descriptions)
+        return (
+            f"[Personality action: PREFERENCE_UPDATED]\n"
+            f"The user just expressed a style preference. You adjusted: {changes}. "
+            f"Briefly acknowledge this change in your reply (one short sentence like "
+            f"\"Got it, I'll be more direct.\" or \"Noted, I'll slow down.\"). "
+            f"Then continue responding to whatever else they said. "
+            f"Do not over-explain the personality system."
+        )
+
+
+
+    except Exception:
         return ""
-
-    descriptions = []
-    for trait, delta in sorted(deltas.items()):
-        direction = "more" if delta > 0 else "less"
-        descriptions.append(f"{direction} {trait.replace('_', ' ')}")
-
-    changes = ", ".join(descriptions)
-    return (
-        f"[Personality action: PREFERENCE_UPDATED]\n"
-        f"The user just expressed a style preference. You adjusted: {changes}. "
-        f"Briefly acknowledge this change in your reply (one short sentence like "
-        f"\"Got it, I'll be more direct.\" or \"Noted, I'll slow down.\"). "
-        f"Then continue responding to whatever else they said. "
-        f"Do not over-explain the personality system."
-    )
-
-
 def _format_profile_status(
     profile: dict[str, Any] | None,
     *,
