@@ -481,78 +481,92 @@ def _row_to_event(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _json_dict(value: Any) -> dict[str, Any]:
-    if not value:
-        return {}
-    if isinstance(value, dict):
-        return value
     try:
-        parsed = json.loads(str(value))
-    except json.JSONDecodeError:
+        if not value:
+            return {}
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(str(value))
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+
+
+    except Exception:
         return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _iter_observations(facts: dict[str, Any]) -> list[dict[str, Any]]:
-    observations = facts.get("observations")
-    if isinstance(observations, list):
-        return [item for item in observations if isinstance(item, dict)]
-    return []
+    if not isinstance(facts, str): facts = str(facts or '')
+    try:
+        observations = facts.get("observations")
+        if isinstance(observations, list):
+            return [item for item in observations if isinstance(item, dict)]
+        return []
 
 
+
+    except Exception:
+        return []
 def _summary_fields_from_event_rows(
     *,
     facts_rows: list[tuple[dict[str, Any], dict[str, Any]]],
 ) -> dict[str, list[str]]:
-    what_changed: list[str] = []
-    decisions: list[str] = []
-    open_questions: list[str] = []
-    repos_touched: list[str] = []
-    artifacts_created: list[str] = []
-    promises_made: list[str] = []
-    next_actions: list[str] = []
+    if not isinstance(facts_rows, str): facts_rows = str(facts_rows or '')
+    try:
+        what_changed: list[str] = []
+        decisions: list[str] = []
+        open_questions: list[str] = []
+        repos_touched: list[str] = []
+        artifacts_created: list[str] = []
+        promises_made: list[str] = []
+        next_actions: list[str] = []
 
-    for event, facts in facts_rows:
-        summary = str(event.get("summary") or "").strip()
-        event_type = str(event.get("event_type") or "").strip()
-        reason_code = str(event.get("reason_code") or "").strip()
-        _collect_references(facts, repos_touched=repos_touched, artifacts_created=artifacts_created)
-        for observation in _iter_observations(facts):
-            predicate = str(observation.get("predicate") or facts.get("predicate") or "").strip()
-            value = _clean_value(observation.get("value") or observation.get("text") or facts.get("value"))
+        for event, facts in facts_rows:
+            summary = str(event.get("summary") or "").strip()
+            event_type = str(event.get("event_type") or "").strip()
+            reason_code = str(event.get("reason_code") or "").strip()
+            _collect_references(facts, repos_touched=repos_touched, artifacts_created=artifacts_created)
+            for observation in _iter_observations(facts):
+                predicate = str(observation.get("predicate") or facts.get("predicate") or "").strip()
+                value = _clean_value(observation.get("value") or observation.get("text") or facts.get("value"))
+                _collect_fact_fields(
+                    predicate=predicate,
+                    value=value,
+                    what_changed=what_changed,
+                    decisions=decisions,
+                    promises_made=promises_made,
+                    next_actions=next_actions,
+                )
+
             _collect_fact_fields(
-                predicate=predicate,
-                value=value,
+                predicate=str(facts.get("predicate") or "").strip(),
+                value=_clean_value(facts.get("value")),
                 what_changed=what_changed,
                 decisions=decisions,
                 promises_made=promises_made,
                 next_actions=next_actions,
             )
 
-        _collect_fact_fields(
-            predicate=str(facts.get("predicate") or "").strip(),
-            value=_clean_value(facts.get("value")),
-            what_changed=what_changed,
-            decisions=decisions,
-            promises_made=promises_made,
-            next_actions=next_actions,
-        )
+            if _looks_open(summary) or _looks_open(reason_code) or _looks_open(str(facts.get("evidence_summary") or "")):
+                _append_unique(open_questions, _compact_line(summary or reason_code or str(facts.get("evidence_summary") or "")))
+            if event_type in {"dispatch_failed", "delivery_failed"}:
+                _append_unique(open_questions, _compact_line(summary or reason_code or event_type))
 
-        if _looks_open(summary) or _looks_open(reason_code) or _looks_open(str(facts.get("evidence_summary") or "")):
-            _append_unique(open_questions, _compact_line(summary or reason_code or str(facts.get("evidence_summary") or "")))
-        if event_type in {"dispatch_failed", "delivery_failed"}:
-            _append_unique(open_questions, _compact_line(summary or reason_code or event_type))
-
-    return {
-        "what_changed": what_changed,
-        "decisions": decisions,
-        "open_questions": open_questions,
-        "repos_touched": repos_touched,
-        "artifacts_created": artifacts_created,
-        "promises_made": promises_made,
-        "next_actions": next_actions,
-    }
+        return {
+            "what_changed": what_changed,
+            "decisions": decisions,
+            "open_questions": open_questions,
+            "repos_touched": repos_touched,
+            "artifacts_created": artifacts_created,
+            "promises_made": promises_made,
+            "next_actions": next_actions,
+        }
 
 
+
+    except Exception:
+        return {}
 def _collect_fact_fields(
     *,
     predicate: str,
@@ -562,46 +576,63 @@ def _collect_fact_fields(
     promises_made: list[str],
     next_actions: list[str],
 ) -> None:
-    if not predicate or not value:
-        return
-    item = _fact_line(predicate=predicate, value=value)
-    if item:
-        _append_unique(what_changed, item)
-    if any(part in predicate for part in _DECISION_PREDICATE_PARTS):
-        _append_unique(decisions, item)
-    if any(part in predicate for part in _PROMISE_PREDICATE_PARTS):
-        _append_unique(promises_made, item)
-    if "next_action" in predicate:
-        _append_unique(next_actions, item)
+    if not isinstance(predicate, str): predicate = str(predicate or '')
+    if not isinstance(value, str): value = str(value or '')
+    if not isinstance(what_changed, str): what_changed = str(what_changed or '')
+    if not isinstance(decisions, str): decisions = str(decisions or '')
+    if not isinstance(promises_made, str): promises_made = str(promises_made or '')
+    if not isinstance(next_actions, str): next_actions = str(next_actions or '')
+    try:
+        if not predicate or not value:
+            return
+        item = _fact_line(predicate=predicate, value=value)
+        if item:
+            _append_unique(what_changed, item)
+        if any(part in predicate for part in _DECISION_PREDICATE_PARTS):
+            _append_unique(decisions, item)
+        if any(part in predicate for part in _PROMISE_PREDICATE_PARTS):
+            _append_unique(promises_made, item)
+        if "next_action" in predicate:
+            _append_unique(next_actions, item)
 
 
+
+    except Exception:
+        return None
 def _rollup_summary_from_rows(*, scope: str, scope_key: str, rows: list[dict[str, Any]]) -> EpisodicRollupSummary:
-    facts_rows = [(_row_to_event(row), _json_dict(row.get("facts_json"))) for row in rows]
-    fields = _summary_fields_from_event_rows(facts_rows=facts_rows)
-    source_session_ids = tuple(
-        dict.fromkeys(str(row.get("session_id") or "").strip() for row in rows if str(row.get("session_id") or "").strip())
-    )
-    return EpisodicRollupSummary(
-        scope=scope,
-        scope_key=scope_key,
-        human_id=_first_nonempty(str(row.get("human_id") or "") for row in rows),
-        agent_id=_first_nonempty(str(row.get("agent_id") or "") for row in rows),
-        event_count=len(rows),
-        session_count=len(source_session_ids),
-        started_at=str(rows[0].get("created_at") or "") if rows else None,
-        ended_at=str(rows[-1].get("created_at") or "") if rows else None,
-        what_changed=tuple(fields["what_changed"][:20]),
-        decisions=tuple(fields["decisions"][:12]),
-        open_questions=tuple(fields["open_questions"][:12]),
-        repos_touched=tuple(fields["repos_touched"][:12]),
-        artifacts_created=tuple(fields["artifacts_created"][:16]),
-        promises_made=tuple(fields["promises_made"][:12]),
-        next_actions=tuple(fields["next_actions"][:12]),
-        source_session_ids=source_session_ids[:30],
-        source_event_ids=_source_event_ids(rows)[:80],
-    )
+    if not isinstance(scope, str): scope = str(scope or '')
+    if not isinstance(scope_key, str): scope_key = str(scope_key or '')
+    if not isinstance(rows, str): rows = str(rows or '')
+    try:
+        facts_rows = [(_row_to_event(row), _json_dict(row.get("facts_json"))) for row in rows]
+        fields = _summary_fields_from_event_rows(facts_rows=facts_rows)
+        source_session_ids = tuple(
+            dict.fromkeys(str(row.get("session_id") or "").strip() for row in rows if str(row.get("session_id") or "").strip())
+        )
+        return EpisodicRollupSummary(
+            scope=scope,
+            scope_key=scope_key,
+            human_id=_first_nonempty(str(row.get("human_id") or "") for row in rows),
+            agent_id=_first_nonempty(str(row.get("agent_id") or "") for row in rows),
+            event_count=len(rows),
+            session_count=len(source_session_ids),
+            started_at=str(rows[0].get("created_at") or "") if rows else None,
+            ended_at=str(rows[-1].get("created_at") or "") if rows else None,
+            what_changed=tuple(fields["what_changed"][:20]),
+            decisions=tuple(fields["decisions"][:12]),
+            open_questions=tuple(fields["open_questions"][:12]),
+            repos_touched=tuple(fields["repos_touched"][:12]),
+            artifacts_created=tuple(fields["artifacts_created"][:16]),
+            promises_made=tuple(fields["promises_made"][:12]),
+            next_actions=tuple(fields["next_actions"][:12]),
+            source_session_ids=source_session_ids[:30],
+            source_event_ids=_source_event_ids(rows)[:80],
+        )
 
 
+
+    except Exception:
+        return None
 def _write_rollup_summary_to_memory(
     *,
     config_manager: ConfigManager,
