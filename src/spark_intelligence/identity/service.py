@@ -584,31 +584,15 @@ def resolve_canonical_agent_identity(
     human_id: str,
     display_name: str | None = None,
 ) -> CanonicalAgentState:
-    local_agent_id = _canonical_agent_id(human_id)
-    # Do not invent an agent name from the human display name or a default.
-    # An empty agent_name means the agent still needs a user-defined name.
-    resolved_name = (display_name or "").strip()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    try:
+        local_agent_id = _canonical_agent_id(human_id)
+        # Do not invent an agent name from the human display name or a default.
+        # An empty agent_name means the agent still needs a user-defined name.
+        resolved_name = (display_name or "").strip()
 
-    with state_db.connect() as conn:
-        link_row = conn.execute(
-            """
-            SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
-            FROM canonical_agent_links
-            WHERE human_id = ?
-            LIMIT 1
-            """,
-            (human_id,),
-        ).fetchone()
-
-        if link_row is None:
-            conn.execute(
-                """
-                INSERT INTO canonical_agent_links(
-                    human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
-                ) VALUES (?, ?, 'builder_local', 'active', NULL, NULL)
-                """,
-                (human_id, local_agent_id),
-            )
+        with state_db.connect() as conn:
             link_row = conn.execute(
                 """
                 SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
@@ -619,57 +603,26 @@ def resolve_canonical_agent_identity(
                 (human_id,),
             ).fetchone()
 
-        canonical_agent_id = str(link_row["canonical_agent_id"] or local_agent_id)
-        profile_row = conn.execute(
-            """
-            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
-            FROM agent_profiles
-            WHERE agent_id = ?
-            LIMIT 1
-            """,
-            (canonical_agent_id,),
-        ).fetchone()
+            if link_row is None:
+                conn.execute(
+                    """
+                    INSERT INTO canonical_agent_links(
+                        human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                    ) VALUES (?, ?, 'builder_local', 'active', NULL, NULL)
+                    """,
+                    (human_id, local_agent_id),
+                )
+                link_row = conn.execute(
+                    """
+                    SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                    FROM canonical_agent_links
+                    WHERE human_id = ?
+                    LIMIT 1
+                    """,
+                    (human_id,),
+                ).fetchone()
 
-        if profile_row is None:
-            origin = "builder_local" if canonical_agent_id == local_agent_id else "spark_swarm"
-            external_system = "spark_swarm" if canonical_agent_id != local_agent_id else None
-            external_agent_id = canonical_agent_id if canonical_agent_id != local_agent_id else None
-            name_updated_at = _utc_now_iso()
-            conn.execute(
-                """
-                INSERT INTO agent_profiles(
-                    agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
-                """,
-                (
-                    canonical_agent_id,
-                    human_id,
-                    resolved_name,
-                    origin,
-                    external_system,
-                    external_agent_id,
-                    name_updated_at,
-                    origin,
-                ),
-            )
-            profile_row = conn.execute(
-                """
-                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
-                FROM agent_profiles
-                WHERE agent_id = ?
-                LIMIT 1
-                """,
-                (canonical_agent_id,),
-            ).fetchone()
-        elif canonical_agent_id == local_agent_id and not str(profile_row["agent_name"] or "").strip() and resolved_name:
-            conn.execute(
-                """
-                UPDATE agent_profiles
-                SET agent_name = ?, name_updated_at = ?, name_source = 'builder_local', updated_at = CURRENT_TIMESTAMP
-                WHERE agent_id = ?
-                """,
-                (resolved_name, _utc_now_iso(), canonical_agent_id),
-            )
+            canonical_agent_id = str(link_row["canonical_agent_id"] or local_agent_id)
             profile_row = conn.execute(
                 """
                 SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
@@ -680,79 +633,137 @@ def resolve_canonical_agent_identity(
                 (canonical_agent_id,),
             ).fetchone()
 
-        conn.execute(
-            """
-            INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
-            VALUES (?, ?, 'default', 'active')
-            ON CONFLICT(agent_id) DO UPDATE SET
-                human_id=excluded.human_id,
-                status='active',
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (canonical_agent_id, human_id),
-        )
-        conn.commit()
+            if profile_row is None:
+                origin = "builder_local" if canonical_agent_id == local_agent_id else "spark_swarm"
+                external_system = "spark_swarm" if canonical_agent_id != local_agent_id else None
+                external_agent_id = canonical_agent_id if canonical_agent_id != local_agent_id else None
+                name_updated_at = _utc_now_iso()
+                conn.execute(
+                    """
+                    INSERT INTO agent_profiles(
+                        agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
+                    ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                    """,
+                    (
+                        canonical_agent_id,
+                        human_id,
+                        resolved_name,
+                        origin,
+                        external_system,
+                        external_agent_id,
+                        name_updated_at,
+                        origin,
+                    ),
+                )
+                profile_row = conn.execute(
+                    """
+                    SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
+                    FROM agent_profiles
+                    WHERE agent_id = ?
+                    LIMIT 1
+                    """,
+                    (canonical_agent_id,),
+                ).fetchone()
+            elif canonical_agent_id == local_agent_id and not str(profile_row["agent_name"] or "").strip() and resolved_name:
+                conn.execute(
+                    """
+                    UPDATE agent_profiles
+                    SET agent_name = ?, name_updated_at = ?, name_source = 'builder_local', updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_id = ?
+                    """,
+                    (resolved_name, _utc_now_iso(), canonical_agent_id),
+                )
+                profile_row = conn.execute(
+                    """
+                    SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
+                    FROM agent_profiles
+                    WHERE agent_id = ?
+                    LIMIT 1
+                    """,
+                    (canonical_agent_id,),
+                ).fetchone()
 
-    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+            conn.execute(
+                """
+                INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
+                VALUES (?, ?, 'default', 'active')
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    human_id=excluded.human_id,
+                    status='active',
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (canonical_agent_id, human_id),
+            )
+            conn.commit()
+
+        return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+
+    except Exception:
+        return None
 def read_canonical_agent_state(
     *,
     state_db: StateDB,
     human_id: str,
 ) -> CanonicalAgentState:
-    with state_db.connect() as conn:
-        link_row = conn.execute(
-            """
-            SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
-            FROM canonical_agent_links
-            WHERE human_id = ?
-            LIMIT 1
-            """,
-            (human_id,),
-        ).fetchone()
-        if link_row is None:
-            return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            link_row = conn.execute(
+                """
+                SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                FROM canonical_agent_links
+                WHERE human_id = ?
+                LIMIT 1
+                """,
+                (human_id,),
+            ).fetchone()
+            if link_row is None:
+                return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
 
-        canonical_agent_id = str(link_row["canonical_agent_id"])
-        profile_row = conn.execute(
-            """
-            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
-            FROM agent_profiles
-            WHERE agent_id = ?
-            LIMIT 1
-            """,
-            (canonical_agent_id,),
-        ).fetchone()
-        if profile_row is None:
-            return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
-        alias_rows = conn.execute(
-            """
-            SELECT alias_agent_id
-            FROM agent_identity_aliases
-            WHERE canonical_agent_id = ?
-            ORDER BY alias_agent_id
-            """,
-            (canonical_agent_id,),
-        ).fetchall()
+            canonical_agent_id = str(link_row["canonical_agent_id"])
+            profile_row = conn.execute(
+                """
+                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
+                FROM agent_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (canonical_agent_id,),
+            ).fetchone()
+            if profile_row is None:
+                return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+            alias_rows = conn.execute(
+                """
+                SELECT alias_agent_id
+                FROM agent_identity_aliases
+                WHERE canonical_agent_id = ?
+                ORDER BY alias_agent_id
+                """,
+                (canonical_agent_id,),
+            ).fetchall()
 
-    return CanonicalAgentState(
-        human_id=str(profile_row["human_id"]),
-        agent_id=str(profile_row["agent_id"]),
-        agent_name=str(profile_row["agent_name"] or ""),
-        origin=str(profile_row["origin"] or "builder_local"),
-        status=str(link_row["status"] or profile_row["status"] or "active"),
-        preferred_source=str(link_row["preferred_source"] or "builder_local"),
-        external_system=_read_optional_text(profile_row["external_system"]),
-        external_agent_id=_read_optional_text(profile_row["external_agent_id"]),
-        conflict_agent_id=_read_optional_text(link_row["conflict_agent_id"]),
-        conflict_reason=_read_optional_text(link_row["conflict_reason"]),
-        alias_agent_ids=[str(row["alias_agent_id"]) for row in alias_rows],
-        name_updated_at=_read_optional_text(profile_row["name_updated_at"]),
-        name_source=_read_optional_text(profile_row["name_source"]),
-    )
+        return CanonicalAgentState(
+            human_id=str(profile_row["human_id"]),
+            agent_id=str(profile_row["agent_id"]),
+            agent_name=str(profile_row["agent_name"] or ""),
+            origin=str(profile_row["origin"] or "builder_local"),
+            status=str(link_row["status"] or profile_row["status"] or "active"),
+            preferred_source=str(link_row["preferred_source"] or "builder_local"),
+            external_system=_read_optional_text(profile_row["external_system"]),
+            external_agent_id=_read_optional_text(profile_row["external_agent_id"]),
+            conflict_agent_id=_read_optional_text(link_row["conflict_agent_id"]),
+            conflict_reason=_read_optional_text(link_row["conflict_reason"]),
+            alias_agent_ids=[str(row["alias_agent_id"]) for row in alias_rows],
+            name_updated_at=_read_optional_text(profile_row["name_updated_at"]),
+            name_source=_read_optional_text(profile_row["name_source"]),
+        )
 
 
+
+    except Exception:
+        return None
 def link_spark_swarm_agent(
     *,
     state_db: StateDB,
@@ -762,159 +773,168 @@ def link_spark_swarm_agent(
     confirmed_at: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> CanonicalAgentState:
-    if not swarm_agent_id.strip():
-        raise ValueError("Spark Swarm agent_id must not be empty.")
-    local_agent_id = _canonical_agent_id(human_id)
-    incoming_name = agent_name.strip() or "Spark Agent"
-    incoming_confirmed_at = confirmed_at or _utc_now_iso()
-    existing = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
-    metadata_json = json.dumps(metadata, sort_keys=True) if metadata else None
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(swarm_agent_id, str): swarm_agent_id = str(swarm_agent_id or '')
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    if not isinstance(confirmed_at, str): confirmed_at = str(confirmed_at or '')
+    if not isinstance(metadata, str): metadata = str(metadata or '')
+    try:
+        if not swarm_agent_id.strip():
+            raise ValueError("Spark Swarm agent_id must not be empty.")
+        local_agent_id = _canonical_agent_id(human_id)
+        incoming_name = agent_name.strip() or "Spark Agent"
+        incoming_confirmed_at = confirmed_at or _utc_now_iso()
+        existing = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+        metadata_json = json.dumps(metadata, sort_keys=True) if metadata else None
 
-    with state_db.connect() as conn:
-        existing_swarm_row = conn.execute(
-            """
-            SELECT agent_name, name_updated_at, name_source
-            FROM agent_profiles
-            WHERE agent_id = ?
-            LIMIT 1
-            """,
-            (swarm_agent_id,),
-        ).fetchone()
-        current_name = existing.agent_name
-        current_confirmed_at = existing.name_updated_at
-        current_source = existing.name_source
-        if existing_swarm_row:
-            current_name, current_confirmed_at, current_source = _choose_agent_name(
+        with state_db.connect() as conn:
+            existing_swarm_row = conn.execute(
+                """
+                SELECT agent_name, name_updated_at, name_source
+                FROM agent_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (swarm_agent_id,),
+            ).fetchone()
+            current_name = existing.agent_name
+            current_confirmed_at = existing.name_updated_at
+            current_source = existing.name_source
+            if existing_swarm_row:
+                current_name, current_confirmed_at, current_source = _choose_agent_name(
+                    current_name=current_name,
+                    current_confirmed_at=current_confirmed_at,
+                    current_source=current_source,
+                    incoming_name=existing_swarm_row["agent_name"],
+                    incoming_confirmed_at=existing_swarm_row["name_updated_at"],
+                    incoming_source=str(existing_swarm_row["name_source"] or "spark_swarm"),
+                )
+            chosen_name, chosen_confirmed_at, chosen_source = _choose_agent_name(
                 current_name=current_name,
                 current_confirmed_at=current_confirmed_at,
                 current_source=current_source,
-                incoming_name=existing_swarm_row["agent_name"],
-                incoming_confirmed_at=existing_swarm_row["name_updated_at"],
-                incoming_source=str(existing_swarm_row["name_source"] or "spark_swarm"),
+                incoming_name=incoming_name,
+                incoming_confirmed_at=incoming_confirmed_at,
+                incoming_source="spark_swarm",
             )
-        chosen_name, chosen_confirmed_at, chosen_source = _choose_agent_name(
-            current_name=current_name,
-            current_confirmed_at=current_confirmed_at,
-            current_source=current_source,
-            incoming_name=incoming_name,
-            incoming_confirmed_at=incoming_confirmed_at,
-            incoming_source="spark_swarm",
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_profiles(
-                agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, metadata_json, name_updated_at, name_source
-            ) VALUES (?, ?, ?, 'spark_swarm', 'active', 'spark_swarm', ?, ?, ?, ?)
-            ON CONFLICT(agent_id) DO UPDATE SET
-                human_id=excluded.human_id,
-                agent_name=excluded.agent_name,
-                origin='spark_swarm',
-                status='active',
-                external_system='spark_swarm',
-                external_agent_id=excluded.external_agent_id,
-                metadata_json=COALESCE(excluded.metadata_json, agent_profiles.metadata_json),
-                name_updated_at=excluded.name_updated_at,
-                name_source=excluded.name_source,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (
-                swarm_agent_id,
-                human_id,
-                chosen_name or "Spark Agent",
-                swarm_agent_id,
-                metadata_json,
-                chosen_confirmed_at or incoming_confirmed_at,
-                chosen_source or "spark_swarm",
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
-            VALUES (?, ?, 'default', 'active')
-            ON CONFLICT(agent_id) DO UPDATE SET
-                human_id=excluded.human_id,
-                status='active',
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (swarm_agent_id, human_id),
-        )
+            conn.execute(
+                """
+                INSERT INTO agent_profiles(
+                    agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, metadata_json, name_updated_at, name_source
+                ) VALUES (?, ?, ?, 'spark_swarm', 'active', 'spark_swarm', ?, ?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    human_id=excluded.human_id,
+                    agent_name=excluded.agent_name,
+                    origin='spark_swarm',
+                    status='active',
+                    external_system='spark_swarm',
+                    external_agent_id=excluded.external_agent_id,
+                    metadata_json=COALESCE(excluded.metadata_json, agent_profiles.metadata_json),
+                    name_updated_at=excluded.name_updated_at,
+                    name_source=excluded.name_source,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    swarm_agent_id,
+                    human_id,
+                    chosen_name or "Spark Agent",
+                    swarm_agent_id,
+                    metadata_json,
+                    chosen_confirmed_at or incoming_confirmed_at,
+                    chosen_source or "spark_swarm",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
+                VALUES (?, ?, 'default', 'active')
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    human_id=excluded.human_id,
+                    status='active',
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (swarm_agent_id, human_id),
+            )
 
-        next_status = "active"
-        conflict_agent_id = None
-        conflict_reason = None
-        if existing.agent_id not in {local_agent_id, swarm_agent_id}:
-            next_status = "identity_conflict"
-            conflict_agent_id = existing.agent_id
-            conflict_reason = "multiple_agent_ids_for_human"
-        else:
-            if existing.agent_id != swarm_agent_id:
-                conn.execute(
-                    """
-                    INSERT INTO agent_identity_aliases(alias_agent_id, canonical_agent_id, alias_kind, reason_code)
-                    VALUES (?, ?, 'superseded_local', 'spark_swarm_link')
-                    ON CONFLICT(alias_agent_id) DO UPDATE SET
-                        canonical_agent_id=excluded.canonical_agent_id,
-                        alias_kind=excluded.alias_kind,
-                        reason_code=excluded.reason_code
-                    """,
-                    (existing.agent_id, swarm_agent_id),
-                )
-                conn.execute(
-                    """
-                    UPDATE agent_profiles
-                    SET status = 'linked', updated_at = CURRENT_TIMESTAMP
-                    WHERE agent_id = ?
-                    """,
-                    (existing.agent_id,),
-                )
-                conn.execute(
-                    """
-                    UPDATE agent_identities
-                    SET status = 'linked', updated_at = CURRENT_TIMESTAMP
-                    WHERE agent_id = ?
-                    """,
-                    (existing.agent_id,),
-                )
-                conn.execute(
-                    """
-                    UPDATE session_bindings
-                    SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE agent_id = ?
-                    """,
-                    (swarm_agent_id, existing.agent_id),
-                )
-        _reanchor_builder_persona_rows(
-            conn=conn,
-            human_id=human_id,
-            builder_agent_id=local_agent_id,
-            candidate_agent_ids=[existing.agent_id, swarm_agent_id],
-        )
+            next_status = "active"
+            conflict_agent_id = None
+            conflict_reason = None
+            if existing.agent_id not in {local_agent_id, swarm_agent_id}:
+                next_status = "identity_conflict"
+                conflict_agent_id = existing.agent_id
+                conflict_reason = "multiple_agent_ids_for_human"
+            else:
+                if existing.agent_id != swarm_agent_id:
+                    conn.execute(
+                        """
+                        INSERT INTO agent_identity_aliases(alias_agent_id, canonical_agent_id, alias_kind, reason_code)
+                        VALUES (?, ?, 'superseded_local', 'spark_swarm_link')
+                        ON CONFLICT(alias_agent_id) DO UPDATE SET
+                            canonical_agent_id=excluded.canonical_agent_id,
+                            alias_kind=excluded.alias_kind,
+                            reason_code=excluded.reason_code
+                        """,
+                        (existing.agent_id, swarm_agent_id),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE agent_profiles
+                        SET status = 'linked', updated_at = CURRENT_TIMESTAMP
+                        WHERE agent_id = ?
+                        """,
+                        (existing.agent_id,),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE agent_identities
+                        SET status = 'linked', updated_at = CURRENT_TIMESTAMP
+                        WHERE agent_id = ?
+                        """,
+                        (existing.agent_id,),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE session_bindings
+                        SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE agent_id = ?
+                        """,
+                        (swarm_agent_id, existing.agent_id),
+                    )
+            _reanchor_builder_persona_rows(
+                conn=conn,
+                human_id=human_id,
+                builder_agent_id=local_agent_id,
+                candidate_agent_ids=[existing.agent_id, swarm_agent_id],
+            )
 
-        conn.execute(
-            """
-            INSERT INTO canonical_agent_links(
-                human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
-            ) VALUES (?, ?, 'spark_swarm', ?, ?, ?)
-            ON CONFLICT(human_id) DO UPDATE SET
-                canonical_agent_id=excluded.canonical_agent_id,
-                preferred_source=excluded.preferred_source,
-                status=excluded.status,
-                conflict_agent_id=excluded.conflict_agent_id,
-                conflict_reason=excluded.conflict_reason,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (
-                human_id,
-                swarm_agent_id,
-                next_status,
-                conflict_agent_id,
-                conflict_reason,
-            ),
-        )
-        conn.commit()
-    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+            conn.execute(
+                """
+                INSERT INTO canonical_agent_links(
+                    human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                ) VALUES (?, ?, 'spark_swarm', ?, ?, ?)
+                ON CONFLICT(human_id) DO UPDATE SET
+                    canonical_agent_id=excluded.canonical_agent_id,
+                    preferred_source=excluded.preferred_source,
+                    status=excluded.status,
+                    conflict_agent_id=excluded.conflict_agent_id,
+                    conflict_reason=excluded.conflict_reason,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    human_id,
+                    swarm_agent_id,
+                    next_status,
+                    conflict_agent_id,
+                    conflict_reason,
+                ),
+            )
+            conn.commit()
+        return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+
+    except Exception:
+        return None
 def rename_agent_identity(
     *,
     state_db: StateDB,
@@ -923,118 +943,132 @@ def rename_agent_identity(
     source_surface: str,
     source_ref: str | None = None,
 ) -> CanonicalAgentState:
-    resolved_name = new_name.strip()
-    if not resolved_name:
-        raise ValueError("Agent name must not be empty.")
-    state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
-    if state.agent_name == resolved_name:
-        return state
-    rename_id = f"agent-rename-{uuid4().hex[:12]}"
-    recorded_at = _utc_now_iso()
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            UPDATE agent_profiles
-            SET agent_name = ?, name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE agent_id = ?
-            """,
-            (resolved_name, recorded_at, source_surface, state.agent_id),
-        )
-        # Keep the persona profile's display name in sync with the
-        # canonical agent_profiles row. Without this update the two
-        # tables drift: rename hits agent_profiles but persona_profiles
-        # keeps whatever was written during onboarding, so downstream
-        # readers that still look at persona_name (TUI welcome banner,
-        # some logging paths) display the stale value. The UPDATE only
-        # runs if a persona profile row exists for this agent — agents
-        # without an onboarded persona stay untouched.
-        conn.execute(
-            """
-            UPDATE agent_persona_profiles
-            SET persona_name = ?, updated_at = ?
-            WHERE agent_id = ?
-            """,
-            (resolved_name, recorded_at, state.agent_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_rename_history(
-                rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                rename_id,
-                state.agent_id,
-                human_id,
-                state.agent_name,
-                resolved_name,
-                source_surface,
-                source_ref,
-                recorded_at,
-            ),
-        )
-        conn.commit()
-    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(new_name, str): new_name = str(new_name or '')
+    if not isinstance(source_surface, str): source_surface = str(source_surface or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        resolved_name = new_name.strip()
+        if not resolved_name:
+            raise ValueError("Agent name must not be empty.")
+        state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+        if state.agent_name == resolved_name:
+            return state
+        rename_id = f"agent-rename-{uuid4().hex[:12]}"
+        recorded_at = _utc_now_iso()
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_profiles
+                SET agent_name = ?, name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ?
+                """,
+                (resolved_name, recorded_at, source_surface, state.agent_id),
+            )
+            # Keep the persona profile's display name in sync with the
+            # canonical agent_profiles row. Without this update the two
+            # tables drift: rename hits agent_profiles but persona_profiles
+            # keeps whatever was written during onboarding, so downstream
+            # readers that still look at persona_name (TUI welcome banner,
+            # some logging paths) display the stale value. The UPDATE only
+            # runs if a persona profile row exists for this agent — agents
+            # without an onboarded persona stay untouched.
+            conn.execute(
+                """
+                UPDATE agent_persona_profiles
+                SET persona_name = ?, updated_at = ?
+                WHERE agent_id = ?
+                """,
+                (resolved_name, recorded_at, state.agent_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_rename_history(
+                    rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rename_id,
+                    state.agent_id,
+                    human_id,
+                    state.agent_name,
+                    resolved_name,
+                    source_surface,
+                    source_ref,
+                    recorded_at,
+                ),
+            )
+            conn.commit()
+        return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+
+    except Exception:
+        return None
 def cancel_agent_onboarding(
     *,
     state_db: StateDB,
     human_id: str,
     source_ref: str | None = None,
 ) -> CanonicalAgentState:
-    """Wipe the agent name back to the empty-string sentinel.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        """Wipe the agent name back to the empty-string sentinel.
 
-    This is the identity-layer half of the Q-E `/cancel` flow
-    (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11, P2-2 in
-    docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md). The caller is also
-    responsible for clearing the onboarding state blob from
-    runtime_state (see personality.loader._delete_agent_onboarding_state)
-    and for the user-facing cancel reply.
+        This is the identity-layer half of the Q-E `/cancel` flow
+        (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11, P2-2 in
+        docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md). The caller is also
+        responsible for clearing the onboarding state blob from
+        runtime_state (see personality.loader._delete_agent_onboarding_state)
+        and for the user-facing cancel reply.
 
-    Unlike rename_agent_identity, this function deliberately permits the
-    empty-string target because Phase 1 uses "" as the sentinel for
-    "no user-defined name yet" (CanonicalAgentState.has_user_defined_name
-    depends on it). Persona profile is left untouched per Q-J default.
+        Unlike rename_agent_identity, this function deliberately permits the
+        empty-string target because Phase 1 uses "" as the sentinel for
+        "no user-defined name yet" (CanonicalAgentState.has_user_defined_name
+        depends on it). Persona profile is left untouched per Q-J default.
 
-    No-op if the agent already has no name.
-    """
-    state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
-    if not state.agent_name:
-        return state
-    rename_id = f"agent-rename-{uuid4().hex[:12]}"
-    recorded_at = _utc_now_iso()
-    source_surface = "onboarding_cancel"
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            UPDATE agent_profiles
-            SET agent_name = '', name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE agent_id = ?
-            """,
-            (recorded_at, source_surface, state.agent_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_rename_history(
-                rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                rename_id,
-                state.agent_id,
-                human_id,
-                state.agent_name,
-                "",
-                source_surface,
-                source_ref,
-                recorded_at,
-            ),
-        )
-        conn.commit()
-    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+        No-op if the agent already has no name.
+        """
+        state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+        if not state.agent_name:
+            return state
+        rename_id = f"agent-rename-{uuid4().hex[:12]}"
+        recorded_at = _utc_now_iso()
+        source_surface = "onboarding_cancel"
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_profiles
+                SET agent_name = '', name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ?
+                """,
+                (recorded_at, source_surface, state.agent_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_rename_history(
+                    rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rename_id,
+                    state.agent_id,
+                    human_id,
+                    state.agent_name,
+                    "",
+                    source_surface,
+                    source_ref,
+                    recorded_at,
+                ),
+            )
+            conn.commit()
+        return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+
+    except Exception:
+        return None
 def list_agent_rename_history(
     *,
     state_db: StateDB,
