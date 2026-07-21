@@ -267,121 +267,146 @@ def _builder_event_rows(trace_index: dict[str, Any]) -> int:
 
 
 def _builder_event_sample_count(trace_index: dict[str, Any]) -> int:
-    builder_event_samples = _dict(trace_index.get("builder_event_samples"))
-    return _int(builder_event_samples.get("sample_count"))
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        builder_event_samples = _dict(trace_index.get("builder_event_samples"))
+        return _int(builder_event_samples.get("sample_count"))
 
 
+
+    except Exception:
+        return 0
 def _builder_trace_group_count(trace_index: dict[str, Any]) -> int:
-    builder_trace_groups = _dict(trace_index.get("builder_trace_groups"))
-    return _int(builder_trace_groups.get("group_count"))
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        builder_trace_groups = _dict(trace_index.get("builder_trace_groups"))
+        return _int(builder_trace_groups.get("group_count"))
 
 
+
+    except Exception:
+        return 0
 def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
-    trace_health = _dict(trace_index.get("builder_trace_health"))
-    return {
-        "present": bool(trace_health),
-        "health_flags": _list(trace_health.get("health_flags")),
-        "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
-        "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
-        "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
-        "trace_group_count": _int(trace_health.get("trace_group_count")),
-        "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
-        "orphan_parent_event_sources": _orphan_parent_event_sources(trace_health),
-        "recent_windows": _trace_health_recent_windows(trace_health),
-        "claim_boundary": (
-            "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
-            "not final task outcome or memory truth."
-        ),
-    }
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        trace_health = _dict(trace_index.get("builder_trace_health"))
+        return {
+            "present": bool(trace_health),
+            "health_flags": _list(trace_health.get("health_flags")),
+            "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
+            "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+            "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
+            "trace_group_count": _int(trace_health.get("trace_group_count")),
+            "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
+            "orphan_parent_event_sources": _orphan_parent_event_sources(trace_health),
+            "recent_windows": _trace_health_recent_windows(trace_health),
+            "claim_boundary": (
+                "Trace health flags are black-box diagnostics. They show observability gaps and open severity, "
+                "not final task outcome or memory truth."
+            ),
+        }
 
 
+
+    except Exception:
+        return {}
 def _trace_topology_context(trace_index: dict[str, Any]) -> dict[str, Any]:
-    trace_groups = _dict(trace_index.get("builder_trace_groups"))
-    groups: list[dict[str, Any]] = []
-    parent_link_count = 0
-    orphan_parent_event_count = 0
-    edge_sample_count = 0
-    for raw_group in _list(trace_groups.get("groups"))[:10]:
-        group = _dict(raw_group)
-        topology = _dict(group.get("topology"))
-        edges = [_dict(edge) for edge in _list(topology.get("edge_sample"))[:5]]
-        parent_links = _int(topology.get("parent_link_count"))
-        orphan_count = _int(topology.get("orphan_parent_event_count"))
-        edge_count = _int(topology.get("edge_sample_count"))
-        parent_link_count += parent_links
-        orphan_parent_event_count += orphan_count
-        edge_sample_count += edge_count
-        groups.append(
-            {
-                "trace_ref": str(group.get("trace_ref") or ""),
-                "event_count": _int(group.get("event_count")),
-                "first_seen_at": group.get("first_seen_at"),
-                "last_seen_at": group.get("last_seen_at"),
-                "topology": {
-                    "available": bool(topology.get("available")),
-                    "root_event_count": _int(topology.get("root_event_count")),
-                    "parent_link_count": parent_links,
-                    "orphan_parent_event_count": orphan_count,
-                    "edge_sample_count": edge_count,
-                    "edge_sample": [
-                        {
-                            "parent_event_id": edge.get("parent_event_id"),
-                            "child_event_id": edge.get("child_event_id"),
-                            "parent_event_type": edge.get("parent_event_type"),
-                            "child_event_type": edge.get("child_event_type"),
-                            "child_component": edge.get("child_component"),
-                            "parent_exists": bool(edge.get("parent_exists")),
-                            "parent_in_same_trace": bool(edge.get("parent_in_same_trace")),
-                        }
-                        for edge in edges
-                    ],
-                },
-            }
-        )
-    return {
-        "present": bool(trace_groups),
-        "group_count": _int(trace_groups.get("group_count")) or len(groups),
-        "projected_group_count": len(groups),
-        "parent_link_count": parent_link_count,
-        "orphan_parent_event_count": orphan_parent_event_count,
-        "edge_sample_count": edge_sample_count,
-        "groups": groups,
-        "claim_boundary": (
-            "Trace topology is a redacted event graph projection. It can guide repair and debugging; "
-            "it is not event body evidence, memory truth, or proof of task success."
-        ),
-    }
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        trace_groups = _dict(trace_index.get("builder_trace_groups"))
+        groups: list[dict[str, Any]] = []
+        parent_link_count = 0
+        orphan_parent_event_count = 0
+        edge_sample_count = 0
+        for raw_group in _list(trace_groups.get("groups"))[:10]:
+            group = _dict(raw_group)
+            topology = _dict(group.get("topology"))
+            edges = [_dict(edge) for edge in _list(topology.get("edge_sample"))[:5]]
+            parent_links = _int(topology.get("parent_link_count"))
+            orphan_count = _int(topology.get("orphan_parent_event_count"))
+            edge_count = _int(topology.get("edge_sample_count"))
+            parent_link_count += parent_links
+            orphan_parent_event_count += orphan_count
+            edge_sample_count += edge_count
+            groups.append(
+                {
+                    "trace_ref": str(group.get("trace_ref") or ""),
+                    "event_count": _int(group.get("event_count")),
+                    "first_seen_at": group.get("first_seen_at"),
+                    "last_seen_at": group.get("last_seen_at"),
+                    "topology": {
+                        "available": bool(topology.get("available")),
+                        "root_event_count": _int(topology.get("root_event_count")),
+                        "parent_link_count": parent_links,
+                        "orphan_parent_event_count": orphan_count,
+                        "edge_sample_count": edge_count,
+                        "edge_sample": [
+                            {
+                                "parent_event_id": edge.get("parent_event_id"),
+                                "child_event_id": edge.get("child_event_id"),
+                                "parent_event_type": edge.get("parent_event_type"),
+                                "child_event_type": edge.get("child_event_type"),
+                                "child_component": edge.get("child_component"),
+                                "parent_exists": bool(edge.get("parent_exists")),
+                                "parent_in_same_trace": bool(edge.get("parent_in_same_trace")),
+                            }
+                            for edge in edges
+                        ],
+                    },
+                }
+            )
+        return {
+            "present": bool(trace_groups),
+            "group_count": _int(trace_groups.get("group_count")) or len(groups),
+            "projected_group_count": len(groups),
+            "parent_link_count": parent_link_count,
+            "orphan_parent_event_count": orphan_parent_event_count,
+            "edge_sample_count": edge_sample_count,
+            "groups": groups,
+            "claim_boundary": (
+                "Trace topology is a redacted event graph projection. It can guide repair and debugging; "
+                "it is not event body evidence, memory truth, or proof of task success."
+            ),
+        }
 
 
+
+    except Exception:
+        return {}
 def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
-    spawner = _dict(trace_index.get("spawner_prd_auto_trace_samples"))
-    spawner_join = _dict(spawner.get("join_keys"))
-    spawner_derived = _dict(spawner.get("derived_trace_contract"))
-    spawner_request_overlap = _dict(spawner.get("builder_request_overlap"))
-    spawner_trace_overlap = _dict(spawner.get("builder_trace_ref_overlap"))
-    telegram_final_gate = _dict(trace_index.get("telegram_final_answer_gate_samples"))
-    telegram_join = _dict(telegram_final_gate.get("trace_join"))
-    return {
-        "present": bool(spawner or telegram_final_gate),
-        "spawner_prd_request_id_count": _int(spawner_join.get("request_id_count")),
-        "spawner_prd_mission_id_count": _int(spawner_join.get("mission_id_count")),
-        "spawner_prd_trace_ref_count": _int(spawner_join.get("trace_ref_count")),
-        "spawner_prd_derived_trace_ref_count": _int(spawner_join.get("derived_trace_ref_count")),
-        "spawner_trace_contract_status": str(spawner_derived.get("status") or "unknown"),
-        "spawner_builder_request_overlap_count": _int(
-            spawner_request_overlap.get("matched_builder_request_id_count")
-        ),
-        "spawner_builder_trace_ref_overlap_count": _int(
-            spawner_trace_overlap.get("matched_builder_trace_ref_count")
-        ),
-        "telegram_final_answer_trace_join_status": str(telegram_join.get("status") or "unknown"),
-        "claim_boundary": (
-            "Cross-system trace context is metadata-only join shape. It shows whether traces can be stitched; "
-            "it is not action success, permission evidence, or user-message content."
-        ),
-    }
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        spawner = _dict(trace_index.get("spawner_prd_auto_trace_samples"))
+        spawner_join = _dict(spawner.get("join_keys"))
+        spawner_derived = _dict(spawner.get("derived_trace_contract"))
+        spawner_request_overlap = _dict(spawner.get("builder_request_overlap"))
+        spawner_trace_overlap = _dict(spawner.get("builder_trace_ref_overlap"))
+        telegram_final_gate = _dict(trace_index.get("telegram_final_answer_gate_samples"))
+        telegram_join = _dict(telegram_final_gate.get("trace_join"))
+        return {
+            "present": bool(spawner or telegram_final_gate),
+            "spawner_prd_request_id_count": _int(spawner_join.get("request_id_count")),
+            "spawner_prd_mission_id_count": _int(spawner_join.get("mission_id_count")),
+            "spawner_prd_trace_ref_count": _int(spawner_join.get("trace_ref_count")),
+            "spawner_prd_derived_trace_ref_count": _int(spawner_join.get("derived_trace_ref_count")),
+            "spawner_trace_contract_status": str(spawner_derived.get("status") or "unknown"),
+            "spawner_builder_request_overlap_count": _int(
+                spawner_request_overlap.get("matched_builder_request_id_count")
+            ),
+            "spawner_builder_trace_ref_overlap_count": _int(
+                spawner_trace_overlap.get("matched_builder_trace_ref_count")
+            ),
+            "telegram_final_answer_trace_join_status": str(telegram_join.get("status") or "unknown"),
+            "claim_boundary": (
+                "Cross-system trace context is metadata-only join shape. It shows whether traces can be stitched; "
+                "it is not action success, permission evidence, or user-message content."
+            ),
+        }
 
 
+
+    except Exception:
+        return {}
 def _latest_spawner_job_context(trace_index: dict[str, Any]) -> dict[str, Any]:
     latest = _dict(trace_index.get("latest_spawner_job"))
     if not latest:
