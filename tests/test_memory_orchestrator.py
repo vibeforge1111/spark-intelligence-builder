@@ -558,6 +558,39 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_domain_answer_contract_trace_names_explain_answer_method(self) -> None:
+        class AnswerExplanationRequest:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        module = SimpleNamespace(
+            AnswerExplanationRequest=AnswerExplanationRequest,
+            build_current_state_view=lambda _observations: [],
+        )
+        sdk = SimpleNamespace(
+            explain_answer=lambda _request: SimpleNamespace(
+                memory_role="invalid-role",
+                answer="A source-backed answer",
+                found=True,
+                trace={"operation": "explain_answer"},
+                provenance=[],
+                explanation="Supporting evidence was inspected.",
+                evidence=[],
+                events=[],
+            )
+        )
+        adapter = memory_orchestrator._DomainChipMemoryClientAdapter(sdk, module)
+
+        result = adapter.explain_answer(
+            subject="human:telegram:1",
+            predicate="profile.current_focus",
+        )
+
+        self.assertEqual(result["status"], "abstained")
+        self.assertEqual(result["reason"], "invalid_memory_role")
+        self.assertEqual(result["retrieval_trace"]["method"], "explain_answer")
+        self.assertNotEqual(result["retrieval_trace"]["method"], "get_current_state")
+
     def test_memory_kernel_current_state_returns_unified_schema(self) -> None:
         fake_client = _FakeMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
