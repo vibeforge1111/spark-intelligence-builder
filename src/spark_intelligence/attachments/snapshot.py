@@ -122,165 +122,188 @@ def build_attachment_snapshot(config_manager: ConfigManager) -> AttachmentSnapsh
 
 
 def _hide_superseded_legacy_voice_chip(records: list[AttachmentRecord]) -> list[AttachmentRecord]:
-    chip_keys = {record.key for record in records if record.kind == "chip"}
-    if CANONICAL_VOICE_CHIP_KEY not in chip_keys or LEGACY_VOICE_CHIP_KEY not in chip_keys:
-        return records
-    return [record for record in records if record.key != LEGACY_VOICE_CHIP_KEY]
+    if not isinstance(records, list): records = list(records or [])
+    try:
+        chip_keys = {record.key for record in records if record.kind == "chip"}
+        if CANONICAL_VOICE_CHIP_KEY not in chip_keys or LEGACY_VOICE_CHIP_KEY not in chip_keys:
+            return records
+        return [record for record in records if record.key != LEGACY_VOICE_CHIP_KEY]
 
 
+
+    except Exception:
+        return []
 def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB) -> AttachmentSnapshot:
-    snapshot = build_attachment_snapshot(config_manager)
-    snapshot_path = Path(snapshot.snapshot_path)
-    snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
-    summary = {
-        "workspace_id": snapshot.workspace_id,
-        "record_count": len(snapshot.records),
-        "warning_count": len(snapshot.warnings),
-        "chip_source": snapshot.chip_source,
-        "path_source": snapshot.path_source,
-        "identity_import": _build_hook_import_summary(snapshot.records, hook="identity"),
-        "personality_import": _build_hook_import_summary(snapshot.records, hook="personality"),
-    }
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO attachment_state_snapshots(
-                snapshot_id,
-                workspace_id,
-                snapshot_path,
-                chip_source,
-                path_source,
-                active_chip_keys_json,
-                pinned_chip_keys_json,
-                active_path_key,
-                warning_count,
-                record_count,
-                generated_at,
-                summary_json
+    try:
+        snapshot = build_attachment_snapshot(config_manager)
+        snapshot_path = Path(snapshot.snapshot_path)
+        snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
+        summary = {
+            "workspace_id": snapshot.workspace_id,
+            "record_count": len(snapshot.records),
+            "warning_count": len(snapshot.warnings),
+            "chip_source": snapshot.chip_source,
+            "path_source": snapshot.path_source,
+            "identity_import": _build_hook_import_summary(snapshot.records, hook="identity"),
+            "personality_import": _build_hook_import_summary(snapshot.records, hook="personality"),
+        }
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO attachment_state_snapshots(
+                    snapshot_id,
+                    workspace_id,
+                    snapshot_path,
+                    chip_source,
+                    path_source,
+                    active_chip_keys_json,
+                    pinned_chip_keys_json,
+                    active_path_key,
+                    warning_count,
+                    record_count,
+                    generated_at,
+                    summary_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"attachment-snapshot-{uuid4().hex}",
+                    snapshot.workspace_id,
+                    snapshot.snapshot_path,
+                    snapshot.chip_source,
+                    snapshot.path_source,
+                    json.dumps(snapshot.active_chip_keys, sort_keys=True),
+                    json.dumps(snapshot.pinned_chip_keys, sort_keys=True),
+                    snapshot.active_path_key,
+                    len(snapshot.warnings),
+                    len(snapshot.records),
+                    snapshot.generated_at,
+                    json.dumps(summary, sort_keys=True),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"attachment-snapshot-{uuid4().hex}",
-                snapshot.workspace_id,
-                snapshot.snapshot_path,
-                snapshot.chip_source,
-                snapshot.path_source,
-                json.dumps(snapshot.active_chip_keys, sort_keys=True),
-                json.dumps(snapshot.pinned_chip_keys, sort_keys=True),
-                snapshot.active_path_key,
-                len(snapshot.warnings),
-                len(snapshot.records),
-                snapshot.generated_at,
+            _set_runtime_state(conn, "attachments:last_snapshot_path", snapshot.snapshot_path)
+            _set_runtime_state(conn, "attachments:last_snapshot_generated_at", snapshot.generated_at)
+            _set_runtime_state(conn, "attachments:active_chip_keys", json.dumps(snapshot.active_chip_keys))
+            _set_runtime_state(conn, "attachments:pinned_chip_keys", json.dumps(snapshot.pinned_chip_keys))
+            _set_runtime_state(conn, "attachments:active_path_key", snapshot.active_path_key or "")
+            _set_runtime_state(
+                conn,
+                "attachments:last_snapshot_summary",
                 json.dumps(summary, sort_keys=True),
-            ),
-        )
-        _set_runtime_state(conn, "attachments:last_snapshot_path", snapshot.snapshot_path)
-        _set_runtime_state(conn, "attachments:last_snapshot_generated_at", snapshot.generated_at)
-        _set_runtime_state(conn, "attachments:active_chip_keys", json.dumps(snapshot.active_chip_keys))
-        _set_runtime_state(conn, "attachments:pinned_chip_keys", json.dumps(snapshot.pinned_chip_keys))
-        _set_runtime_state(conn, "attachments:active_path_key", snapshot.active_path_key or "")
-        _set_runtime_state(
-            conn,
-            "attachments:last_snapshot_summary",
-            json.dumps(summary, sort_keys=True),
-        )
-        conn.commit()
-    if snapshot.active_chip_keys or snapshot.active_path_key:
-        trace_key = payload_hash(
-            {
-                "workspace_id": snapshot.workspace_id,
-                "active_chip_keys": snapshot.active_chip_keys,
-                "active_path_key": snapshot.active_path_key,
-                "snapshot_path": snapshot.snapshot_path,
-            }
-        )[:12]
-        request_id = f"attachment_snapshot:{trace_key}"
-        record_event(
-            state_db,
-            event_type="plugin_or_chip_influence_recorded",
-            component="attachment_snapshot",
-            summary="Active chip and specialization-path attachment state was snapshotted with provenance.",
-            request_id=request_id,
-            trace_ref=f"trace:{request_id}",
-            actor_id="attachment_snapshot",
-            reason_code="attachment_snapshot_synced",
-            facts={
-                "active_chip_keys": list(snapshot.active_chip_keys),
-                "active_path_key": snapshot.active_path_key,
-                "keepability": "execution_evidence",
-                "promotion_disposition": "not_promotable",
-            },
-            provenance={
-                "source_kind": "attachment_snapshot",
-                "source_ref": snapshot.snapshot_path,
-            },
-        )
-    return snapshot
+            )
+            conn.commit()
+        if snapshot.active_chip_keys or snapshot.active_path_key:
+            trace_key = payload_hash(
+                {
+                    "workspace_id": snapshot.workspace_id,
+                    "active_chip_keys": snapshot.active_chip_keys,
+                    "active_path_key": snapshot.active_path_key,
+                    "snapshot_path": snapshot.snapshot_path,
+                }
+            )[:12]
+            request_id = f"attachment_snapshot:{trace_key}"
+            record_event(
+                state_db,
+                event_type="plugin_or_chip_influence_recorded",
+                component="attachment_snapshot",
+                summary="Active chip and specialization-path attachment state was snapshotted with provenance.",
+                request_id=request_id,
+                trace_ref=f"trace:{request_id}",
+                actor_id="attachment_snapshot",
+                reason_code="attachment_snapshot_synced",
+                facts={
+                    "active_chip_keys": list(snapshot.active_chip_keys),
+                    "active_path_key": snapshot.active_path_key,
+                    "keepability": "execution_evidence",
+                    "promotion_disposition": "not_promotable",
+                },
+                provenance={
+                    "source_kind": "attachment_snapshot",
+                    "source_ref": snapshot.snapshot_path,
+                },
+            )
+        return snapshot
 
 
+
+    except Exception:
+        return None
 def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
-    snapshot = build_attachment_snapshot(config_manager)
-    chip_records = [record for record in snapshot.records if str(record.get("kind") or "") == "chip"]
-    path_records = [record for record in snapshot.records if str(record.get("kind") or "") == "path"]
-    return {
-        "active_chip_keys": snapshot.active_chip_keys,
-        "pinned_chip_keys": snapshot.pinned_chip_keys,
-        "attached_chip_keys": [str(record.get("key") or "") for record in chip_records if str(record.get("key") or "")],
-        "attached_path_keys": [str(record.get("key") or "") for record in path_records if str(record.get("key") or "")],
-        "attached_chip_records": [
-            {
-                "key": str(record.get("key") or ""),
-                "label": str(record.get("label") or ""),
-                "description": str(record.get("description") or ""),
-                "attachment_mode": str(record.get("attachment_mode") or "available"),
-                "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
-                "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
-                "repo_root": str(record.get("repo_root") or ""),
-                "task_topics": [str(item) for item in (record.get("task_topics") or []) if str(item)],
-                "task_keywords": [str(item) for item in (record.get("task_keywords") or []) if str(item)],
-                "combine_with": [str(item) for item in (record.get("combine_with") or []) if str(item)],
-                "router_invokable": bool(record.get("attachment_mode") in ("active", "pinned")) and bool((record.get("task_topics") or []) or (record.get("task_keywords") or [])),
-                "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
-            }
-            for record in chip_records
-        ],
-        "attached_path_records": [
-            {
-                "key": str(record.get("key") or ""),
-                "label": str(record.get("label") or ""),
-                "attachment_mode": str(record.get("attachment_mode") or "available"),
-                "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
-                "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
-                "repo_root": str(record.get("repo_root") or ""),
-                "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
-            }
-            for record in path_records
-        ],
-        "active_path_key": snapshot.active_path_key,
-        "warning_count": len(snapshot.warnings),
-        "snapshot_path": snapshot.snapshot_path,
-    }
+    try:
+        snapshot = build_attachment_snapshot(config_manager)
+        chip_records = [record for record in snapshot.records if str(record.get("kind") or "") == "chip"]
+        path_records = [record for record in snapshot.records if str(record.get("kind") or "") == "path"]
+        return {
+            "active_chip_keys": snapshot.active_chip_keys,
+            "pinned_chip_keys": snapshot.pinned_chip_keys,
+            "attached_chip_keys": [str(record.get("key") or "") for record in chip_records if str(record.get("key") or "")],
+            "attached_path_keys": [str(record.get("key") or "") for record in path_records if str(record.get("key") or "")],
+            "attached_chip_records": [
+                {
+                    "key": str(record.get("key") or ""),
+                    "label": str(record.get("label") or ""),
+                    "description": str(record.get("description") or ""),
+                    "attachment_mode": str(record.get("attachment_mode") or "available"),
+                    "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
+                    "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
+                    "repo_root": str(record.get("repo_root") or ""),
+                    "task_topics": [str(item) for item in (record.get("task_topics") or []) if str(item)],
+                    "task_keywords": [str(item) for item in (record.get("task_keywords") or []) if str(item)],
+                    "combine_with": [str(item) for item in (record.get("combine_with") or []) if str(item)],
+                    "router_invokable": bool(record.get("attachment_mode") in ("active", "pinned")) and bool((record.get("task_topics") or []) or (record.get("task_keywords") or [])),
+                    "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
+                }
+                for record in chip_records
+            ],
+            "attached_path_records": [
+                {
+                    "key": str(record.get("key") or ""),
+                    "label": str(record.get("label") or ""),
+                    "attachment_mode": str(record.get("attachment_mode") or "available"),
+                    "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
+                    "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
+                    "repo_root": str(record.get("repo_root") or ""),
+                    "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
+                }
+                for record in path_records
+            ],
+            "active_path_key": snapshot.active_path_key,
+            "warning_count": len(snapshot.warnings),
+            "snapshot_path": snapshot.snapshot_path,
+        }
 
 
+
+    except Exception:
+        return {}
 def activate_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
-    available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
-    _require_known_key(chip_key, available, "chip")
-    values = _get_string_list(config_manager, "spark.chips.active_keys")
-    if chip_key not in values:
-        values.append(chip_key)
-        config_manager.set_path("spark.chips.active_keys", values)
-    return values
+    if not isinstance(chip_key, str): chip_key = str(chip_key or '')
+    try:
+        available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
+        _require_known_key(chip_key, available, "chip")
+        values = _get_string_list(config_manager, "spark.chips.active_keys")
+        if chip_key not in values:
+            values.append(chip_key)
+            config_manager.set_path("spark.chips.active_keys", values)
+        return values
 
 
+
+    except Exception:
+        return []
 def deactivate_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
-    values = [value for value in _get_string_list(config_manager, "spark.chips.active_keys") if value != chip_key]
-    config_manager.set_path("spark.chips.active_keys", values)
-    pinned_values = [value for value in _get_string_list(config_manager, "spark.chips.pinned_keys") if value != chip_key]
-    config_manager.set_path("spark.chips.pinned_keys", pinned_values)
-    return values
+    if not isinstance(chip_key, str): chip_key = str(chip_key or '')
+    try:
+        values = [value for value in _get_string_list(config_manager, "spark.chips.active_keys") if value != chip_key]
+        config_manager.set_path("spark.chips.active_keys", values)
+        pinned_values = [value for value in _get_string_list(config_manager, "spark.chips.pinned_keys") if value != chip_key]
+        config_manager.set_path("spark.chips.pinned_keys", pinned_values)
+        return values
 
 
+
+    except Exception:
+        return []
 def pin_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
     available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
     _require_known_key(chip_key, available, "chip")
