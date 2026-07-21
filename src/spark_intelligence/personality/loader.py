@@ -1247,36 +1247,43 @@ def load_agent_persona_savepoint(
     savepoint_name: str,
     state_db: StateDB,
 ) -> dict[str, Any] | None:
-    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
-    normalized_name = " ".join(str(savepoint_name or "").strip().split())
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT savepoint_id, savepoint_name, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, created_at
-            FROM agent_persona_savepoints
-            WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (storage_agent_id, human_id, normalized_name),
-        ).fetchone()
-    if not row:
-        return None
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
-    return {
-        "savepoint_id": row["savepoint_id"],
-        "savepoint_name": row["savepoint_name"],
-        "persona_name": _read_optional_text(row["persona_name"]),
-        "persona_summary": _read_optional_text(row["persona_summary"]),
-        "base_traits": {**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
-        "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
-        "provenance": provenance if isinstance(provenance, dict) else {},
-        "created_at": row["created_at"],
-    }
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(savepoint_name, str): savepoint_name = str(savepoint_name or '')
+    try:
+        storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+        normalized_name = " ".join(str(savepoint_name or "").strip().split())
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT savepoint_id, savepoint_name, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, created_at
+                FROM agent_persona_savepoints
+                WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (storage_agent_id, human_id, normalized_name),
+            ).fetchone()
+        if not row:
+            return None
+        base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+        behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+        provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+        return {
+            "savepoint_id": row["savepoint_id"],
+            "savepoint_name": row["savepoint_name"],
+            "persona_name": _read_optional_text(row["persona_name"]),
+            "persona_summary": _read_optional_text(row["persona_summary"]),
+            "base_traits": {**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
+            "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
+            "provenance": provenance if isinstance(provenance, dict) else {},
+            "created_at": row["created_at"],
+        }
 
 
+
+    except Exception:
+        return {}
 def restore_agent_persona_savepoint(
     *,
     agent_id: str,
@@ -1286,40 +1293,49 @@ def restore_agent_persona_savepoint(
     source_surface: str,
     source_ref: str | None = None,
 ) -> dict[str, Any] | None:
-    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
-    normalized_name = " ".join(str(savepoint_name or "").strip().split())
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json
-            FROM agent_persona_savepoints
-            WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (storage_agent_id, human_id, normalized_name),
-        ).fetchone()
-    if not row:
-        return None
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
-    return save_agent_persona_profile(
-        agent_id=storage_agent_id,
-        human_id=human_id,
-        state_db=state_db,
-        base_traits={**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
-        persona_name=_read_optional_text(row["persona_name"]),
-        persona_summary=_read_optional_text(row["persona_summary"]),
-        behavioral_rules=behavioral_rules if isinstance(behavioral_rules, list) else [],
-        provenance=provenance if isinstance(provenance, dict) else {},
-        mutation_kind="savepoint_restore",
-        source_surface=source_surface,
-        source_ref=source_ref,
-        push_undo_snapshot=True,
-    )
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(savepoint_name, str): savepoint_name = str(savepoint_name or '')
+    if not isinstance(source_surface, str): source_surface = str(source_surface or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+        normalized_name = " ".join(str(savepoint_name or "").strip().split())
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json
+                FROM agent_persona_savepoints
+                WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (storage_agent_id, human_id, normalized_name),
+            ).fetchone()
+        if not row:
+            return None
+        base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+        behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+        provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+        return save_agent_persona_profile(
+            agent_id=storage_agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits={**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
+            persona_name=_read_optional_text(row["persona_name"]),
+            persona_summary=_read_optional_text(row["persona_summary"]),
+            behavioral_rules=behavioral_rules if isinstance(behavioral_rules, list) else [],
+            provenance=provenance if isinstance(provenance, dict) else {},
+            mutation_kind="savepoint_restore",
+            source_surface=source_surface,
+            source_ref=source_ref,
+            push_undo_snapshot=True,
+        )
 
 
+
+    except Exception:
+        return {}
 def migrate_legacy_human_personality_to_agent_persona(
     *,
     human_id: str,
@@ -1330,125 +1346,139 @@ def migrate_legacy_human_personality_to_agent_persona(
     source_surface: str = "agent_cli",
     source_ref: str | None = None,
 ) -> LegacyPersonalityMigrationResult:
-    resolved_agent_id = (
-        resolve_builder_persona_agent_id(human_id=human_id)
-        or agent_id
-        or read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_id
-    )
-    existing_persona = load_agent_persona_profile(agent_id=resolved_agent_id, human_id=human_id, state_db=state_db)
-    if existing_persona and not force:
-        return LegacyPersonalityMigrationResult(
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(source_surface, str): source_surface = str(source_surface or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        resolved_agent_id = (
+            resolve_builder_persona_agent_id(human_id=human_id)
+            or agent_id
+            or read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_id
+        )
+        existing_persona = load_agent_persona_profile(agent_id=resolved_agent_id, human_id=human_id, state_db=state_db)
+        if existing_persona and not force:
+            return LegacyPersonalityMigrationResult(
+                human_id=human_id,
+                agent_id=resolved_agent_id,
+                status="existing_agent_persona",
+                migrated_traits={},
+                cleared_overlay=False,
+                persona_profile=existing_persona,
+            )
+
+        user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+        if not user_deltas:
+            return LegacyPersonalityMigrationResult(
+                human_id=human_id,
+                agent_id=resolved_agent_id,
+                status="no_legacy_deltas",
+                migrated_traits={},
+                cleared_overlay=False,
+                persona_profile=existing_persona,
+            )
+
+        effective_profile = load_personality_profile(
             human_id=human_id,
             agent_id=resolved_agent_id,
-            status="existing_agent_persona",
-            migrated_traits={},
-            cleared_overlay=False,
-            persona_profile=existing_persona,
+            state_db=state_db,
+            config_manager=None,
         )
-
-    user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-    if not user_deltas:
-        return LegacyPersonalityMigrationResult(
-            human_id=human_id,
-            agent_id=resolved_agent_id,
-            status="no_legacy_deltas",
-            migrated_traits={},
-            cleared_overlay=False,
-            persona_profile=existing_persona,
-        )
-
-    effective_profile = load_personality_profile(
-        human_id=human_id,
-        agent_id=resolved_agent_id,
-        state_db=state_db,
-        config_manager=None,
-    )
-    effective_traits = (effective_profile or {}).get("traits") or {}
-    migrated_traits = {
-        trait: round(
-            max(
-                0.0,
-                min(
-                    1.0,
-                    float(
-                        effective_traits.get(
-                            trait,
-                            _DEFAULT_TRAITS[trait] + float(user_deltas.get(trait, 0.0)),
-                        )
+        effective_traits = (effective_profile or {}).get("traits") or {}
+        migrated_traits = {
+            trait: round(
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            effective_traits.get(
+                                trait,
+                                _DEFAULT_TRAITS[trait] + float(user_deltas.get(trait, 0.0)),
+                            )
+                        ),
                     ),
                 ),
-            ),
-            3,
+                3,
+            )
+            for trait in _DEFAULT_TRAITS
+        }
+        persona_profile = save_agent_persona_profile(
+            agent_id=resolved_agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits=migrated_traits,
+            persona_name=(existing_persona.get("persona_name") if existing_persona else None),
+            persona_summary=(existing_persona.get("persona_summary") if existing_persona else _compact_persona_summary(migrated_traits)),
+            provenance={
+                "source_surface": source_surface,
+                "source_ref": source_ref,
+                "migration": "legacy_human_trait_deltas",
+                "legacy_deltas": user_deltas,
+            },
+            mutation_kind="legacy_human_migration",
+            source_surface=source_surface,
+            source_ref=source_ref,
         )
-        for trait in _DEFAULT_TRAITS
-    }
-    persona_profile = save_agent_persona_profile(
-        agent_id=resolved_agent_id,
-        human_id=human_id,
-        state_db=state_db,
-        base_traits=migrated_traits,
-        persona_name=(existing_persona.get("persona_name") if existing_persona else None),
-        persona_summary=(existing_persona.get("persona_summary") if existing_persona else _compact_persona_summary(migrated_traits)),
-        provenance={
-            "source_surface": source_surface,
-            "source_ref": source_ref,
-            "migration": "legacy_human_trait_deltas",
-            "legacy_deltas": user_deltas,
-        },
-        mutation_kind="legacy_human_migration",
-        source_surface=source_surface,
-        source_ref=source_ref,
-    )
-    cleared_overlay = False
-    if clear_overlay:
-        _clear_legacy_user_trait_overlay(human_id=human_id, state_db=state_db)
-        cleared_overlay = True
-    return LegacyPersonalityMigrationResult(
-        human_id=human_id,
-        agent_id=resolved_agent_id,
-        status="migrated",
-        migrated_traits=migrated_traits,
-        cleared_overlay=cleared_overlay,
-        persona_profile=persona_profile,
-    )
+        cleared_overlay = False
+        if clear_overlay:
+            _clear_legacy_user_trait_overlay(human_id=human_id, state_db=state_db)
+            cleared_overlay = True
+        return LegacyPersonalityMigrationResult(
+            human_id=human_id,
+            agent_id=resolved_agent_id,
+            status="migrated",
+            migrated_traits=migrated_traits,
+            cleared_overlay=cleared_overlay,
+            persona_profile=persona_profile,
+        )
 
 
+
+    except Exception:
+        return None
 def agent_has_reonboard_candidate(
     *,
     human_id: str,
     agent_id: str,
     state_db: StateDB,
 ) -> bool:
-    """Return True if the caller should start the P2-12 reonboard offer.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    try:
+        """Return True if the caller should start the P2-12 reonboard offer.
 
-    P2-13 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The Telegram
-    runtime uses this helper as an entry gate so existing users with
-    a saved persona profile but no in-progress onboarding state blob
-    still get the P2-12 one-tap skip offer on their next DM — not
-    only freshly-paired users whose pairing welcome is still pending.
+        P2-13 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The Telegram
+        runtime uses this helper as an entry gate so existing users with
+        a saved persona profile but no in-progress onboarding state blob
+        still get the P2-12 one-tap skip offer on their next DM — not
+        only freshly-paired users whose pairing welcome is still pending.
 
-    Returns True only when BOTH of the following hold:
+        Returns True only when BOTH of the following hold:
 
-    1. There is no existing onboarding state blob for this human
-       (so we never re-fire the offer once the user has interacted
-       with the state machine at all).
-    2. There is a saved persona profile for this agent/human pair
-       (so genuinely new pairings still flow through the standard
-       `awaiting_name` entry, not the reonboard offer).
-    """
-    if not human_id or not agent_id or state_db is None:
+        1. There is no existing onboarding state blob for this human
+           (so we never re-fire the offer once the user has interacted
+           with the state machine at all).
+        2. There is a saved persona profile for this agent/human pair
+           (so genuinely new pairings still flow through the standard
+           `awaiting_name` entry, not the reonboard offer).
+        """
+        if not human_id or not agent_id or state_db is None:
+            return False
+        onboarding_state = _load_agent_onboarding_state(
+            human_id=human_id, state_db=state_db
+        )
+        if onboarding_state:
+            return False
+        existing_persona = load_agent_persona_profile(
+            agent_id=agent_id, human_id=human_id, state_db=state_db
+        )
+        return bool(existing_persona)
+
+
+
+    except Exception:
         return False
-    onboarding_state = _load_agent_onboarding_state(
-        human_id=human_id, state_db=state_db
-    )
-    if onboarding_state:
-        return False
-    existing_persona = load_agent_persona_profile(
-        agent_id=agent_id, human_id=human_id, state_db=state_db
-    )
-    return bool(existing_persona)
-
-
 def maybe_handle_agent_persona_onboarding_turn(
     *,
     human_id: str,
@@ -1459,137 +1489,77 @@ def maybe_handle_agent_persona_onboarding_turn(
     source_ref: str | None = None,
     start_if_eligible: bool = False,
 ) -> AgentOnboardingTurnResult | None:
-    canonical_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
-    onboarding_state = _load_agent_onboarding_state(human_id=human_id, state_db=state_db)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(source_surface, str): source_surface = str(source_surface or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    try:
+        canonical_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+        onboarding_state = _load_agent_onboarding_state(human_id=human_id, state_db=state_db)
 
-    if canonical_state.preferred_source != "builder_local" or canonical_state.external_system == "spark_swarm":
-        if onboarding_state:
-            _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
-        return None
-
-    existing_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
-    if onboarding_state.get("status") == "completed":
-        return None
-
-    if not onboarding_state:
-        if not start_if_eligible:
+        if canonical_state.preferred_source != "builder_local" or canonical_state.external_system == "spark_swarm":
+            if onboarding_state:
+                _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
             return None
-        if existing_persona:
-            # P2-12: existing users with a saved persona see a
-            # one-tap skip offer instead of being silently skipped
-            # (Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md
-            # §11). Any reply other than yes closes out the
-            # offer without touching the persona profile.
+
+        existing_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
+        if onboarding_state.get("status") == "completed":
+            return None
+
+        if not onboarding_state:
+            if not start_if_eligible:
+                return None
+            if existing_persona:
+                # P2-12: existing users with a saved persona see a
+                # one-tap skip offer instead of being silently skipped
+                # (Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md
+                # §11). Any reply other than yes closes out the
+                # offer without touching the persona profile.
+                onboarding_state = {
+                    "status": "active",
+                    "step": "awaiting_reonboard_consent",
+                    "agent_id": agent_id,
+                    "started_at": _utc_now_iso(),
+                    "updated_at": _utc_now_iso(),
+                }
+                _save_agent_onboarding_state(
+                    human_id=human_id, payload=onboarding_state, state_db=state_db
+                )
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_reonboard_consent",
+                    reply_text=_build_reonboard_consent_offer_text(
+                        canonical_state.agent_name
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
             onboarding_state = {
                 "status": "active",
-                "step": "awaiting_reonboard_consent",
+                "step": "awaiting_name",
                 "agent_id": agent_id,
                 "started_at": _utc_now_iso(),
                 "updated_at": _utc_now_iso(),
             }
-            _save_agent_onboarding_state(
-                human_id=human_id, payload=onboarding_state, state_db=state_db
-            )
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_reonboard_consent",
-                reply_text=_build_reonboard_consent_offer_text(
-                    canonical_state.agent_name
-                ),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-        onboarding_state = {
-            "status": "active",
-            "step": "awaiting_name",
-            "agent_id": agent_id,
-            "started_at": _utc_now_iso(),
-            "updated_at": _utc_now_iso(),
-        }
-        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-        if canonical_state.has_user_defined_name:
-            name_prompt = (
-                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`. "
-                "Reply with a new name, or say `keep` to keep the current one."
-            )
-        else:
-            name_prompt = (
-                "What should I call your agent? Reply with a name like `Atlas`, `Nova`, or `Lyra`."
-            )
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_name",
-            reply_text=(
-                "Let's set up your agent. Short conversation: name first, then personality.\n"
-                "You can say `/cancel` at any time to stop and reset.\n\n"
-                f"{name_prompt}"
-            ),
-            agent_name=canonical_state.agent_name,
-            persona_profile=existing_persona,
-            completed=False,
-        )
-
-    step = str(onboarding_state.get("step") or "awaiting_name")
-    normalized_message = " ".join(str(user_message or "").strip().split())
-    lowered = normalized_message.lower()
-
-    # P2-11: /cancel escape hatch. Q-E of the v2 design doc
-    # (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11)
-    # decided that /cancel wipes BOTH the in-progress onboarding
-    # state blob AND the saved agent name (back to the empty-string
-    # sentinel), while leaving the persona profile untouched per
-    # Q-J. The caller-facing reply confirms the wipe and points
-    # toward restarting from pairing on the next DM.
-    if lowered in _ONBOARDING_CANCEL_TOKENS:
-        _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
-        cancelled_state = cancel_agent_onboarding(
-            state_db=state_db,
-            human_id=human_id,
-            source_ref=source_ref,
-        )
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="cancelled",
-            reply_text=_build_onboarding_cancelled_reply_text(),
-            agent_name=cancelled_state.agent_name,
-            persona_profile=existing_persona,
-            completed=True,
-        )
-
-    if step == "awaiting_reonboard_consent":
-        # P2-12: one-tap skip offer for existing users with a saved
-        # persona. Accept only explicit opt-ins; anything else closes
-        # out the state (status=completed) so the offer never nags
-        # again, and returns None so the researcher bridge handles
-        # the original message normally.
-        if lowered in _REONBOARD_CONSENT_YES_TOKENS:
-            onboarding_state["step"] = "awaiting_name"
-            onboarding_state["updated_at"] = _utc_now_iso()
-            _save_agent_onboarding_state(
-                human_id=human_id, payload=onboarding_state, state_db=state_db
-            )
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
             if canonical_state.has_user_defined_name:
                 name_prompt = (
-                    f"What should I call your agent? Right now it's "
-                    f"`{canonical_state.agent_name}`. Reply with a new name, "
-                    "or say `keep` to keep the current one."
+                    f"What should I call your agent? Right now it's `{canonical_state.agent_name}`. "
+                    "Reply with a new name, or say `keep` to keep the current one."
                 )
             else:
                 name_prompt = (
-                    "What should I call your agent? Reply with a name like "
-                    "`Atlas`, `Nova`, or `Lyra`."
+                    "What should I call your agent? Reply with a name like `Atlas`, `Nova`, or `Lyra`."
                 )
             return AgentOnboardingTurnResult(
                 human_id=human_id,
                 agent_id=agent_id,
                 step="awaiting_name",
                 reply_text=(
-                    "Restarting setup. Short conversation: name first, then "
-                    "personality.\n"
+                    "Let's set up your agent. Short conversation: name first, then personality.\n"
                     "You can say `/cancel` at any time to stop and reset.\n\n"
                     f"{name_prompt}"
                 ),
@@ -1597,36 +1567,141 @@ def maybe_handle_agent_persona_onboarding_turn(
                 persona_profile=existing_persona,
                 completed=False,
             )
-        # Skip / silence path: close out the offer without touching
-        # the persona profile and let the normal reply path handle
-        # the user's message.
-        _complete_agent_onboarding_state(
-            human_id=human_id,
-            state_db=state_db,
-            agent_id=agent_id,
-            agent_name=canonical_state.agent_name,
-            persona_summary=(
-                existing_persona.get("persona_summary") if existing_persona else None
-            ),
-        )
-        return None
 
-    if step == "awaiting_name":
-        if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
-            if not canonical_state.has_user_defined_name:
+        step = str(onboarding_state.get("step") or "awaiting_name")
+        normalized_message = " ".join(str(user_message or "").strip().split())
+        lowered = normalized_message.lower()
+
+        # P2-11: /cancel escape hatch. Q-E of the v2 design doc
+        # (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11)
+        # decided that /cancel wipes BOTH the in-progress onboarding
+        # state blob AND the saved agent name (back to the empty-string
+        # sentinel), while leaving the persona profile untouched per
+        # Q-J. The caller-facing reply confirms the wipe and points
+        # toward restarting from pairing on the next DM.
+        if lowered in _ONBOARDING_CANCEL_TOKENS:
+            _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
+            cancelled_state = cancel_agent_onboarding(
+                state_db=state_db,
+                human_id=human_id,
+                source_ref=source_ref,
+            )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="cancelled",
+                reply_text=_build_onboarding_cancelled_reply_text(),
+                agent_name=cancelled_state.agent_name,
+                persona_profile=existing_persona,
+                completed=True,
+            )
+
+        if step == "awaiting_reonboard_consent":
+            # P2-12: one-tap skip offer for existing users with a saved
+            # persona. Accept only explicit opt-ins; anything else closes
+            # out the state (status=completed) so the offer never nags
+            # again, and returns None so the researcher bridge handles
+            # the original message normally.
+            if lowered in _REONBOARD_CONSENT_YES_TOKENS:
+                onboarding_state["step"] = "awaiting_name"
+                onboarding_state["updated_at"] = _utc_now_iso()
+                _save_agent_onboarding_state(
+                    human_id=human_id, payload=onboarding_state, state_db=state_db
+                )
+                if canonical_state.has_user_defined_name:
+                    name_prompt = (
+                        f"What should I call your agent? Right now it's "
+                        f"`{canonical_state.agent_name}`. Reply with a new name, "
+                        "or say `keep` to keep the current one."
+                    )
+                else:
+                    name_prompt = (
+                        "What should I call your agent? Reply with a name like "
+                        "`Atlas`, `Nova`, or `Lyra`."
+                    )
                 return AgentOnboardingTurnResult(
                     human_id=human_id,
                     agent_id=agent_id,
                     step="awaiting_name",
                     reply_text=(
-                        "There's no current name to keep yet. Give your agent a name first, "
-                        "something like `Atlas`, `Nova`, or `Lyra`."
+                        "Restarting setup. Short conversation: name first, then "
+                        "personality.\n"
+                        "You can say `/cancel` at any time to stop and reset.\n\n"
+                        f"{name_prompt}"
                     ),
                     agent_name=canonical_state.agent_name,
                     persona_profile=existing_persona,
                     completed=False,
                 )
+            # Skip / silence path: close out the offer without touching
+            # the persona profile and let the normal reply path handle
+            # the user's message.
+            _complete_agent_onboarding_state(
+                human_id=human_id,
+                state_db=state_db,
+                agent_id=agent_id,
+                agent_name=canonical_state.agent_name,
+                persona_summary=(
+                    existing_persona.get("persona_summary") if existing_persona else None
+                ),
+            )
+            return None
+
+        if step == "awaiting_name":
+            if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
+                if not canonical_state.has_user_defined_name:
+                    return AgentOnboardingTurnResult(
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        step="awaiting_name",
+                        reply_text=(
+                            "There's no current name to keep yet. Give your agent a name first, "
+                            "something like `Atlas`, `Nova`, or `Lyra`."
+                        ),
+                        agent_name=canonical_state.agent_name,
+                        persona_profile=existing_persona,
+                        completed=False,
+                    )
+                onboarding_state["step"] = "awaiting_user_address"
+                onboarding_state["updated_at"] = _utc_now_iso()
+                _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_user_address",
+                    reply_text=(
+                        f"Keeping the current name `{canonical_state.agent_name}`.\n\n"
+                        + _build_user_address_prompt()
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+
+            candidate_name = _extract_agent_name(normalized_message) or _extract_onboarding_agent_name(normalized_message)
+            if not candidate_name:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_name",
+                    reply_text=(
+                        "I need a short agent name first. "
+                        "Reply with something like `Atlas`, `Nova`, or `Lyra`."
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+
+            renamed_state = rename_agent_identity(
+                state_db=state_db,
+                human_id=human_id,
+                new_name=candidate_name,
+                source_surface=source_surface,
+                source_ref=source_ref,
+            )
             onboarding_state["step"] = "awaiting_user_address"
+            onboarding_state["agent_name"] = renamed_state.agent_name
             onboarding_state["updated_at"] = _utc_now_iso()
             _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
             return AgentOnboardingTurnResult(
@@ -1634,379 +1709,384 @@ def maybe_handle_agent_persona_onboarding_turn(
                 agent_id=agent_id,
                 step="awaiting_user_address",
                 reply_text=(
-                    f"Keeping the current name `{canonical_state.agent_name}`.\n\n"
+                    f"Saved. Your agent is now `{renamed_state.agent_name}`.\n\n"
                     + _build_user_address_prompt()
                 ),
-                agent_name=canonical_state.agent_name,
+                agent_name=renamed_state.agent_name,
                 persona_profile=existing_persona,
                 completed=False,
             )
 
-        candidate_name = _extract_agent_name(normalized_message) or _extract_onboarding_agent_name(normalized_message)
-        if not candidate_name:
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_name",
-                reply_text=(
-                    "I need a short agent name first. "
-                    "Reply with something like `Atlas`, `Nova`, or `Lyra`."
-                ),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-
-        renamed_state = rename_agent_identity(
-            state_db=state_db,
-            human_id=human_id,
-            new_name=candidate_name,
-            source_surface=source_surface,
-            source_ref=source_ref,
-        )
-        onboarding_state["step"] = "awaiting_user_address"
-        onboarding_state["agent_name"] = renamed_state.agent_name
-        onboarding_state["updated_at"] = _utc_now_iso()
-        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_user_address",
-            reply_text=(
-                f"Saved. Your agent is now `{renamed_state.agent_name}`.\n\n"
-                + _build_user_address_prompt()
-            ),
-            agent_name=renamed_state.agent_name,
-            persona_profile=existing_persona,
-            completed=False,
-        )
-
-    if step == "awaiting_user_address":
-        if lowered in _ONBOARDING_ADDRESS_SKIP_TOKENS or not normalized_message:
-            stored_address = set_human_user_address(
-                state_db=state_db,
-                human_id=human_id,
-                user_address=None,
-            )
-        else:
-            stored_address = set_human_user_address(
-                state_db=state_db,
-                human_id=human_id,
-                user_address=normalized_message,
-            )
-        onboarding_state["step"] = "awaiting_persona_mode"
-        onboarding_state["user_address"] = stored_address
-        onboarding_state["updated_at"] = _utc_now_iso()
-        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-        if stored_address:
-            ack = format_address_aware_line(
-                "{salutation}got it — I'll address you as "
-                f"`{stored_address}`.",
-                stored_address,
-            )
-        else:
-            ack = "Got it — no salutation, I'll keep replies neutral."
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_persona_mode",
-            reply_text=f"{ack}\n\n" + _build_persona_mode_prompt(),
-            agent_name=canonical_state.agent_name,
-            persona_profile=existing_persona,
-            completed=False,
-        )
-
-    if step == "awaiting_persona_mode":
-        persona_mode = _parse_onboarding_persona_mode(lowered)
-        if persona_mode is None:
+        if step == "awaiting_user_address":
+            if lowered in _ONBOARDING_ADDRESS_SKIP_TOKENS or not normalized_message:
+                stored_address = set_human_user_address(
+                    state_db=state_db,
+                    human_id=human_id,
+                    user_address=None,
+                )
+            else:
+                stored_address = set_human_user_address(
+                    state_db=state_db,
+                    human_id=human_id,
+                    user_address=normalized_message,
+                )
+            onboarding_state["step"] = "awaiting_persona_mode"
+            onboarding_state["user_address"] = stored_address
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            if stored_address:
+                ack = format_address_aware_line(
+                    "{salutation}got it — I'll address you as "
+                    f"`{stored_address}`.",
+                    stored_address,
+                )
+            else:
+                ack = "Got it — no salutation, I'll keep replies neutral."
             return AgentOnboardingTurnResult(
                 human_id=human_id,
                 agent_id=agent_id,
                 step="awaiting_persona_mode",
-                reply_text=(
-                    "I didn't catch that. Reply with `guided`, `express`, "
-                    "`freestyle`, or the number `1`, `2`, or `3`."
-                ),
+                reply_text=f"{ack}\n\n" + _build_persona_mode_prompt(),
                 agent_name=canonical_state.agent_name,
                 persona_profile=existing_persona,
                 completed=False,
             )
-        onboarding_state["persona_mode"] = persona_mode
-        onboarding_state["updated_at"] = _utc_now_iso()
-        if persona_mode == "guided":
-            onboarding_state["step"] = "awaiting_persona_guided"
-            onboarding_state["persona_guided_trait_index"] = 0
-            onboarding_state["persona_guided_ratings"] = {}
-            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-            first_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[0]
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_persona_guided",
-                reply_text=_build_guided_trait_question(first_trait, 0),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-        if persona_mode == "express":
-            onboarding_state["step"] = "awaiting_persona_express"
-            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_persona_express",
-                reply_text=_build_persona_express_catalog_text(),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-        onboarding_state["step"] = "awaiting_persona_freestyle"
-        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_persona_freestyle",
-            reply_text=(
-                "Now describe the personality you want. "
-                "You can say something like `calm, strategic, very direct, low-fluff`."
-            ),
-            agent_name=canonical_state.agent_name,
-            persona_profile=existing_persona,
-            completed=False,
-        )
 
-    if step == "awaiting_persona_guided":
-        try:
-            current_index = int(onboarding_state.get("persona_guided_trait_index") or 0)
-        except (TypeError, ValueError):
-            current_index = 0
-        raw_ratings = onboarding_state.get("persona_guided_ratings") or {}
-        ratings: dict[str, int] = {}
-        if isinstance(raw_ratings, dict):
-            for key, value in raw_ratings.items():
-                try:
-                    ratings[str(key)] = int(value)
-                except (TypeError, ValueError):
-                    continue
-
-        if current_index < 0 or current_index >= len(_ONBOARDING_GUIDED_TRAIT_ORDER):
-            # Defensive: restart the guided flow if the stored index is bogus.
-            current_index = 0
-            ratings = {}
-            onboarding_state["persona_guided_trait_index"] = 0
-            onboarding_state["persona_guided_ratings"] = {}
+        if step == "awaiting_persona_mode":
+            persona_mode = _parse_onboarding_persona_mode(lowered)
+            if persona_mode is None:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_mode",
+                    reply_text=(
+                        "I didn't catch that. Reply with `guided`, `express`, "
+                        "`freestyle`, or the number `1`, `2`, or `3`."
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            onboarding_state["persona_mode"] = persona_mode
             onboarding_state["updated_at"] = _utc_now_iso()
+            if persona_mode == "guided":
+                onboarding_state["step"] = "awaiting_persona_guided"
+                onboarding_state["persona_guided_trait_index"] = 0
+                onboarding_state["persona_guided_ratings"] = {}
+                _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+                first_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[0]
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_guided",
+                    reply_text=_build_guided_trait_question(first_trait, 0),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            if persona_mode == "express":
+                onboarding_state["step"] = "awaiting_persona_express"
+                _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_express",
+                    reply_text=_build_persona_express_catalog_text(),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            onboarding_state["step"] = "awaiting_persona_freestyle"
             _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
             return AgentOnboardingTurnResult(
                 human_id=human_id,
                 agent_id=agent_id,
-                step="awaiting_persona_guided",
-                reply_text=_build_guided_trait_question(_ONBOARDING_GUIDED_TRAIT_ORDER[0], 0),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-
-        current_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[current_index]
-        rating = _parse_onboarding_guided_rating(normalized_message)
-        if rating is None:
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_persona_guided",
+                step="awaiting_persona_freestyle",
                 reply_text=(
-                    "I need a number from 1 to 5 (or the word `one`, `two`, `three`, `four`, or `five`).\n\n"
-                    + _build_guided_trait_question(current_trait, current_index)
+                    "Now describe the personality you want. "
+                    "You can say something like `calm, strategic, very direct, low-fluff`."
                 ),
                 agent_name=canonical_state.agent_name,
                 persona_profile=existing_persona,
                 completed=False,
             )
 
-        ratings[current_trait] = rating
-        next_index = current_index + 1
-        if next_index < len(_ONBOARDING_GUIDED_TRAIT_ORDER):
-            onboarding_state["persona_guided_trait_index"] = next_index
-            onboarding_state["persona_guided_ratings"] = ratings
+        if step == "awaiting_persona_guided":
+            try:
+                current_index = int(onboarding_state.get("persona_guided_trait_index") or 0)
+            except (TypeError, ValueError):
+                current_index = 0
+            raw_ratings = onboarding_state.get("persona_guided_ratings") or {}
+            ratings: dict[str, int] = {}
+            if isinstance(raw_ratings, dict):
+                for key, value in raw_ratings.items():
+                    try:
+                        ratings[str(key)] = int(value)
+                    except (TypeError, ValueError):
+                        continue
+
+            if current_index < 0 or current_index >= len(_ONBOARDING_GUIDED_TRAIT_ORDER):
+                # Defensive: restart the guided flow if the stored index is bogus.
+                current_index = 0
+                ratings = {}
+                onboarding_state["persona_guided_trait_index"] = 0
+                onboarding_state["persona_guided_ratings"] = {}
+                onboarding_state["updated_at"] = _utc_now_iso()
+                _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_guided",
+                    reply_text=_build_guided_trait_question(_ONBOARDING_GUIDED_TRAIT_ORDER[0], 0),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+
+            current_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[current_index]
+            rating = _parse_onboarding_guided_rating(normalized_message)
+            if rating is None:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_guided",
+                    reply_text=(
+                        "I need a number from 1 to 5 (or the word `one`, `two`, `three`, `four`, or `five`).\n\n"
+                        + _build_guided_trait_question(current_trait, current_index)
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+
+            ratings[current_trait] = rating
+            next_index = current_index + 1
+            if next_index < len(_ONBOARDING_GUIDED_TRAIT_ORDER):
+                onboarding_state["persona_guided_trait_index"] = next_index
+                onboarding_state["persona_guided_ratings"] = ratings
+                onboarding_state["updated_at"] = _utc_now_iso()
+                _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+                next_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[next_index]
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_guided",
+                    reply_text=_build_guided_trait_question(next_trait, next_index),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+
+            guided_traits = {
+                trait: _GUIDED_RATING_TO_VALUE[ratings[trait]]
+                for trait in _ONBOARDING_GUIDED_TRAIT_ORDER
+                if trait in ratings
+            }
+            persona_summary = _compact_persona_summary(guided_traits)
+            persona_profile = save_agent_persona_profile(
+                agent_id=agent_id,
+                human_id=human_id,
+                state_db=state_db,
+                base_traits=guided_traits,
+                persona_name=canonical_state.agent_name,
+                persona_summary=persona_summary,
+                provenance={
+                    "source_surface": source_surface,
+                    "source_ref": source_ref,
+                    "onboarding": True,
+                    "persona_mode": "guided",
+                    "guided_ratings": ratings,
+                },
+                mutation_kind="onboarding_guided",
+                source_surface=source_surface,
+                source_ref=source_ref,
+            )
+            onboarding_state["step"] = "awaiting_guardrails_ack"
+            onboarding_state["agent_id"] = agent_id
+            onboarding_state["agent_name"] = canonical_state.agent_name
+            onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
             onboarding_state["updated_at"] = _utc_now_iso()
-            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
-            next_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[next_index]
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_persona_guided",
-                reply_text=_build_guided_trait_question(next_trait, next_index),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
+            _save_agent_onboarding_state(
+                human_id=human_id, payload=onboarding_state, state_db=state_db
             )
-
-        guided_traits = {
-            trait: _GUIDED_RATING_TO_VALUE[ratings[trait]]
-            for trait in _ONBOARDING_GUIDED_TRAIT_ORDER
-            if trait in ratings
-        }
-        persona_summary = _compact_persona_summary(guided_traits)
-        persona_profile = save_agent_persona_profile(
-            agent_id=agent_id,
-            human_id=human_id,
-            state_db=state_db,
-            base_traits=guided_traits,
-            persona_name=canonical_state.agent_name,
-            persona_summary=persona_summary,
-            provenance={
-                "source_surface": source_surface,
-                "source_ref": source_ref,
-                "onboarding": True,
-                "persona_mode": "guided",
-                "guided_ratings": ratings,
-            },
-            mutation_kind="onboarding_guided",
-            source_surface=source_surface,
-            source_ref=source_ref,
-        )
-        onboarding_state["step"] = "awaiting_guardrails_ack"
-        onboarding_state["agent_id"] = agent_id
-        onboarding_state["agent_name"] = canonical_state.agent_name
-        onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
-        onboarding_state["updated_at"] = _utc_now_iso()
-        _save_agent_onboarding_state(
-            human_id=human_id, payload=onboarding_state, state_db=state_db
-        )
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_guardrails_ack",
-            reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
-            agent_name=canonical_state.agent_name,
-            persona_profile=persona_profile,
-            completed=False,
-        )
-
-    if step == "awaiting_persona_express":
-        preset_key = _parse_onboarding_persona_express_choice(normalized_message)
-        if preset_key is None:
-            return AgentOnboardingTurnResult(
-                human_id=human_id,
-                agent_id=agent_id,
-                step="awaiting_persona_express",
-                reply_text=(
-                    "I didn't catch that preset. Reply with the name or number.\n\n"
-                    + _build_persona_express_catalog_text()
-                ),
-                agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
-                completed=False,
-            )
-        preset = _ONBOARDING_EXPRESS_PRESETS[preset_key]
-        preset_traits = {
-            str(trait): float(value)
-            for trait, value in (preset.get("base_traits") or {}).items()
-        }
-        persona_summary = _compact_persona_summary(preset_traits)
-        persona_profile = save_agent_persona_profile(
-            agent_id=agent_id,
-            human_id=human_id,
-            state_db=state_db,
-            base_traits=preset_traits,
-            persona_name=canonical_state.agent_name,
-            persona_summary=persona_summary,
-            provenance={
-                "source_surface": source_surface,
-                "source_ref": source_ref,
-                "onboarding": True,
-                "persona_mode": "express",
-                "express_preset": preset_key,
-            },
-            mutation_kind="onboarding_express",
-            source_surface=source_surface,
-            source_ref=source_ref,
-        )
-        label = str(preset.get("label") or preset_key)
-        onboarding_state["step"] = "awaiting_guardrails_ack"
-        onboarding_state["agent_id"] = agent_id
-        onboarding_state["agent_name"] = canonical_state.agent_name
-        onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
-        onboarding_state["express_preset_label"] = label
-        onboarding_state["updated_at"] = _utc_now_iso()
-        _save_agent_onboarding_state(
-            human_id=human_id, payload=onboarding_state, state_db=state_db
-        )
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="awaiting_guardrails_ack",
-            reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
-            agent_name=canonical_state.agent_name,
-            persona_profile=persona_profile,
-            completed=False,
-        )
-
-    if step == "awaiting_guardrails_ack":
-        # P2-10: Show-but-don't-gate guardrails card (Q-C decision,
-        # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11).
-        # Silence / any non-`change` reply is treated as acceptance and
-        # moves onboarding to the completed terminal state. The `change`
-        # / `adjust` branch stays pinned to awaiting_guardrails_ack and
-        # surfaces a short pointer toward the NL preference path, which
-        # will land in a later P2 step.
-        if lowered in {"change", "adjust", "edit", "modify"}:
             return AgentOnboardingTurnResult(
                 human_id=human_id,
                 agent_id=agent_id,
                 step="awaiting_guardrails_ack",
-                reply_text=(
-                    "No problem. Reply `ok` to keep the commitments as-is, or say "
-                    "things like `be gentler` / `be more direct` any time after "
-                    "onboarding to shape tone."
-                ),
+                reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
                 agent_name=canonical_state.agent_name,
-                persona_profile=existing_persona,
+                persona_profile=persona_profile,
                 completed=False,
             )
-        stored_persona_summary = onboarding_state.get("persona_summary")
-        stored_user_address = onboarding_state.get("user_address")
-        _complete_agent_onboarding_state(
-            human_id=human_id,
-            state_db=state_db,
-            agent_id=agent_id,
-            agent_name=canonical_state.agent_name,
-            persona_summary=(
-                str(stored_persona_summary) if stored_persona_summary else None
-            ),
-        )
-        return AgentOnboardingTurnResult(
-            human_id=human_id,
-            agent_id=agent_id,
-            step="completed",
-            reply_text=_build_onboarding_completion_recap_text(
+
+        if step == "awaiting_persona_express":
+            preset_key = _parse_onboarding_persona_express_choice(normalized_message)
+            if preset_key is None:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_persona_express",
+                    reply_text=(
+                        "I didn't catch that preset. Reply with the name or number.\n\n"
+                        + _build_persona_express_catalog_text()
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            preset = _ONBOARDING_EXPRESS_PRESETS[preset_key]
+            preset_traits = {
+                str(trait): float(value)
+                for trait, value in (preset.get("base_traits") or {}).items()
+            }
+            persona_summary = _compact_persona_summary(preset_traits)
+            persona_profile = save_agent_persona_profile(
+                agent_id=agent_id,
+                human_id=human_id,
+                state_db=state_db,
+                base_traits=preset_traits,
+                persona_name=canonical_state.agent_name,
+                persona_summary=persona_summary,
+                provenance={
+                    "source_surface": source_surface,
+                    "source_ref": source_ref,
+                    "onboarding": True,
+                    "persona_mode": "express",
+                    "express_preset": preset_key,
+                },
+                mutation_kind="onboarding_express",
+                source_surface=source_surface,
+                source_ref=source_ref,
+            )
+            label = str(preset.get("label") or preset_key)
+            onboarding_state["step"] = "awaiting_guardrails_ack"
+            onboarding_state["agent_id"] = agent_id
+            onboarding_state["agent_name"] = canonical_state.agent_name
+            onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
+            onboarding_state["express_preset_label"] = label
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(
+                human_id=human_id, payload=onboarding_state, state_db=state_db
+            )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_guardrails_ack",
+                reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
                 agent_name=canonical_state.agent_name,
-                user_address=(
-                    str(stored_user_address) if stored_user_address else None
-                ),
+                persona_profile=persona_profile,
+                completed=False,
+            )
+
+        if step == "awaiting_guardrails_ack":
+            # P2-10: Show-but-don't-gate guardrails card (Q-C decision,
+            # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11).
+            # Silence / any non-`change` reply is treated as acceptance and
+            # moves onboarding to the completed terminal state. The `change`
+            # / `adjust` branch stays pinned to awaiting_guardrails_ack and
+            # surfaces a short pointer toward the NL preference path, which
+            # will land in a later P2 step.
+            if lowered in {"change", "adjust", "edit", "modify"}:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_guardrails_ack",
+                    reply_text=(
+                        "No problem. Reply `ok` to keep the commitments as-is, or say "
+                        "things like `be gentler` / `be more direct` any time after "
+                        "onboarding to shape tone."
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            stored_persona_summary = onboarding_state.get("persona_summary")
+            stored_user_address = onboarding_state.get("user_address")
+            _complete_agent_onboarding_state(
+                human_id=human_id,
+                state_db=state_db,
+                agent_id=agent_id,
+                agent_name=canonical_state.agent_name,
                 persona_summary=(
                     str(stored_persona_summary) if stored_persona_summary else None
                 ),
-            ),
-            agent_name=canonical_state.agent_name,
-            persona_profile=existing_persona,
-            completed=True,
+            )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="completed",
+                reply_text=_build_onboarding_completion_recap_text(
+                    agent_name=canonical_state.agent_name,
+                    user_address=(
+                        str(stored_user_address) if stored_user_address else None
+                    ),
+                    persona_summary=(
+                        str(stored_persona_summary) if stored_persona_summary else None
+                    ),
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=True,
+            )
+
+        if step != "awaiting_persona_freestyle":
+            _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
+            return None
+
+        if lowered in {"skip", "skip for now", "later", "use default"}:
+            completed_profile = existing_persona or {}
+            onboarding_state["step"] = "awaiting_guardrails_ack"
+            onboarding_state["agent_id"] = agent_id
+            onboarding_state["agent_name"] = canonical_state.agent_name
+            onboarding_state["persona_summary"] = (
+                completed_profile.get("persona_summary") if completed_profile else None
+            )
+            onboarding_state["persona_mode"] = onboarding_state.get("persona_mode") or "freestyle"
+            onboarding_state["persona_skip"] = True
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(
+                human_id=human_id, payload=onboarding_state, state_db=state_db
+            )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_guardrails_ack",
+                reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
+                agent_name=canonical_state.agent_name,
+                persona_profile=completed_profile,
+                completed=False,
+            )
+
+        base_traits = dict(existing_persona.get("base_traits") or _DEFAULT_TRAITS)
+        trait_deltas = _extract_trait_deltas(normalized_message)
+        for trait, delta in _extract_onboarding_descriptor_deltas(normalized_message).items():
+            trait_deltas[trait] = round(trait_deltas.get(trait, 0.0) + delta, 3)
+        next_traits = dict(base_traits)
+        for trait, delta in trait_deltas.items():
+            next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
+        persona_summary = _compact_onboarding_persona_summary(normalized_message) or _compact_persona_summary(next_traits)
+        persona_profile = save_agent_persona_profile(
+            agent_id=agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits=next_traits,
+            persona_name=canonical_state.agent_name,
+            persona_summary=persona_summary,
+            provenance={
+                "source_surface": source_surface,
+                "source_ref": source_ref,
+                "onboarding": True,
+                "authoring_text": normalized_message,
+                "trait_deltas": trait_deltas,
+            },
+            mutation_kind="onboarding_authoring",
+            source_surface=source_surface,
+            source_ref=source_ref,
         )
-
-    if step != "awaiting_persona_freestyle":
-        _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
-        return None
-
-    if lowered in {"skip", "skip for now", "later", "use default"}:
-        completed_profile = existing_persona or {}
         onboarding_state["step"] = "awaiting_guardrails_ack"
         onboarding_state["agent_id"] = agent_id
         onboarding_state["agent_name"] = canonical_state.agent_name
-        onboarding_state["persona_summary"] = (
-            completed_profile.get("persona_summary") if completed_profile else None
-        )
-        onboarding_state["persona_mode"] = onboarding_state.get("persona_mode") or "freestyle"
-        onboarding_state["persona_skip"] = True
+        onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
         onboarding_state["updated_at"] = _utc_now_iso()
         _save_agent_onboarding_state(
             human_id=human_id, payload=onboarding_state, state_db=state_db
@@ -2017,58 +2097,17 @@ def maybe_handle_agent_persona_onboarding_turn(
             step="awaiting_guardrails_ack",
             reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
             agent_name=canonical_state.agent_name,
-            persona_profile=completed_profile,
+            persona_profile=persona_profile,
             completed=False,
         )
 
-    base_traits = dict(existing_persona.get("base_traits") or _DEFAULT_TRAITS)
-    trait_deltas = _extract_trait_deltas(normalized_message)
-    for trait, delta in _extract_onboarding_descriptor_deltas(normalized_message).items():
-        trait_deltas[trait] = round(trait_deltas.get(trait, 0.0) + delta, 3)
-    next_traits = dict(base_traits)
-    for trait, delta in trait_deltas.items():
-        next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
-    persona_summary = _compact_onboarding_persona_summary(normalized_message) or _compact_persona_summary(next_traits)
-    persona_profile = save_agent_persona_profile(
-        agent_id=agent_id,
-        human_id=human_id,
-        state_db=state_db,
-        base_traits=next_traits,
-        persona_name=canonical_state.agent_name,
-        persona_summary=persona_summary,
-        provenance={
-            "source_surface": source_surface,
-            "source_ref": source_ref,
-            "onboarding": True,
-            "authoring_text": normalized_message,
-            "trait_deltas": trait_deltas,
-        },
-        mutation_kind="onboarding_authoring",
-        source_surface=source_surface,
-        source_ref=source_ref,
-    )
-    onboarding_state["step"] = "awaiting_guardrails_ack"
-    onboarding_state["agent_id"] = agent_id
-    onboarding_state["agent_name"] = canonical_state.agent_name
-    onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
-    onboarding_state["updated_at"] = _utc_now_iso()
-    _save_agent_onboarding_state(
-        human_id=human_id, payload=onboarding_state, state_db=state_db
-    )
-    return AgentOnboardingTurnResult(
-        human_id=human_id,
-        agent_id=agent_id,
-        step="awaiting_guardrails_ack",
-        reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
-        agent_name=canonical_state.agent_name,
-        persona_profile=persona_profile,
-        completed=False,
-    )
+
+    # ── NL preference detection and persistence ──
 
 
-# ── NL preference detection and persistence ──
 
-
+    except Exception:
+        return None
 def detect_and_persist_nl_preferences(
     *,
     human_id: str,
