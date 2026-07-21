@@ -19,19 +19,25 @@ def load_channel_security_policy(
     channel_id: str,
     defaults: dict[str, Any],
 ) -> dict[str, Any]:
-    configured = config_manager.get_path(f"security.{channel_id}", default={}) or {}
-    policy: dict[str, Any] = {}
-    for key, default_value in defaults.items():
-        value = configured.get(key, default_value)
-        if isinstance(default_value, bool):
-            policy[key] = bool(value)
-        elif isinstance(default_value, int):
-            policy[key] = int(value)
-        else:
-            policy[key] = value
-    return policy
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(defaults, str): defaults = str(defaults or '')
+    try:
+        configured = config_manager.get_path(f"security.{channel_id}", default={}) or {}
+        policy: dict[str, Any] = {}
+        for key, default_value in defaults.items():
+            value = configured.get(key, default_value)
+            if isinstance(default_value, bool):
+                policy[key] = bool(value)
+            elif isinstance(default_value, int):
+                policy[key] = int(value)
+            else:
+                policy[key] = value
+        return policy
 
 
+
+    except Exception:
+        return {}
 def is_duplicate_event(
     *,
     state_db: StateDB,

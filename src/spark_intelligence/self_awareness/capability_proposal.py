@@ -228,23 +228,44 @@ def _claim_boundary(route: str) -> str:
 
 
 def _compact(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
+
+    except Exception:
+        return ""
 def _slug(text: str) -> str:
-    slug = "-".join(re.findall(r"[a-z0-9]+", text.casefold())[:8])
-    return slug or "custom-capability"
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        slug = "-".join(re.findall(r"[a-z0-9]+", text.casefold())[:8])
+        return slug or "custom-capability"
 
 
+
+    except Exception:
+        return ""
 def _has_any(text: str, needles: tuple[str, ...]) -> bool:
-    return any(needle in text for needle in needles)
+    if not isinstance(text, str): text = str(text or '')
+    if not isinstance(needles, str): needles = str(needles or '')
+    try:
+        return any(needle in text for needle in needles)
 
 
+
+    except Exception:
+        return False
 def _dedupe(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            deduped.append(item)
-    return deduped
+    if not isinstance(items, str): items = str(items or '')
+    try:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                deduped.append(item)
+        return deduped
+
+    except Exception:
+        return []
