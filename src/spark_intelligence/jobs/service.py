@@ -33,49 +33,57 @@ class JobRecord:
 
 
 def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
-    record_environment_snapshot(
-        state_db,
-        surface="jobs_tick",
-        summary="Jobs tick environment snapshot recorded.",
-        provider_id=str(config_manager.get_path("providers.default_provider")) if config_manager.get_path("providers.default_provider") else None,
-        runtime_root=str(config_manager.get_path("spark.researcher.runtime_root")) if config_manager.get_path("spark.researcher.runtime_root") else None,
-        config_path=str(config_manager.get_path("spark.researcher.config_path")) if config_manager.get_path("spark.researcher.config_path") else None,
-        env_refs={"jobs_scheduler_enabled": bool(config_manager.get_path("jobs.scheduler.enabled", default=True))},
-        facts={"origin_surface": "jobs_tick"},
-    )
-    with state_db.connect() as conn:
-        jobs = conn.execute(
-            "SELECT job_id, job_kind, status FROM job_records WHERE status = 'scheduled' ORDER BY job_id"
-        ).fetchall()
-    if not jobs:
-        return "No scheduled jobs due. Scheduler harness is healthy."
-    lines = [f"Ran {len(jobs)} scheduled job(s)."]
-    for job in jobs:
-        result = _run_job(
-            config_manager=config_manager,
-            state_db=state_db,
-            job_id=str(job["job_id"]),
-            job_kind=str(job["job_kind"]),
+    try:
+        record_environment_snapshot(
+            state_db,
+            surface="jobs_tick",
+            summary="Jobs tick environment snapshot recorded.",
+            provider_id=str(config_manager.get_path("providers.default_provider")) if config_manager.get_path("providers.default_provider") else None,
+            runtime_root=str(config_manager.get_path("spark.researcher.runtime_root")) if config_manager.get_path("spark.researcher.runtime_root") else None,
+            config_path=str(config_manager.get_path("spark.researcher.config_path")) if config_manager.get_path("spark.researcher.config_path") else None,
+            env_refs={"jobs_scheduler_enabled": bool(config_manager.get_path("jobs.scheduler.enabled", default=True))},
+            facts={"origin_surface": "jobs_tick"},
         )
-        lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
-    return "\n".join(lines)
+        with state_db.connect() as conn:
+            jobs = conn.execute(
+                "SELECT job_id, job_kind, status FROM job_records WHERE status = 'scheduled' ORDER BY job_id"
+            ).fetchall()
+        if not jobs:
+            return "No scheduled jobs due. Scheduler harness is healthy."
+        lines = [f"Ran {len(jobs)} scheduled job(s)."]
+        for job in jobs:
+            result = _run_job(
+                config_manager=config_manager,
+                state_db=state_db,
+                job_id=str(job["job_id"]),
+                job_kind=str(job["job_kind"]),
+            )
+            lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def jobs_list(state_db: StateDB) -> str:
-    jobs = list_job_records(state_db)
-    if not jobs:
-        return "No jobs configured."
+    try:
+        jobs = list_job_records(state_db)
+        if not jobs:
+            return "No jobs configured."
 
-    lines = ["Jobs:"]
-    for job in jobs:
-        lines.append(
-            f"- {job.job_id} kind={job.job_kind} status={job.status} "
-            f"schedule={job.schedule_expr or 'none'} last_run={job.last_run_at or 'never'} "
-            f"last_result={job.last_result or 'none'}"
-        )
-    return "\n".join(lines)
+        lines = ["Jobs:"]
+        for job in jobs:
+            lines.append(
+                f"- {job.job_id} kind={job.job_kind} status={job.status} "
+                f"schedule={job.schedule_expr or 'none'} last_run={job.last_run_at or 'never'} "
+                f"last_result={job.last_result or 'none'}"
+            )
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def list_job_records(state_db: StateDB) -> list[JobRecord]:
     with state_db.connect() as conn:
         rows = conn.execute(

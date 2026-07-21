@@ -3322,82 +3322,89 @@ def record_observation(
     traits_active: dict[str, float],
     state_db: StateDB,
 ) -> dict[str, Any]:
-    """Record a personality observation after an interaction.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(traits_active, str): traits_active = str(traits_active or '')
+    try:
+        """Record a personality observation after an interaction.
 
-    Stores what traits were active and what the user's inferred state was.
-    Used later by self-evolution to identify what's working.
-    """
-    user_state, confidence = _infer_user_state(user_message)
+        Stores what traits were active and what the user's inferred state was.
+        Used later by self-evolution to identify what's working.
+        """
+        user_state, confidence = _infer_user_state(user_message)
 
-    observation = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "user_state": user_state,
-        "confidence": round(confidence, 2),
-        "traits": {k: round(v, 3) for k, v in traits_active.items()},
-    }
-    existing = _load_recent_observations(human_id=human_id, state_db=state_db)
-    existing.append(observation)
-    if len(existing) > _OBSERVATION_WINDOW:
-        existing = existing[-_OBSERVATION_WINDOW:]
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO personality_observations(
-                observation_id,
-                human_id,
-                observed_at,
-                user_state,
-                confidence,
-                traits_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"personality-observation-{uuid4().hex}",
-                human_id,
-                observation["ts"],
-                user_state,
-                float(observation["confidence"]),
-                json.dumps(observation["traits"], sort_keys=True),
-            ),
-        )
-        total_rows = conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM personality_observations
-            WHERE human_id = ?
-            """,
-            (human_id,),
-        ).fetchone()
-        delete_count = max(0, int(total_rows["count"]) - _OBSERVATION_WINDOW)
-        if delete_count > 0:
+        observation = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "user_state": user_state,
+            "confidence": round(confidence, 2),
+            "traits": {k: round(v, 3) for k, v in traits_active.items()},
+        }
+        existing = _load_recent_observations(human_id=human_id, state_db=state_db)
+        existing.append(observation)
+        if len(existing) > _OBSERVATION_WINDOW:
+            existing = existing[-_OBSERVATION_WINDOW:]
+        with state_db.connect() as conn:
             conn.execute(
                 """
-                DELETE FROM personality_observations
-                WHERE observation_id IN (
-                    SELECT observation_id
-                    FROM personality_observations
-                    WHERE human_id = ?
-                    ORDER BY observed_at ASC, created_at ASC
-                    LIMIT ?
+                INSERT INTO personality_observations(
+                    observation_id,
+                    human_id,
+                    observed_at,
+                    user_state,
+                    confidence,
+                    traits_json
                 )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (human_id, delete_count),
+                (
+                    f"personality-observation-{uuid4().hex}",
+                    human_id,
+                    observation["ts"],
+                    user_state,
+                    float(observation["confidence"]),
+                    json.dumps(observation["traits"], sort_keys=True),
+                ),
             )
-        _store_observation_runtime_mirror(
-            human_id=human_id,
-            observations=existing,
-            state_db=state_db,
-            conn=conn,
-        )
-        conn.commit()
+            total_rows = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM personality_observations
+                WHERE human_id = ?
+                """,
+                (human_id,),
+            ).fetchone()
+            delete_count = max(0, int(total_rows["count"]) - _OBSERVATION_WINDOW)
+            if delete_count > 0:
+                conn.execute(
+                    """
+                    DELETE FROM personality_observations
+                    WHERE observation_id IN (
+                        SELECT observation_id
+                        FROM personality_observations
+                        WHERE human_id = ?
+                        ORDER BY observed_at ASC, created_at ASC
+                        LIMIT ?
+                    )
+                    """,
+                    (human_id, delete_count),
+                )
+            _store_observation_runtime_mirror(
+                human_id=human_id,
+                observations=existing,
+                state_db=state_db,
+                conn=conn,
+            )
+            conn.commit()
 
-    return observation
+        return observation
 
 
-# ── Self-evolution ──
+    # ── Self-evolution ──
 
-# How much a single evolution cycle can shift a trait
+    # How much a single evolution cycle can shift a trait
+
+    except Exception:
+        return {}
 _EVOLUTION_STEP = 0.05
 # Minimum observations before evolution triggers
 _EVOLUTION_MIN_OBSERVATIONS = 10
@@ -3421,87 +3428,92 @@ def maybe_evolve_traits(
     human_id: str,
     state_db: StateDB,
 ) -> dict[str, float] | None:
-    """Analyze accumulated observations and apply small trait adjustments.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        """Analyze accumulated observations and apply small trait adjustments.
 
-    Returns the evolution deltas applied, or None if no evolution occurred.
-    Only runs when enough observations have accumulated.
-    Evolution deltas are bounded to +-_EVOLUTION_STEP per trait per cycle.
-    """
-    observations = _load_recent_observations(human_id=human_id, state_db=state_db)
-    if not observations:
-        return None
+        Returns the evolution deltas applied, or None if no evolution occurred.
+        Only runs when enough observations have accumulated.
+        Evolution deltas are bounded to +-_EVOLUTION_STEP per trait per cycle.
+        """
+        observations = _load_recent_observations(human_id=human_id, state_db=state_db)
+        if not observations:
+            return None
 
-    if len(observations) < _EVOLUTION_MIN_OBSERVATIONS:
-        return None
+        if len(observations) < _EVOLUTION_MIN_OBSERVATIONS:
+            return None
 
-    # Count state occurrences weighted by confidence
-    state_weights: dict[str, float] = {}
-    total_weight = 0.0
-    for obs in observations:
-        state = obs.get("user_state", "neutral")
-        conf = obs.get("confidence", 0.0)
-        if state != "neutral" and conf > 0.3:
-            state_weights[state] = state_weights.get(state, 0.0) + conf
-            total_weight += conf
+        # Count state occurrences weighted by confidence
+        state_weights: dict[str, float] = {}
+        total_weight = 0.0
+        for obs in observations:
+            state = obs.get("user_state", "neutral")
+            conf = obs.get("confidence", 0.0)
+            if state != "neutral" and conf > 0.3:
+                state_weights[state] = state_weights.get(state, 0.0) + conf
+                total_weight += conf
 
-    if total_weight < 2.0:
-        # Not enough signal to evolve
-        return None
+        if total_weight < 2.0:
+            # Not enough signal to evolve
+            return None
 
-    # Compute trait adjustment signals
-    trait_signals: dict[str, float] = {}
-    for state, weight in state_weights.items():
-        signals = _STATE_TRAIT_SIGNALS.get(state, {})
-        normalized_weight = weight / total_weight
-        for trait, direction in signals.items():
-            trait_signals[trait] = trait_signals.get(trait, 0.0) + direction * normalized_weight
+        # Compute trait adjustment signals
+        trait_signals: dict[str, float] = {}
+        for state, weight in state_weights.items():
+            signals = _STATE_TRAIT_SIGNALS.get(state, {})
+            normalized_weight = weight / total_weight
+            for trait, direction in signals.items():
+                trait_signals[trait] = trait_signals.get(trait, 0.0) + direction * normalized_weight
 
-    if not trait_signals:
-        return None
+        if not trait_signals:
+            return None
 
-    # Clamp each signal to evolution step size
-    evolution_deltas: dict[str, float] = {}
-    for trait, signal in trait_signals.items():
-        if abs(signal) < 0.1:
-            continue  # below noise threshold
-        clamped = max(-_EVOLUTION_STEP, min(_EVOLUTION_STEP, signal * _EVOLUTION_STEP))
-        evolution_deltas[trait] = round(clamped, 4)
+        # Clamp each signal to evolution step size
+        evolution_deltas: dict[str, float] = {}
+        for trait, signal in trait_signals.items():
+            if abs(signal) < 0.1:
+                continue  # below noise threshold
+            clamped = max(-_EVOLUTION_STEP, min(_EVOLUTION_STEP, signal * _EVOLUTION_STEP))
+            evolution_deltas[trait] = round(clamped, 4)
 
-    if not evolution_deltas:
-        return None
+        if not evolution_deltas:
+            return None
 
-    # Apply evolution deltas to existing user deltas
-    existing = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-    merged = dict(existing)
-    for trait, delta in evolution_deltas.items():
-        merged[trait] = max(-0.5, min(0.5, merged.get(trait, 0.0) + delta))
+        # Apply evolution deltas to existing user deltas
+        existing = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+        merged = dict(existing)
+        for trait, delta in evolution_deltas.items():
+            merged[trait] = max(-0.5, min(0.5, merged.get(trait, 0.0) + delta))
 
-    _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
+        _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
 
-    # Log the evolution event
-    _record_evolution_event(
-        human_id=human_id,
-        state_db=state_db,
-        evolution_deltas=evolution_deltas,
-        state_weights=state_weights,
-        observation_count=len(observations),
-    )
-
-    # Clear observations after evolution (start fresh)
-    with state_db.connect() as conn:
-        conn.execute(
-            "DELETE FROM personality_observations WHERE human_id = ?",
-            (human_id,),
+        # Log the evolution event
+        _record_evolution_event(
+            human_id=human_id,
+            state_db=state_db,
+            evolution_deltas=evolution_deltas,
+            state_weights=state_weights,
+            observation_count=len(observations),
         )
-        clear_registered_state_keys(
-            conn,
-            state_keys=[_observation_state_key(human_id)],
-        )
-        conn.commit()
 
-    return evolution_deltas
+        # Clear observations after evolution (start fresh)
+        with state_db.connect() as conn:
+            conn.execute(
+                "DELETE FROM personality_observations WHERE human_id = ?",
+                (human_id,),
+            )
+            clear_registered_state_keys(
+                conn,
+                state_keys=[_observation_state_key(human_id)],
+            )
+            conn.commit()
+
+        return evolution_deltas
 
 
+
+    except Exception:
+        return {}
 def _record_evolution_event(
     *,
     human_id: str,
@@ -3510,42 +3522,49 @@ def _record_evolution_event(
     state_weights: dict[str, float],
     observation_count: int,
 ) -> None:
-    """Record an evolution event for auditability."""
-    existing_log = _load_evolution_events(human_id=human_id, state_db=state_db)
-    event = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "deltas": evolution_deltas,
-        "state_weights": {k: round(v, 2) for k, v in state_weights.items()},
-        "observation_count": observation_count,
-    }
-    existing_log.append(event)
-    existing_log = existing_log[-20:]
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO personality_evolution_events(
-                evolution_id,
-                human_id,
-                evolved_at,
-                deltas_json,
-                state_weights_json,
-                observation_count
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(evolution_deltas, str): evolution_deltas = str(evolution_deltas or '')
+    if not isinstance(state_weights, str): state_weights = str(state_weights or '')
+    try:
+        """Record an evolution event for auditability."""
+        existing_log = _load_evolution_events(human_id=human_id, state_db=state_db)
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "deltas": evolution_deltas,
+            "state_weights": {k: round(v, 2) for k, v in state_weights.items()},
+            "observation_count": observation_count,
+        }
+        existing_log.append(event)
+        existing_log = existing_log[-20:]
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO personality_evolution_events(
+                    evolution_id,
+                    human_id,
+                    evolved_at,
+                    deltas_json,
+                    state_weights_json,
+                    observation_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"personality-evolution-{uuid4().hex}",
+                    human_id,
+                    event["ts"],
+                    json.dumps(event["deltas"], sort_keys=True),
+                    json.dumps(event["state_weights"], sort_keys=True),
+                    observation_count,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"personality-evolution-{uuid4().hex}",
-                human_id,
-                event["ts"],
-                json.dumps(event["deltas"], sort_keys=True),
-                json.dumps(event["state_weights"], sort_keys=True),
-                observation_count,
-            ),
-        )
-        _store_evolution_runtime_mirror(
-            human_id=human_id,
-            events=existing_log,
-            state_db=state_db,
-            conn=conn,
-        )
-        conn.commit()
+            _store_evolution_runtime_mirror(
+                human_id=human_id,
+                events=existing_log,
+                state_db=state_db,
+                conn=conn,
+            )
+            conn.commit()
+
+    except Exception:
+        return None
