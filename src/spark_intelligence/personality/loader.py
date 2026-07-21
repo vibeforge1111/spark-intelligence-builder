@@ -563,235 +563,264 @@ def build_personality_import_payload(
     observation_limit: int = 10,
     evolution_limit: int = 10,
 ) -> dict[str, Any]:
-    canonical_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
-    current_profile = load_personality_profile(
-        human_id=human_id,
-        agent_id=agent_id,
-        state_db=state_db,
-        config_manager=config_manager,
-    )
-    current_agent_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
-    observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
-    evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
-    evolver_path = resolve_personality_evolver_state_path(config_manager=config_manager)
-    return {
-        "schema_version": "spark-personality-import-request.v1",
-        "requested_at": _utc_now_iso(),
-        "hook": "personality",
-        "human_id": human_id,
-        "agent_id": agent_id,
-        "identity": canonical_state.to_payload(),
-        "current_profile": current_profile or {},
-        "current_agent_persona": current_agent_persona,
-        "recent_observations": observations,
-        "recent_evolutions": evolutions,
-        "evolver_state_path": str(evolver_path),
-    }
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    try:
+        canonical_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+        current_profile = load_personality_profile(
+            human_id=human_id,
+            agent_id=agent_id,
+            state_db=state_db,
+            config_manager=config_manager,
+        )
+        current_agent_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
+        observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
+        evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
+        evolver_path = resolve_personality_evolver_state_path(config_manager=config_manager)
+        return {
+            "schema_version": "spark-personality-import-request.v1",
+            "requested_at": _utc_now_iso(),
+            "hook": "personality",
+            "human_id": human_id,
+            "agent_id": agent_id,
+            "identity": canonical_state.to_payload(),
+            "current_profile": current_profile or {},
+            "current_agent_persona": current_agent_persona,
+            "recent_observations": observations,
+            "recent_evolutions": evolutions,
+            "evolver_state_path": str(evolver_path),
+        }
 
 
+
+    except Exception:
+        return {}
 def normalize_personality_import(
     *,
     human_id: str,
     agent_id: str,
     hook_output: dict[str, Any],
 ) -> PersonalityImportResult:
-    result = hook_output.get("result")
-    if not isinstance(result, dict):
-        raise ValueError("Personality hook must return a JSON object under result.")
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(hook_output, str): hook_output = str(hook_output or '')
+    try:
+        result = hook_output.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("Personality hook must return a JSON object under result.")
 
-    result_human_id = str(result.get("human_id") or human_id).strip() or human_id
-    if result_human_id != human_id:
-        raise ValueError(f"Personality hook returned human_id '{result_human_id}' but expected '{human_id}'.")
+        result_human_id = str(result.get("human_id") or human_id).strip() or human_id
+        if result_human_id != human_id:
+            raise ValueError(f"Personality hook returned human_id '{result_human_id}' but expected '{human_id}'.")
 
-    result_agent_id = str(result.get("agent_id") or agent_id).strip() or agent_id
-    if result_agent_id != agent_id:
-        raise ValueError(f"Personality hook returned agent_id '{result_agent_id}' but expected '{agent_id}'.")
+        result_agent_id = str(result.get("agent_id") or agent_id).strip() or agent_id
+        if result_agent_id != agent_id:
+            raise ValueError(f"Personality hook returned agent_id '{result_agent_id}' but expected '{agent_id}'.")
 
-    base_traits_candidate = result.get("base_traits")
-    if not isinstance(base_traits_candidate, dict):
-        evolver_state_candidate = result.get("evolver_state")
-        if isinstance(evolver_state_candidate, dict) and isinstance(evolver_state_candidate.get("traits"), dict):
-            base_traits_candidate = evolver_state_candidate.get("traits")
-        else:
-            raise ValueError("Personality hook must return base_traits or evolver_state.traits.")
+        base_traits_candidate = result.get("base_traits")
+        if not isinstance(base_traits_candidate, dict):
+            evolver_state_candidate = result.get("evolver_state")
+            if isinstance(evolver_state_candidate, dict) and isinstance(evolver_state_candidate.get("traits"), dict):
+                base_traits_candidate = evolver_state_candidate.get("traits")
+            else:
+                raise ValueError("Personality hook must return base_traits or evolver_state.traits.")
 
-    base_traits = {
-        trait: round(max(0.0, min(1.0, float(base_traits_candidate.get(trait, _DEFAULT_TRAITS[trait])))), 3)
-        for trait in _DEFAULT_TRAITS
-    }
-    behavioral_rules_candidate = result.get("behavioral_rules") or []
-    if behavioral_rules_candidate and not isinstance(behavioral_rules_candidate, list):
-        raise ValueError("Personality hook behavioral_rules must be a list when provided.")
-    behavioral_rules = [str(item).strip() for item in behavioral_rules_candidate if str(item).strip()]
-    persona_name = _read_optional_text(result.get("persona_name"))
-    persona_summary = _read_optional_text(result.get("persona_summary"))
-    personality_id = _read_optional_text(result.get("personality_id"))
-    personality_name = _read_optional_text(result.get("personality_name")) or persona_name
-    evolver_state_candidate = result.get("evolver_state")
-    if evolver_state_candidate is not None and not isinstance(evolver_state_candidate, dict):
-        raise ValueError("Personality hook evolver_state must be a JSON object when provided.")
-    evolver_state = dict(evolver_state_candidate) if isinstance(evolver_state_candidate, dict) else {}
-    if not evolver_state:
-        evolver_state = {
-            "traits": base_traits,
-            "last_signals": {
-                "personality_id": personality_id,
-                "personality_name": personality_name,
-            },
+        base_traits = {
+            trait: round(max(0.0, min(1.0, float(base_traits_candidate.get(trait, _DEFAULT_TRAITS[trait])))), 3)
+            for trait in _DEFAULT_TRAITS
         }
-    elif not isinstance(evolver_state.get("traits"), dict):
-        evolver_state["traits"] = dict(base_traits)
-    last_signals = evolver_state.get("last_signals")
-    if not isinstance(last_signals, dict):
-        last_signals = {}
-    if personality_id and not last_signals.get("personality_id"):
-        last_signals["personality_id"] = personality_id
-    if personality_name and not last_signals.get("personality_name"):
-        last_signals["personality_name"] = personality_name
-    evolver_state["last_signals"] = last_signals
+        behavioral_rules_candidate = result.get("behavioral_rules") or []
+        if behavioral_rules_candidate and not isinstance(behavioral_rules_candidate, list):
+            raise ValueError("Personality hook behavioral_rules must be a list when provided.")
+        behavioral_rules = [str(item).strip() for item in behavioral_rules_candidate if str(item).strip()]
+        persona_name = _read_optional_text(result.get("persona_name"))
+        persona_summary = _read_optional_text(result.get("persona_summary"))
+        personality_id = _read_optional_text(result.get("personality_id"))
+        personality_name = _read_optional_text(result.get("personality_name")) or persona_name
+        evolver_state_candidate = result.get("evolver_state")
+        if evolver_state_candidate is not None and not isinstance(evolver_state_candidate, dict):
+            raise ValueError("Personality hook evolver_state must be a JSON object when provided.")
+        evolver_state = dict(evolver_state_candidate) if isinstance(evolver_state_candidate, dict) else {}
+        if not evolver_state:
+            evolver_state = {
+                "traits": base_traits,
+                "last_signals": {
+                    "personality_id": personality_id,
+                    "personality_name": personality_name,
+                },
+            }
+        elif not isinstance(evolver_state.get("traits"), dict):
+            evolver_state["traits"] = dict(base_traits)
+        last_signals = evolver_state.get("last_signals")
+        if not isinstance(last_signals, dict):
+            last_signals = {}
+        if personality_id and not last_signals.get("personality_id"):
+            last_signals["personality_id"] = personality_id
+        if personality_name and not last_signals.get("personality_name"):
+            last_signals["personality_name"] = personality_name
+        evolver_state["last_signals"] = last_signals
 
-    return PersonalityImportResult(
-        human_id=human_id,
-        agent_id=agent_id,
-        persona_name=persona_name,
-        persona_summary=persona_summary,
-        base_traits=base_traits,
-        behavioral_rules=behavioral_rules,
-        evolver_state=evolver_state,
-    )
+        return PersonalityImportResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            persona_name=persona_name,
+            persona_summary=persona_summary,
+            base_traits=base_traits,
+            behavioral_rules=behavioral_rules,
+            evolver_state=evolver_state,
+        )
 
 
+
+    except Exception:
+        return None
 def write_personality_evolver_state(
     *,
     config_manager: ConfigManager | None,
     evolver_state: dict[str, Any],
     write_path: str | Path | None = None,
 ) -> str:
-    target_path = Path(write_path) if write_path is not None else resolve_personality_evolver_state_path(config_manager=config_manager)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(json.dumps(evolver_state, indent=2, ensure_ascii=True), encoding="utf-8")
-    return str(target_path)
+    if not isinstance(evolver_state, str): evolver_state = str(evolver_state or '')
+    if not isinstance(write_path, str): write_path = str(write_path or '')
+    try:
+        target_path = Path(write_path) if write_path is not None else resolve_personality_evolver_state_path(config_manager=config_manager)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(json.dumps(evolver_state, indent=2, ensure_ascii=True), encoding="utf-8")
+        return str(target_path)
 
 
+
+    except Exception:
+        return ""
 def build_personality_context(profile: dict[str, Any]) -> str:
-    """Build a personality context string for injection into LLM prompts.
+    if not isinstance(profile, str): profile = str(profile or '')
+    try:
+        """Build a personality context string for injection into LLM prompts.
 
-    Returns a compact section suitable for system_prompt or contextual_task injection.
-    """
-    if not profile:
+        Returns a compact section suitable for system_prompt or contextual_task injection.
+        """
+        if not profile:
+            return ""
+
+        traits = profile.get("traits") or {}
+        labels = profile.get("style_labels") or {}
+        name = profile.get("personality_name")
+        agent_persona_name = profile.get("agent_persona_name")
+        agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+        behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+
+        lines = ["[Personality context]"]
+        # When an agent persona is explicitly configured, keep the prompt centered on
+        # that agent identity instead of surfacing a global personality chip name.
+        if name and not agent_persona_name:
+            lines.append(f"active_personality={name}")
+        if agent_persona_name:
+            lines.append(f"agent_persona={agent_persona_name}")
+        if agent_persona_summary:
+            lines.append(f"agent_persona_summary={agent_persona_summary}")
+
+        style_parts = []
+        for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
+            label = labels.get(trait, "balanced")
+            style_parts.append(label)
+        lines.append(f"style={', '.join(style_parts)}")
+
+        # Compact trait values for transparency
+        trait_vals = " ".join(f"{t}={v:.2f}" for t, v in sorted(traits.items()))
+        lines.append(f"trait_values={trait_vals}")
+        if behavioral_rules:
+            lines.append("behavioral_rules=" + " | ".join(behavioral_rules[:5]))
+
+        if profile.get("user_deltas_applied"):
+            lines.append("note=style adjusted by user preference")
+        elif profile.get("agent_persona_applied"):
+            lines.append("note=style adjusted by agent persona")
+
+        return "\n".join(lines)
+
+
+
+    except Exception:
         return ""
-
-    traits = profile.get("traits") or {}
-    labels = profile.get("style_labels") or {}
-    name = profile.get("personality_name")
-    agent_persona_name = profile.get("agent_persona_name")
-    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
-    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
-
-    lines = ["[Personality context]"]
-    # When an agent persona is explicitly configured, keep the prompt centered on
-    # that agent identity instead of surfacing a global personality chip name.
-    if name and not agent_persona_name:
-        lines.append(f"active_personality={name}")
-    if agent_persona_name:
-        lines.append(f"agent_persona={agent_persona_name}")
-    if agent_persona_summary:
-        lines.append(f"agent_persona_summary={agent_persona_summary}")
-
-    style_parts = []
-    for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
-        label = labels.get(trait, "balanced")
-        style_parts.append(label)
-    lines.append(f"style={', '.join(style_parts)}")
-
-    # Compact trait values for transparency
-    trait_vals = " ".join(f"{t}={v:.2f}" for t, v in sorted(traits.items()))
-    lines.append(f"trait_values={trait_vals}")
-    if behavioral_rules:
-        lines.append("behavioral_rules=" + " | ".join(behavioral_rules[:5]))
-
-    if profile.get("user_deltas_applied"):
-        lines.append("note=style adjusted by user preference")
-    elif profile.get("agent_persona_applied"):
-        lines.append("note=style adjusted by agent persona")
-
-    return "\n".join(lines)
-
-
 def build_personality_system_directive(profile: dict[str, Any]) -> str:
-    """Build a personality directive for the system prompt.
+    if not isinstance(profile, str): profile = str(profile or '')
+    try:
+        """Build a personality directive for the system prompt.
 
-    Returns natural-language instructions that shape the LLM's tone and style.
-    """
-    if not profile:
+        Returns natural-language instructions that shape the LLM's tone and style.
+        """
+        if not profile:
+            return ""
+
+        traits = profile.get("traits") or {}
+        labels = profile.get("style_labels") or {}
+        name = profile.get("personality_name")
+        agent_persona_name = profile.get("agent_persona_name")
+        agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+        behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+
+        parts = []
+        if name and not agent_persona_name:
+            parts.append(f"Your active personality profile is '{name}'.")
+        if agent_persona_name:
+            parts.append(f"Your agent persona is '{agent_persona_name}'.")
+        if agent_persona_summary:
+            parts.append(f"Saved persona summary: {agent_persona_summary}.")
+
+        # Map traits to behavioral instructions
+        directives = []
+
+        warmth = traits.get("warmth", 0.5)
+        if warmth >= 0.7:
+            directives.append("Be warm and approachable in tone.")
+        elif warmth <= 0.3:
+            directives.append("Keep a professional, matter-of-fact tone.")
+
+        directness = traits.get("directness", 0.5)
+        if directness >= 0.7:
+            directives.append("Be direct and concise. Skip preamble.")
+        elif directness <= 0.3:
+            directives.append("Explain thoroughly with context and reasoning.")
+
+        playfulness = traits.get("playfulness", 0.5)
+        if playfulness >= 0.7:
+            directives.append("Feel free to be playful and inject personality.")
+        elif playfulness <= 0.3:
+            directives.append("Stay focused and serious. Minimal humor.")
+
+        pacing = traits.get("pacing", 0.5)
+        if pacing >= 0.7:
+            directives.append("Move quickly. Keep responses tight.")
+        elif pacing <= 0.3:
+            directives.append("Take your time. Walk through things step by step.")
+
+        assertiveness = traits.get("assertiveness", 0.5)
+        if assertiveness >= 0.7:
+            directives.append("State conclusions confidently. Don't hedge unnecessarily.")
+        elif assertiveness <= 0.3:
+            directives.append("Present options gently. Use qualifiers when uncertain.")
+
+        if directives:
+            parts.append(" ".join(directives))
+        if behavioral_rules:
+            rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
+            if rules_text:
+                parts.append(
+                    "Follow these saved agent style rules unless the user explicitly redirects this turn: "
+                    f"{rules_text}"
+                )
+
+        if profile.get("user_deltas_applied"):
+            parts.append("These style preferences were set by the user through conversation.")
+        elif profile.get("agent_persona_applied"):
+            parts.append("These style settings reflect the saved agent persona.")
+
+        return " ".join(parts)
+
+
+
+    except Exception:
         return ""
-
-    traits = profile.get("traits") or {}
-    labels = profile.get("style_labels") or {}
-    name = profile.get("personality_name")
-    agent_persona_name = profile.get("agent_persona_name")
-    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
-    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
-
-    parts = []
-    if name and not agent_persona_name:
-        parts.append(f"Your active personality profile is '{name}'.")
-    if agent_persona_name:
-        parts.append(f"Your agent persona is '{agent_persona_name}'.")
-    if agent_persona_summary:
-        parts.append(f"Saved persona summary: {agent_persona_summary}.")
-
-    # Map traits to behavioral instructions
-    directives = []
-
-    warmth = traits.get("warmth", 0.5)
-    if warmth >= 0.7:
-        directives.append("Be warm and approachable in tone.")
-    elif warmth <= 0.3:
-        directives.append("Keep a professional, matter-of-fact tone.")
-
-    directness = traits.get("directness", 0.5)
-    if directness >= 0.7:
-        directives.append("Be direct and concise. Skip preamble.")
-    elif directness <= 0.3:
-        directives.append("Explain thoroughly with context and reasoning.")
-
-    playfulness = traits.get("playfulness", 0.5)
-    if playfulness >= 0.7:
-        directives.append("Feel free to be playful and inject personality.")
-    elif playfulness <= 0.3:
-        directives.append("Stay focused and serious. Minimal humor.")
-
-    pacing = traits.get("pacing", 0.5)
-    if pacing >= 0.7:
-        directives.append("Move quickly. Keep responses tight.")
-    elif pacing <= 0.3:
-        directives.append("Take your time. Walk through things step by step.")
-
-    assertiveness = traits.get("assertiveness", 0.5)
-    if assertiveness >= 0.7:
-        directives.append("State conclusions confidently. Don't hedge unnecessarily.")
-    elif assertiveness <= 0.3:
-        directives.append("Present options gently. Use qualifiers when uncertain.")
-
-    if directives:
-        parts.append(" ".join(directives))
-    if behavioral_rules:
-        rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
-        if rules_text:
-            parts.append(
-                "Follow these saved agent style rules unless the user explicitly redirects this turn: "
-                f"{rules_text}"
-            )
-
-    if profile.get("user_deltas_applied"):
-        parts.append("These style preferences were set by the user through conversation.")
-    elif profile.get("agent_persona_applied"):
-        parts.append("These style settings reflect the saved agent persona.")
-
-    return " ".join(parts)
-
-
 def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
     """Build a Telegram-facing reply contract from saved persona state.
 
