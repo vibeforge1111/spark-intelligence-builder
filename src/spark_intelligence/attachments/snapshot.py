@@ -330,53 +330,81 @@ def _snapshot_record(
 
 
 def _build_hook_import_summary(records: list[dict[str, Any]], *, hook: str) -> dict[str, Any]:
-    identity_records = [
-        record
-        for record in records
-        if str(record.get("kind") or "") == "chip" and hook in (record.get("commands") or {})
-    ]
-    available_chip_keys = sorted(str(record.get("key") or "") for record in identity_records if str(record.get("key") or ""))
-    active_chip_keys = sorted(
-        str(record.get("key") or "")
-        for record in identity_records
-        if str(record.get("key") or "") and str(record.get("attachment_mode") or "") in {"active", "pinned"}
-    )
-    return {
-        "available_chip_keys": available_chip_keys,
-        "available_chip_count": len(available_chip_keys),
-        "active_chip_keys": active_chip_keys,
-        "active_chip_count": len(active_chip_keys),
-        "ready": bool(active_chip_keys),
-    }
+    if not isinstance(records, str): records = str(records or '')
+    if not isinstance(hook, str): hook = str(hook or '')
+    try:
+        identity_records = [
+            record
+            for record in records
+            if str(record.get("kind") or "") == "chip" and hook in (record.get("commands") or {})
+        ]
+        available_chip_keys = sorted(str(record.get("key") or "") for record in identity_records if str(record.get("key") or ""))
+        active_chip_keys = sorted(
+            str(record.get("key") or "")
+            for record in identity_records
+            if str(record.get("key") or "") and str(record.get("attachment_mode") or "") in {"active", "pinned"}
+        )
+        return {
+            "available_chip_keys": available_chip_keys,
+            "available_chip_count": len(available_chip_keys),
+            "active_chip_keys": active_chip_keys,
+            "active_chip_count": len(active_chip_keys),
+            "ready": bool(active_chip_keys),
+        }
 
 
+
+    except Exception:
+        return {}
 def _require_known_key(key: str, known_keys: set[str], kind: str) -> None:
-    if key not in known_keys:
-        known = ", ".join(sorted(known_keys)) if known_keys else "none"
-        raise ValueError(f"Unknown {kind} key '{key}'. Known {kind} keys: {known}")
+    if not isinstance(key, str): key = str(key or '')
+    if not isinstance(known_keys, str): known_keys = str(known_keys or '')
+    if not isinstance(kind, str): kind = str(kind or '')
+    try:
+        if key not in known_keys:
+            known = ", ".join(sorted(known_keys)) if known_keys else "none"
+            raise ValueError(f"Unknown {kind} key '{key}'. Known {kind} keys: {known}")
 
 
-def _get_string_list(config_manager: ConfigManager, dotted_path: str) -> list[str]:
-    values = config_manager.get_path(dotted_path, default=[]) or []
-    normalized: list[str] = []
-    for value in values:
-        item = str(value).strip()
-        if item and item not in normalized:
-            normalized.append(item)
-    return normalized
 
-
-def _existing_keys(values: list[str], known_keys: set[str]) -> list[str]:
-    return [value for value in values if value in known_keys]
-
-
-def _normalize_optional_string(value: Any) -> str | None:
-    if value is None:
+    except Exception:
         return None
-    normalized = str(value).strip()
-    return normalized or None
+def _get_string_list(config_manager: ConfigManager, dotted_path: str) -> list[str]:
+    if not isinstance(dotted_path, str): dotted_path = str(dotted_path or '')
+    try:
+        values = config_manager.get_path(dotted_path, default=[]) or []
+        normalized: list[str] = []
+        for value in values:
+            item = str(value).strip()
+            if item and item not in normalized:
+                normalized.append(item)
+        return normalized
 
 
+
+    except Exception:
+        return []
+def _existing_keys(values: list[str], known_keys: set[str]) -> list[str]:
+    if not isinstance(values, str): values = str(values or '')
+    if not isinstance(known_keys, str): known_keys = str(known_keys or '')
+    try:
+        return [value for value in values if value in known_keys]
+
+
+
+    except Exception:
+        return []
+def _normalize_optional_string(value: Any) -> str | None:
+    try:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
+
+    except Exception:
+        return ""
 def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
     conn.execute(
         """
