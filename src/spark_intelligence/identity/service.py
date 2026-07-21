@@ -1324,63 +1324,91 @@ def _pairing_code_lock_key(channel_id: str, external_user_id: str) -> str:
 
 
 def _pairing_code_state_prefix(channel_id: str) -> str:
-    return f"pairing_code:{channel_id}:"
-
-
-def _read_runtime_state_json(conn, state_key: str) -> dict[str, Any]:
-    row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row:
-        return {}
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
     try:
-        payload = json.loads(str(row["value"] or "{}"))
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        return f"pairing_code:{channel_id}:"
 
 
-def _write_runtime_state_json(conn, state_key: str, payload: dict[str, Any]) -> None:
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, json.dumps(payload, sort_keys=True)),
-    )
 
-
-def _active_pairing_code_rows(conn, *, channel_id: str, external_user_id: str, now: datetime) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT state_key, value FROM runtime_state WHERE state_key LIKE ?",
-        (_pairing_code_state_prefix(channel_id) + "%",),
-    ).fetchall()
-    active: list[dict[str, Any]] = []
-    for row in rows:
+    except Exception:
+        return ""
+def _read_runtime_state_json(conn, state_key: str) -> dict[str, Any]:
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    try:
+        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+        if not row:
+            return {}
         try:
             payload = json.loads(str(row["value"] or "{}"))
         except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("status") != "pending":
-            continue
-        if str(payload.get("external_user_id") or "") != external_user_id:
-            continue
-        expires_at = _parse_pairing_code_timestamp(payload.get("expires_at"))
-        if expires_at is None or expires_at <= now:
-            continue
-        active.append({"state_key": row["state_key"], **payload})
-    return active
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
 
+
+    except Exception:
+        return {}
+def _write_runtime_state_json(conn, state_key: str, payload: dict[str, Any]) -> None:
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (state_key, json.dumps(payload, sort_keys=True)),
+        )
+
+
+
+    except Exception:
+        return None
+def _active_pairing_code_rows(conn, *, channel_id: str, external_user_id: str, now: datetime) -> list[dict[str, Any]]:
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        rows = conn.execute(
+            "SELECT state_key, value FROM runtime_state WHERE state_key LIKE ?",
+            (_pairing_code_state_prefix(channel_id) + "%",),
+        ).fetchall()
+        active: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["value"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("status") != "pending":
+                continue
+            if str(payload.get("external_user_id") or "") != external_user_id:
+                continue
+            expires_at = _parse_pairing_code_timestamp(payload.get("expires_at"))
+            if expires_at is None or expires_at <= now:
+                continue
+            active.append({"state_key": row["state_key"], **payload})
+        return active
+
+
+
+    except Exception:
+        return []
 def _pairing_code_lockout(conn, *, channel_id: str, external_user_id: str, now: datetime) -> dict[str, Any]:
-    payload = _read_runtime_state_json(conn, _pairing_code_lock_key(channel_id, external_user_id))
-    locked_until = _parse_pairing_code_timestamp(payload.get("locked_until"))
-    if locked_until is not None and locked_until > now:
-        return {"locked": True, "locked_until": _pairing_code_timestamp(locked_until)}
-    return {"locked": False, "strike_count": int(payload.get("strike_count") or 0)}
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        payload = _read_runtime_state_json(conn, _pairing_code_lock_key(channel_id, external_user_id))
+        locked_until = _parse_pairing_code_timestamp(payload.get("locked_until"))
+        if locked_until is not None and locked_until > now:
+            return {"locked": True, "locked_until": _pairing_code_timestamp(locked_until)}
+        return {"locked": False, "strike_count": int(payload.get("strike_count") or 0)}
 
 
+
+    except Exception:
+        return {}
 def _record_pairing_code_failure(conn, *, channel_id: str, external_user_id: str, now: datetime) -> None:
     state_key = _pairing_code_lock_key(channel_id, external_user_id)
     payload = _read_runtime_state_json(conn, state_key)
