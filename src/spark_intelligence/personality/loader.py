@@ -340,71 +340,97 @@ def _has_personality_signal(text: str) -> bool:
 
 
 def _extract_agent_name(text: str) -> str | None:
-    for pattern in _AGENT_NAME_PATTERNS:
-        match = pattern.search(text.strip())
-        if not match:
-            continue
-        candidate = str(match.group("name") or "").strip().strip(".")
-        if candidate:
-            return candidate
-    return None
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        for pattern in _AGENT_NAME_PATTERNS:
+            match = pattern.search(text.strip())
+            if not match:
+                continue
+            candidate = str(match.group("name") or "").strip().strip(".")
+            if candidate:
+                return candidate
+        return None
 
 
-def _split_behavioral_rule_candidates(text: str) -> list[str]:
-    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    candidates: list[str] = []
-    for raw_line in normalized.split("\n"):
-        line = raw_line.strip()
-        if not line:
-            continue
-        line = re.sub(r"^[\-\*\u2022]+\s*", "", line)
-        for chunk in re.split(r"(?<=[.!])\s+(?=[A-Z\"'`])", line):
-            compact = " ".join(chunk.strip().split())
-            if compact:
-                candidates.append(compact)
-    return candidates
 
-
-def _normalize_behavioral_rule(rule: str) -> str:
-    compact = " ".join(str(rule or "").strip().split())
-    compact = compact.strip("\"'`")
-    compact = compact.rstrip(".! ")
-    if not compact:
+    except Exception:
         return ""
-    return compact[0].upper() + compact[1:]
+def _split_behavioral_rule_candidates(text: str) -> list[str]:
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        candidates: list[str] = []
+        for raw_line in normalized.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                continue
+            line = re.sub(r"^[\-\*\u2022]+\s*", "", line)
+            for chunk in re.split(r"(?<=[.!])\s+(?=[A-Z\"'`])", line):
+                compact = " ".join(chunk.strip().split())
+                if compact:
+                    candidates.append(compact)
+        return candidates
 
 
+
+    except Exception:
+        return []
+def _normalize_behavioral_rule(rule: str) -> str:
+    if not isinstance(rule, str): rule = str(rule or '')
+    try:
+        compact = " ".join(str(rule or "").strip().split())
+        compact = compact.strip("\"'`")
+        compact = compact.rstrip(".! ")
+        if not compact:
+            return ""
+        return compact[0].upper() + compact[1:]
+
+
+
+    except Exception:
+        return ""
 def _extract_behavioral_rules(text: str) -> list[str]:
-    rules: list[str] = []
-    for candidate in _split_behavioral_rule_candidates(text):
-        lowered = candidate.lower().replace("’", "'")
-        if candidate.startswith("/") or candidate.endswith("?"):
-            continue
-        if len(candidate) < 12 or len(candidate) > 180:
-            continue
-        if not any(lowered.startswith(prefix) for prefix in _BEHAVIORAL_RULE_PREFIXES):
-            continue
-        normalized = _normalize_behavioral_rule(candidate)
-        if normalized and normalized.lower() not in {item.lower() for item in rules}:
-            rules.append(normalized)
-    return rules
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        rules: list[str] = []
+        for candidate in _split_behavioral_rule_candidates(text):
+            lowered = candidate.lower().replace("’", "'")
+            if candidate.startswith("/") or candidate.endswith("?"):
+                continue
+            if len(candidate) < 12 or len(candidate) > 180:
+                continue
+            if not any(lowered.startswith(prefix) for prefix in _BEHAVIORAL_RULE_PREFIXES):
+                continue
+            normalized = _normalize_behavioral_rule(candidate)
+            if normalized and normalized.lower() not in {item.lower() for item in rules}:
+                rules.append(normalized)
+        return rules
 
 
+
+    except Exception:
+        return []
 def _merge_behavioral_rules(existing: list[str], incoming: list[str], *, limit: int = 8) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for rule in [*existing, *incoming]:
-        normalized = _normalize_behavioral_rule(rule)
-        if not normalized:
-            continue
-        lowered = normalized.lower()
-        if lowered in seen:
-            continue
-        merged.append(normalized)
-        seen.add(lowered)
-    return merged[-limit:]
+    if not isinstance(existing, str): existing = str(existing or '')
+    if not isinstance(incoming, str): incoming = str(incoming or '')
+    try:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for rule in [*existing, *incoming]:
+            normalized = _normalize_behavioral_rule(rule)
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            merged.append(normalized)
+            seen.add(lowered)
+        return merged[-limit:]
 
 
+
+    except Exception:
+        return []
 def _behavioral_rule_summary(rules: list[str], *, limit: int = 160) -> str | None:
     if not rules:
         return None
