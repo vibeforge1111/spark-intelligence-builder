@@ -378,15 +378,25 @@ def _normalize_optional_string(value: Any) -> str | None:
 
 
 def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, value),
-    )
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (state_key, value),
+        )
 
 
+
+    except Exception:
+        return None
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    try:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    except Exception:
+        return ""

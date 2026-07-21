@@ -19,186 +19,199 @@ _RAW_READ_FLAGS = (
 
 
 def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, Any]:
-    output_dir, resolution = _resolve_system_map_dir(config_manager)
-    files = {
-        "system_map": output_dir / "system-map.json",
-        "authority_view": output_dir / "authority-view.json",
-        "capability_catalog": output_dir / "capability-catalog.json",
-        "trace_index": output_dir / "trace-index.json",
-        "memory_movement_index": output_dir / "memory-movement-index.json",
-        "gaps": output_dir / "gaps.md",
-    }
-    system_map = _read_json_object(files["system_map"])
-    authority_view = _read_json_object(files["authority_view"])
-    capability_catalog = _read_json_object(files["capability_catalog"])
-    trace_index = _read_json_object(files["trace_index"])
-    memory_movement_index = _read_json_object(files["memory_movement_index"])
-    present = bool(system_map)
+    try:
+        output_dir, resolution = _resolve_system_map_dir(config_manager)
+        files = {
+            "system_map": output_dir / "system-map.json",
+            "authority_view": output_dir / "authority-view.json",
+            "capability_catalog": output_dir / "capability-catalog.json",
+            "trace_index": output_dir / "trace-index.json",
+            "memory_movement_index": output_dir / "memory-movement-index.json",
+            "gaps": output_dir / "gaps.md",
+        }
+        system_map = _read_json_object(files["system_map"])
+        authority_view = _read_json_object(files["authority_view"])
+        capability_catalog = _read_json_object(files["capability_catalog"])
+        trace_index = _read_json_object(files["trace_index"])
+        memory_movement_index = _read_json_object(files["memory_movement_index"])
+        present = bool(system_map)
 
-    if not present:
+        if not present:
+            return {
+                "schema_version": SYSTEM_MAP_CONTEXT_SCHEMA_VERSION,
+                "present": False,
+                "source": "spark_cli.os_compile",
+                "source_ref": "spark os compile",
+                "output_dir": str(output_dir),
+                "resolution": resolution,
+                "freshness": "unknown",
+                "counts": {},
+                "warnings": ["spark_os_system_map_missing"],
+                "next_action": "Run `spark os compile` from spark-cli before using cross-repo system truth in AOC.",
+                "claim_boundary": _claim_boundary(),
+                "authority": "observability_non_authoritative",
+            }
+
+        privacy = _dict(system_map.get("privacy"))
+        warnings = _warnings(
+            system_map=system_map,
+            authority_view=authority_view,
+            capability_catalog=capability_catalog,
+            trace_index=trace_index,
+            memory_movement_index=memory_movement_index,
+            privacy=privacy,
+        )
+        memory_movement = _memory_movement_context(memory_movement_index)
+        trace_health = _trace_health_context(trace_index)
+        trace_topology = _trace_topology_context(trace_index)
+        cross_system_trace = _cross_system_trace_context(trace_index)
+        latest_spawner_job = _latest_spawner_job_context(trace_index)
+        authority_status = _authority_status_context(authority_view)
+        authority_status.update(_authority_verdict_context(trace_index))
+        capability_garden = _capability_garden_context(capability_catalog)
+        counts = {
+            "modules": len(_list(system_map.get("modules"))),
+            "repos": len(_list(system_map.get("discovered_repos"))),
+            "gaps": len(_list(system_map.get("gaps"))),
+            "chip_manifests": len(_list(capability_catalog.get("chip_manifests"))),
+            "skill_graphs": len(_list(capability_catalog.get("skill_graphs"))),
+            "creator_system_surfaces": _int(capability_garden.get("creator_system_surfaces")),
+            "specialization_path_surfaces": _int(capability_garden.get("specialization_path_surfaces")),
+            "capability_cards": _int(capability_garden.get("card_count")),
+            "authority_sources": _authority_source_count(authority_view),
+            "authority_toxic_pairs": _int(authority_status.get("toxic_pair_count")),
+            "authority_browser_approval_hooks": _int(authority_status.get("browser_approval_required_hook_count")),
+            "authority_publication_checks": _int(authority_status.get("publication_checks_required")),
+            "authority_trace_verdicts": _int(authority_status.get("trace_verdict_count")),
+            "builder_event_rows": _builder_event_rows(trace_index),
+            "builder_event_samples": _builder_event_sample_count(trace_index),
+            "builder_trace_groups": _builder_trace_group_count(trace_index),
+            "builder_trace_topology_groups": _int(trace_topology.get("group_count")),
+            "trace_health_flags": len(_list(trace_health.get("health_flags"))),
+            "spawner_prd_request_ids": _int(cross_system_trace.get("spawner_prd_request_id_count")),
+            "spawner_prd_derived_trace_refs": _int(cross_system_trace.get("spawner_prd_derived_trace_ref_count")),
+            "spawner_builder_trace_ref_overlaps": _int(cross_system_trace.get("spawner_builder_trace_ref_overlap_count")),
+            "memory_movement_rows": memory_movement.get("row_count"),
+            "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
+        }
         return {
             "schema_version": SYSTEM_MAP_CONTEXT_SCHEMA_VERSION,
-            "present": False,
+            "present": True,
             "source": "spark_cli.os_compile",
             "source_ref": "spark os compile",
             "output_dir": str(output_dir),
             "resolution": resolution,
-            "freshness": "unknown",
-            "counts": {},
-            "warnings": ["spark_os_system_map_missing"],
-            "next_action": "Run `spark os compile` from spark-cli before using cross-repo system truth in AOC.",
+            "freshness": "fresh" if system_map.get("generated_at") else "unknown",
+            "generated_at": system_map.get("generated_at"),
+            "counts": counts,
+            "memory_movement": memory_movement,
+            "trace_health": trace_health,
+            "trace_topology": trace_topology,
+            "cross_system_trace": cross_system_trace,
+            "latest_spawner_job": latest_spawner_job,
+            "authority_status": authority_status,
+            "capability_garden": capability_garden,
+            "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
+            "files": {
+                name: {
+                    "exists": path.exists(),
+                    "schema_version": _schema_for(
+                        name,
+                        system_map,
+                        authority_view,
+                        capability_catalog,
+                        trace_index,
+                        memory_movement_index,
+                    ),
+                }
+                for name, path in files.items()
+            },
+            "warnings": warnings,
+            "next_action": "Use as read-only AOC source evidence; rerun `spark os compile` after install or repo changes.",
             "claim_boundary": _claim_boundary(),
             "authority": "observability_non_authoritative",
         }
 
-    privacy = _dict(system_map.get("privacy"))
-    warnings = _warnings(
-        system_map=system_map,
-        authority_view=authority_view,
-        capability_catalog=capability_catalog,
-        trace_index=trace_index,
-        memory_movement_index=memory_movement_index,
-        privacy=privacy,
-    )
-    memory_movement = _memory_movement_context(memory_movement_index)
-    trace_health = _trace_health_context(trace_index)
-    trace_topology = _trace_topology_context(trace_index)
-    cross_system_trace = _cross_system_trace_context(trace_index)
-    latest_spawner_job = _latest_spawner_job_context(trace_index)
-    authority_status = _authority_status_context(authority_view)
-    authority_status.update(_authority_verdict_context(trace_index))
-    capability_garden = _capability_garden_context(capability_catalog)
-    counts = {
-        "modules": len(_list(system_map.get("modules"))),
-        "repos": len(_list(system_map.get("discovered_repos"))),
-        "gaps": len(_list(system_map.get("gaps"))),
-        "chip_manifests": len(_list(capability_catalog.get("chip_manifests"))),
-        "skill_graphs": len(_list(capability_catalog.get("skill_graphs"))),
-        "creator_system_surfaces": _int(capability_garden.get("creator_system_surfaces")),
-        "specialization_path_surfaces": _int(capability_garden.get("specialization_path_surfaces")),
-        "capability_cards": _int(capability_garden.get("card_count")),
-        "authority_sources": _authority_source_count(authority_view),
-        "authority_toxic_pairs": _int(authority_status.get("toxic_pair_count")),
-        "authority_browser_approval_hooks": _int(authority_status.get("browser_approval_required_hook_count")),
-        "authority_publication_checks": _int(authority_status.get("publication_checks_required")),
-        "authority_trace_verdicts": _int(authority_status.get("trace_verdict_count")),
-        "builder_event_rows": _builder_event_rows(trace_index),
-        "builder_event_samples": _builder_event_sample_count(trace_index),
-        "builder_trace_groups": _builder_trace_group_count(trace_index),
-        "builder_trace_topology_groups": _int(trace_topology.get("group_count")),
-        "trace_health_flags": len(_list(trace_health.get("health_flags"))),
-        "spawner_prd_request_ids": _int(cross_system_trace.get("spawner_prd_request_id_count")),
-        "spawner_prd_derived_trace_refs": _int(cross_system_trace.get("spawner_prd_derived_trace_ref_count")),
-        "spawner_builder_trace_ref_overlaps": _int(cross_system_trace.get("spawner_builder_trace_ref_overlap_count")),
-        "memory_movement_rows": memory_movement.get("row_count"),
-        "builder_memory_table_count": memory_movement.get("builder_memory_table_count"),
-    }
-    return {
-        "schema_version": SYSTEM_MAP_CONTEXT_SCHEMA_VERSION,
-        "present": True,
-        "source": "spark_cli.os_compile",
-        "source_ref": "spark os compile",
-        "output_dir": str(output_dir),
-        "resolution": resolution,
-        "freshness": "fresh" if system_map.get("generated_at") else "unknown",
-        "generated_at": system_map.get("generated_at"),
-        "counts": counts,
-        "memory_movement": memory_movement,
-        "trace_health": trace_health,
-        "trace_topology": trace_topology,
-        "cross_system_trace": cross_system_trace,
-        "latest_spawner_job": latest_spawner_job,
-        "authority_status": authority_status,
-        "capability_garden": capability_garden,
-        "privacy": {key: privacy.get(key) for key in _RAW_READ_FLAGS if key in privacy},
-        "files": {
-            name: {
-                "exists": path.exists(),
-                "schema_version": _schema_for(
-                    name,
-                    system_map,
-                    authority_view,
-                    capability_catalog,
-                    trace_index,
-                    memory_movement_index,
-                ),
-            }
-            for name, path in files.items()
-        },
-        "warnings": warnings,
-        "next_action": "Use as read-only AOC source evidence; rerun `spark os compile` after install or repo changes.",
-        "claim_boundary": _claim_boundary(),
-        "authority": "observability_non_authoritative",
-    }
 
 
+    except Exception:
+        return {}
 def summarize_spark_system_map_context(context: dict[str, Any]) -> str:
-    if not context.get("present"):
-        return "missing; run spark os compile"
-    counts = _dict(context.get("counts"))
-    parts = [
-        f"{int(counts.get('modules') or 0)} modules",
-        f"{int(counts.get('repos') or 0)} repos",
-        f"{int(counts.get('chip_manifests') or 0)} chips",
-        f"{int(counts.get('gaps') or 0)} gaps",
-    ]
-    memory_movement = _dict(context.get("memory_movement"))
-    if memory_movement.get("present"):
-        parts.append(
-            f"memory movement {memory_movement.get('status') or 'unknown'} "
-            f"({int(memory_movement.get('row_count') or 0)} rows)"
-        )
-    sample_count = int(counts.get("builder_event_samples") or 0)
-    if sample_count:
-        parts.append(f"black-box samples {sample_count}")
-    trace_group_count = int(counts.get("builder_trace_groups") or 0)
-    if trace_group_count:
-        parts.append(f"trace groups {trace_group_count}")
-    trace_health = _dict(context.get("trace_health"))
-    health_flags = _list(trace_health.get("health_flags"))
-    if health_flags:
-        parts.append(f"trace health flags {len(health_flags)}")
-    trace_topology = _dict(context.get("trace_topology"))
-    if trace_topology.get("present"):
-        parts.append(f"trace topology {int(trace_topology.get('group_count') or 0)} groups")
-    cross_system_trace = _dict(context.get("cross_system_trace"))
-    derived_spawner_refs = int(cross_system_trace.get("spawner_prd_derived_trace_ref_count") or 0)
-    if derived_spawner_refs:
-        parts.append(f"spawner trace refs {derived_spawner_refs}")
-    authority_status = _dict(context.get("authority_status"))
-    if authority_status.get("present"):
-        authority_part = (
-            "authority "
-            f"L{int(authority_status.get('default_access_level') or 0)} "
-            f"{authority_status.get('default_sandbox_lane') or 'unknown'}"
-        )
-        trace_verdict_count = int(authority_status.get("trace_verdict_count") or 0)
-        if trace_verdict_count:
-            authority_part += f", authority verdicts {trace_verdict_count}"
-        parts.append(authority_part)
-    capability_garden = _dict(context.get("capability_garden"))
-    card_count = int(capability_garden.get("card_count") or 0)
-    if card_count:
-        parts.append(f"capability cards {card_count}")
-    return ", ".join(parts)
+    if not isinstance(context, str): context = str(context or '')
+    try:
+        if not context.get("present"):
+            return "missing; run spark os compile"
+        counts = _dict(context.get("counts"))
+        parts = [
+            f"{int(counts.get('modules') or 0)} modules",
+            f"{int(counts.get('repos') or 0)} repos",
+            f"{int(counts.get('chip_manifests') or 0)} chips",
+            f"{int(counts.get('gaps') or 0)} gaps",
+        ]
+        memory_movement = _dict(context.get("memory_movement"))
+        if memory_movement.get("present"):
+            parts.append(
+                f"memory movement {memory_movement.get('status') or 'unknown'} "
+                f"({int(memory_movement.get('row_count') or 0)} rows)"
+            )
+        sample_count = int(counts.get("builder_event_samples") or 0)
+        if sample_count:
+            parts.append(f"black-box samples {sample_count}")
+        trace_group_count = int(counts.get("builder_trace_groups") or 0)
+        if trace_group_count:
+            parts.append(f"trace groups {trace_group_count}")
+        trace_health = _dict(context.get("trace_health"))
+        health_flags = _list(trace_health.get("health_flags"))
+        if health_flags:
+            parts.append(f"trace health flags {len(health_flags)}")
+        trace_topology = _dict(context.get("trace_topology"))
+        if trace_topology.get("present"):
+            parts.append(f"trace topology {int(trace_topology.get('group_count') or 0)} groups")
+        cross_system_trace = _dict(context.get("cross_system_trace"))
+        derived_spawner_refs = int(cross_system_trace.get("spawner_prd_derived_trace_ref_count") or 0)
+        if derived_spawner_refs:
+            parts.append(f"spawner trace refs {derived_spawner_refs}")
+        authority_status = _dict(context.get("authority_status"))
+        if authority_status.get("present"):
+            authority_part = (
+                "authority "
+                f"L{int(authority_status.get('default_access_level') or 0)} "
+                f"{authority_status.get('default_sandbox_lane') or 'unknown'}"
+            )
+            trace_verdict_count = int(authority_status.get("trace_verdict_count") or 0)
+            if trace_verdict_count:
+                authority_part += f", authority verdicts {trace_verdict_count}"
+            parts.append(authority_part)
+        capability_garden = _dict(context.get("capability_garden"))
+        card_count = int(capability_garden.get("card_count") or 0)
+        if card_count:
+            parts.append(f"capability cards {card_count}")
+        return ", ".join(parts)
 
 
+
+    except Exception:
+        return ""
 def _resolve_system_map_dir(config_manager: ConfigManager) -> tuple[Path, str]:
-    configured = config_manager.get_path("spark.system_map.output_dir")
-    if isinstance(configured, str) and configured.strip():
-        return Path(configured).expanduser(), "config:spark.system_map.output_dir"
+    try:
+        configured = config_manager.get_path("spark.system_map.output_dir")
+        if isinstance(configured, str) and configured.strip():
+            return Path(configured).expanduser(), "config:spark.system_map.output_dir"
 
-    home = config_manager.paths.home
-    if home.name == "spark-intelligence" and home.parent.name == "state":
-        return home.parent / "system-map", "spark_home_sibling"
+        home = config_manager.paths.home
+        if home.name == "spark-intelligence" and home.parent.name == "state":
+            return home.parent / "system-map", "spark_home_sibling"
 
-    spark_cli_state = Path.home() / ".spark" / "state" / "system-map"
-    if spark_cli_state.exists():
-        return spark_cli_state, "spark_cli_default_state"
+        spark_cli_state = Path.home() / ".spark" / "state" / "system-map"
+        if spark_cli_state.exists():
+            return spark_cli_state, "spark_cli_default_state"
 
-    return home / "artifacts" / "system-map", "builder_artifacts_default"
+        return home / "artifacts" / "system-map", "builder_artifacts_default"
 
 
+
+    except Exception:
+        return ()
 def _read_json_object(path: Path) -> dict[str, Any]:
     if not path.exists() or path.stat().st_size > 5_000_000:
         return {}
