@@ -61,45 +61,49 @@ class DiscordSimulationResult:
 
 
 def build_discord_runtime_summary(config_manager: ConfigManager, state_db: StateDB) -> DiscordRuntimeSummary:
-    config = config_manager.load()
-    record = config.get("channels", {}).get("records", {}).get("discord")
-    if not record:
+    try:
+        config = config_manager.load()
+        record = config.get("channels", {}).get("records", {}).get("discord")
+        if not record:
+            return DiscordRuntimeSummary(
+                channel_id="discord",
+                configured=False,
+                status=None,
+                pairing_mode=None,
+                auth_ref=None,
+                allowed_user_count=0,
+                interaction_public_key_configured=False,
+                webhook_auth_ref=None,
+                legacy_message_webhook_enabled=False,
+            )
+        with state_db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'discord'"
+            ).fetchone()["c"]
+            installation = conn.execute(
+                """
+                SELECT status, pairing_mode, auth_ref
+                FROM channel_installations
+                WHERE channel_id = 'discord'
+                LIMIT 1
+                """
+            ).fetchone()
         return DiscordRuntimeSummary(
             channel_id="discord",
-            configured=False,
-            status=None,
-            pairing_mode=None,
-            auth_ref=None,
-            allowed_user_count=0,
-            interaction_public_key_configured=False,
-            webhook_auth_ref=None,
-            legacy_message_webhook_enabled=False,
+            configured=True,
+            status=(installation["status"] if installation else record.get("status")),
+            pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
+            auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
+            allowed_user_count=count,
+            interaction_public_key_configured=bool(str(record.get("interaction_public_key") or "").strip()),
+            webhook_auth_ref=(str(record.get("webhook_auth_ref")) if record.get("webhook_auth_ref") else None),
+            legacy_message_webhook_enabled=bool(record.get("allow_legacy_message_webhook")),
         )
-    with state_db.connect() as conn:
-        count = conn.execute(
-            "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'discord'"
-        ).fetchone()["c"]
-        installation = conn.execute(
-            """
-            SELECT status, pairing_mode, auth_ref
-            FROM channel_installations
-            WHERE channel_id = 'discord'
-            LIMIT 1
-            """
-        ).fetchone()
-    return DiscordRuntimeSummary(
-        channel_id="discord",
-        configured=True,
-        status=(installation["status"] if installation else record.get("status")),
-        pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
-        auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
-        allowed_user_count=count,
-        interaction_public_key_configured=bool(str(record.get("interaction_public_key") or "").strip()),
-        webhook_auth_ref=(str(record.get("webhook_auth_ref")) if record.get("webhook_auth_ref") else None),
-        legacy_message_webhook_enabled=bool(record.get("allow_legacy_message_webhook")),
-    )
 
 
+
+    except Exception:
+        return None
 def simulate_discord_message(
     *,
     config_manager: ConfigManager,

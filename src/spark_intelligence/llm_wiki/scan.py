@@ -201,33 +201,53 @@ def _recommendation(issues: list[dict[str, str]]) -> str:
 
 
 def _looks_like_conversation_residue(source_refs: list[str]) -> bool:
-    residue_patterns = ("conversation", "chat_log", "raw_turn", "transcript", "telegram_update", "message:")
-    return any(any(pattern in source.casefold() for pattern in residue_patterns) for source in source_refs)
+    if not isinstance(source_refs, str): source_refs = str(source_refs or '')
+    try:
+        residue_patterns = ("conversation", "chat_log", "raw_turn", "transcript", "telegram_update", "message:")
+        return any(any(pattern in source.casefold() for pattern in residue_patterns) for source in source_refs)
 
 
+
+    except Exception:
+        return False
 def _looks_like_mutable_user_fact(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(user|human|they|i)\s+(prefers|prefer|likes|like|wants|want|works|is|am)\b|\bmy preference\b",
-            text,
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        return bool(
+            re.search(
+                r"\b(user|human|they|i)\s+(prefers|prefer|likes|like|wants|want|works|is|am)\b|\bmy preference\b",
+                text,
+            )
         )
-    )
 
 
+
+    except Exception:
+        return False
 def _looks_like_live_health_claim(text: str) -> bool:
-    return any(
-        phrase in text
-        for phrase in (
-            "all chips work",
-            "provider is ready",
-            "gateway is ready",
-            "system is healthy",
-            "route is live",
-            "capability is verified",
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        return any(
+            phrase in text
+            for phrase in (
+                "all chips work",
+                "provider is ready",
+                "gateway is ready",
+                "system is healthy",
+                "route is live",
+                "capability is verified",
+            )
         )
-    )
 
 
+
+    except Exception:
+        return False
 def _has_live_probe_ref(evidence_refs: list[str]) -> bool:
-    probe_terms = ("pytest", "trace", "status", "doctor", "smoke", "commit:", "run:", "gateway")
-    return any(any(term in ref.casefold() for term in probe_terms) for ref in evidence_refs)
+    if not isinstance(evidence_refs, str): evidence_refs = str(evidence_refs or '')
+    try:
+        probe_terms = ("pytest", "trace", "status", "doctor", "smoke", "commit:", "run:", "gateway")
+        return any(any(term in ref.casefold() for term in probe_terms) for ref in evidence_refs)
+
+    except Exception:
+        return False
