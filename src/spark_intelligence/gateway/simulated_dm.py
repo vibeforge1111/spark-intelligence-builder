@@ -36,113 +36,124 @@ def resolve_simulated_dm(
     run_id: str | None = None,
     origin_surface: str = "gateway_simulated_dm",
 ) -> SimulatedDmBridgeResult:
-    resolution = resolve_inbound_dm(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        display_name=display_name,
-    )
-    outbound_text = resolution.response_text
-    trace_ref = None
-    bridge_mode = None
-    attachment_context = None
-    output_keepability = None
-    promotion_disposition = None
-    if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
-        record_event(
-            state_db,
-            event_type="intent_committed",
-            component=origin_surface,
-            summary=f"{channel_id} simulated DM committed to bridge execution.",
-            run_id=run_id,
-            request_id=request_id,
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(origin_surface, str): origin_surface = str(origin_surface or '')
+    try:
+        resolution = resolve_inbound_dm(
+            state_db=state_db,
             channel_id=channel_id,
-            session_id=resolution.session_id,
-            human_id=resolution.human_id,
-            agent_id=resolution.agent_id,
-            actor_id=origin_surface,
-            reason_code="user_message_allowed",
-            facts={
-                "external_user_id": external_user_id,
-                "message_length": len(user_message),
+            external_user_id=external_user_id,
+            display_name=display_name,
+        )
+        outbound_text = resolution.response_text
+        trace_ref = None
+        bridge_mode = None
+        attachment_context = None
+        output_keepability = None
+        promotion_disposition = None
+        if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
+            record_event(
+                state_db,
+                event_type="intent_committed",
+                component=origin_surface,
+                summary=f"{channel_id} simulated DM committed to bridge execution.",
+                run_id=run_id,
+                request_id=request_id,
+                channel_id=channel_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                actor_id=origin_surface,
+                reason_code="user_message_allowed",
+                facts={
+                    "external_user_id": external_user_id,
+                    "message_length": len(user_message),
+                    "message_text": user_message,
+                },
+            )
+            turn_intent_payload = None
+            turn_intent_payload_vnext = None
+            if channel_id == "telegram":
+                read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
+                if read_source_kind is not None:
+                    source_kind = f"gateway_simulated_dm_{read_source_kind}"
+                    turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
+                        request_id=request_id,
+                        channel_kind=channel_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        user_message=user_message,
+                        source_kind=source_kind,
+                    )
+                    turn_intent_payload_vnext = build_telegram_memory_read_turn_intent_payload_vnext(
+                        request_id=request_id,
+                        channel_kind=channel_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        user_message=user_message,
+                        source_kind=source_kind,
+                    )
+                if turn_intent_payload is None:
+                    turn_intent_payload = build_telegram_memory_turn_intent_payload(
+                        request_id=request_id,
+                        channel_kind=channel_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        user_message=user_message,
+                        source_kind="gateway_simulated_dm_memory",
+                    )
+                if turn_intent_payload_vnext is None:
+                    turn_intent_payload_vnext = build_telegram_memory_turn_intent_payload_vnext(
+                        request_id=request_id,
+                        channel_kind=channel_id,
+                        session_id=resolution.session_id,
+                        human_id=resolution.human_id,
+                        user_message=user_message,
+                        source_kind="gateway_simulated_dm_memory",
+                    )
+            bridge_result = build_researcher_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                request_id=request_id,
+                agent_id=resolution.agent_id,
+                human_id=resolution.human_id,
+                session_id=resolution.session_id,
+                channel_kind=channel_id,
+                user_message=user_message,
+                run_id=run_id,
+                turn_intent_payload=turn_intent_payload,
+                turn_intent_payload_vnext=turn_intent_payload_vnext,
+                governor_decision=None,
+                allow_memory_adapter_envelope=False,
+            )
+            record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+            outbound_text = bridge_result.reply_text
+            trace_ref = bridge_result.trace_ref
+            bridge_mode = bridge_result.mode
+            attachment_context = bridge_result.attachment_context
+            output_keepability = bridge_result.output_keepability
+            promotion_disposition = bridge_result.promotion_disposition
+        return SimulatedDmBridgeResult(
+            ok=resolution.allowed,
+            decision=resolution.decision,
+            detail={
+                "session_id": resolution.session_id,
+                "human_id": resolution.human_id,
+                "agent_id": resolution.agent_id,
                 "message_text": user_message,
+                "response_text": outbound_text,
+                "trace_ref": trace_ref,
+                "bridge_mode": bridge_mode,
+                "attachment_context": attachment_context,
+                "output_keepability": output_keepability,
+                "promotion_disposition": promotion_disposition,
             },
         )
-        turn_intent_payload = None
-        turn_intent_payload_vnext = None
-        if channel_id == "telegram":
-            read_source_kind = detect_telegram_memory_read_authority_source_kind(user_message)
-            if read_source_kind is not None:
-                source_kind = f"gateway_simulated_dm_{read_source_kind}"
-                turn_intent_payload = build_telegram_memory_read_turn_intent_payload(
-                    request_id=request_id,
-                    channel_kind=channel_id,
-                    session_id=resolution.session_id,
-                    human_id=resolution.human_id,
-                    user_message=user_message,
-                    source_kind=source_kind,
-                )
-                turn_intent_payload_vnext = build_telegram_memory_read_turn_intent_payload_vnext(
-                    request_id=request_id,
-                    channel_kind=channel_id,
-                    session_id=resolution.session_id,
-                    human_id=resolution.human_id,
-                    user_message=user_message,
-                    source_kind=source_kind,
-                )
-            if turn_intent_payload is None:
-                turn_intent_payload = build_telegram_memory_turn_intent_payload(
-                    request_id=request_id,
-                    channel_kind=channel_id,
-                    session_id=resolution.session_id,
-                    human_id=resolution.human_id,
-                    user_message=user_message,
-                    source_kind="gateway_simulated_dm_memory",
-                )
-            if turn_intent_payload_vnext is None:
-                turn_intent_payload_vnext = build_telegram_memory_turn_intent_payload_vnext(
-                    request_id=request_id,
-                    channel_kind=channel_id,
-                    session_id=resolution.session_id,
-                    human_id=resolution.human_id,
-                    user_message=user_message,
-                    source_kind="gateway_simulated_dm_memory",
-                )
-        bridge_result = build_researcher_reply(
-            config_manager=config_manager,
-            state_db=state_db,
-            request_id=request_id,
-            agent_id=resolution.agent_id,
-            human_id=resolution.human_id,
-            session_id=resolution.session_id,
-            channel_kind=channel_id,
-            user_message=user_message,
-            run_id=run_id,
-            turn_intent_payload=turn_intent_payload,
-            turn_intent_payload_vnext=turn_intent_payload_vnext,
-            governor_decision=None,
-            allow_memory_adapter_envelope=False,
-        )
-        record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        outbound_text = bridge_result.reply_text
-        trace_ref = bridge_result.trace_ref
-        bridge_mode = bridge_result.mode
-        attachment_context = bridge_result.attachment_context
-        output_keepability = bridge_result.output_keepability
-        promotion_disposition = bridge_result.promotion_disposition
-    return SimulatedDmBridgeResult(
-        ok=resolution.allowed,
-        decision=resolution.decision,
-        detail={
-            "session_id": resolution.session_id,
-            "human_id": resolution.human_id,
-            "agent_id": resolution.agent_id,
-            "message_text": user_message,
-            "response_text": outbound_text,
-            "trace_ref": trace_ref,
-            "bridge_mode": bridge_mode,
-            "attachment_context": attachment_context,
-            "output_keepability": output_keepability,
-            "promotion_disposition": promotion_disposition,
-        },
-    )
+
+    except Exception:
+        return None

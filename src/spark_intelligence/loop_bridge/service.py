@@ -48,33 +48,43 @@ def extract_chip_key(message: str) -> str | None:
 
 
 def _extract_rounds(message: str) -> int | None:
-    m = re.search(r"\b(\d+)\s+(?:times|rounds|iterations)\b", message, re.IGNORECASE)
-    if m:
-        return max(1, min(10, int(m.group(1))))
-    for word, n in (("once", 1), ("twice", 2), ("three times", 3), ("a few times", 3)):
-        if word in message.lower():
-            return n
-    return None
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        m = re.search(r"\b(\d+)\s+(?:times|rounds|iterations)\b", message, re.IGNORECASE)
+        if m:
+            return max(1, min(10, int(m.group(1))))
+        for word, n in (("once", 1), ("twice", 2), ("three times", 3), ("a few times", 3)):
+            if word in message.lower():
+                return n
+        return None
 
 
+
+    except Exception:
+        return 0
 def detect_loop_invoke_intent(message: str) -> dict | None:
-    text = str(message or "").strip()
-    if not text:
-        return None
-    if has_conversation_only_boundary(text) or denies_intent(
-        text,
-        ("loop", "run", "iterate", "improve", "evaluate", "tune", "refine"),
-    ):
-        return None
-    matched = False
-    for pat in _LOOP_PATTERNS:
-        if pat.search(text):
-            matched = True
-            break
-    if not matched:
-        return None
-    chip_key = extract_chip_key(text)
-    if not chip_key:
-        return None
-    rounds = _extract_rounds(text) or 1
-    return {"action": "loop", "chip_key": chip_key, "rounds": rounds}
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if has_conversation_only_boundary(text) or denies_intent(
+            text,
+            ("loop", "run", "iterate", "improve", "evaluate", "tune", "refine"),
+        ):
+            return None
+        matched = False
+        for pat in _LOOP_PATTERNS:
+            if pat.search(text):
+                matched = True
+                break
+        if not matched:
+            return None
+        chip_key = extract_chip_key(text)
+        if not chip_key:
+            return None
+        rounds = _extract_rounds(text) or 1
+        return {"action": "loop", "chip_key": chip_key, "rounds": rounds}
+
+    except Exception:
+        return {}

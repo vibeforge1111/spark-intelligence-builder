@@ -22,35 +22,43 @@ MutationClass = Literal[
 
 
 def _harness_core_source_candidates() -> list[Path]:
-    candidates: list[Path] = []
-    configured = os.environ.get("SPARK_HARNESS_CORE_SOURCE")
-    if configured:
-        source = Path(configured).expanduser()
-        candidates.append(source / "src" if source.name != "src" else source)
-    spark_home = Path(os.environ.get("SPARK_HOME", Path.home() / ".spark")).expanduser()
-    candidates.append(spark_home / "modules" / "spark-harness-core" / "source" / "src")
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if parent.name == "modules":
-            candidates.append(parent / "spark-harness-core" / "source" / "src")
-            break
-    for parent in here.parents:
-        sibling = parent / "spark-harness-core" / "src"
-        if sibling.exists():
-            candidates.append(sibling)
-            break
-    return candidates
+    try:
+        candidates: list[Path] = []
+        configured = os.environ.get("SPARK_HARNESS_CORE_SOURCE")
+        if configured:
+            source = Path(configured).expanduser()
+            candidates.append(source / "src" if source.name != "src" else source)
+        spark_home = Path(os.environ.get("SPARK_HOME", Path.home() / ".spark")).expanduser()
+        candidates.append(spark_home / "modules" / "spark-harness-core" / "source" / "src")
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            if parent.name == "modules":
+                candidates.append(parent / "spark-harness-core" / "source" / "src")
+                break
+        for parent in here.parents:
+            sibling = parent / "spark-harness-core" / "src"
+            if sibling.exists():
+                candidates.append(sibling)
+                break
+        return candidates
 
 
+
+    except Exception:
+        return []
 def _ensure_harness_core_importable() -> None:
-    for candidate in _harness_core_source_candidates():
-        if not candidate.exists():
-            continue
-        raw = str(candidate)
-        if raw not in sys.path:
-            sys.path.insert(0, raw)
+    try:
+        for candidate in _harness_core_source_candidates():
+            if not candidate.exists():
+                continue
+            raw = str(candidate)
+            if raw not in sys.path:
+                sys.path.insert(0, raw)
 
 
+
+    except Exception:
+        return None
 _ensure_harness_core_importable()
 
 
