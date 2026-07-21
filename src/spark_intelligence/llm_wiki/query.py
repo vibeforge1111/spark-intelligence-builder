@@ -111,7 +111,7 @@ def build_llm_wiki_query(
             source_surface="wiki_query",
             record_activity=False,
         )
-    except Exception as exc:
+    except (ImportError, OSError, ValueError, TimeoutError, RuntimeError) as exc:
         return LlmWikiQueryResult(
             output_dir=root,
             payload={
