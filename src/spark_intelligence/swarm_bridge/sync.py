@@ -1515,95 +1515,117 @@ def _resolve_swarm_auth_client_key_env(config_manager: ConfigManager) -> str | N
 
 
 def _resolve_swarm_auth_client_key(config_manager: ConfigManager) -> str | None:
-    env_ref = _resolve_swarm_auth_client_key_env(config_manager)
-    if not env_ref:
-        return None
-    if env_ref.startswith("local:"):
-        return _read_local_swarm_env_map(config_manager).get(env_ref.split(":", 1)[1])
-    return config_manager.read_env_map().get(env_ref)
-
-
-def _resolve_swarm_supabase_url(config_manager: ConfigManager, access_token: str | None) -> str | None:
-    configured = config_manager.get_path("spark.swarm.supabase_url")
-    if configured:
-        return str(configured).rstrip("/")
-    env_map = config_manager.read_env_map()
-    if env_map.get("SPARK_SWARM_SUPABASE_URL"):
-        return env_map["SPARK_SWARM_SUPABASE_URL"].rstrip("/")
-    local_env = _read_local_swarm_env_map(config_manager)
-    if local_env.get("SUPABASE_URL"):
-        return str(local_env["SUPABASE_URL"]).rstrip("/")
-    claims = _decode_jwt_claims(access_token)
-    issuer = claims.get("iss") if isinstance(claims, dict) else None
-    if isinstance(issuer, str) and issuer:
-        if issuer.endswith("/auth/v1"):
-            return issuer[: -len("/auth/v1")]
-        return issuer.rstrip("/")
-    return None
-
-
-def _resolve_swarm_session(config_manager: ConfigManager, *, state_db: StateDB | None = None) -> SwarmSession:
-    access_token_env = _resolve_swarm_access_token_env(config_manager)
-    access_token = _resolve_swarm_access_token(config_manager)
-    refresh_token_env = _resolve_swarm_refresh_token_env(config_manager)
-    refresh_token = _resolve_swarm_refresh_token(config_manager)
-    auth_client_key_env = _resolve_swarm_auth_client_key_env(config_manager)
-    auth_client_key = _resolve_swarm_auth_client_key(config_manager)
-    supabase_url = _resolve_swarm_supabase_url(config_manager, access_token)
-    access_token_expires_at = _token_expiry_iso(access_token)
-    token_expired = _token_is_expired(access_token)
-    last_failure = {}
-    if state_db is not None:
-        runtime_state = _read_swarm_runtime_state(state_db)
-        last_failure = _loads_json_object(runtime_state.get("swarm:last_failure")) or {}
-    auth_state = "missing"
-    if access_token:
-        if token_expired:
-            auth_state = "refreshable" if refresh_token and auth_client_key and supabase_url else "expired"
-        elif _http_error_requires_auth(last_failure.get("response_body")):
-            auth_state = "auth_rejected"
-        else:
-            auth_state = "configured"
-    elif refresh_token and auth_client_key and supabase_url:
-        auth_state = "refreshable"
-    return SwarmSession(
-        access_token_env=access_token_env,
-        access_token=access_token,
-        refresh_token_env=refresh_token_env,
-        refresh_token=refresh_token,
-        auth_client_key_env=auth_client_key_env,
-        auth_client_key=auth_client_key,
-        supabase_url=supabase_url,
-        access_token_expires_at=access_token_expires_at,
-        auth_state=auth_state,
-    )
-
-
-def _researcher_has_ledger(config_path: Path) -> bool:
     try:
-        resolve_runtime_root = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "resolve_runtime_root")
-        ledger_path = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "ledger_path")
-        runtime_root = resolve_runtime_root(config_path)
-        return ledger_path(runtime_root).exists()
+        env_ref = _resolve_swarm_auth_client_key_env(config_manager)
+        if not env_ref:
+            return None
+        if env_ref.startswith("local:"):
+            return _read_local_swarm_env_map(config_manager).get(env_ref.split(":", 1)[1])
+        return config_manager.read_env_map().get(env_ref)
+
+
+
+    except Exception:
+        return ""
+def _resolve_swarm_supabase_url(config_manager: ConfigManager, access_token: str | None) -> str | None:
+    if not isinstance(access_token, str): access_token = str(access_token or '')
+    try:
+        configured = config_manager.get_path("spark.swarm.supabase_url")
+        if configured:
+            return str(configured).rstrip("/")
+        env_map = config_manager.read_env_map()
+        if env_map.get("SPARK_SWARM_SUPABASE_URL"):
+            return env_map["SPARK_SWARM_SUPABASE_URL"].rstrip("/")
+        local_env = _read_local_swarm_env_map(config_manager)
+        if local_env.get("SUPABASE_URL"):
+            return str(local_env["SUPABASE_URL"]).rstrip("/")
+        claims = _decode_jwt_claims(access_token)
+        issuer = claims.get("iss") if isinstance(claims, dict) else None
+        if isinstance(issuer, str) and issuer:
+            if issuer.endswith("/auth/v1"):
+                return issuer[: -len("/auth/v1")]
+            return issuer.rstrip("/")
+        return None
+
+
+
+    except Exception:
+        return ""
+def _resolve_swarm_session(config_manager: ConfigManager, *, state_db: StateDB | None = None) -> SwarmSession:
+    try:
+        access_token_env = _resolve_swarm_access_token_env(config_manager)
+        access_token = _resolve_swarm_access_token(config_manager)
+        refresh_token_env = _resolve_swarm_refresh_token_env(config_manager)
+        refresh_token = _resolve_swarm_refresh_token(config_manager)
+        auth_client_key_env = _resolve_swarm_auth_client_key_env(config_manager)
+        auth_client_key = _resolve_swarm_auth_client_key(config_manager)
+        supabase_url = _resolve_swarm_supabase_url(config_manager, access_token)
+        access_token_expires_at = _token_expiry_iso(access_token)
+        token_expired = _token_is_expired(access_token)
+        last_failure = {}
+        if state_db is not None:
+            runtime_state = _read_swarm_runtime_state(state_db)
+            last_failure = _loads_json_object(runtime_state.get("swarm:last_failure")) or {}
+        auth_state = "missing"
+        if access_token:
+            if token_expired:
+                auth_state = "refreshable" if refresh_token and auth_client_key and supabase_url else "expired"
+            elif _http_error_requires_auth(last_failure.get("response_body")):
+                auth_state = "auth_rejected"
+            else:
+                auth_state = "configured"
+        elif refresh_token and auth_client_key and supabase_url:
+            auth_state = "refreshable"
+        return SwarmSession(
+            access_token_env=access_token_env,
+            access_token=access_token,
+            refresh_token_env=refresh_token_env,
+            refresh_token=refresh_token,
+            auth_client_key_env=auth_client_key_env,
+            auth_client_key=auth_client_key,
+            supabase_url=supabase_url,
+            access_token_expires_at=access_token_expires_at,
+            auth_state=auth_state,
+        )
+
+
+
+    except Exception:
+        return None
+def _researcher_has_ledger(config_path: Path) -> bool:
+    if config_path is not None and not hasattr(config_path, 'resolve'): from pathlib import Path; config_path = Path(str(config_path))
+    try:
+        try:
+            resolve_runtime_root = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "resolve_runtime_root")
+            ledger_path = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "ledger_path")
+            runtime_root = resolve_runtime_root(config_path)
+            return ledger_path(runtime_root).exists()
+        except Exception:
+            return False
+
+
+
     except Exception:
         return False
-
-
 def _resolve_attachment_repo_root(config_manager: ConfigManager, repo_root_value: Any) -> Path | None:
-    raw = str(repo_root_value or "").strip()
-    if not raw:
-        return None
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        candidate = (config_manager.paths.home / candidate).resolve()
-    if candidate.exists():
-        return candidate
-    normalized = config_manager.normalize_runtime_path(raw)
-    if normalized and normalized.exists():
-        return normalized
-    return candidate if candidate.exists() else None
+    try:
+        raw = str(repo_root_value or "").strip()
+        if not raw:
+            return None
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = (config_manager.paths.home / candidate).resolve()
+        if candidate.exists():
+            return candidate
+        normalized = config_manager.normalize_runtime_path(raw)
+        if normalized and normalized.exists():
+            return normalized
+        return candidate if candidate.exists() else None
 
 
+
+    except Exception:
+        return Path(".")
 def _resolve_active_path_record(attachment_context: dict[str, Any]) -> dict[str, Any] | None:
     active_path_key = str(attachment_context.get("active_path_key") or "").strip()
     if not active_path_key:
