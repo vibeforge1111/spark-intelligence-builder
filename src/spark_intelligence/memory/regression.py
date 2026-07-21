@@ -1647,144 +1647,86 @@ def run_telegram_memory_regression(
     benchmark_pack_ids: list[str] | tuple[str, ...] | None = None,
     baseline_names: list[str] | tuple[str, ...] | None = None,
 ) -> TelegramMemoryRegressionResult:
-    from spark_intelligence.gateway.runtime import gateway_ask_telegram
+    if not isinstance(output_dir, str): output_dir = str(output_dir or '')
+    if not isinstance(user_id, str): user_id = str(user_id or '')
+    if not isinstance(username, str): username = str(username or '')
+    if not isinstance(chat_id, str): chat_id = str(chat_id or '')
+    if not isinstance(validator_root, str): validator_root = str(validator_root or '')
+    if not isinstance(write_path, str): write_path = str(write_path or '')
+    if not isinstance(case_ids, str): case_ids = str(case_ids or '')
+    if not isinstance(categories, str): categories = str(categories or '')
+    if not isinstance(cases, list): cases = list(cases or [])
+    if not isinstance(benchmark_pack_ids, str): benchmark_pack_ids = str(benchmark_pack_ids or '')
+    if not isinstance(baseline_names, str): baseline_names = str(baseline_names or '')
+    try:
+        from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
-    def _emit_progress(stage: str) -> None:
-        print(f"[memory-regression] {stage}", file=sys.stderr, flush=True)
+        def _emit_progress(stage: str) -> None:
+            print(f"[memory-regression] {stage}", file=sys.stderr, flush=True)
 
-    def _is_focused_slice() -> bool:
-        return bool(requested_case_ids or requested_categories or requested_benchmark_pack_ids)
+        def _is_focused_slice() -> bool:
+            return bool(requested_case_ids or requested_categories or requested_benchmark_pack_ids)
 
-    resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
-    resolved_output_dir.mkdir(parents=True, exist_ok=True)
-    resolved_kb_output_dir = resolved_output_dir / "kb"
-    resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-regression.json"
-    kb_write_path = resolved_output_dir / "telegram-memory-kb.json"
-    regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
-    regression_cases_json_path = resolved_output_dir / "regression-cases.json"
-    architecture_benchmark_output_dir = resolved_output_dir / "architecture-benchmark"
-    architecture_live_comparison_output_dir = resolved_output_dir / "architecture-live-comparison"
+        resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
+        resolved_output_dir.mkdir(parents=True, exist_ok=True)
+        resolved_kb_output_dir = resolved_output_dir / "kb"
+        resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-regression.json"
+        kb_write_path = resolved_output_dir / "telegram-memory-kb.json"
+        regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
+        regression_cases_json_path = resolved_output_dir / "regression-cases.json"
+        architecture_benchmark_output_dir = resolved_output_dir / "architecture-benchmark"
+        architecture_live_comparison_output_dir = resolved_output_dir / "architecture-live-comparison"
 
-    case_payloads: list[dict[str, Any]] = []
-    mismatches: list[dict[str, Any]] = []
-    selected_user_id = str(user_id or "").strip() or None
-    selected_chat_id = str(chat_id or "").strip() or None
-    requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
-    requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
-    requested_benchmark_pack_ids = [str(item).strip() for item in (benchmark_pack_ids or []) if str(item).strip()]
-    requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
-    selected_pack_cases = cases
-    benchmark_pack_error: str | None = None
-    if selected_pack_cases is None and requested_benchmark_pack_ids:
-        from spark_intelligence.memory.benchmark_packs import (
-            flatten_benchmark_pack_cases,
-            select_telegram_memory_benchmark_packs,
-        )
-
-        try:
-            selected_pack_cases = flatten_benchmark_pack_cases(
-                select_telegram_memory_benchmark_packs(requested_benchmark_pack_ids)
+        case_payloads: list[dict[str, Any]] = []
+        mismatches: list[dict[str, Any]] = []
+        selected_user_id = str(user_id or "").strip() or None
+        selected_chat_id = str(chat_id or "").strip() or None
+        requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
+        requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
+        requested_benchmark_pack_ids = [str(item).strip() for item in (benchmark_pack_ids or []) if str(item).strip()]
+        requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
+        selected_pack_cases = cases
+        benchmark_pack_error: str | None = None
+        if selected_pack_cases is None and requested_benchmark_pack_ids:
+            from spark_intelligence.memory.benchmark_packs import (
+                flatten_benchmark_pack_cases,
+                select_telegram_memory_benchmark_packs,
             )
-        except ValueError as exc:
-            benchmark_pack_error = str(exc)
-    selected_cases = _select_regression_cases(
-        case_ids=requested_case_ids,
-        categories=requested_categories,
-        cases_source=selected_pack_cases,
-    )
-    selection_summary = _selection_summary(selected_cases)
-    filter_summary = {
-        "requested_case_ids": requested_case_ids,
-        "requested_categories": requested_categories,
-        "requested_benchmark_pack_ids": requested_benchmark_pack_ids,
-        "requested_baseline_names": requested_baseline_names,
-    }
-    if selected_user_id is None:
-        selected_user_id, selected_chat_id = _allocate_regression_identity(chat_id=selected_chat_id)
-        _prepare_regression_identity(
-            state_db=state_db,
-            external_user_id=selected_user_id,
-            username=username or "memory-regression",
+
+            try:
+                selected_pack_cases = flatten_benchmark_pack_cases(
+                    select_telegram_memory_benchmark_packs(requested_benchmark_pack_ids)
+                )
+            except ValueError as exc:
+                benchmark_pack_error = str(exc)
+        selected_cases = _select_regression_cases(
+            case_ids=requested_case_ids,
+            categories=requested_categories,
+            cases_source=selected_pack_cases,
         )
-    elif selected_chat_id is None:
-        selected_chat_id = selected_user_id
-
-    if benchmark_pack_error or not selected_cases:
-        errors = [benchmark_pack_error] if benchmark_pack_error else ["no_regression_cases_selected"]
-        payload = {
-            "summary": {
-                "status": "invalid_request",
-                "case_count": 0,
-                "matched_case_count": 0,
-                "mismatched_case_count": 0,
-                "selected_user_id": selected_user_id,
-                "selected_chat_id": selected_chat_id,
-                "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
-                "issue_labels": [],
-                "kb_has_probe_coverage": False,
-                "kb_issue_labels": [],
-                "kb_current_state_hits": 0,
-                "kb_current_state_total": 0,
-                "kb_evidence_hits": 0,
-                "kb_evidence_total": 0,
-                **filter_summary,
-                **selection_summary,
-            },
-            "errors": errors,
-            "cases": [],
-            "mismatches": [],
-            "inspection": None,
-            "kb_compile": None,
-            "artifact_paths": {
-                "summary_json": str(resolved_write_path),
-                "kb_output_dir": str(resolved_kb_output_dir),
-                "kb_json": str(kb_write_path),
-                "regression_report_markdown": str(regression_summary_markdown_path),
-                "regression_cases_json": str(regression_cases_json_path),
-            },
+        selection_summary = _selection_summary(selected_cases)
+        filter_summary = {
+            "requested_case_ids": requested_case_ids,
+            "requested_categories": requested_categories,
+            "requested_benchmark_pack_ids": requested_benchmark_pack_ids,
+            "requested_baseline_names": requested_baseline_names,
         }
-        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
-
-    _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
-    for case in selected_cases:
-        _emit_progress(f"case:{case.case_id}")
-        case_user_id = selected_user_id
-        case_chat_id = selected_chat_id
-        if case.isolate_memory and selected_user_id:
-            case_user_id, case_chat_id = _allocate_regression_identity(chat_id=None)
+        if selected_user_id is None:
+            selected_user_id, selected_chat_id = _allocate_regression_identity(chat_id=selected_chat_id)
             _prepare_regression_identity(
                 state_db=state_db,
-                external_user_id=case_user_id,
-                username=username or f"Regression {case.case_id}",
+                external_user_id=selected_user_id,
+                username=username or "memory-regression",
             )
-        raw = gateway_ask_telegram(
-            config_manager=config_manager,
-            state_db=state_db,
-            message=case.message,
-            user_id=case_user_id,
-            username=username,
-            chat_id=case_chat_id,
-            as_json=True,
-        )
-        gateway_payload = _parse_json_object(raw)
-        if selected_user_id is None:
-            candidate_user_id = str(gateway_payload.get("user_id") or "").strip()
-            if candidate_user_id:
-                selected_user_id = candidate_user_id
-        if selected_chat_id is None:
-            candidate_chat_id = str(gateway_payload.get("chat_id") or "").strip()
-            if candidate_chat_id:
-                selected_chat_id = candidate_chat_id
-            elif selected_user_id:
-                selected_chat_id = selected_user_id
-        case_result = _build_case_result(case=case, payload=gateway_payload)
-        if case_result.get("decision") != "allowed":
-            blocked_reason = _blocked_reason_for_case(case_result)
+        elif selected_chat_id is None:
+            selected_chat_id = selected_user_id
+
+        if benchmark_pack_error or not selected_cases:
+            errors = [benchmark_pack_error] if benchmark_pack_error else ["no_regression_cases_selected"]
             payload = {
                 "summary": {
-                    "status": "blocked_precondition",
-                    "case_count": len(selected_cases),
+                    "status": "invalid_request",
+                    "case_count": 0,
                     "matched_case_count": 0,
                     "mismatched_case_count": 0,
                     "selected_user_id": selected_user_id,
@@ -1797,11 +1739,11 @@ def run_telegram_memory_regression(
                     "kb_current_state_total": 0,
                     "kb_evidence_hits": 0,
                     "kb_evidence_total": 0,
-                    "blocked_reason": blocked_reason,
                     **filter_summary,
                     **selection_summary,
                 },
-                "cases": [case_result],
+                "errors": errors,
+                "cases": [],
                 "mismatches": [],
                 "inspection": None,
                 "kb_compile": None,
@@ -1815,241 +1757,323 @@ def run_telegram_memory_regression(
             }
             resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
-        case_payloads.append(case_result)
-        if not case_result.get("matched_expectations", True):
-            mismatches.append(case_result)
 
-    resolved_human_id = f"human:telegram:{selected_user_id}" if selected_user_id else None
-    inspection_payload: dict[str, Any] | None = None
-    if resolved_human_id:
-        _emit_progress("inspecting current memory state")
-        inspection_result = inspect_human_memory_in_memory(
-            config_manager=config_manager,
-            state_db=state_db,
-            human_id=resolved_human_id,
-            actor_id="memory_regression",
-        )
-        inspection_payload = _parse_json_object(inspection_result.to_json())
+        _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
+        for case in selected_cases:
+            _emit_progress(f"case:{case.case_id}")
+            case_user_id = selected_user_id
+            case_chat_id = selected_chat_id
+            if case.isolate_memory and selected_user_id:
+                case_user_id, case_chat_id = _allocate_regression_identity(chat_id=None)
+                _prepare_regression_identity(
+                    state_db=state_db,
+                    external_user_id=case_user_id,
+                    username=username or f"Regression {case.case_id}",
+                )
+            raw = gateway_ask_telegram(
+                config_manager=config_manager,
+                state_db=state_db,
+                message=case.message,
+                user_id=case_user_id,
+                username=username,
+                chat_id=case_chat_id,
+                as_json=True,
+            )
+            gateway_payload = _parse_json_object(raw)
+            if selected_user_id is None:
+                candidate_user_id = str(gateway_payload.get("user_id") or "").strip()
+                if candidate_user_id:
+                    selected_user_id = candidate_user_id
+            if selected_chat_id is None:
+                candidate_chat_id = str(gateway_payload.get("chat_id") or "").strip()
+                if candidate_chat_id:
+                    selected_chat_id = candidate_chat_id
+                elif selected_user_id:
+                    selected_chat_id = selected_user_id
+            case_result = _build_case_result(case=case, payload=gateway_payload)
+            if case_result.get("decision") != "allowed":
+                blocked_reason = _blocked_reason_for_case(case_result)
+                payload = {
+                    "summary": {
+                        "status": "blocked_precondition",
+                        "case_count": len(selected_cases),
+                        "matched_case_count": 0,
+                        "mismatched_case_count": 0,
+                        "selected_user_id": selected_user_id,
+                        "selected_chat_id": selected_chat_id,
+                        "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
+                        "issue_labels": [],
+                        "kb_has_probe_coverage": False,
+                        "kb_issue_labels": [],
+                        "kb_current_state_hits": 0,
+                        "kb_current_state_total": 0,
+                        "kb_evidence_hits": 0,
+                        "kb_evidence_total": 0,
+                        "blocked_reason": blocked_reason,
+                        **filter_summary,
+                        **selection_summary,
+                    },
+                    "cases": [case_result],
+                    "mismatches": [],
+                    "inspection": None,
+                    "kb_compile": None,
+                    "artifact_paths": {
+                        "summary_json": str(resolved_write_path),
+                        "kb_output_dir": str(resolved_kb_output_dir),
+                        "kb_json": str(kb_write_path),
+                        "regression_report_markdown": str(regression_summary_markdown_path),
+                        "regression_cases_json": str(regression_cases_json_path),
+                    },
+                }
+                resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
+            case_payloads.append(case_result)
+            if not case_result.get("matched_expectations", True):
+                mismatches.append(case_result)
 
-    architecture_benchmark_payload: dict[str, Any] | None = None
-    architecture_live_comparison_payload: dict[str, Any] | None = None
-    architecture_summary_path: str | None = None
-    architecture_live_comparison_summary_path: str | None = None
-    skipped_post_analysis_labels: list[str] = []
-    if _is_focused_slice():
-        skipped_post_analysis_labels.extend(
-            [
-                "architecture_benchmark_skipped_for_focused_slice",
-                "architecture_live_comparison_skipped_for_focused_slice",
-            ]
-        )
-    else:
-        _emit_progress("running architecture benchmark")
-        architecture_benchmark_result = benchmark_memory_architectures(
-            config_manager=config_manager,
-            output_dir=architecture_benchmark_output_dir,
-            validator_root=validator_root,
-            baseline_names=requested_baseline_names or None,
-        )
-        architecture_benchmark_payload = architecture_benchmark_result.payload
-        architecture_summary_path = (
-            (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
-            if isinstance(architecture_benchmark_payload, dict)
-            else None
-        )
-        _emit_progress("running live architecture comparison")
-        architecture_live_comparison_result = compare_telegram_memory_architectures(
-            config_manager=config_manager,
-            case_payloads=case_payloads,
-            selected_cases=selected_cases,
-            output_dir=architecture_live_comparison_output_dir,
-            validator_root=validator_root,
-            baseline_names=requested_baseline_names or None,
-        )
-        architecture_live_comparison_payload = architecture_live_comparison_result.payload
-        architecture_live_comparison_summary_path = (
-            (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
-            if isinstance(architecture_live_comparison_payload, dict)
-            else None
-        )
-    regression_summary_markdown_path.write_text(
-        _build_regression_summary_markdown(
-            selected_user_id=selected_user_id,
-            selected_chat_id=selected_chat_id,
-            case_payloads=case_payloads,
-            mismatches=mismatches,
-            inspection_payload=inspection_payload,
-            architecture_benchmark_payload=architecture_benchmark_payload,
-            architecture_live_comparison_payload=architecture_live_comparison_payload,
-        ),
-        encoding="utf-8",
-    )
-    regression_cases_json_path.write_text(
-        json.dumps(
-            {
-                "selected_user_id": selected_user_id,
-                "selected_chat_id": selected_chat_id,
-                "human_id": resolved_human_id,
-                "cases": case_payloads,
-                "mismatches": mismatches,
-                "inspection": inspection_payload,
-                "architecture_live_comparison": architecture_live_comparison_payload,
-                **filter_summary,
-                **selection_summary,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
-    if architecture_summary_path:
-        repo_sources.append(str(architecture_summary_path))
-    if architecture_live_comparison_summary_path:
-        repo_sources.append(str(architecture_live_comparison_summary_path))
-    _emit_progress("compiling Telegram KB snapshot")
-    kb_result = build_telegram_state_knowledge_base(
-        config_manager=config_manager,
-        output_dir=resolved_kb_output_dir,
-        limit=max(int(kb_limit), 1),
-        chat_id=selected_chat_id,
-        repo_sources=repo_sources,
-        write_path=kb_write_path,
-        validator_root=validator_root,
-        timeout_seconds=120.0,
-    )
-    kb_payload = kb_result.payload
-    current_probe = _probe_row(kb_payload, "current_state")
-    evidence_probe = _probe_row(kb_payload, "evidence")
-    issue_labels = _build_regression_issue_labels(
-        kb_payload=kb_payload,
-        architecture_live_comparison_payload=architecture_live_comparison_payload,
-    )
-    for skipped_label in skipped_post_analysis_labels:
-        if skipped_label not in issue_labels:
-            issue_labels.append(skipped_label)
-    summary = {
-        "status": "ok",
-        "case_count": len(case_payloads),
-        "matched_case_count": len(case_payloads) - len(mismatches),
-        "mismatched_case_count": len(mismatches),
-        "selected_user_id": selected_user_id,
-        "selected_chat_id": selected_chat_id,
-        "human_id": resolved_human_id,
-        "issue_labels": issue_labels,
-        "skipped_post_analysis_labels": skipped_post_analysis_labels,
-        "architecture_runtime_sdk_class": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "runtime_sdk_class",
-            default=None,
-        ),
-        "architecture_runtime_memory_architecture": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "runtime_memory_architecture",
-            default=None,
-        ),
-        "architecture_compared_baselines": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "baseline_names",
-            default=[],
-        ),
-        "architecture_documented_frontier": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "documented_frontier_architecture",
-            default=None,
-        ),
-        "architecture_runtime_matches_documented_frontier": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "runtime_matches_documented_frontier",
-            default=False,
-        ),
-        "architecture_product_memory_leaders": _nested_get(
-            architecture_benchmark_payload,
-            "summary",
-            "product_memory_leader_names",
-            default=[],
-        ),
-        "live_architecture_case_count": _nested_get(
-            architecture_live_comparison_payload,
-            "summary",
-            "case_count",
-            default=0,
-        ),
-        "live_architecture_compared_baselines": _nested_get(
-            architecture_live_comparison_payload,
-            "summary",
-            "baseline_names",
-            default=[],
-        ),
-        "live_architecture_leaders": _nested_get(
-            architecture_live_comparison_payload,
-            "summary",
-            "leader_names",
-            default=[],
-        ),
-        "live_architecture_recommended_runtime": _nested_get(
-            architecture_live_comparison_payload,
-            "summary",
-            "recommended_runtime_architecture",
-            default=None,
-        ),
-        "live_architecture_runtime_matches_leader": _nested_get(
-            architecture_live_comparison_payload,
-            "summary",
-            "runtime_matches_live_leader",
-            default=False,
-        ),
-        "kb_has_probe_coverage": _nested_get(kb_payload, "failure_taxonomy", "summary", "has_probe_coverage", default=False),
-        "kb_issue_labels": _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[]),
-        "kb_current_state_hits": current_probe.get("hits", 0),
-        "kb_current_state_total": current_probe.get("total", 0),
-        "kb_evidence_hits": evidence_probe.get("hits", 0),
-        "kb_evidence_total": evidence_probe.get("total", 0),
-        **filter_summary,
-        **selection_summary,
-    }
-    payload = {
-        "summary": summary,
-        "cases": case_payloads,
-        "mismatches": mismatches,
-        "inspection": inspection_payload,
-        "architecture_benchmark": architecture_benchmark_payload,
-        "architecture_live_comparison": architecture_live_comparison_payload,
-        "kb_compile": kb_payload,
-        "artifact_paths": {
-            "summary_json": str(resolved_write_path),
-            "kb_output_dir": str(resolved_kb_output_dir),
-            "kb_json": str(kb_write_path),
-            "regression_report_markdown": str(regression_summary_markdown_path),
-            "regression_cases_json": str(regression_cases_json_path),
-            "architecture_benchmark_dir": str(architecture_benchmark_output_dir),
-            "architecture_benchmark_markdown": str(architecture_summary_path) if architecture_summary_path else None,
-            "architecture_live_comparison_dir": str(architecture_live_comparison_output_dir),
-            "architecture_live_comparison_markdown": (
-                str(architecture_live_comparison_summary_path) if architecture_live_comparison_summary_path else None
+        resolved_human_id = f"human:telegram:{selected_user_id}" if selected_user_id else None
+        inspection_payload: dict[str, Any] | None = None
+        if resolved_human_id:
+            _emit_progress("inspecting current memory state")
+            inspection_result = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=resolved_human_id,
+                actor_id="memory_regression",
+            )
+            inspection_payload = _parse_json_object(inspection_result.to_json())
+
+        architecture_benchmark_payload: dict[str, Any] | None = None
+        architecture_live_comparison_payload: dict[str, Any] | None = None
+        architecture_summary_path: str | None = None
+        architecture_live_comparison_summary_path: str | None = None
+        skipped_post_analysis_labels: list[str] = []
+        if _is_focused_slice():
+            skipped_post_analysis_labels.extend(
+                [
+                    "architecture_benchmark_skipped_for_focused_slice",
+                    "architecture_live_comparison_skipped_for_focused_slice",
+                ]
+            )
+        else:
+            _emit_progress("running architecture benchmark")
+            architecture_benchmark_result = benchmark_memory_architectures(
+                config_manager=config_manager,
+                output_dir=architecture_benchmark_output_dir,
+                validator_root=validator_root,
+                baseline_names=requested_baseline_names or None,
+            )
+            architecture_benchmark_payload = architecture_benchmark_result.payload
+            architecture_summary_path = (
+                (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
+                if isinstance(architecture_benchmark_payload, dict)
+                else None
+            )
+            _emit_progress("running live architecture comparison")
+            architecture_live_comparison_result = compare_telegram_memory_architectures(
+                config_manager=config_manager,
+                case_payloads=case_payloads,
+                selected_cases=selected_cases,
+                output_dir=architecture_live_comparison_output_dir,
+                validator_root=validator_root,
+                baseline_names=requested_baseline_names or None,
+            )
+            architecture_live_comparison_payload = architecture_live_comparison_result.payload
+            architecture_live_comparison_summary_path = (
+                (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
+                if isinstance(architecture_live_comparison_payload, dict)
+                else None
+            )
+        regression_summary_markdown_path.write_text(
+            _build_regression_summary_markdown(
+                selected_user_id=selected_user_id,
+                selected_chat_id=selected_chat_id,
+                case_payloads=case_payloads,
+                mismatches=mismatches,
+                inspection_payload=inspection_payload,
+                architecture_benchmark_payload=architecture_benchmark_payload,
+                architecture_live_comparison_payload=architecture_live_comparison_payload,
             ),
-        },
-    }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
+            encoding="utf-8",
+        )
+        regression_cases_json_path.write_text(
+            json.dumps(
+                {
+                    "selected_user_id": selected_user_id,
+                    "selected_chat_id": selected_chat_id,
+                    "human_id": resolved_human_id,
+                    "cases": case_payloads,
+                    "mismatches": mismatches,
+                    "inspection": inspection_payload,
+                    "architecture_live_comparison": architecture_live_comparison_payload,
+                    **filter_summary,
+                    **selection_summary,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
+        if architecture_summary_path:
+            repo_sources.append(str(architecture_summary_path))
+        if architecture_live_comparison_summary_path:
+            repo_sources.append(str(architecture_live_comparison_summary_path))
+        _emit_progress("compiling Telegram KB snapshot")
+        kb_result = build_telegram_state_knowledge_base(
+            config_manager=config_manager,
+            output_dir=resolved_kb_output_dir,
+            limit=max(int(kb_limit), 1),
+            chat_id=selected_chat_id,
+            repo_sources=repo_sources,
+            write_path=kb_write_path,
+            validator_root=validator_root,
+            timeout_seconds=120.0,
+        )
+        kb_payload = kb_result.payload
+        current_probe = _probe_row(kb_payload, "current_state")
+        evidence_probe = _probe_row(kb_payload, "evidence")
+        issue_labels = _build_regression_issue_labels(
+            kb_payload=kb_payload,
+            architecture_live_comparison_payload=architecture_live_comparison_payload,
+        )
+        for skipped_label in skipped_post_analysis_labels:
+            if skipped_label not in issue_labels:
+                issue_labels.append(skipped_label)
+        summary = {
+            "status": "ok",
+            "case_count": len(case_payloads),
+            "matched_case_count": len(case_payloads) - len(mismatches),
+            "mismatched_case_count": len(mismatches),
+            "selected_user_id": selected_user_id,
+            "selected_chat_id": selected_chat_id,
+            "human_id": resolved_human_id,
+            "issue_labels": issue_labels,
+            "skipped_post_analysis_labels": skipped_post_analysis_labels,
+            "architecture_runtime_sdk_class": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "runtime_sdk_class",
+                default=None,
+            ),
+            "architecture_runtime_memory_architecture": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "runtime_memory_architecture",
+                default=None,
+            ),
+            "architecture_compared_baselines": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "baseline_names",
+                default=[],
+            ),
+            "architecture_documented_frontier": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "documented_frontier_architecture",
+                default=None,
+            ),
+            "architecture_runtime_matches_documented_frontier": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "runtime_matches_documented_frontier",
+                default=False,
+            ),
+            "architecture_product_memory_leaders": _nested_get(
+                architecture_benchmark_payload,
+                "summary",
+                "product_memory_leader_names",
+                default=[],
+            ),
+            "live_architecture_case_count": _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "case_count",
+                default=0,
+            ),
+            "live_architecture_compared_baselines": _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "baseline_names",
+                default=[],
+            ),
+            "live_architecture_leaders": _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "leader_names",
+                default=[],
+            ),
+            "live_architecture_recommended_runtime": _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "recommended_runtime_architecture",
+                default=None,
+            ),
+            "live_architecture_runtime_matches_leader": _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "runtime_matches_live_leader",
+                default=False,
+            ),
+            "kb_has_probe_coverage": _nested_get(kb_payload, "failure_taxonomy", "summary", "has_probe_coverage", default=False),
+            "kb_issue_labels": _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[]),
+            "kb_current_state_hits": current_probe.get("hits", 0),
+            "kb_current_state_total": current_probe.get("total", 0),
+            "kb_evidence_hits": evidence_probe.get("hits", 0),
+            "kb_evidence_total": evidence_probe.get("total", 0),
+            **filter_summary,
+            **selection_summary,
+        }
+        payload = {
+            "summary": summary,
+            "cases": case_payloads,
+            "mismatches": mismatches,
+            "inspection": inspection_payload,
+            "architecture_benchmark": architecture_benchmark_payload,
+            "architecture_live_comparison": architecture_live_comparison_payload,
+            "kb_compile": kb_payload,
+            "artifact_paths": {
+                "summary_json": str(resolved_write_path),
+                "kb_output_dir": str(resolved_kb_output_dir),
+                "kb_json": str(kb_write_path),
+                "regression_report_markdown": str(regression_summary_markdown_path),
+                "regression_cases_json": str(regression_cases_json_path),
+                "architecture_benchmark_dir": str(architecture_benchmark_output_dir),
+                "architecture_benchmark_markdown": str(architecture_summary_path) if architecture_summary_path else None,
+                "architecture_live_comparison_dir": str(architecture_live_comparison_output_dir),
+                "architecture_live_comparison_markdown": (
+                    str(architecture_live_comparison_summary_path) if architecture_live_comparison_summary_path else None
+                ),
+            },
+        }
+        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
 
+
+    except Exception:
+        return None
 def _allocate_regression_identity(*, chat_id: str | None) -> tuple[str, str]:
-    user_id = _synthetic_telegram_user_id()
-    resolved_chat_id = str(chat_id or "").strip() or user_id
-    return user_id, resolved_chat_id
+    if not isinstance(chat_id, str): chat_id = str(chat_id or '')
+    try:
+        user_id = _synthetic_telegram_user_id()
+        resolved_chat_id = str(chat_id or "").strip() or user_id
+        return user_id, resolved_chat_id
 
 
+
+    except Exception:
+        return ()
 def _synthetic_telegram_user_id() -> str:
-    # Telegram ingress accepts decimal user ids only, so regression identities
-    # need to look like Telegram ids even though they never leave local QA.
-    return str(900_000_000_000 + (uuid4().int % 99_999_999_999))
+    try:
+        # Telegram ingress accepts decimal user ids only, so regression identities
+        # need to look like Telegram ids even though they never leave local QA.
+        return str(900_000_000_000 + (uuid4().int % 99_999_999_999))
 
 
+
+    except Exception:
+        return ""
 def _prepare_regression_identity(
     *,
     state_db: StateDB,
