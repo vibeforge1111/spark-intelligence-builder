@@ -1741,58 +1741,72 @@ def resolve_inbound_dm(
 
 
 def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, revoked_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
-    _require_operator(state_db, revoked_by)
-    human_id = _canonical_human_id(channel_id, external_user_id)
-    session_id = _canonical_session_id(channel_id, external_user_id)
-    pairing_id = f"pairing:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(revoked_by, str): revoked_by = str(revoked_by or '')
+    try:
+        _require_operator(state_db, revoked_by)
+        human_id = _canonical_human_id(channel_id, external_user_id)
+        session_id = _canonical_session_id(channel_id, external_user_id)
+        pairing_id = f"pairing:{channel_id}:{external_user_id}"
 
-    with state_db.connect() as conn:
-        conn.execute(
-            "UPDATE pairing_records SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE pairing_id = ?",
-            (pairing_id,),
-        )
-        conn.execute(
-            "UPDATE session_bindings SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE session_id = ?",
-            (session_id,),
-        )
-        conn.execute(
-            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
-            (channel_id, external_user_id),
-        )
-        conn.execute(
-            "UPDATE humans SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE human_id = ?",
-            (human_id,),
-        )
-        conn.commit()
+        with state_db.connect() as conn:
+            conn.execute(
+                "UPDATE pairing_records SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE pairing_id = ?",
+                (pairing_id,),
+            )
+            conn.execute(
+                "UPDATE session_bindings SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
+                (channel_id, external_user_id),
+            )
+            conn.execute(
+                "UPDATE humans SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE human_id = ?",
+                (human_id,),
+            )
+            conn.commit()
 
-    return f"Revoked pairing for {channel_id}:{external_user_id}"
+        return f"Revoked pairing for {channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, held_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
-    _require_operator(state_db, held_by)
-    human_id = _canonical_human_id(channel_id, external_user_id)
-    pairing_id = f"pairing:{channel_id}:{external_user_id}"
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
-            VALUES (?, ?, ?, ?, 'held', ?)
-            ON CONFLICT(pairing_id) DO UPDATE SET
-                human_id=excluded.human_id,
-                status='held',
-                approved_by=excluded.approved_by,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (pairing_id, channel_id, external_user_id, human_id, held_by),
-        )
-        conn.execute(
-            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
-            (channel_id, external_user_id),
-        )
-        conn.commit()
-    return f"Held pairing for {channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(held_by, str): held_by = str(held_by or '')
+    try:
+        _require_operator(state_db, held_by)
+        human_id = _canonical_human_id(channel_id, external_user_id)
+        pairing_id = f"pairing:{channel_id}:{external_user_id}"
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
+                VALUES (?, ?, ?, ?, 'held', ?)
+                ON CONFLICT(pairing_id) DO UPDATE SET
+                    human_id=excluded.human_id,
+                    status='held',
+                    approved_by=excluded.approved_by,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (pairing_id, channel_id, external_user_id, human_id, held_by),
+            )
+            conn.execute(
+                "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
+                (channel_id, external_user_id),
+            )
+            conn.commit()
+        return f"Held pairing for {channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def record_pairing_context(
     *,
     state_db: StateDB,
@@ -1800,39 +1814,50 @@ def record_pairing_context(
     external_user_id: str,
     context: dict[str, Any],
 ) -> None:
-    state_key = _pairing_context_state_key(channel_id, external_user_id)
-    with state_db.connect() as conn:
-        upsert_runtime_state(
-            conn,
-            state_key=state_key,
-            value=json.dumps(context, sort_keys=True),
-            component="pairing_context",
-            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
-        )
-        conn.commit()
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(context, str): context = str(context or '')
+    try:
+        state_key = _pairing_context_state_key(channel_id, external_user_id)
+        with state_db.connect() as conn:
+            upsert_runtime_state(
+                conn,
+                state_key=state_key,
+                value=json.dumps(context, sort_keys=True),
+                component="pairing_context",
+                guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def list_pairings(state_db: StateDB) -> str:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at
-            FROM pairing_records
-            ORDER BY channel_id, external_user_id
-            """
-        ).fetchall()
-    if not rows:
-        return "No pairings recorded."
-    lines = ["Pairings:"]
-    for row in rows:
-        lines.append(
-            f"- {row['channel_id']}:{row['external_user_id']} "
-            f"human={row['human_id']} status={row['status']} approved_by={row['approved_by']} "
-            f"approved_at={row['approved_at']}"
-        )
-    return "\n".join(lines)
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at
+                FROM pairing_records
+                ORDER BY channel_id, external_user_id
+                """
+            ).fetchall()
+        if not rows:
+            return "No pairings recorded."
+        lines = ["Pairings:"]
+        for row in rows:
+            lines.append(
+                f"- {row['channel_id']}:{row['external_user_id']} "
+                f"human={row['human_id']} status={row['status']} approved_by={row['approved_by']} "
+                f"approved_at={row['approved_at']}"
+            )
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def review_pairings(
     state_db: StateDB,
     *,
@@ -1840,49 +1865,55 @@ def review_pairings(
     status: str | None = None,
     limit: int | None = None,
 ) -> PairingQueueReport:
-    allowed_statuses = ("pending", "held")
-    filters: list[str] = ["status IN ('pending', 'held')"]
-    params: list[Any] = []
-    if channel_id:
-        filters.append("channel_id = ?")
-        params.append(channel_id)
-    if status:
-        if status not in allowed_statuses:
-            raise ValueError(f"Unsupported review pairing status '{status}'.")
-        filters.append("status = ?")
-        params.append(status)
-    limit_clause = ""
-    if limit is not None:
-        limit_clause = "LIMIT ?"
-        params.append(limit)
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
-            FROM pairing_records
-            WHERE {' AND '.join(filters)}
-            ORDER BY
-                CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
-                updated_at DESC,
-                channel_id,
-                external_user_id
-            {limit_clause}
-            """
-            ,
-            params,
-        ).fetchall()
-    payload: list[dict[str, Any]] = []
-    for row in rows:
-        item = dict(row)
-        item["context"] = _load_pairing_context(
-            state_db=state_db,
-            channel_id=str(row["channel_id"]),
-            external_user_id=str(row["external_user_id"]),
-        )
-        payload.append(item)
-    return PairingQueueReport(rows=payload)
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(status, str): status = str(status or '')
+    try:
+        allowed_statuses = ("pending", "held")
+        filters: list[str] = ["status IN ('pending', 'held')"]
+        params: list[Any] = []
+        if channel_id:
+            filters.append("channel_id = ?")
+            params.append(channel_id)
+        if status:
+            if status not in allowed_statuses:
+                raise ValueError(f"Unsupported review pairing status '{status}'.")
+            filters.append("status = ?")
+            params.append(status)
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            params.append(limit)
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
+                FROM pairing_records
+                WHERE {' AND '.join(filters)}
+                ORDER BY
+                    CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
+                    updated_at DESC,
+                    channel_id,
+                    external_user_id
+                {limit_clause}
+                """
+                ,
+                params,
+            ).fetchall()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["context"] = _load_pairing_context(
+                state_db=state_db,
+                channel_id=str(row["channel_id"]),
+                external_user_id=str(row["external_user_id"]),
+            )
+            payload.append(item)
+        return PairingQueueReport(rows=payload)
 
 
+
+    except Exception:
+        return None
 def pairing_summary(*, state_db: StateDB, channel_id: str) -> PairingSummaryReport:
     with state_db.connect() as conn:
         rows = conn.execute(
