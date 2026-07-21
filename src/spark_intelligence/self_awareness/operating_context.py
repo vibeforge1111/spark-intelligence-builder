@@ -318,61 +318,67 @@ def _missing_route(key: str) -> dict[str, Any]:
 
 
 def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> dict[str, Any]:
-    key = str(record.get("key") or "")
-    available = bool(record.get("available"))
-    registry_status = str(record.get("status") or "")
-    browser_use_pending = _browser_use_adapter_pending(record, evidence=evidence)
-    swarm_rollout_pending = _swarm_rollout_pending(record, evidence=evidence)
-    route_planned = browser_use_pending or swarm_rollout_pending
-    ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
-    command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
-    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure" and not route_planned
-    degraded = False if route_planned else (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
-    status = (
-        "planned"
-        if route_planned
-        else (
-        "available_with_warnings"
-        if command_path_available_with_warnings
-        else _route_health_status(available=available, degraded=degraded, registry_status=registry_status)
+    if not isinstance(record, str): record = str(record or '')
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        key = str(record.get("key") or "")
+        available = bool(record.get("available"))
+        registry_status = str(record.get("status") or "")
+        browser_use_pending = _browser_use_adapter_pending(record, evidence=evidence)
+        swarm_rollout_pending = _swarm_rollout_pending(record, evidence=evidence)
+        route_planned = browser_use_pending or swarm_rollout_pending
+        ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
+        command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
+        recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure" and not route_planned
+        degraded = False if route_planned else (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
+        status = (
+            "planned"
+            if route_planned
+            else (
+            "available_with_warnings"
+            if command_path_available_with_warnings
+            else _route_health_status(available=available, degraded=degraded, registry_status=registry_status)
+            )
         )
-    )
-    label = "Spark Browser" if key == "spark_browser" and browser_use_pending else str(record.get("label") or record.get("key") or "")
-    planned_reason = None
-    if browser_use_pending:
-        planned_reason = "browser-use adapter migration pending"
-    elif swarm_rollout_pending:
-        planned_reason = "swarm payload/API rollout pending"
-    return {
-        "key": key,
-        "label": label,
-        "status": status,
-        "registry_status": registry_status,
-        "available": available,
-        "degraded": degraded,
-        "ecosystem_degraded": ecosystem_degraded,
-        "active": bool(record.get("active")),
-        "attached": bool(record.get("attached")),
-        "planned_reason": planned_reason,
-        "last_success_at": evidence.get("last_success_at"),
-        "last_failure_at": evidence.get("last_failure_at"),
-        "last_failure_reason": evidence.get("last_failure_reason"),
-        "latest_probe_summary": evidence.get("latest_probe_summary"),
-        "route_latency_ms": evidence.get("route_latency_ms"),
-        "eval_coverage_status": evidence.get("eval_coverage_status") or "missing",
-        "evidence_status": _route_evidence_status(evidence),
-        "next_probe": evidence.get("next_probe") or _safe_route_probe(key),
-        "confidence_level": evidence.get("confidence_level") or "registry_only",
-        "limitations": list(record.get("limitations") or [])[:3],
-        "claim_boundary": _route_claim_boundary(
-            key,
-            browser_use_pending=browser_use_pending,
-            swarm_rollout_pending=swarm_rollout_pending,
-            command_path_available_with_warnings=command_path_available_with_warnings,
-        ),
-    }
+        label = "Spark Browser" if key == "spark_browser" and browser_use_pending else str(record.get("label") or record.get("key") or "")
+        planned_reason = None
+        if browser_use_pending:
+            planned_reason = "browser-use adapter migration pending"
+        elif swarm_rollout_pending:
+            planned_reason = "swarm payload/API rollout pending"
+        return {
+            "key": key,
+            "label": label,
+            "status": status,
+            "registry_status": registry_status,
+            "available": available,
+            "degraded": degraded,
+            "ecosystem_degraded": ecosystem_degraded,
+            "active": bool(record.get("active")),
+            "attached": bool(record.get("attached")),
+            "planned_reason": planned_reason,
+            "last_success_at": evidence.get("last_success_at"),
+            "last_failure_at": evidence.get("last_failure_at"),
+            "last_failure_reason": evidence.get("last_failure_reason"),
+            "latest_probe_summary": evidence.get("latest_probe_summary"),
+            "route_latency_ms": evidence.get("route_latency_ms"),
+            "eval_coverage_status": evidence.get("eval_coverage_status") or "missing",
+            "evidence_status": _route_evidence_status(evidence),
+            "next_probe": evidence.get("next_probe") or _safe_route_probe(key),
+            "confidence_level": evidence.get("confidence_level") or "registry_only",
+            "limitations": list(record.get("limitations") or [])[:3],
+            "claim_boundary": _route_claim_boundary(
+                key,
+                browser_use_pending=browser_use_pending,
+                swarm_rollout_pending=swarm_rollout_pending,
+                command_path_available_with_warnings=command_path_available_with_warnings,
+            ),
+        }
 
 
+
+    except Exception:
+        return {}
 def _route_claim_boundary(
     key: str,
     *,
@@ -380,91 +386,112 @@ def _route_claim_boundary(
     swarm_rollout_pending: bool,
     command_path_available_with_warnings: bool,
 ) -> str:
-    if browser_use_pending:
-        return "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
-    if swarm_rollout_pending:
-        return "Spark Swarm is attached as a planned rollout, but payload/API readiness is not live yet."
-    if key == "spark_voice":
-        return "Voice readiness requires a current voice.status probe and Telegram delivery evidence before claiming audio replies."
-    if command_path_available_with_warnings:
-        return "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
-    return "Registry visibility is route availability context, not proof the route succeeded for the current task."
+    if not isinstance(key, str): key = str(key or '')
+    try:
+        if browser_use_pending:
+            return "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
+        if swarm_rollout_pending:
+            return "Spark Swarm is attached as a planned rollout, but payload/API readiness is not live yet."
+        if key == "spark_voice":
+            return "Voice readiness requires a current voice.status probe and Telegram delivery evidence before claiming audio replies."
+        if command_path_available_with_warnings:
+            return "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
+        return "Registry visibility is route availability context, not proof the route succeeded for the current task."
 
 
+
+    except Exception:
+        return ""
 def _build_access(spark_access_level: str) -> dict[str, Any]:
-    normalized = str(spark_access_level or "").strip()
-    kind = _access_kind(normalized)
-    local_allowed = kind in {"workspace", "operator"}
-    whole_computer_allowed = kind == "operator"
-    if kind == "workspace":
-        label = "Level 4 - sandboxed workspace allowed"
-        effective_level = "4"
-        boundary = "spark_workspace_sandbox"
-    elif kind == "operator":
-        label = "Level 5 - whole-computer operator mode"
-        effective_level = "5"
-        boundary = "whole_computer_operator"
-    elif normalized:
-        label = f"Level {normalized}" if normalized.isdigit() else normalized
-        effective_level = normalized if normalized.isdigit() else None
-        boundary = "chat_or_remote_only"
-    else:
-        label = "unknown"
-        effective_level = None
-        boundary = "unknown"
-    return {
-        "spark_access_level": normalized or None,
-        "effective_level": effective_level,
-        "label": label,
-        "local_workspace_allowed": local_allowed if normalized else None,
-        "whole_computer_allowed": whole_computer_allowed if normalized else None,
-        "boundary": boundary,
-        "source": "operator_supplied" if normalized else "not_supplied",
-        "claim_boundary": "Spark permission describes allowed authority; it does not prove the current runner can read or write files.",
-    }
+    if not isinstance(spark_access_level, str): spark_access_level = str(spark_access_level or '')
+    try:
+        normalized = str(spark_access_level or "").strip()
+        kind = _access_kind(normalized)
+        local_allowed = kind in {"workspace", "operator"}
+        whole_computer_allowed = kind == "operator"
+        if kind == "workspace":
+            label = "Level 4 - sandboxed workspace allowed"
+            effective_level = "4"
+            boundary = "spark_workspace_sandbox"
+        elif kind == "operator":
+            label = "Level 5 - whole-computer operator mode"
+            effective_level = "5"
+            boundary = "whole_computer_operator"
+        elif normalized:
+            label = f"Level {normalized}" if normalized.isdigit() else normalized
+            effective_level = normalized if normalized.isdigit() else None
+            boundary = "chat_or_remote_only"
+        else:
+            label = "unknown"
+            effective_level = None
+            boundary = "unknown"
+        return {
+            "spark_access_level": normalized or None,
+            "effective_level": effective_level,
+            "label": label,
+            "local_workspace_allowed": local_allowed if normalized else None,
+            "whole_computer_allowed": whole_computer_allowed if normalized else None,
+            "boundary": boundary,
+            "source": "operator_supplied" if normalized else "not_supplied",
+            "claim_boundary": "Spark permission describes allowed authority; it does not prove the current runner can read or write files.",
+        }
 
 
+
+    except Exception:
+        return {}
 def _build_runner(*, runner_writable: bool | None, runner_label: str) -> dict[str, Any]:
-    if runner_writable is True:
-        state_label = "writable"
-    elif runner_writable is False:
-        state_label = "read-only"
-    else:
-        state_label = "unknown"
-    label = str(runner_label or "").strip() or state_label
-    return {
-        "writable": runner_writable,
-        "label": label,
-        "source": "operator_supplied_or_runtime_preflight",
-        "claim_boundary": "Runner capability is the current execution environment, independent from Spark access level.",
-    }
+    if not isinstance(runner_label, str): runner_label = str(runner_label or '')
+    try:
+        if runner_writable is True:
+            state_label = "writable"
+        elif runner_writable is False:
+            state_label = "read-only"
+        else:
+            state_label = "unknown"
+        label = str(runner_label or "").strip() or state_label
+        return {
+            "writable": runner_writable,
+            "label": label,
+            "source": "operator_supplied_or_runtime_preflight",
+            "claim_boundary": "Runner capability is the current execution environment, independent from Spark access level.",
+        }
 
 
+
+    except Exception:
+        return {}
 def _build_execution_lane(raw: dict[str, Any] | None, *, access: dict[str, Any]) -> dict[str, Any]:
-    state = raw if isinstance(raw, dict) else {}
-    docker = state.get("docker") if isinstance(state.get("docker"), dict) else {}
-    workspace_sandbox = state.get("workspace_sandbox")
-    if workspace_sandbox is None:
-        workspace_sandbox = access.get("boundary") == "spark_workspace_sandbox"
-    whole_computer_claim_requested = bool(
-        state.get("level5_whole_computer_claim")
-        or state.get("whole_computer_claim")
-        or state.get("whole_computer_claim_allowed")
-    )
-    access_is_level5 = str(access.get("effective_level") or "") == "5"
-    return {
-        "docker": {
-            "available": _optional_bool(docker.get("available", state.get("docker_available"))),
-            "selected": _optional_bool(docker.get("selected", state.get("docker_selected"))),
-            "probed": _optional_bool(docker.get("probed", state.get("docker_probed"))),
-        },
-        "workspace_sandbox": _optional_bool(workspace_sandbox),
-        "level5_whole_computer_claim_allowed": bool(access_is_level5 and whole_computer_claim_requested),
-        "source": "operator_supplied_runner_state" if state else "derived_from_access",
-        "claim_boundary": "Level 5 whole-computer claims stay false unless current supplied access is Level 5.",
-    }
+    if not isinstance(raw, str): raw = str(raw or '')
+    if not isinstance(access, str): access = str(access or '')
+    try:
+        state = raw if isinstance(raw, dict) else {}
+        docker = state.get("docker") if isinstance(state.get("docker"), dict) else {}
+        workspace_sandbox = state.get("workspace_sandbox")
+        if workspace_sandbox is None:
+            workspace_sandbox = access.get("boundary") == "spark_workspace_sandbox"
+        whole_computer_claim_requested = bool(
+            state.get("level5_whole_computer_claim")
+            or state.get("whole_computer_claim")
+            or state.get("whole_computer_claim_allowed")
+        )
+        access_is_level5 = str(access.get("effective_level") or "") == "5"
+        return {
+            "docker": {
+                "available": _optional_bool(docker.get("available", state.get("docker_available"))),
+                "selected": _optional_bool(docker.get("selected", state.get("docker_selected"))),
+                "probed": _optional_bool(docker.get("probed", state.get("docker_probed"))),
+            },
+            "workspace_sandbox": _optional_bool(workspace_sandbox),
+            "level5_whole_computer_claim_allowed": bool(access_is_level5 and whole_computer_claim_requested),
+            "source": "operator_supplied_runner_state" if state else "derived_from_access",
+            "claim_boundary": "Level 5 whole-computer claims stay false unless current supplied access is Level 5.",
+        }
 
 
+
+    except Exception:
+        return {}
 def _build_access_automation(
     raw: dict[str, Any] | None,
     *,
