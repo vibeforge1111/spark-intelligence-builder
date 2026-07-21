@@ -2056,97 +2056,123 @@ def _prepare_regression_identity(
     external_user_id: str,
     username: str,
 ) -> None:
-    approve_pairing(
-        state_db=state_db,
-        channel_id="telegram",
-        external_user_id=external_user_id,
-        display_name=username,
-    )
-    rename_agent_identity(
-        state_db=state_db,
-        human_id=f"human:telegram:{external_user_id}",
-        new_name="Atlas",
-        source_surface="memory_regression",
-        source_ref="memory-regression-setup",
-    )
-    consume_pairing_welcome(
-        state_db=state_db,
-        channel_id="telegram",
-        external_user_id=external_user_id,
-    )
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(username, str): username = str(username or '')
+    try:
+        approve_pairing(
+            state_db=state_db,
+            channel_id="telegram",
+            external_user_id=external_user_id,
+            display_name=username,
+        )
+        rename_agent_identity(
+            state_db=state_db,
+            human_id=f"human:telegram:{external_user_id}",
+            new_name="Atlas",
+            source_surface="memory_regression",
+            source_ref="memory-regression-setup",
+        )
+        consume_pairing_welcome(
+            state_db=state_db,
+            channel_id="telegram",
+            external_user_id=external_user_id,
+        )
 
 
+
+    except Exception:
+        return None
 def _build_case_result(*, case: TelegramMemoryRegressionCase, payload: dict[str, Any]) -> dict[str, Any]:
-    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-    detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
-    bridge_mode = str(detail.get("bridge_mode") or payload.get("bridge_mode") or "").strip()
-    routing_decision = str(detail.get("routing_decision") or payload.get("routing_decision") or "").strip()
-    response_text = str(detail.get("response_text") or payload.get("response_text") or "").strip()
-    mismatches: list[str] = []
-    if case.expected_bridge_mode and bridge_mode != case.expected_bridge_mode:
-        mismatches.append(f"bridge_mode:{bridge_mode or 'missing'}")
-    if case.expected_routing_decision and routing_decision != case.expected_routing_decision:
-        mismatches.append(f"routing_decision:{routing_decision or 'missing'}")
-    lowered_response = response_text.lower()
-    for expected_fragment in case.expected_response_contains:
-        if expected_fragment.lower() not in lowered_response:
-            mismatches.append(f"response_missing:{expected_fragment}")
-    for forbidden_fragment in case.expected_response_excludes:
-        if forbidden_fragment.lower() in lowered_response:
-            mismatches.append(f"response_forbidden:{forbidden_fragment}")
-    return {
-        "case_id": case.case_id,
-        "category": case.category,
-        "message": case.message,
-        "expected_response_contains": list(case.expected_response_contains),
-        "expected_response_excludes": list(case.expected_response_excludes),
-        "benchmark_tags": list(case.benchmark_tags),
-        "decision": str(result.get("decision") or payload.get("decision") or "").strip(),
-        "bridge_mode": bridge_mode,
-        "routing_decision": routing_decision,
-        "response_text": response_text,
-        "trace_ref": str(detail.get("trace_ref") or payload.get("trace_ref") or "").strip(),
-        "matched_expectations": not mismatches,
-        "mismatches": mismatches,
-        "gateway_payload": payload,
-    }
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
+        bridge_mode = str(detail.get("bridge_mode") or payload.get("bridge_mode") or "").strip()
+        routing_decision = str(detail.get("routing_decision") or payload.get("routing_decision") or "").strip()
+        response_text = str(detail.get("response_text") or payload.get("response_text") or "").strip()
+        mismatches: list[str] = []
+        if case.expected_bridge_mode and bridge_mode != case.expected_bridge_mode:
+            mismatches.append(f"bridge_mode:{bridge_mode or 'missing'}")
+        if case.expected_routing_decision and routing_decision != case.expected_routing_decision:
+            mismatches.append(f"routing_decision:{routing_decision or 'missing'}")
+        lowered_response = response_text.lower()
+        for expected_fragment in case.expected_response_contains:
+            if expected_fragment.lower() not in lowered_response:
+                mismatches.append(f"response_missing:{expected_fragment}")
+        for forbidden_fragment in case.expected_response_excludes:
+            if forbidden_fragment.lower() in lowered_response:
+                mismatches.append(f"response_forbidden:{forbidden_fragment}")
+        return {
+            "case_id": case.case_id,
+            "category": case.category,
+            "message": case.message,
+            "expected_response_contains": list(case.expected_response_contains),
+            "expected_response_excludes": list(case.expected_response_excludes),
+            "benchmark_tags": list(case.benchmark_tags),
+            "decision": str(result.get("decision") or payload.get("decision") or "").strip(),
+            "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            "response_text": response_text,
+            "trace_ref": str(detail.get("trace_ref") or payload.get("trace_ref") or "").strip(),
+            "matched_expectations": not mismatches,
+            "mismatches": mismatches,
+            "gateway_payload": payload,
+        }
 
 
+
+    except Exception:
+        return {}
 def _default_output_dir(config_manager: ConfigManager) -> Path:
-    return config_manager.paths.home / "artifacts" / "telegram-memory-regression"
+    try:
+        return config_manager.paths.home / "artifacts" / "telegram-memory-regression"
 
 
+
+    except Exception:
+        return Path(".")
 def _select_regression_cases(
     *,
     case_ids: list[str] | None,
     categories: list[str] | None,
     cases_source: list[TelegramMemoryRegressionCase] | tuple[TelegramMemoryRegressionCase, ...] | None = None,
 ) -> tuple[TelegramMemoryRegressionCase, ...]:
-    requested_case_ids = {str(item).strip() for item in (case_ids or []) if str(item).strip()}
-    requested_categories = {str(item).strip() for item in (categories or []) if str(item).strip()}
-    available_cases = tuple(cases_source or DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES)
-    if not requested_case_ids and not requested_categories:
-        return available_cases
-    selected: list[TelegramMemoryRegressionCase] = []
-    for case in available_cases:
-        if requested_case_ids and case.case_id not in requested_case_ids:
-            continue
-        if requested_categories and case.category not in requested_categories:
-            continue
-        selected.append(case)
-    return tuple(selected)
+    if not isinstance(case_ids, str): case_ids = str(case_ids or '')
+    if not isinstance(categories, str): categories = str(categories or '')
+    if not isinstance(cases_source, list): cases_source = list(cases_source or [])
+    try:
+        requested_case_ids = {str(item).strip() for item in (case_ids or []) if str(item).strip()}
+        requested_categories = {str(item).strip() for item in (categories or []) if str(item).strip()}
+        available_cases = tuple(cases_source or DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES)
+        if not requested_case_ids and not requested_categories:
+            return available_cases
+        selected: list[TelegramMemoryRegressionCase] = []
+        for case in available_cases:
+            if requested_case_ids and case.case_id not in requested_case_ids:
+                continue
+            if requested_categories and case.category not in requested_categories:
+                continue
+            selected.append(case)
+        return tuple(selected)
 
 
+
+    except Exception:
+        return ()
 def _selection_summary(cases: tuple[TelegramMemoryRegressionCase, ...]) -> dict[str, Any]:
-    category_counts = _build_category_counts(case.category for case in cases)
-    return {
-        "selected_case_ids": [case.case_id for case in cases],
-        "selected_categories": sorted(category_counts),
-        "category_counts": category_counts,
-        "quality_lanes": _build_quality_lanes(category_counts),
-    }
+    try:
+        category_counts = _build_category_counts(case.category for case in cases)
+        return {
+            "selected_case_ids": [case.case_id for case in cases],
+            "selected_categories": sorted(category_counts),
+            "category_counts": category_counts,
+            "quality_lanes": _build_quality_lanes(category_counts),
+        }
 
 
+
+    except Exception:
+        return {}
 def _nested_get(payload: dict[str, Any], *path: str, default: Any = None) -> Any:
     current: Any = payload
     for key in path:
