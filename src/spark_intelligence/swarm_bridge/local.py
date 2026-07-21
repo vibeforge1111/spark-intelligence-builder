@@ -40,49 +40,58 @@ class SwarmBridgeCommandResult:
 
 
 def swarm_bridge_list_paths(config_manager: ConfigManager) -> dict[str, Any]:
-    runtime_root = _resolve_swarm_runtime_root(config_manager)
-    attachments = list_attachments(config_manager, kind="path")
-    active_path_key = str(config_manager.get_path("spark.specialization_paths.active_path_key", default="") or "").strip()
-    paths: list[dict[str, str]] = []
-    for record in attachments.records:
-        paths.append(
-            {
-                "key": record.key,
-                "label": _normalize_path_label(record.label, fallback=record.key),
-                "repo_root": record.repo_root,
-                "active": "yes" if record.key == active_path_key else "no",
-            }
-        )
-    return {
-        "runtime_root": str(runtime_root),
-        "active_path_key": active_path_key or None,
-        "paths": paths,
-    }
+    try:
+        runtime_root = _resolve_swarm_runtime_root(config_manager)
+        attachments = list_attachments(config_manager, kind="path")
+        active_path_key = str(config_manager.get_path("spark.specialization_paths.active_path_key", default="") or "").strip()
+        paths: list[dict[str, str]] = []
+        for record in attachments.records:
+            paths.append(
+                {
+                    "key": record.key,
+                    "label": _normalize_path_label(record.label, fallback=record.key),
+                    "repo_root": record.repo_root,
+                    "active": "yes" if record.key == active_path_key else "no",
+                }
+            )
+        return {
+            "runtime_root": str(runtime_root),
+            "active_path_key": active_path_key or None,
+            "paths": paths,
+        }
 
 
+
+    except Exception:
+        return {}
 def swarm_bridge_run_specialization_path(
     config_manager: ConfigManager,
     *,
     path_key: str,
 ) -> SwarmBridgeCommandResult:
-    repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
-    return _run_swarm_bridge_command(
-        config_manager,
-        action="run",
-        repo_root=repo_root,
-        path_key=path_key,
-        command=[
-            sys.executable,
-            "-m",
-            "spark_swarm_bridge.cli",
-            "specialization-path",
-            "run",
-            path_key,
-            str(repo_root),
-        ],
-    )
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
+        return _run_swarm_bridge_command(
+            config_manager,
+            action="run",
+            repo_root=repo_root,
+            path_key=path_key,
+            command=[
+                sys.executable,
+                "-m",
+                "spark_swarm_bridge.cli",
+                "specialization-path",
+                "run",
+                path_key,
+                str(repo_root),
+            ],
+        )
 
 
+
+    except Exception:
+        return None
 def swarm_bridge_autoloop(
     config_manager: ConfigManager,
     *,
@@ -92,33 +101,39 @@ def swarm_bridge_autoloop(
     allow_fallback_planner: bool = False,
     force: bool = False,
 ) -> SwarmBridgeCommandResult:
-    repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
-    command = [
-        sys.executable,
-        "-m",
-        "spark_swarm_bridge.cli",
-        "specialization-path",
-        "autoloop",
-        path_key,
-        str(repo_root),
-        "--rounds",
-        str(max(int(rounds or 1), 1)),
-    ]
-    if session_id:
-        command.extend(["--session-id", session_id])
-    if allow_fallback_planner:
-        command.append("--allow-fallback-planner")
-    if force:
-        command.append("--force")
-    return _run_swarm_bridge_command(
-        config_manager,
-        action="autoloop",
-        repo_root=repo_root,
-        path_key=path_key,
-        command=command,
-    )
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
+        command = [
+            sys.executable,
+            "-m",
+            "spark_swarm_bridge.cli",
+            "specialization-path",
+            "autoloop",
+            path_key,
+            str(repo_root),
+            "--rounds",
+            str(max(int(rounds or 1), 1)),
+        ]
+        if session_id:
+            command.extend(["--session-id", session_id])
+        if allow_fallback_planner:
+            command.append("--allow-fallback-planner")
+        if force:
+            command.append("--force")
+        return _run_swarm_bridge_command(
+            config_manager,
+            action="autoloop",
+            repo_root=repo_root,
+            path_key=path_key,
+            command=command,
+        )
 
 
+
+    except Exception:
+        return None
 def swarm_bridge_execute_rerun_request(
     config_manager: ConfigManager,
     *,
