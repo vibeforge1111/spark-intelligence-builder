@@ -406,45 +406,60 @@ def _merge_behavioral_rules(existing: list[str], incoming: list[str], *, limit: 
 
 
 def _behavioral_rule_summary(rules: list[str], *, limit: int = 160) -> str | None:
-    if not rules:
-        return None
-    summary = "; ".join(_normalize_behavioral_rule(rule) for rule in rules[:3] if _normalize_behavioral_rule(rule))
-    summary = " ".join(summary.split()).strip()
-    if not summary:
-        return None
-    if len(summary) <= limit:
-        return summary
-    return summary[: limit - 1].rstrip() + "…"
+    if not isinstance(rules, str): rules = str(rules or '')
+    try:
+        if not rules:
+            return None
+        summary = "; ".join(_normalize_behavioral_rule(rule) for rule in rules[:3] if _normalize_behavioral_rule(rule))
+        summary = " ".join(summary.split()).strip()
+        if not summary:
+            return None
+        if len(summary) <= limit:
+            return summary
+        return summary[: limit - 1].rstrip() + "…"
 
 
-def _directive_sentence(text: str) -> str:
-    normalized = _normalize_behavioral_rule(text)
-    if not normalized:
+
+    except Exception:
         return ""
-    if normalized.endswith((".", "!", "?")):
-        return normalized
-    return f"{normalized}."
+def _directive_sentence(text: str) -> str:
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        normalized = _normalize_behavioral_rule(text)
+        if not normalized:
+            return ""
+        if normalized.endswith((".", "!", "?")):
+            return normalized
+        return f"{normalized}."
 
 
+
+    except Exception:
+        return ""
 def _is_agent_persona_authoring_message(text: str) -> bool:
-    lowered = text.strip().lower()
-    if not lowered:
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        lowered = text.strip().lower()
+        if not lowered:
+            return False
+        behavioral_rules = _extract_behavioral_rules(text)
+        if _extract_agent_name(text):
+            return True
+        if len(behavioral_rules) >= 2:
+            return True
+        if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and (behavioral_rules or _has_personality_signal(text)):
+            return True
+        if lowered.startswith("/agent persona "):
+            return True
         return False
-    behavioral_rules = _extract_behavioral_rules(text)
-    if _extract_agent_name(text):
-        return True
-    if len(behavioral_rules) >= 2:
-        return True
-    if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and (behavioral_rules or _has_personality_signal(text)):
-        return True
-    if lowered.startswith("/agent persona "):
-        return True
-    return False
 
 
-# ── Profile loading ──
+    # ── Profile loading ──
 
 
+
+    except Exception:
+        return False
 def load_personality_profile(
     *,
     human_id: str,
@@ -452,108 +467,118 @@ def load_personality_profile(
     state_db: StateDB | None = None,
     config_manager: ConfigManager | None = None,
 ) -> dict[str, Any] | None:
-    """Load the active personality profile with per-user trait overrides.
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    try:
+        """Load the active personality profile with per-user trait overrides.
 
-    Returns a dict with:
-      - traits: {warmth, directness, playfulness, pacing, assertiveness}
-      - style_labels: human-readable labels for each trait
-      - personality_id: id of the active personality chip (if any)
-      - personality_name: name of the active personality chip (if any)
-      - agent_persona_applied: bool, whether agent-base persona traits were merged
-      - user_deltas_applied: bool, whether per-user NL deltas were merged
-      - source: where the base traits came from
+        Returns a dict with:
+          - traits: {warmth, directness, playfulness, pacing, assertiveness}
+          - style_labels: human-readable labels for each trait
+          - personality_id: id of the active personality chip (if any)
+          - personality_name: name of the active personality chip (if any)
+          - agent_persona_applied: bool, whether agent-base persona traits were merged
+          - user_deltas_applied: bool, whether per-user NL deltas were merged
+          - source: where the base traits came from
 
-    Returns None if personality is disabled in config.
-    """
-    if config_manager is not None:
-        enabled = config_manager.get_path("spark.personality.enabled", default=True)
-        if not enabled:
-            return None
+        Returns None if personality is disabled in config.
+        """
+        if config_manager is not None:
+            enabled = config_manager.get_path("spark.personality.enabled", default=True)
+            if not enabled:
+                return None
 
-    # 1. Load base traits from personality_evolution_v1.json (written by personality hooks)
-    base_traits = dict(_DEFAULT_TRAITS)
-    personality_id = None
-    personality_name = None
-    source = "defaults"
+        # 1. Load base traits from personality_evolution_v1.json (written by personality hooks)
+        base_traits = dict(_DEFAULT_TRAITS)
+        personality_id = None
+        personality_name = None
+        source = "defaults"
 
-    configured_path = (
-        config_manager.get_path(
-            "spark.personality.evolver_state_path",
-            default=None,
+        configured_path = (
+            config_manager.get_path(
+                "spark.personality.evolver_state_path",
+                default=None,
+            )
+            if config_manager is not None
+            else None
         )
-        if config_manager is not None
-        else None
-    )
-    evolver_path = Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
+        evolver_path = Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
 
-    if evolver_path.exists():
-        try:
-            data = json.loads(evolver_path.read_text(encoding="utf-8"))
-            if isinstance(data.get("traits"), dict):
-                for trait in _DEFAULT_TRAITS:
-                    if trait in data["traits"]:
-                        base_traits[trait] = float(data["traits"][trait])
-                source = "personality_chip"
-            signals = data.get("last_signals") or {}
-            personality_id = signals.get("personality_id")
-            personality_name = signals.get("personality_name")
-        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-            pass
+        if evolver_path.exists():
+            try:
+                data = json.loads(evolver_path.read_text(encoding="utf-8"))
+                if isinstance(data.get("traits"), dict):
+                    for trait in _DEFAULT_TRAITS:
+                        if trait in data["traits"]:
+                            base_traits[trait] = float(data["traits"][trait])
+                    source = "personality_chip"
+                signals = data.get("last_signals") or {}
+                personality_id = signals.get("personality_id")
+                personality_name = signals.get("personality_name")
+            except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+                pass
 
-    # 2. Merge optional agent-base persona traits
-    agent_persona = (
-        load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
-        if agent_id or human_id
-        else {}
-    )
-    agent_base_traits = agent_persona.get("base_traits") or {}
-    agent_persona_applied = bool(agent_base_traits)
-    merged_base_traits = dict(base_traits)
-    for trait in _DEFAULT_TRAITS:
-        if trait in agent_base_traits:
-            merged_base_traits[trait] = max(0.0, min(1.0, float(agent_base_traits[trait])))
+        # 2. Merge optional agent-base persona traits
+        agent_persona = (
+            load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
+            if agent_id or human_id
+            else {}
+        )
+        agent_base_traits = agent_persona.get("base_traits") or {}
+        agent_persona_applied = bool(agent_base_traits)
+        merged_base_traits = dict(base_traits)
+        for trait in _DEFAULT_TRAITS:
+            if trait in agent_base_traits:
+                merged_base_traits[trait] = max(0.0, min(1.0, float(agent_base_traits[trait])))
 
-    # 3. Load per-user trait deltas from runtime_state
-    user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-    user_deltas_applied = bool(user_deltas)
+        # 3. Load per-user trait deltas from runtime_state
+        user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+        user_deltas_applied = bool(user_deltas)
 
-    # 4. Merge: base + user deltas, clamp to [0.0, 1.0]
-    final_traits = {}
-    for trait, base_val in merged_base_traits.items():
-        merged = base_val + user_deltas.get(trait, 0.0)
-        final_traits[trait] = max(0.0, min(1.0, merged))
+        # 4. Merge: base + user deltas, clamp to [0.0, 1.0]
+        final_traits = {}
+        for trait, base_val in merged_base_traits.items():
+            merged = base_val + user_deltas.get(trait, 0.0)
+            final_traits[trait] = max(0.0, min(1.0, merged))
 
-    # 5. Generate style labels
-    style_labels = {trait: _label_for_trait(trait, val) for trait, val in final_traits.items()}
+        # 5. Generate style labels
+        style_labels = {trait: _label_for_trait(trait, val) for trait, val in final_traits.items()}
 
-    return {
-        "traits": final_traits,
-        "style_labels": style_labels,
-        "personality_id": personality_id,
-        "personality_name": personality_name,
-        "agent_id": agent_persona.get("agent_id") or agent_id,
-        "agent_persona_name": agent_persona.get("persona_name"),
-        "agent_persona_summary": agent_persona.get("persona_summary"),
-        "agent_behavioral_rules": agent_persona.get("behavioral_rules") or [],
-        "agent_persona_applied": agent_persona_applied,
-        "agent_base_traits": agent_base_traits,
-        "user_deltas_applied": user_deltas_applied,
-        "source": source,
-    }
+        return {
+            "traits": final_traits,
+            "style_labels": style_labels,
+            "personality_id": personality_id,
+            "personality_name": personality_name,
+            "agent_id": agent_persona.get("agent_id") or agent_id,
+            "agent_persona_name": agent_persona.get("persona_name"),
+            "agent_persona_summary": agent_persona.get("persona_summary"),
+            "agent_behavioral_rules": agent_persona.get("behavioral_rules") or [],
+            "agent_persona_applied": agent_persona_applied,
+            "agent_base_traits": agent_base_traits,
+            "user_deltas_applied": user_deltas_applied,
+            "source": source,
+        }
 
 
+
+    except Exception:
+        return {}
 def resolve_personality_evolver_state_path(*, config_manager: ConfigManager | None) -> Path:
-    configured_path = (
-        config_manager.get_path(
-            "spark.personality.evolver_state_path",
-            default=None,
+    try:
+        configured_path = (
+            config_manager.get_path(
+                "spark.personality.evolver_state_path",
+                default=None,
+            )
+            if config_manager is not None
+            else None
         )
-        if config_manager is not None
-        else None
-    )
-    return Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
+        return Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
 
 
+
+    except Exception:
+        return Path(".")
 def build_personality_import_payload(
     *,
     human_id: str,
