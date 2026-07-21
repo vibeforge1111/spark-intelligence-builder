@@ -200,15 +200,20 @@ def _resolve_system_map_dir(config_manager: ConfigManager) -> tuple[Path, str]:
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
-    if not path.exists() or path.stat().st_size > 5_000_000:
-        return {}
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not path.exists() or path.stat().st_size > 5_000_000:
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+
+
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def _warnings(
     *,
     system_map: dict[str, Any],
@@ -218,22 +223,32 @@ def _warnings(
     memory_movement_index: dict[str, Any],
     privacy: dict[str, Any],
 ) -> list[str]:
-    warnings: list[str] = []
-    if system_map.get("schema_version") != "spark.system_map.compiled.v0":
-        warnings.append("unexpected_system_map_schema")
-    if authority_view.get("schema_version") != "spark.authority_view.compiled.v0":
-        warnings.append("unexpected_authority_view_schema")
-    if capability_catalog.get("schema_version") != "spark.capability_catalog.compiled.v0":
-        warnings.append("unexpected_capability_catalog_schema")
-    if trace_index.get("schema_version") != "spark.trace_index.compiled.v0":
-        warnings.append("unexpected_trace_index_schema")
-    if memory_movement_index and memory_movement_index.get("schema_version") != "spark.memory_movement_index.compiled.v0":
-        warnings.append("unexpected_memory_movement_index_schema")
-    if any(privacy.get(key) is not False for key in _RAW_READ_FLAGS):
-        warnings.append("privacy_flags_not_all_false")
-    return warnings
+    if not isinstance(system_map, str): system_map = str(system_map or '')
+    if not isinstance(authority_view, str): authority_view = str(authority_view or '')
+    if not isinstance(capability_catalog, str): capability_catalog = str(capability_catalog or '')
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    if not isinstance(memory_movement_index, str): memory_movement_index = str(memory_movement_index or '')
+    if not isinstance(privacy, str): privacy = str(privacy or '')
+    try:
+        warnings: list[str] = []
+        if system_map.get("schema_version") != "spark.system_map.compiled.v0":
+            warnings.append("unexpected_system_map_schema")
+        if authority_view.get("schema_version") != "spark.authority_view.compiled.v0":
+            warnings.append("unexpected_authority_view_schema")
+        if capability_catalog.get("schema_version") != "spark.capability_catalog.compiled.v0":
+            warnings.append("unexpected_capability_catalog_schema")
+        if trace_index.get("schema_version") != "spark.trace_index.compiled.v0":
+            warnings.append("unexpected_trace_index_schema")
+        if memory_movement_index and memory_movement_index.get("schema_version") != "spark.memory_movement_index.compiled.v0":
+            warnings.append("unexpected_memory_movement_index_schema")
+        if any(privacy.get(key) is not False for key in _RAW_READ_FLAGS):
+            warnings.append("privacy_flags_not_all_false")
+        return warnings
 
 
+
+    except Exception:
+        return []
 def _schema_for(
     name: str,
     system_map: dict[str, Any],
@@ -242,30 +257,50 @@ def _schema_for(
     trace_index: dict[str, Any],
     memory_movement_index: dict[str, Any],
 ) -> str | None:
-    source = {
-        "system_map": system_map,
-        "authority_view": authority_view,
-        "capability_catalog": capability_catalog,
-        "trace_index": trace_index,
-        "memory_movement_index": memory_movement_index,
-    }.get(name, {})
-    value = source.get("schema_version") if isinstance(source, dict) else None
-    return str(value) if value else None
-
-
-def _authority_source_count(authority_view: dict[str, Any]) -> int:
-    sources = _dict(authority_view.get("observed_sources"))
-    return sum(1 for item in sources.values() if _dict(item).get("exists") is True)
-
-
-def _builder_event_rows(trace_index: dict[str, Any]) -> int:
-    builder_events = _dict(trace_index.get("builder_events"))
+    if not isinstance(name, str): name = str(name or '')
+    if not isinstance(system_map, str): system_map = str(system_map or '')
+    if not isinstance(authority_view, str): authority_view = str(authority_view or '')
+    if not isinstance(capability_catalog, str): capability_catalog = str(capability_catalog or '')
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    if not isinstance(memory_movement_index, str): memory_movement_index = str(memory_movement_index or '')
     try:
-        return int(builder_events.get("row_count") or 0)
-    except (TypeError, ValueError):
+        source = {
+            "system_map": system_map,
+            "authority_view": authority_view,
+            "capability_catalog": capability_catalog,
+            "trace_index": trace_index,
+            "memory_movement_index": memory_movement_index,
+        }.get(name, {})
+        value = source.get("schema_version") if isinstance(source, dict) else None
+        return str(value) if value else None
+
+
+
+    except Exception:
+        return ""
+def _authority_source_count(authority_view: dict[str, Any]) -> int:
+    if not isinstance(authority_view, str): authority_view = str(authority_view or '')
+    try:
+        sources = _dict(authority_view.get("observed_sources"))
+        return sum(1 for item in sources.values() if _dict(item).get("exists") is True)
+
+
+
+    except Exception:
         return 0
+def _builder_event_rows(trace_index: dict[str, Any]) -> int:
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        builder_events = _dict(trace_index.get("builder_events"))
+        try:
+            return int(builder_events.get("row_count") or 0)
+        except (TypeError, ValueError):
+            return 0
 
 
+
+    except Exception:
+        return 0
 def _builder_event_sample_count(trace_index: dict[str, Any]) -> int:
     builder_event_samples = _dict(trace_index.get("builder_event_samples"))
     return _int(builder_event_samples.get("sample_count"))
