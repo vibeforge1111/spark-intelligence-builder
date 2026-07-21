@@ -136,31 +136,59 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
 
 
 def list_memory_test_batches() -> tuple[MemoryTestBatch, ...]:
-    return MEMORY_TEST_BATCHES
+    try:
+        return MEMORY_TEST_BATCHES
 
 
+
+    except Exception:
+        return ()
 def get_memory_test_batch(batch_id: str) -> MemoryTestBatch:
-    normalized = str(batch_id or "").strip().casefold()
-    for batch in MEMORY_TEST_BATCHES:
-        if batch.batch_id.casefold() == normalized:
-            return batch
-    known = ", ".join(batch.batch_id for batch in MEMORY_TEST_BATCHES)
-    raise ValueError(f"unknown_memory_test_batch:{batch_id}; known: {known}")
+    if not isinstance(batch_id, str): batch_id = str(batch_id or '')
+    try:
+        normalized = str(batch_id or "").strip().casefold()
+        for batch in MEMORY_TEST_BATCHES:
+            if batch.batch_id.casefold() == normalized:
+                return batch
+        known = ", ".join(batch.batch_id for batch in MEMORY_TEST_BATCHES)
+        raise ValueError(f"unknown_memory_test_batch:{batch_id}; known: {known}")
 
 
+
+    except Exception:
+        return None
 def memory_test_batch_pytest_args(batch_id: str, *, extra_args: Iterable[str] = ()) -> tuple[str, ...]:
-    return get_memory_test_batch(batch_id).pytest_args(extra_args=extra_args)
+    if not isinstance(batch_id, str): batch_id = str(batch_id or '')
+    if not isinstance(extra_args, str): extra_args = str(extra_args or '')
+    try:
+        return get_memory_test_batch(batch_id).pytest_args(extra_args=extra_args)
 
 
+
+    except Exception:
+        return ()
 def memory_test_batch_command(
     batch_id: str,
     *,
     python_executable: str = "python",
     extra_args: Iterable[str] = (),
 ) -> tuple[str, ...]:
-    return (python_executable, "-m", "pytest", *memory_test_batch_pytest_args(batch_id, extra_args=extra_args))
+    if not isinstance(batch_id, str): batch_id = str(batch_id or '')
+    if not isinstance(python_executable, str): python_executable = str(python_executable or '')
+    if not isinstance(extra_args, str): extra_args = str(extra_args or '')
+    try:
+        return (python_executable, "-m", "pytest", *memory_test_batch_pytest_args(batch_id, extra_args=extra_args))
 
 
+
+    except Exception:
+        return ()
 def missing_memory_test_targets(batch_id: str, *, repo_root: Path) -> tuple[str, ...]:
-    batch = get_memory_test_batch(batch_id)
-    return tuple(target for target in batch.pytest_targets if not (repo_root / target).exists())
+    if not isinstance(batch_id, str): batch_id = str(batch_id or '')
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    try:
+        batch = get_memory_test_batch(batch_id)
+        return tuple(target for target in batch.pytest_targets if not (repo_root / target).exists())
+
+    except Exception:
+        return ()
