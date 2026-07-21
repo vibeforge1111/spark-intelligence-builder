@@ -2148,41 +2148,62 @@ def _selection_summary(cases: tuple[TelegramMemoryRegressionCase, ...]) -> dict[
 
 
 def _nested_get(payload: dict[str, Any], *path: str, default: Any = None) -> Any:
-    current: Any = payload
-    for key in path:
-        if not isinstance(current, dict):
-            return default
-        current = current.get(key)
-    return default if current is None else current
-
-
-def _parse_json_object(raw: str) -> dict[str, Any]:
+    if not isinstance(payload, str): payload = str(payload or '')
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {"raw_output": raw}
-    return parsed if isinstance(parsed, dict) else {"raw_output": raw}
+        current: Any = payload
+        for key in path:
+            if not isinstance(current, dict):
+                return default
+            current = current.get(key)
+        return default if current is None else current
 
 
-def _probe_row(payload: dict[str, Any], probe_type: str) -> dict[str, Any]:
-    rows = _nested_get(payload, "failure_taxonomy", "probe_rows", default=[])
-    if not isinstance(rows, list):
+
+    except Exception:
+        return None
+def _parse_json_object(raw: str) -> dict[str, Any]:
+    if not isinstance(raw, str): raw = str(raw or '')
+    try:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"raw_output": raw}
+        return parsed if isinstance(parsed, dict) else {"raw_output": raw}
+
+
+
+    except Exception:
         return {}
-    for row in rows:
-        if isinstance(row, dict) and str(row.get("probe_type") or "").strip() == probe_type:
-            return row
-    return {}
+def _probe_row(payload: dict[str, Any], probe_type: str) -> dict[str, Any]:
+    if not isinstance(payload, str): payload = str(payload or '')
+    if not isinstance(probe_type, str): probe_type = str(probe_type or '')
+    try:
+        rows = _nested_get(payload, "failure_taxonomy", "probe_rows", default=[])
+        if not isinstance(rows, list):
+            return {}
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("probe_type") or "").strip() == probe_type:
+                return row
+        return {}
 
 
+
+    except Exception:
+        return {}
 def _blocked_reason_for_case(case_result: dict[str, Any]) -> str:
-    decision = str(case_result.get("decision") or "").strip()
-    response_text = str(case_result.get("response_text") or "").strip()
-    case_id = str(case_result.get("case_id") or "").strip() or "unknown_case"
-    if response_text:
-        return f"{case_id}:{decision}:{response_text}"
-    return f"{case_id}:{decision}"
+    if not isinstance(case_result, str): case_result = str(case_result or '')
+    try:
+        decision = str(case_result.get("decision") or "").strip()
+        response_text = str(case_result.get("response_text") or "").strip()
+        case_id = str(case_result.get("case_id") or "").strip() or "unknown_case"
+        if response_text:
+            return f"{case_id}:{decision}:{response_text}"
+        return f"{case_id}:{decision}"
 
 
+
+    except Exception:
+        return ""
 def _build_regression_summary_markdown(
     *,
     selected_user_id: str | None,
@@ -2193,150 +2214,161 @@ def _build_regression_summary_markdown(
     architecture_benchmark_payload: dict[str, Any] | None,
     architecture_live_comparison_payload: dict[str, Any] | None,
 ) -> str:
-    category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
-    bridge_mode_counts = _build_category_counts(str(case.get("bridge_mode") or "missing") for case in case_payloads)
-    routing_decision_counts = _build_category_counts(
-        str(case.get("routing_decision") or "missing") for case in case_payloads
-    )
-    quality_lanes = _build_quality_lanes(category_counts)
-    inspection_records = _inspection_records(inspection_payload)
-    live_architecture_summary = (
-        architecture_live_comparison_payload.get("summary")
-        if isinstance(architecture_live_comparison_payload, dict)
-        and isinstance(architecture_live_comparison_payload.get("summary"), dict)
-        else {}
-    )
-    benchmark_summary = (
-        architecture_benchmark_payload.get("summary")
-        if isinstance(architecture_benchmark_payload, dict)
-        and isinstance(architecture_benchmark_payload.get("summary"), dict)
-        else {}
-    )
-
-    lines = [
-        "# Telegram Memory Regression Summary",
-        "",
-        f"- Selected user id: `{selected_user_id or 'unknown'}`",
-        f"- Selected chat id: `{selected_chat_id or 'unknown'}`",
-        f"- Total cases: `{len(case_payloads)}`",
-        f"- Matched cases: `{len(case_payloads) - len(mismatches)}`",
-        f"- Mismatched cases: `{len(mismatches)}`",
-        "",
-        "## Live Architecture Comparison",
-        "",
-        f"- ProductMemory contenders: `{', '.join(benchmark_summary.get('baseline_names') or []) or 'none'}`",
-        f"- Live Telegram contenders: `{', '.join(live_architecture_summary.get('baseline_names') or []) or 'none'}`",
-        f"- Compared cases: `{live_architecture_summary.get('case_count', 0)}`",
-        f"- Leaders: `{', '.join(live_architecture_summary.get('leader_names') or []) or 'unknown'}`",
-        f"- Recommended runtime architecture: `{live_architecture_summary.get('recommended_runtime_architecture') or 'undecided'}`",
-        f"- Current runtime architecture: `{live_architecture_summary.get('current_runtime_memory_architecture') or 'unknown'}`",
-        f"- Runtime matches live leader: `{'yes' if live_architecture_summary.get('runtime_matches_live_leader') else 'no'}`",
-        "",
-        "## Category Coverage",
-        "",
-    ]
-    for category in sorted(category_counts):
-        lines.append(f"- `{category}`: `{category_counts[category]}`")
-    lines.extend(
-        [
-            "",
-            "## Route Coverage",
-            "",
-            "### Bridge Modes",
-            "",
-        ]
-    )
-    for bridge_mode in sorted(bridge_mode_counts):
-        lines.append(f"- `{bridge_mode}`: `{bridge_mode_counts[bridge_mode]}`")
-    lines.extend(
-        [
-            "",
-            "### Routing Decisions",
-            "",
-        ]
-    )
-    for routing_decision in sorted(routing_decision_counts):
-        lines.append(f"- `{routing_decision}`: `{routing_decision_counts[routing_decision]}`")
-    lines.extend(
-        [
-            "",
-            "## Quality Lanes",
-            "",
-            f"- `staleness`: `{'yes' if quality_lanes['staleness'] else 'no'}`",
-            f"- `overwrite`: `{'yes' if quality_lanes['overwrite'] else 'no'}`",
-            f"- `abstention`: `{'yes' if quality_lanes['abstention'] else 'no'}`",
-            "",
-            "## Current Memory Snapshot",
-            "",
-        ]
-    )
-    if inspection_records:
-        for record in inspection_records[:12]:
-            predicate = str(record.get("predicate") or "unknown")
-            value = str(record.get("normalized_value") or record.get("value") or "").strip() or "missing"
-            lines.append(f"- `{predicate}`: `{value}`")
-    else:
-        lines.append("- No current-state records were available from the inspection step.")
-    lines.extend(
-        [
-            "",
-            "## Recommended Next Actions",
-            "",
-        ]
-    )
-    if mismatches:
-        lines.append("- Fix the mismatched cases before promoting wider runtime memory behavior.")
-    else:
-        lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
-    lines.append("- Only promote a memory change after it stays green on both ProductMemory scorecards and live Telegram regression packs.")
-    if live_architecture_summary.get("recommended_runtime_architecture") and not live_architecture_summary.get(
-        "runtime_matches_live_leader"
-    ):
-        lines.append(
-            f"- Promote `{live_architecture_summary.get('recommended_runtime_architecture')}` into the Builder runtime selector and rerun this bundle."
+    if not isinstance(selected_user_id, str): selected_user_id = str(selected_user_id or '')
+    if not isinstance(selected_chat_id, str): selected_chat_id = str(selected_chat_id or '')
+    if not isinstance(case_payloads, str): case_payloads = str(case_payloads or '')
+    if not isinstance(mismatches, str): mismatches = str(mismatches or '')
+    if not isinstance(inspection_payload, str): inspection_payload = str(inspection_payload or '')
+    if not isinstance(architecture_benchmark_payload, str): architecture_benchmark_payload = str(architecture_benchmark_payload or '')
+    if not isinstance(architecture_live_comparison_payload, str): architecture_live_comparison_payload = str(architecture_live_comparison_payload or '')
+    try:
+        category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
+        bridge_mode_counts = _build_category_counts(str(case.get("bridge_mode") or "missing") for case in case_payloads)
+        routing_decision_counts = _build_category_counts(
+            str(case.get("routing_decision") or "missing") for case in case_payloads
         )
-        lines.append(
-            f"- Treat `{ARCHITECTURE_PROMOTION_GAP_LABEL}` as unresolved until the declared runtime matches the live leader."
+        quality_lanes = _build_quality_lanes(category_counts)
+        inspection_records = _inspection_records(inspection_payload)
+        live_architecture_summary = (
+            architecture_live_comparison_payload.get("summary")
+            if isinstance(architecture_live_comparison_payload, dict)
+            and isinstance(architecture_live_comparison_payload.get("summary"), dict)
+            else {}
         )
-    elif live_architecture_summary.get("recommended_runtime_architecture"):
-        lines.append(
-            f"- Keep `{live_architecture_summary.get('recommended_runtime_architecture')}` pinned while expanding benchmark coverage."
+        benchmark_summary = (
+            architecture_benchmark_payload.get("summary")
+            if isinstance(architecture_benchmark_payload, dict)
+            and isinstance(architecture_benchmark_payload.get("summary"), dict)
+            else {}
         )
-    elif live_architecture_summary.get("leader_names"):
-        lines.append("- Break the live architecture tie with more cases before pinning the Builder runtime selector.")
-    if not quality_lanes["abstention"]:
-        lines.append("- Add abstention cases before widening memory promotion beyond the current lane.")
-    if not quality_lanes["overwrite"]:
-        lines.append("- Add overwrite cases so newer facts keep winning without regressions.")
-    if not quality_lanes["staleness"]:
-        lines.append("- Add staleness cases to confirm explanation and query routing stay stable over time.")
-    lines.extend(
-        [
+
+        lines = [
+            "# Telegram Memory Regression Summary",
             "",
-            "## Cases",
+            f"- Selected user id: `{selected_user_id or 'unknown'}`",
+            f"- Selected chat id: `{selected_chat_id or 'unknown'}`",
+            f"- Total cases: `{len(case_payloads)}`",
+            f"- Matched cases: `{len(case_payloads) - len(mismatches)}`",
+            f"- Mismatched cases: `{len(mismatches)}`",
+            "",
+            "## Live Architecture Comparison",
+            "",
+            f"- ProductMemory contenders: `{', '.join(benchmark_summary.get('baseline_names') or []) or 'none'}`",
+            f"- Live Telegram contenders: `{', '.join(live_architecture_summary.get('baseline_names') or []) or 'none'}`",
+            f"- Compared cases: `{live_architecture_summary.get('case_count', 0)}`",
+            f"- Leaders: `{', '.join(live_architecture_summary.get('leader_names') or []) or 'unknown'}`",
+            f"- Recommended runtime architecture: `{live_architecture_summary.get('recommended_runtime_architecture') or 'undecided'}`",
+            f"- Current runtime architecture: `{live_architecture_summary.get('current_runtime_memory_architecture') or 'unknown'}`",
+            f"- Runtime matches live leader: `{'yes' if live_architecture_summary.get('runtime_matches_live_leader') else 'no'}`",
+            "",
+            "## Category Coverage",
             "",
         ]
-    )
-    for case in case_payloads:
-        case_id = str(case.get("case_id") or "unknown")
-        category = str(case.get("category") or "unknown")
-        decision = str(case.get("decision") or "unknown")
-        matched = "yes" if case.get("matched_expectations", False) else "no"
-        response_text = " ".join(str(case.get("response_text") or "").split())
-        lines.append(f"### {case_id}")
-        lines.append(f"- Category: `{category}`")
-        lines.append(f"- Decision: `{decision}`")
-        lines.append(f"- Matched: `{matched}`")
-        if response_text:
-            lines.append(f"- Response: {response_text}")
-        mismatch_items = case.get("mismatches")
-        if isinstance(mismatch_items, list) and mismatch_items:
-            rendered = ", ".join(str(item) for item in mismatch_items)
-            lines.append(f"- Mismatches: `{rendered}`")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+        for category in sorted(category_counts):
+            lines.append(f"- `{category}`: `{category_counts[category]}`")
+        lines.extend(
+            [
+                "",
+                "## Route Coverage",
+                "",
+                "### Bridge Modes",
+                "",
+            ]
+        )
+        for bridge_mode in sorted(bridge_mode_counts):
+            lines.append(f"- `{bridge_mode}`: `{bridge_mode_counts[bridge_mode]}`")
+        lines.extend(
+            [
+                "",
+                "### Routing Decisions",
+                "",
+            ]
+        )
+        for routing_decision in sorted(routing_decision_counts):
+            lines.append(f"- `{routing_decision}`: `{routing_decision_counts[routing_decision]}`")
+        lines.extend(
+            [
+                "",
+                "## Quality Lanes",
+                "",
+                f"- `staleness`: `{'yes' if quality_lanes['staleness'] else 'no'}`",
+                f"- `overwrite`: `{'yes' if quality_lanes['overwrite'] else 'no'}`",
+                f"- `abstention`: `{'yes' if quality_lanes['abstention'] else 'no'}`",
+                "",
+                "## Current Memory Snapshot",
+                "",
+            ]
+        )
+        if inspection_records:
+            for record in inspection_records[:12]:
+                predicate = str(record.get("predicate") or "unknown")
+                value = str(record.get("normalized_value") or record.get("value") or "").strip() or "missing"
+                lines.append(f"- `{predicate}`: `{value}`")
+        else:
+            lines.append("- No current-state records were available from the inspection step.")
+        lines.extend(
+            [
+                "",
+                "## Recommended Next Actions",
+                "",
+            ]
+        )
+        if mismatches:
+            lines.append("- Fix the mismatched cases before promoting wider runtime memory behavior.")
+        else:
+            lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
+        lines.append("- Only promote a memory change after it stays green on both ProductMemory scorecards and live Telegram regression packs.")
+        if live_architecture_summary.get("recommended_runtime_architecture") and not live_architecture_summary.get(
+            "runtime_matches_live_leader"
+        ):
+            lines.append(
+                f"- Promote `{live_architecture_summary.get('recommended_runtime_architecture')}` into the Builder runtime selector and rerun this bundle."
+            )
+            lines.append(
+                f"- Treat `{ARCHITECTURE_PROMOTION_GAP_LABEL}` as unresolved until the declared runtime matches the live leader."
+            )
+        elif live_architecture_summary.get("recommended_runtime_architecture"):
+            lines.append(
+                f"- Keep `{live_architecture_summary.get('recommended_runtime_architecture')}` pinned while expanding benchmark coverage."
+            )
+        elif live_architecture_summary.get("leader_names"):
+            lines.append("- Break the live architecture tie with more cases before pinning the Builder runtime selector.")
+        if not quality_lanes["abstention"]:
+            lines.append("- Add abstention cases before widening memory promotion beyond the current lane.")
+        if not quality_lanes["overwrite"]:
+            lines.append("- Add overwrite cases so newer facts keep winning without regressions.")
+        if not quality_lanes["staleness"]:
+            lines.append("- Add staleness cases to confirm explanation and query routing stay stable over time.")
+        lines.extend(
+            [
+                "",
+                "## Cases",
+                "",
+            ]
+        )
+        for case in case_payloads:
+            case_id = str(case.get("case_id") or "unknown")
+            category = str(case.get("category") or "unknown")
+            decision = str(case.get("decision") or "unknown")
+            matched = "yes" if case.get("matched_expectations", False) else "no"
+            response_text = " ".join(str(case.get("response_text") or "").split())
+            lines.append(f"### {case_id}")
+            lines.append(f"- Category: `{category}`")
+            lines.append(f"- Decision: `{decision}`")
+            lines.append(f"- Matched: `{matched}`")
+            if response_text:
+                lines.append(f"- Response: {response_text}")
+            mismatch_items = case.get("mismatches")
+            if isinstance(mismatch_items, list) and mismatch_items:
+                rendered = ", ".join(str(item) for item in mismatch_items)
+                lines.append(f"- Mismatches: `{rendered}`")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
 
+
+    except Exception:
+        return ""
 def _build_regression_issue_labels(
     *,
     kb_payload: dict[str, Any] | None,
