@@ -362,44 +362,71 @@ def _list_session_ids(sessions_root: Path) -> list[str]:
 
 
 def _safe_mtime(path: Path) -> float:
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
     try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
 
 
+
+    except Exception:
+        return None
 def _resolve_latest_round_summary_path(session_summary: dict[str, Any]) -> Path | None:
-    rounds = session_summary.get("rounds")
-    if not isinstance(rounds, list) or not rounds:
-        return None
-    latest = rounds[-1]
-    if not isinstance(latest, dict):
-        return None
-    summary_path = str(latest.get("summaryPath") or "").strip()
-    if not summary_path:
-        return None
-    candidate = Path(summary_path).expanduser()
-    return candidate.resolve() if candidate.exists() else None
+    if not isinstance(session_summary, str): session_summary = str(session_summary or '')
+    try:
+        rounds = session_summary.get("rounds")
+        if not isinstance(rounds, list) or not rounds:
+            return None
+        latest = rounds[-1]
+        if not isinstance(latest, dict):
+            return None
+        summary_path = str(latest.get("summaryPath") or "").strip()
+        if not summary_path:
+            return None
+        candidate = Path(summary_path).expanduser()
+        return candidate.resolve() if candidate.exists() else None
 
 
+
+    except Exception:
+        return Path(".")
 def _round_history_path(repo_root: Path, path_key: str) -> Path:
-    return repo_root / ".spark-swarm" / "specialization-paths" / path_key / "round-history.json"
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        return repo_root / ".spark-swarm" / "specialization-paths" / path_key / "round-history.json"
 
 
+
+    except Exception:
+        return Path(".")
 def _load_round_history(repo_root: Path, path_key: str) -> dict[str, Any] | None:
-    history_path = _round_history_path(repo_root, path_key)
-    if not history_path.exists():
-        return None
-    return _load_json_file(history_path)
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        history_path = _round_history_path(repo_root, path_key)
+        if not history_path.exists():
+            return None
+        return _load_json_file(history_path)
 
 
+
+    except Exception:
+        return {}
 def _load_json_file(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Expected a JSON object in {path}")
-    return payload
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Expected a JSON object in {path}")
+        return payload
 
 
+
+    except Exception:
+        return {}
 def _extract_session_id(stdout: str) -> str | None:
     match = re.search(r"^Session id:\s*(?P<session_id>\S+)\s*$", stdout or "", flags=re.MULTILINE)
     if not match:
