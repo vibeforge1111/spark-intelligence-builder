@@ -674,7 +674,11 @@ def _safe_summary_mapping(value: object, *, depth: int = 0) -> dict[str, Any]:
 
 
 def _short(value: object, *, limit: int = 160) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+    try:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    except Exception:
+        return ""
