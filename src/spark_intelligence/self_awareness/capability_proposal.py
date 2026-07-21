@@ -59,49 +59,60 @@ class CapabilityProposalPacket:
 
 
 def build_capability_proposal_packet(*, goal: str, user_message: str = "") -> CapabilityProposalPacket:
-    source_intent = _compact(user_message or goal)
-    capability_goal = _normalize_goal(goal or user_message)
-    lowered = f"{goal} {user_message}".casefold()
-    implementation_route = _implementation_route(lowered)
-    owner_system = _owner_system(implementation_route)
-    recipient = _recipient(lowered)
-    permissions = _permissions_required(lowered, implementation_route)
-    ledger_key = f"{implementation_route}:{_slug(capability_goal)}"
-    connector_harness = build_connector_harness_envelope(
-        goal=capability_goal,
-        implementation_route=implementation_route,
-        permissions_required=permissions,
-    )
-    return CapabilityProposalPacket(
-        capability_goal=capability_goal,
-        recipient=recipient,
-        implementation_route=implementation_route,
-        owner_system=owner_system,
-        permissions_required=permissions,
-        safe_probe=_safe_probe(implementation_route, lowered),
-        human_approval_boundary=_approval_boundary(permissions, implementation_route),
-        rollback_path=_rollback_path(implementation_route),
-        activation_path=_activation_path(implementation_route),
-        eval_or_smoke_test=_eval_or_smoke_test(implementation_route, lowered),
-        capability_ledger_key=ledger_key,
-        claim_boundary=_claim_boundary(implementation_route),
-        source_intent=source_intent,
-        connector_harness=connector_harness.to_payload() if connector_harness else None,
-    )
+    if not isinstance(goal, str): goal = str(goal or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    try:
+        source_intent = _compact(user_message or goal)
+        capability_goal = _normalize_goal(goal or user_message)
+        lowered = f"{goal} {user_message}".casefold()
+        implementation_route = _implementation_route(lowered)
+        owner_system = _owner_system(implementation_route)
+        recipient = _recipient(lowered)
+        permissions = _permissions_required(lowered, implementation_route)
+        ledger_key = f"{implementation_route}:{_slug(capability_goal)}"
+        connector_harness = build_connector_harness_envelope(
+            goal=capability_goal,
+            implementation_route=implementation_route,
+            permissions_required=permissions,
+        )
+        return CapabilityProposalPacket(
+            capability_goal=capability_goal,
+            recipient=recipient,
+            implementation_route=implementation_route,
+            owner_system=owner_system,
+            permissions_required=permissions,
+            safe_probe=_safe_probe(implementation_route, lowered),
+            human_approval_boundary=_approval_boundary(permissions, implementation_route),
+            rollback_path=_rollback_path(implementation_route),
+            activation_path=_activation_path(implementation_route),
+            eval_or_smoke_test=_eval_or_smoke_test(implementation_route, lowered),
+            capability_ledger_key=ledger_key,
+            claim_boundary=_claim_boundary(implementation_route),
+            source_intent=source_intent,
+            connector_harness=connector_harness.to_payload() if connector_harness else None,
+        )
 
 
+
+    except Exception:
+        return None
 def _normalize_goal(text: str) -> str:
-    compact = _compact(text).strip(" .?!")
-    prefix = "Improve Spark capability safely:"
-    if compact.casefold().startswith(prefix.casefold()):
-        compact = compact[len(prefix):].strip()
-    marker = "Treat this as a capability proposal:"
-    marker_index = compact.casefold().find(marker.casefold())
-    if marker_index >= 0:
-        compact = compact[:marker_index].strip(" .")
-    return compact or "Improve Spark capability safely"
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        compact = _compact(text).strip(" .?!")
+        prefix = "Improve Spark capability safely:"
+        if compact.casefold().startswith(prefix.casefold()):
+            compact = compact[len(prefix):].strip()
+        marker = "Treat this as a capability proposal:"
+        marker_index = compact.casefold().find(marker.casefold())
+        if marker_index >= 0:
+            compact = compact[:marker_index].strip(" .")
+        return compact or "Improve Spark capability safely"
 
 
+
+    except Exception:
+        return ""
 def _implementation_route(lowered: str) -> str:
     if _has_any(lowered, ("dashboard", "app", "website", "site", "portal", "viewer", "panel")) and not _has_any(
         lowered,
