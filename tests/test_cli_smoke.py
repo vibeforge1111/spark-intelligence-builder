@@ -1540,6 +1540,53 @@ class CliSmokeTests(SparkTestCase):
         task_args = run_mock.call_args.args[0]
         self.assertEqual(task_args[:4], ["schtasks", "/Delete", "/TN", "Spark Intelligence Test Task"])
 
+    def test_uninstall_autostart_tolerates_already_removed_startup_wrapper(self) -> None:
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+        self.config_manager.set_path("runtime.autostart.platform", "windows_startup_folder")
+        self.config_manager.set_path("runtime.autostart.task_name", "Spark Intelligence Test Task")
+        startup_root = self.home / "AppData" / "Roaming"
+
+        with patch.dict("os.environ", {"APPDATA": str(startup_root)}, clear=False):
+            exit_code, stdout, stderr = self.run_cli(
+                "uninstall-autostart",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Removed autostart.", stdout)
+        self.assertFalse(self.config_manager.get_path("runtime.autostart.enabled"))
+        self.assertIsNone(self.config_manager.get_path("runtime.autostart.platform"))
+
+    def test_uninstall_autostart_removes_present_startup_wrapper(self) -> None:
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+        self.config_manager.set_path("runtime.autostart.platform", "windows_startup_folder")
+        self.config_manager.set_path("runtime.autostart.task_name", "Spark Intelligence Test Task")
+        startup_root = self.home / "AppData" / "Roaming"
+        wrapper = (
+            startup_root
+            / "Microsoft"
+            / "Windows"
+            / "Start Menu"
+            / "Programs"
+            / "Startup"
+            / "Spark Intelligence Test Task.cmd"
+        )
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text("@echo off\r\nspark-intelligence gateway start\r\n", encoding="utf-8")
+
+        with patch.dict("os.environ", {"APPDATA": str(startup_root)}, clear=False):
+            exit_code, stdout, stderr = self.run_cli(
+                "uninstall-autostart",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Removed autostart.", stdout)
+        self.assertFalse(wrapper.exists())
+        self.assertFalse(self.config_manager.get_path("runtime.autostart.enabled"))
+
     def test_install_autostart_falls_back_to_startup_folder_when_task_scheduler_is_denied(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()
