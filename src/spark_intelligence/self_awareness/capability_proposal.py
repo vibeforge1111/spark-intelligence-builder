@@ -179,54 +179,81 @@ def _safe_probe(route: str, lowered: str) -> str:
 
 
 def _approval_boundary(permissions: list[str], route: str) -> str:
-    if any(permission.endswith("_access") or permission.endswith("_scope") for permission in permissions):
-        return "Human approval required before connecting accounts, reading private data, scheduling delivery, or activating new tool authority."
-    if route == "mission_artifact":
-        return "Human approval required before publishing or wiring the artifact into Spark runtime surfaces."
-    return "Human approval required before raising capability confidence or changing runtime behavior."
+    if not isinstance(permissions, str): permissions = str(permissions or '')
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        if any(permission.endswith("_access") or permission.endswith("_scope") for permission in permissions):
+            return "Human approval required before connecting accounts, reading private data, scheduling delivery, or activating new tool authority."
+        if route == "mission_artifact":
+            return "Human approval required before publishing or wiring the artifact into Spark runtime surfaces."
+        return "Human approval required before raising capability confidence or changing runtime behavior."
 
 
+
+    except Exception:
+        return ""
 def _rollback_path(route: str) -> str:
-    return {
-        "domain_chip": "Deactivate or unpin the chip, remove it from active_keys, and keep the repo for inspection.",
-        "runtime_patch": "Revert the bounded code/config change and rerun the previous passing probe.",
-        "capability_connector": "Disable connector credentials/config, deactivate any connector chip, and clear scheduled jobs.",
-        "mission_artifact": "Pause/archive the Spawner mission and leave Spark runtime settings unchanged.",
-        "workflow_automation": "Pause the schedule, preserve dry-run artifacts, and remove delivery permissions.",
-    }.get(route, "Return to the previous config and rerun the last known-good probe.")
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        return {
+            "domain_chip": "Deactivate or unpin the chip, remove it from active_keys, and keep the repo for inspection.",
+            "runtime_patch": "Revert the bounded code/config change and rerun the previous passing probe.",
+            "capability_connector": "Disable connector credentials/config, deactivate any connector chip, and clear scheduled jobs.",
+            "mission_artifact": "Pause/archive the Spawner mission and leave Spark runtime settings unchanged.",
+            "workflow_automation": "Pause the schedule, preserve dry-run artifacts, and remove delivery permissions.",
+        }.get(route, "Return to the previous config and rerun the last known-good probe.")
 
 
+
+    except Exception:
+        return ""
 def _activation_path(route: str) -> str:
-    return {
-        "domain_chip": "Attach the chip through spark-chip.json, activate or pin it deliberately, then record a successful hook invocation.",
-        "runtime_patch": "Land the bounded patch, restart affected Spark services, then record a successful route/eval probe.",
-        "capability_connector": "Attach connector config, run health and smoke probes, then enable the scoped route for approved users.",
-        "mission_artifact": "Build through Spawner/Mission Control, verify artifacts, then expose links or optional runtime integration.",
-        "workflow_automation": "Create the schedule disabled or dry-run first, verify output, then enable delivery with owner approval.",
-    }.get(route, "Activate only after the probe and eval pass.")
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        return {
+            "domain_chip": "Attach the chip through spark-chip.json, activate or pin it deliberately, then record a successful hook invocation.",
+            "runtime_patch": "Land the bounded patch, restart affected Spark services, then record a successful route/eval probe.",
+            "capability_connector": "Attach connector config, run health and smoke probes, then enable the scoped route for approved users.",
+            "mission_artifact": "Build through Spawner/Mission Control, verify artifacts, then expose links or optional runtime integration.",
+            "workflow_automation": "Create the schedule disabled or dry-run first, verify output, then enable delivery with owner approval.",
+        }.get(route, "Activate only after the probe and eval pass.")
 
 
+
+    except Exception:
+        return ""
 def _eval_or_smoke_test(route: str, lowered: str) -> str:
-    if route == "domain_chip":
-        return "Chip manifest discovery test plus one router-invokable synthetic hook test."
-    if route == "capability_connector":
-        return "Connector health test plus one redacted dry-run invocation with no broad data access."
-    if route == "workflow_automation":
-        return "Schedule rendering test plus one dry-run output snapshot and delivery suppression assertion."
-    if route == "mission_artifact":
-        return "Spawner mission creation test plus artifact/link verification."
-    if "route" in lowered or "routing" in lowered:
-        return "Route-selection regression test covering positive and negative natural-language prompts."
-    return "Focused regression test for the changed runtime path plus a safe live-status probe."
+    if not isinstance(route, str): route = str(route or '')
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    try:
+        if route == "domain_chip":
+            return "Chip manifest discovery test plus one router-invokable synthetic hook test."
+        if route == "capability_connector":
+            return "Connector health test plus one redacted dry-run invocation with no broad data access."
+        if route == "workflow_automation":
+            return "Schedule rendering test plus one dry-run output snapshot and delivery suppression assertion."
+        if route == "mission_artifact":
+            return "Spawner mission creation test plus artifact/link verification."
+        if "route" in lowered or "routing" in lowered:
+            return "Route-selection regression test covering positive and negative natural-language prompts."
+        return "Focused regression test for the changed runtime path plus a safe live-status probe."
 
 
+
+    except Exception:
+        return ""
 def _claim_boundary(route: str) -> str:
-    return (
-        "This packet is a plan, not proof of a live capability. Spark may claim the capability only after "
-        f"the {route} activation path and eval_or_smoke_test pass and the capability ledger records recent success."
-    )
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        return (
+            "This packet is a plan, not proof of a live capability. Spark may claim the capability only after "
+            f"the {route} activation path and eval_or_smoke_test pass and the capability ledger records recent success."
+        )
 
 
+
+    except Exception:
+        return ""
 def _compact(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
