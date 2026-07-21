@@ -260,39 +260,49 @@ def _normalize_score_decimals_to_percent(text: str) -> str:
 
 
 def _split_text_for_delivery(text: str, *, chunk_size: int, max_chunks: int) -> list[str]:
-    if len(text) <= chunk_size:
-        return [text]
-    chunks: list[str] = []
-    remaining = text
-    while remaining and len(chunks) < max_chunks:
-        if len(remaining) <= chunk_size:
-            chunks.append(remaining)
-            remaining = ""
-            break
-        cut = _find_split_point(remaining, chunk_size)
-        chunks.append(remaining[:cut].rstrip())
-        remaining = remaining[cut:].lstrip()
-    if remaining:
-        suffix_note = f"\n\n[content trimmed — chat capped at {max_chunks} parts; ask for the rest or request file delivery]"
-        last = chunks[-1]
-        keep = chunk_size - len(suffix_note)
-        if keep < 0:
-            keep = chunk_size // 2
-        chunks[-1] = last[:keep].rstrip() + suffix_note
-    if len(chunks) > 1:
-        chunks = [f"({i+1}/{len(chunks)}) {c}" for i, c in enumerate(chunks)]
-    return chunks
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        if len(text) <= chunk_size:
+            return [text]
+        chunks: list[str] = []
+        remaining = text
+        while remaining and len(chunks) < max_chunks:
+            if len(remaining) <= chunk_size:
+                chunks.append(remaining)
+                remaining = ""
+                break
+            cut = _find_split_point(remaining, chunk_size)
+            chunks.append(remaining[:cut].rstrip())
+            remaining = remaining[cut:].lstrip()
+        if remaining:
+            suffix_note = f"\n\n[content trimmed — chat capped at {max_chunks} parts; ask for the rest or request file delivery]"
+            last = chunks[-1]
+            keep = chunk_size - len(suffix_note)
+            if keep < 0:
+                keep = chunk_size // 2
+            chunks[-1] = last[:keep].rstrip() + suffix_note
+        if len(chunks) > 1:
+            chunks = [f"({i+1}/{len(chunks)}) {c}" for i, c in enumerate(chunks)]
+        return chunks
 
 
+
+    except Exception:
+        return []
 def _find_split_point(text: str, chunk_size: int) -> int:
-    if len(text) <= chunk_size:
-        return len(text)
-    window = text[:chunk_size]
-    for boundary in ("\n\n", "\n", ". ", "! ", "? ", " "):
-        idx = window.rfind(boundary)
-        if idx >= chunk_size // 2:
-            return idx + len(boundary)
-    return chunk_size
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        if len(text) <= chunk_size:
+            return len(text)
+        window = text[:chunk_size]
+        for boundary in ("\n\n", "\n", ". ", "! ", "? ", " "):
+            idx = window.rfind(boundary)
+            if idx >= chunk_size // 2:
+                return idx + len(boundary)
+        return chunk_size
+
+    except Exception:
+        return 0
 def set_runtime_state_value(
     *,
     state_db: StateDB,
@@ -301,38 +311,56 @@ def set_runtime_state_value(
     component: str = "gateway_guardrails",
     guard_strategy: str | None = None,
 ) -> None:
-    with state_db.connect() as conn:
-        upsert_runtime_state(
-            conn,
-            state_key=state_key,
-            value=value,
-            component=component,
-            guard_strategy=guard_strategy,
-        )
-        conn.commit()
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(value, str): value = str(value or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(guard_strategy, str): guard_strategy = str(guard_strategy or '')
+    try:
+        with state_db.connect() as conn:
+            upsert_runtime_state(
+                conn,
+                state_key=state_key,
+                value=value,
+                component=component,
+                guard_strategy=guard_strategy,
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def _load_json_list(*, state_db: StateDB, state_key: str) -> list[int]:
-    with state_db.connect() as conn:
-        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row or row["value"] is None:
-        return []
+    if not isinstance(state_key, str): state_key = str(state_key or '')
     try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    return [int(item) for item in payload if isinstance(item, (int, float))]
+        with state_db.connect() as conn:
+            row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+        if not row or row["value"] is None:
+            return []
+        try:
+            payload = json.loads(str(row["value"]))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [int(item) for item in payload if isinstance(item, (int, float))]
 
 
+
+    except Exception:
+        return []
 def _load_json_object(*, state_db: StateDB, state_key: str) -> dict[str, Any]:
-    with state_db.connect() as conn:
-        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row or row["value"] is None:
-        return {}
+    if not isinstance(state_key, str): state_key = str(state_key or '')
     try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
+        with state_db.connect() as conn:
+            row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+        if not row or row["value"] is None:
+            return {}
+        try:
+            payload = json.loads(str(row["value"]))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
