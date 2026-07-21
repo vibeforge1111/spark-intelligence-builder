@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
+_LOGGER = logging.getLogger(__name__)
 _CAPSULE_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _CAPSULE_TOKEN_STOPWORDS = frozenset(
     {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
@@ -206,7 +208,7 @@ def _build_current_state_lines(
     candidates.append(human_id)
 
     records: list[dict[str, Any]] = []
-    for candidate in candidates:
+    for candidate_index, candidate in enumerate(candidates):
         try:
             inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
@@ -214,7 +216,13 @@ def _build_current_state_lines(
                 human_id=candidate,
                 actor_id="context_capsule",
             )
-        except Exception:
+        except Exception as exc:
+            candidate_scope = "channel_scoped" if candidate_index == 0 and len(candidates) > 1 else "direct"
+            _LOGGER.debug(
+                "context_capsule_memory_candidate_failed candidate_scope=%s error_type=%s",
+                candidate_scope,
+                type(exc).__name__,
+            )
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:

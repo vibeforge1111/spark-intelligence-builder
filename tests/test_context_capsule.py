@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.context.capsule import _build_current_state_lines
+from spark_intelligence.context.recent_conversation import _load_builder_event_turns
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
@@ -36,6 +38,53 @@ class ContextCapsuleTests(SparkTestCase):
                 ]
             )
         )
+
+    def test_current_state_lookup_logs_safe_candidate_failure_metadata(self) -> None:
+        secret_human_id = "human-secret@example.test"
+        secret_error = "database password=top-secret"
+        with (
+            patch(
+                "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+                side_effect=RuntimeError(secret_error),
+            ),
+            self.assertLogs("spark_intelligence.context.capsule", level="DEBUG") as captured,
+        ):
+            lines = _build_current_state_lines(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id=secret_human_id,
+                channel_kind="telegram",
+            )
+
+        rendered = "\n".join(captured.output)
+        self.assertEqual(lines, [])
+        self.assertIn("candidate_scope=channel_scoped", rendered)
+        self.assertIn("candidate_scope=direct", rendered)
+        self.assertIn("error_type=RuntimeError", rendered)
+        self.assertNotIn(secret_human_id, rendered)
+        self.assertNotIn(secret_error, rendered)
+
+    def test_recent_conversation_lookup_logs_safe_failure_metadata(self) -> None:
+        secret_error = "unable to open /private/runtime.sqlite?token=top-secret"
+        with (
+            patch.object(self.state_db, "connect", side_effect=OSError(secret_error)),
+            self.assertLogs("spark_intelligence.context.recent_conversation", level="WARNING") as captured,
+        ):
+            turns = _load_builder_event_turns(
+                state_db=self.state_db,
+                session_id="session-secret",
+                channel_kind="telegram",
+                request_id="req-secret",
+                turn_limit=3,
+            )
+
+        rendered = "\n".join(captured.output)
+        self.assertEqual(turns, [])
+        self.assertIn("recent_conversation_builder_event_lookup_failed", rendered)
+        self.assertIn("error_type=OSError", rendered)
+        self.assertNotIn(secret_error, rendered)
+        self.assertNotIn("session-secret", rendered)
+        self.assertNotIn("req-secret", rendered)
 
     def test_context_capsule_compiles_state_conversation_jobs_and_diagnostics(self) -> None:
         self.config_manager.set_path("workspace.id", "workspace-test")
