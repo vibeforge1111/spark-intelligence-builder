@@ -234,27 +234,42 @@ _TELEGRAM_TRIVIAL_GREETING_RE = re.compile(
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+
+    except Exception:
+        return ""
 def resolve_builder_persona_agent_id(*, human_id: str | None) -> str | None:
-    normalized = str(human_id or "").strip()
-    if not normalized:
-        return None
-    return f"agent:{normalized}"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        normalized = str(human_id or "").strip()
+        if not normalized:
+            return None
+        return f"agent:{normalized}"
 
 
+
+    except Exception:
+        return ""
 def _persona_lookup_agent_ids(*, agent_id: str | None, human_id: str | None) -> list[str]:
-    candidate_ids: list[str] = []
-    builder_agent_id = resolve_builder_persona_agent_id(human_id=human_id)
-    if builder_agent_id:
-        candidate_ids.append(builder_agent_id)
-    normalized_agent_id = str(agent_id or "").strip()
-    if normalized_agent_id and normalized_agent_id not in candidate_ids:
-        candidate_ids.append(normalized_agent_id)
-    return candidate_ids
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        candidate_ids: list[str] = []
+        builder_agent_id = resolve_builder_persona_agent_id(human_id=human_id)
+        if builder_agent_id:
+            candidate_ids.append(builder_agent_id)
+        normalized_agent_id = str(agent_id or "").strip()
+        if normalized_agent_id and normalized_agent_id not in candidate_ids:
+            candidate_ids.append(normalized_agent_id)
+        return candidate_ids
 
 
+
+    except Exception:
+        return []
 @dataclass
 class AgentPersonaMutationResult:
     agent_id: str
@@ -298,47 +313,57 @@ class PersonalityImportResult:
 
 
 def _extract_trait_deltas(text: str) -> dict[str, float]:
-    """Extract personality trait deltas from natural language text.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Extract personality trait deltas from natural language text.
 
-    Tries the full personality_engine.nl_traits module first, falls
-    back to inline patterns if the personality engine is not installed.
-    """
-    if not text or not text.strip():
+        Tries the full personality_engine.nl_traits module first, falls
+        back to inline patterns if the personality engine is not installed.
+        """
+        if not text or not text.strip():
+            return {}
+
+        # Try the full NL traits module from personality engine
+        try:
+            from personality_engine.nl_traits import extract_trait_deltas  # type: ignore[import-untyped]
+            return extract_trait_deltas(text)
+        except ImportError:
+            pass
+
+        # Inline fallback
+        combined: dict[str, float] = {}
+        for pattern, deltas in _NL_TRAIT_PATTERNS:
+            if pattern.search(text):
+                for trait, delta in deltas.items():
+                    combined[trait] = combined.get(trait, 0.0) + delta
+        for trait in combined:
+            combined[trait] = max(-1.0, min(1.0, combined[trait]))
+        return combined
+
+
+
+    except Exception:
         return {}
-
-    # Try the full NL traits module from personality engine
-    try:
-        from personality_engine.nl_traits import extract_trait_deltas  # type: ignore[import-untyped]
-        return extract_trait_deltas(text)
-    except ImportError:
-        pass
-
-    # Inline fallback
-    combined: dict[str, float] = {}
-    for pattern, deltas in _NL_TRAIT_PATTERNS:
-        if pattern.search(text):
-            for trait, delta in deltas.items():
-                combined[trait] = combined.get(trait, 0.0) + delta
-    for trait in combined:
-        combined[trait] = max(-1.0, min(1.0, combined[trait]))
-    return combined
-
-
 def _has_personality_signal(text: str) -> bool:
-    """Quick check: does text contain any personality preference signal?"""
-    if not text or not text.strip():
-        return False
+    if not isinstance(text, str): text = str(text or '')
     try:
-        from personality_engine.nl_traits import has_personality_preference  # type: ignore[import-untyped]
-        return has_personality_preference(text)
-    except ImportError:
-        pass
-    for pattern, _ in _NL_TRAIT_PATTERNS:
-        if pattern.search(text):
-            return True
-    return False
+        """Quick check: does text contain any personality preference signal?"""
+        if not text or not text.strip():
+            return False
+        try:
+            from personality_engine.nl_traits import has_personality_preference  # type: ignore[import-untyped]
+            return has_personality_preference(text)
+        except ImportError:
+            pass
+        for pattern, _ in _NL_TRAIT_PATTERNS:
+            if pattern.search(text):
+                return True
+        return False
 
 
+
+    except Exception:
+        return False
 def _extract_agent_name(text: str) -> str | None:
     for pattern in _AGENT_NAME_PATTERNS:
         match = pattern.search(text.strip())
