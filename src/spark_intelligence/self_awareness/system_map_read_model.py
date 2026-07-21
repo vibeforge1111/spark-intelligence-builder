@@ -553,85 +553,108 @@ def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
 
 
 def _orphan_parent_event_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
-    sources = _dict(trace_health.get("orphan_parent_event_sources"))
-    rows: list[dict[str, Any]] = []
-    for raw_row in _list(sources.get("rows"))[:10]:
-        row = _dict(raw_row)
-        rows.append(
-            {
-                "component": str(row.get("component") or "[missing]"),
-                "event_type": str(row.get("event_type") or "[missing]"),
-                "status": str(row.get("status") or "[missing]"),
-                "severity": str(row.get("severity") or "[missing]"),
-                "target_surface": str(row.get("target_surface") or "[missing]"),
-                "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
-                "event_count": _int(row.get("event_count")),
-            }
-        )
-    return {
-        "group_by": [str(item) for item in _list(sources.get("group_by"))],
-        "row_count": len(rows),
-        "rows": rows,
-        "claim_boundary": "Ranked repair queue for missing parent links only; not memory truth or task outcome.",
-    }
-
-
-def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for raw_row in _list(trace_health.get("recent_windows")):
-        row = _dict(raw_row)
-        rows.append(
-            {
-                "window": str(row.get("window") or ""),
-                "threshold": str(row.get("threshold") or ""),
-                "row_count": _int(row.get("row_count")),
-                "missing_trace_ref_count": _int(row.get("missing_trace_ref_count")),
-                "missing_trace_ref_ratio": _float(row.get("missing_trace_ref_ratio")),
-            }
-        )
-    return rows
-
-
-def _memory_movement_context(memory_movement_index: dict[str, Any]) -> dict[str, Any]:
-    if not memory_movement_index:
+    if not isinstance(trace_health, str): trace_health = str(trace_health or '')
+    try:
+        sources = _dict(trace_health.get("orphan_parent_event_sources"))
+        rows: list[dict[str, Any]] = []
+        for raw_row in _list(sources.get("rows"))[:10]:
+            row = _dict(raw_row)
+            rows.append(
+                {
+                    "component": str(row.get("component") or "[missing]"),
+                    "event_type": str(row.get("event_type") or "[missing]"),
+                    "status": str(row.get("status") or "[missing]"),
+                    "severity": str(row.get("severity") or "[missing]"),
+                    "target_surface": str(row.get("target_surface") or "[missing]"),
+                    "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
+                    "event_count": _int(row.get("event_count")),
+                }
+            )
         return {
-            "present": False,
-            "status": "missing",
-            "row_count": 0,
-            "builder_memory_table_count": 0,
-            "movement_counts": {},
-            "authority": "observability_non_authoritative",
+            "group_by": [str(item) for item in _list(sources.get("group_by"))],
+            "row_count": len(rows),
+            "rows": rows,
+            "claim_boundary": "Ranked repair queue for missing parent links only; not memory truth or task outcome.",
         }
 
-    status_export = _dict(memory_movement_index.get("safe_status_export"))
-    status = _dict(status_export.get("status"))
-    builder_tables = _dict(memory_movement_index.get("builder_memory_tables"))
-    return {
-        "present": True,
-        "schema_version": memory_movement_index.get("schema_version"),
-        "status": str(status.get("status") or ("status_export_missing" if not status_export.get("exists") else "unknown")),
-        "row_count": _int(status.get("row_count")),
-        "builder_memory_table_count": _int(builder_tables.get("table_count")),
-        "movement_counts": _int_mapping(status.get("movement_counts")),
-        "authority": str(memory_movement_index.get("authority") or status.get("authority") or "observability_non_authoritative"),
-        "claim_boundary": (
-            "Memory movement index is observability evidence. It explains movement counts and status; "
-            "it is not memory truth and cannot override current-state records."
-        ),
-    }
 
 
+    except Exception:
+        return {}
+def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(trace_health, str): trace_health = str(trace_health or '')
+    try:
+        rows: list[dict[str, Any]] = []
+        for raw_row in _list(trace_health.get("recent_windows")):
+            row = _dict(raw_row)
+            rows.append(
+                {
+                    "window": str(row.get("window") or ""),
+                    "threshold": str(row.get("threshold") or ""),
+                    "row_count": _int(row.get("row_count")),
+                    "missing_trace_ref_count": _int(row.get("missing_trace_ref_count")),
+                    "missing_trace_ref_ratio": _float(row.get("missing_trace_ref_ratio")),
+                }
+            )
+        return rows
+
+
+
+    except Exception:
+        return []
+def _memory_movement_context(memory_movement_index: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(memory_movement_index, str): memory_movement_index = str(memory_movement_index or '')
+    try:
+        if not memory_movement_index:
+            return {
+                "present": False,
+                "status": "missing",
+                "row_count": 0,
+                "builder_memory_table_count": 0,
+                "movement_counts": {},
+                "authority": "observability_non_authoritative",
+            }
+
+        status_export = _dict(memory_movement_index.get("safe_status_export"))
+        status = _dict(status_export.get("status"))
+        builder_tables = _dict(memory_movement_index.get("builder_memory_tables"))
+        return {
+            "present": True,
+            "schema_version": memory_movement_index.get("schema_version"),
+            "status": str(status.get("status") or ("status_export_missing" if not status_export.get("exists") else "unknown")),
+            "row_count": _int(status.get("row_count")),
+            "builder_memory_table_count": _int(builder_tables.get("table_count")),
+            "movement_counts": _int_mapping(status.get("movement_counts")),
+            "authority": str(memory_movement_index.get("authority") or status.get("authority") or "observability_non_authoritative"),
+            "claim_boundary": (
+                "Memory movement index is observability evidence. It explains movement counts and status; "
+                "it is not memory truth and cannot override current-state records."
+            ),
+        }
+
+
+
+    except Exception:
+        return {}
 def _claim_boundary() -> str:
-    return (
-        "Compiled Spark OS maps are metadata snapshots. They prove source visibility, not live route success, "
-        "not permission, and not memory truth."
-    )
+    try:
+        return (
+            "Compiled Spark OS maps are metadata snapshots. They prove source visibility, not live route success, "
+            "not permission, and not memory truth."
+        )
 
 
+
+    except Exception:
+        return ""
 def _dict(value: object) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+    try:
+        return dict(value) if isinstance(value, dict) else {}
 
 
+
+    except Exception:
+        return {}
 def _list(value: object) -> list[Any]:
     return list(value) if isinstance(value, list) else []
 
