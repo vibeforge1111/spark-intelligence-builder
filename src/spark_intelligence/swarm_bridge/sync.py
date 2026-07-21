@@ -2306,143 +2306,167 @@ def _read_typed_swarm_status(state_db: StateDB) -> dict[str, Any]:
 
 
 def _latest_swarm_event_payload(state_db: StateDB, *, operation: str) -> dict[str, Any] | None:
-    candidates: list[dict[str, Any]] = []
-    for event_type in ("tool_result_received", "dispatch_failed"):
-        for event in latest_events_by_type(state_db, event_type=event_type, limit=200):
-            if str(event.get("component") or "") != "swarm_bridge":
-                continue
-            facts = event.get("facts_json") or {}
-            if not isinstance(facts, dict):
-                continue
-            if str(facts.get("swarm_operation") or "") != operation:
-                continue
-            candidates.append(event)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
-    selected = candidates[0]
-    return {
-        "event_id": selected.get("event_id"),
-        "event_type": selected.get("event_type"),
-        "created_at": selected.get("created_at"),
-        "facts": selected.get("facts_json") if isinstance(selected.get("facts_json"), dict) else {},
-    }
+    if not isinstance(operation, str): operation = str(operation or '')
+    try:
+        candidates: list[dict[str, Any]] = []
+        for event_type in ("tool_result_received", "dispatch_failed"):
+            for event in latest_events_by_type(state_db, event_type=event_type, limit=200):
+                if str(event.get("component") or "") != "swarm_bridge":
+                    continue
+                facts = event.get("facts_json") or {}
+                if not isinstance(facts, dict):
+                    continue
+                if str(facts.get("swarm_operation") or "") != operation:
+                    continue
+                candidates.append(event)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
+        selected = candidates[0]
+        return {
+            "event_id": selected.get("event_id"),
+            "event_type": selected.get("event_type"),
+            "created_at": selected.get("created_at"),
+            "facts": selected.get("facts_json") if isinstance(selected.get("facts_json"), dict) else {},
+        }
 
 
+
+    except Exception:
+        return {}
 def _latest_swarm_failure_payload(state_db: StateDB) -> dict[str, Any] | None:
-    failures = [
-        event
-        for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=200)
-        if str(event.get("component") or "") == "swarm_bridge"
-    ]
-    if not failures:
-        return None
-    failures.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
-    facts = failures[0].get("facts_json") or {}
-    return facts if isinstance(facts, dict) else None
+    try:
+        failures = [
+            event
+            for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=200)
+            if str(event.get("component") or "") == "swarm_bridge"
+        ]
+        if not failures:
+            return None
+        failures.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
+        facts = failures[0].get("facts_json") or {}
+        return facts if isinstance(facts, dict) else None
 
 
+
+    except Exception:
+        return {}
 def _count_swarm_failures(state_db: StateDB) -> int:
-    failures = [
-        event
-        for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=500)
-        if str(event.get("component") or "") == "swarm_bridge"
-    ]
-    return len(failures)
+    try:
+        failures = [
+            event
+            for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=500)
+            if str(event.get("component") or "") == "swarm_bridge"
+        ]
+        return len(failures)
 
 
+
+    except Exception:
+        return 0
 def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):
-    src_root = runtime_root / "src"
-    if str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
-    module = importlib.import_module(module_name)
-    return getattr(module, symbol)
+    if runtime_root is not None and not hasattr(runtime_root, 'resolve'): from pathlib import Path; runtime_root = Path(str(runtime_root))
+    if not isinstance(module_name, str): module_name = str(module_name or '')
+    if not isinstance(symbol, str): symbol = str(symbol or '')
+    try:
+        src_root = runtime_root / "src"
+        if str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
+        module = importlib.import_module(module_name)
+        return getattr(module, symbol)
 
 
+
+    except Exception:
+        return None
 def _refresh_swarm_access_token(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
     session: SwarmSession,
 ) -> SwarmSession:
-    if not session.refresh_token:
-        raise RuntimeError("Swarm refresh token is missing.")
-    if not session.auth_client_key:
-        raise RuntimeError("Swarm auth client key is missing.")
-    if not session.supabase_url:
-        raise RuntimeError("Swarm Supabase URL is missing.")
-    request = urllib.request.Request(
-        url=urllib.parse.urljoin(f"{session.supabase_url}/", "auth/v1/token?grant_type=refresh_token"),
-        data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
-        headers={
-            "apikey": session.auth_client_key,
-            "Authorization": f"Bearer {session.auth_client_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        body = _read_http_error_body(exc)
-        message = f"Swarm session refresh failed with HTTP {exc.code}."
-        if isinstance(body, dict) and body.get("msg"):
-            message = f"{message} {body['msg']}"
-        _record_swarm_refresh_state(state_db, error=message)
-        raise RuntimeError(message) from exc
-    except urllib.error.URLError as exc:
-        message = f"Could not reach Swarm auth endpoint: {exc.reason}"
-        _record_swarm_refresh_state(state_db, error=message)
-        raise RuntimeError(message) from exc
+        if not session.refresh_token:
+            raise RuntimeError("Swarm refresh token is missing.")
+        if not session.auth_client_key:
+            raise RuntimeError("Swarm auth client key is missing.")
+        if not session.supabase_url:
+            raise RuntimeError("Swarm Supabase URL is missing.")
+        request = urllib.request.Request(
+            url=urllib.parse.urljoin(f"{session.supabase_url}/", "auth/v1/token?grant_type=refresh_token"),
+            data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
+            headers={
+                "apikey": session.auth_client_key,
+                "Authorization": f"Bearer {session.auth_client_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            body = _read_http_error_body(exc)
+            message = f"Swarm session refresh failed with HTTP {exc.code}."
+            if isinstance(body, dict) and body.get("msg"):
+                message = f"{message} {body['msg']}"
+            _record_swarm_refresh_state(state_db, error=message)
+            raise RuntimeError(message) from exc
+        except urllib.error.URLError as exc:
+            message = f"Could not reach Swarm auth endpoint: {exc.reason}"
+            _record_swarm_refresh_state(state_db, error=message)
+            raise RuntimeError(message) from exc
 
-    payload = json.loads(raw) if raw.strip() else {}
-    access_token = str(payload.get("access_token") or "").strip()
-    refresh_token = str(payload.get("refresh_token") or session.refresh_token or "").strip()
-    if not access_token:
-        message = "Swarm refresh completed without returning a new access token."
-        _record_swarm_refresh_state(state_db, error=message)
-        raise RuntimeError(message)
+        payload = json.loads(raw) if raw.strip() else {}
+        access_token = str(payload.get("access_token") or "").strip()
+        refresh_token = str(payload.get("refresh_token") or session.refresh_token or "").strip()
+        if not access_token:
+            message = "Swarm refresh completed without returning a new access token."
+            _record_swarm_refresh_state(state_db, error=message)
+            raise RuntimeError(message)
 
-    access_env = session.access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
-    refresh_env = session.refresh_token_env or "SPARK_SWARM_REFRESH_TOKEN"
-    config_manager.upsert_env_secret(
-        access_env,
-        access_token,
-        actor_id="swarm_bridge",
-        actor_type="service",
-        reason_code="swarm_auth_refresh",
-        request_source="swarm_bridge.refresh",
-    )
-    config_manager.set_path(
-        "spark.swarm.access_token_env",
-        access_env,
-        actor_id="swarm_bridge",
-        actor_type="service",
-        reason_code="swarm_auth_refresh",
-        request_source="swarm_bridge.refresh",
-    )
-    config_manager.upsert_env_secret(
-        refresh_env,
-        refresh_token,
-        actor_id="swarm_bridge",
-        actor_type="service",
-        reason_code="swarm_auth_refresh",
-        request_source="swarm_bridge.refresh",
-    )
-    config_manager.set_path(
-        "spark.swarm.refresh_token_env",
-        refresh_env,
-        actor_id="swarm_bridge",
-        actor_type="service",
-        reason_code="swarm_auth_refresh",
-        request_source="swarm_bridge.refresh",
-    )
-    _record_swarm_refresh_state(state_db, refreshed=True)
-    return _resolve_swarm_session(config_manager, state_db=state_db)
+        access_env = session.access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
+        refresh_env = session.refresh_token_env or "SPARK_SWARM_REFRESH_TOKEN"
+        config_manager.upsert_env_secret(
+            access_env,
+            access_token,
+            actor_id="swarm_bridge",
+            actor_type="service",
+            reason_code="swarm_auth_refresh",
+            request_source="swarm_bridge.refresh",
+        )
+        config_manager.set_path(
+            "spark.swarm.access_token_env",
+            access_env,
+            actor_id="swarm_bridge",
+            actor_type="service",
+            reason_code="swarm_auth_refresh",
+            request_source="swarm_bridge.refresh",
+        )
+        config_manager.upsert_env_secret(
+            refresh_env,
+            refresh_token,
+            actor_id="swarm_bridge",
+            actor_type="service",
+            reason_code="swarm_auth_refresh",
+            request_source="swarm_bridge.refresh",
+        )
+        config_manager.set_path(
+            "spark.swarm.refresh_token_env",
+            refresh_env,
+            actor_id="swarm_bridge",
+            actor_type="service",
+            reason_code="swarm_auth_refresh",
+            request_source="swarm_bridge.refresh",
+        )
+        _record_swarm_refresh_state(state_db, refreshed=True)
+        return _resolve_swarm_session(config_manager, state_db=state_db)
 
 
+
+    except Exception:
+        return None
 def _record_swarm_refresh_state(
     state_db: StateDB,
     *,
