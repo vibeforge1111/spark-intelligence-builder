@@ -2612,56 +2612,66 @@ _GUIDED_TRAIT_PROMPTS: dict[str, str] = {
 
 
 def _parse_onboarding_guided_rating(text: str) -> int | None:
-    """Parse a 1..5 rating from a user message.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Parse a 1..5 rating from a user message.
 
-    Accepts plain digits ("3"), digits embedded in a short phrase
-    ("rating 3", "3 please"), and the English words "one" through
-    "five" (case-insensitive). Returns None if no 1..5 rating can be
-    extracted.
-    """
-    compact = " ".join(str(text or "").strip().lower().split())
-    if not compact:
-        return None
-    if compact in {"1", "2", "3", "4", "5"}:
-        return int(compact)
-    tokens = compact.split()
-    for token in tokens:
-        if token.isdigit():
-            value = int(token)
-            if 1 <= value <= 5:
+        Accepts plain digits ("3"), digits embedded in a short phrase
+        ("rating 3", "3 please"), and the English words "one" through
+        "five" (case-insensitive). Returns None if no 1..5 rating can be
+        extracted.
+        """
+        compact = " ".join(str(text or "").strip().lower().split())
+        if not compact:
+            return None
+        if compact in {"1", "2", "3", "4", "5"}:
+            return int(compact)
+        tokens = compact.split()
+        for token in tokens:
+            if token.isdigit():
+                value = int(token)
+                if 1 <= value <= 5:
+                    return value
+        for word, value in _GUIDED_NUMBER_WORDS.items():
+            if word in tokens:
                 return value
-    for word, value in _GUIDED_NUMBER_WORDS.items():
-        if word in tokens:
-            return value
-    return None
+        return None
 
 
+
+    except Exception:
+        return 0
 def _build_guided_trait_question(trait: str, index: int) -> str:
-    """Render the guided persona question for the given trait.
+    if not isinstance(trait, str): trait = str(trait or '')
+    try:
+        """Render the guided persona question for the given trait.
 
-    `index` is 0-based; the "Question N of 5" label uses 1-based
-    numbering. The question body lists the five anchor phrases from
-    _GUIDED_TRAIT_ANCHORS numbered 1..5 and instructs the operator to
-    reply with a number.
-    """
-    prompt = _GUIDED_TRAIT_PROMPTS.get(trait, f"How should `{trait}` feel?")
-    anchors = _GUIDED_TRAIT_ANCHORS.get(trait, {})
-    lines = [f"Question {index + 1} of 5. {prompt}"]
-    for rating in range(1, 6):
-        label = anchors.get(rating, "")
-        lines.append(f"  {rating}. {label}")
-    lines.append("")
-    lines.append("Reply with a number from 1 to 5.")
-    return "\n".join(lines)
+        `index` is 0-based; the "Question N of 5" label uses 1-based
+        numbering. The question body lists the five anchor phrases from
+        _GUIDED_TRAIT_ANCHORS numbered 1..5 and instructs the operator to
+        reply with a number.
+        """
+        prompt = _GUIDED_TRAIT_PROMPTS.get(trait, f"How should `{trait}` feel?")
+        anchors = _GUIDED_TRAIT_ANCHORS.get(trait, {})
+        lines = [f"Question {index + 1} of 5. {prompt}"]
+        for rating in range(1, 6):
+            label = anchors.get(rating, "")
+            lines.append(f"  {rating}. {label}")
+        lines.append("")
+        lines.append("Reply with a number from 1 to 5.")
+        return "\n".join(lines)
 
 
-# P2-8: Express persona sub-state presets. Each preset maps to a trait
-# vector that becomes the base_traits passed to save_agent_persona_profile
-# on completion. Labels/descriptions mirror the style preset catalog
-# exposed by `/style preset` in the Telegram runtime (operator,
-# claude-like, concise, warm) so the "pick a preset" onboarding path uses
-# the same named identities the operator will see later in conversation.
-# Source: P2-8 in docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md.
+    # P2-8: Express persona sub-state presets. Each preset maps to a trait
+    # vector that becomes the base_traits passed to save_agent_persona_profile
+    # on completion. Labels/descriptions mirror the style preset catalog
+    # exposed by `/style preset` in the Telegram runtime (operator,
+    # claude-like, concise, warm) so the "pick a preset" onboarding path uses
+    # the same named identities the operator will see later in conversation.
+    # Source: P2-8 in docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md.
+
+    except Exception:
+        return ""
 _ONBOARDING_EXPRESS_PRESET_ORDER: tuple[str, ...] = (
     "operator",
     "claude-like",
@@ -2725,78 +2735,92 @@ _EXPRESS_NUMBER_WORDS: dict[str, int] = {
 
 
 def _build_persona_express_catalog_text() -> str:
-    """Render the express-preset catalog for awaiting_persona_express."""
-    lines = ["Pick a preset by number or name."]
-    for index, key in enumerate(_ONBOARDING_EXPRESS_PRESET_ORDER, start=1):
-        preset = _ONBOARDING_EXPRESS_PRESETS[key]
-        label = str(preset.get("label") or key)
-        description = str(preset.get("description") or "")
-        lines.append(f"  {index}. `{key}` \u2014 {label}: {description}")
-    lines.append("")
-    lines.append("Reply with the name (for example `warm`) or the number.")
-    return "\n".join(lines)
+    try:
+        """Render the express-preset catalog for awaiting_persona_express."""
+        lines = ["Pick a preset by number or name."]
+        for index, key in enumerate(_ONBOARDING_EXPRESS_PRESET_ORDER, start=1):
+            preset = _ONBOARDING_EXPRESS_PRESETS[key]
+            label = str(preset.get("label") or key)
+            description = str(preset.get("description") or "")
+            lines.append(f"  {index}. `{key}` \u2014 {label}: {description}")
+        lines.append("")
+        lines.append("Reply with the name (for example `warm`) or the number.")
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def _parse_onboarding_persona_express_choice(text: str) -> str | None:
-    """Match a user's express-preset choice against the catalog.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Match a user's express-preset choice against the catalog.
 
-    Accepts the canonical preset key ("warm"), the preset label
-    case-insensitive ("Warm"), a 1..4 digit, or the words "one".."four".
-    Returns the canonical preset key (e.g. "warm") or None when no match
-    can be made.
-    """
-    compact = " ".join(str(text or "").strip().lower().split())
-    if not compact:
-        return None
-    if compact in _ONBOARDING_EXPRESS_PRESETS:
-        return compact
-    for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
-        label = str(preset.get("label") or "").strip().lower()
-        if label and compact == label:
-            return key
-    if compact in {"1", "2", "3", "4"}:
-        return _ONBOARDING_EXPRESS_PRESET_ORDER[int(compact) - 1]
-    tokens = compact.split()
-    for token in tokens:
-        if token.isdigit():
-            value = int(token)
-            if 1 <= value <= len(_ONBOARDING_EXPRESS_PRESET_ORDER):
+        Accepts the canonical preset key ("warm"), the preset label
+        case-insensitive ("Warm"), a 1..4 digit, or the words "one".."four".
+        Returns the canonical preset key (e.g. "warm") or None when no match
+        can be made.
+        """
+        compact = " ".join(str(text or "").strip().lower().split())
+        if not compact:
+            return None
+        if compact in _ONBOARDING_EXPRESS_PRESETS:
+            return compact
+        for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
+            label = str(preset.get("label") or "").strip().lower()
+            if label and compact == label:
+                return key
+        if compact in {"1", "2", "3", "4"}:
+            return _ONBOARDING_EXPRESS_PRESET_ORDER[int(compact) - 1]
+        tokens = compact.split()
+        for token in tokens:
+            if token.isdigit():
+                value = int(token)
+                if 1 <= value <= len(_ONBOARDING_EXPRESS_PRESET_ORDER):
+                    return _ONBOARDING_EXPRESS_PRESET_ORDER[value - 1]
+        for word, value in _EXPRESS_NUMBER_WORDS.items():
+            if word in tokens:
                 return _ONBOARDING_EXPRESS_PRESET_ORDER[value - 1]
-    for word, value in _EXPRESS_NUMBER_WORDS.items():
-        if word in tokens:
-            return _ONBOARDING_EXPRESS_PRESET_ORDER[value - 1]
-    for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
-        key_lc = key.lower()
-        label_lc = str(preset.get("label") or "").strip().lower()
-        if key_lc and key_lc in tokens:
-            return key
-        if label_lc and label_lc in tokens:
-            return key
-    return None
+        for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
+            key_lc = key.lower()
+            label_lc = str(preset.get("label") or "").strip().lower()
+            if key_lc and key_lc in tokens:
+                return key
+            if label_lc and label_lc in tokens:
+                return key
+        return None
 
 
+
+    except Exception:
+        return ""
 def _build_guardrails_ack_card_text(agent_name: str) -> str:
-    """Render the awaiting_guardrails_ack card (P2-10, Q-C/Q-G).
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    try:
+        """Render the awaiting_guardrails_ack card (P2-10, Q-C/Q-G).
 
-    Q-C decision: Show but don't gate — the user may reply `ok` (or
-    anything that is not `change`) to accept, and the card is shown
-    uniformly across guided/express/freestyle modes per Q-G.
-    See docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
-    """
-    name = f"`{agent_name}`"
-    return (
-        f"One more thing. Here's what {name} commits to:\n\n"
-        f"  1. No glazing. {name} won't say 'great idea!' unless it's "
-        "actually a great idea — and will say so when it isn't.\n"
-        "  2. Better-way surfacing. If there's a clearly better approach, "
-        f"{name} will say so, not just go along.\n"
-        "  3. Honest failure reporting. If something isn't working, "
-        f"{name} will tell you, not pretend.\n\n"
-        "Reply `ok` to accept, or `change` to adjust. You can always "
-        "say `be gentler` or `be more direct` later."
-    )
+        Q-C decision: Show but don't gate — the user may reply `ok` (or
+        anything that is not `change`) to accept, and the card is shown
+        uniformly across guided/express/freestyle modes per Q-G.
+        See docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+        """
+        name = f"`{agent_name}`"
+        return (
+            f"One more thing. Here's what {name} commits to:\n\n"
+            f"  1. No glazing. {name} won't say 'great idea!' unless it's "
+            "actually a great idea — and will say so when it isn't.\n"
+            "  2. Better-way surfacing. If there's a clearly better approach, "
+            f"{name} will say so, not just go along.\n"
+            "  3. Honest failure reporting. If something isn't working, "
+            f"{name} will tell you, not pretend.\n\n"
+            "Reply `ok` to accept, or `change` to adjust. You can always "
+            "say `be gentler` or `be more direct` later."
+        )
 
 
+
+    except Exception:
+        return ""
 def _build_onboarding_completion_recap_text(
     *,
     agent_name: str,
