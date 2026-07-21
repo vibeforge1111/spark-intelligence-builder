@@ -8,6 +8,7 @@ from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.security.spawner_endpoint import (
+    classify_local_spawner_failure,
     request_local_spawner_json,
     resolve_local_spawner_endpoint,
 )
@@ -194,6 +195,15 @@ def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
 
 
 def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    schedules, _ = _fetch_schedules_with_error(spawner_url, timeout=timeout)
+    return schedules
+
+
+def _fetch_schedules_with_error(
+    spawner_url: str | None = None,
+    *,
+    timeout: float = 5.0,
+) -> tuple[list[dict[str, Any]], str | None]:
     try:
         endpoint = resolve_local_spawner_endpoint(
             configured_url=_SPAWNER_URL,
@@ -206,16 +216,30 @@ def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> 
             timeout_seconds=timeout,
             max_response_bytes=1024 * 1024,
         )
-    except RuntimeError:
-        return []
+    except RuntimeError as exc:
+        return [], classify_local_spawner_failure(exc)
     if not isinstance(data, dict):
-        return []
+        return [], "invalid_response"
     records = data.get("schedules")
-    return records if isinstance(records, list) else []
+    if not isinstance(records, list):
+        return [], "invalid_response"
+    return records, None
 
 
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
-    schedules = fetch_schedules(spawner_url)
+    schedules, error = _fetch_schedules_with_error(spawner_url)
+    if error == "endpoint_policy_blocked":
+        return (
+            "I couldn't read schedules because the local endpoint policy blocked the request. "
+            "Check the configured Spawner endpoint, then try /schedules again."
+        )
+    if error in {"redirect_blocked", "response_too_large", "invalid_response"}:
+        return (
+            "The local Spawner returned schedule data Spark couldn't safely use. "
+            "Check Spawner health, then try /schedules again."
+        )
+    if error == "unavailable":
+        return "The local Spawner is unavailable right now. Try /schedules again once it's back."
     return format_schedule_list(schedules)
 
 

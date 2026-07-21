@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from spark_intelligence.mission_bridge import service as mission_service
 from spark_intelligence.schedule_bridge import service as schedule_service
 from spark_intelligence.security.spawner_endpoint import (
+    classify_local_spawner_failure,
     request_local_spawner_json,
     resolve_local_spawner_endpoint,
 )
@@ -88,13 +89,72 @@ class SpawnerEndpointAuthorityTests(SparkTestCase):
                     )
 
     def test_bridge_failure_copy_stays_human_and_hides_endpoint_details(self) -> None:
-        with patch.object(mission_service, "fetch_board", return_value={"ok": False, "board": {}}):
+        with patch.object(
+            mission_service,
+            "_fetch_board_with_error",
+            return_value=({"ok": False, "board": {}}, "unavailable"),
+        ):
             reply = mission_service.format_board_from_spawner()
 
-        assert reply == "Couldn't reach mission board right now. Try /board directly."
+        assert reply == "The local Spawner is unavailable right now. Try /board again once it's back."
         assert "127.0.0.1" not in reply
         assert "spawner_url" not in reply
         assert "Mission:" not in reply
+
+    def test_bridge_failure_replies_name_safe_reason_without_raw_error(self) -> None:
+        cases = (
+            (
+                mission_service,
+                "_fetch_board_with_error",
+                ({"ok": False, "board": {}}, "endpoint_policy_blocked"),
+                mission_service.format_board_from_spawner,
+                "endpoint policy blocked",
+            ),
+            (
+                schedule_service,
+                "_fetch_schedules_with_error",
+                ([], "invalid_response"),
+                schedule_service.format_schedule_list_from_spawner,
+                "couldn't safely use",
+            ),
+        )
+        for module, target, result, formatter, expected in cases:
+            with self.subTest(target=target), patch.object(module, target, return_value=result):
+                reply = formatter()
+            assert expected in reply
+            assert "127.0.0.1" not in reply
+            assert "top-secret" not in reply
+
+    def test_governed_spawner_failures_have_stable_reason_codes(self) -> None:
+        cases = (
+            (RuntimeError("Local Spawner endpoint policy rejected the request: secret."), "endpoint_policy_blocked"),
+            (RuntimeError("Local Spawner redirect blocked by endpoint policy."), "redirect_blocked"),
+            (RuntimeError("Local Spawner response exceeded the safe size limit."), "response_too_large"),
+            (RuntimeError("Local Spawner returned an invalid response."), "invalid_response"),
+            (RuntimeError("socket detail must not escape"), "unavailable"),
+        )
+        for error, expected in cases:
+            with self.subTest(expected=expected):
+                assert classify_local_spawner_failure(error) == expected
+
+    def test_bridge_fetch_helpers_preserve_only_sanitized_failure_codes(self) -> None:
+        with patch.object(
+            mission_service,
+            "request_local_spawner_json",
+            side_effect=RuntimeError("Local Spawner returned an invalid response."),
+        ):
+            board, board_error = mission_service._fetch_board_with_error()
+        with patch.object(
+            schedule_service,
+            "request_local_spawner_json",
+            side_effect=RuntimeError("socket detail top-secret"),
+        ):
+            schedules, schedule_error = schedule_service._fetch_schedules_with_error()
+
+        assert board == {"ok": False, "board": {}}
+        assert board_error == "invalid_response"
+        assert schedules == []
+        assert schedule_error == "unavailable"
 
     def test_board_uses_canonical_route_on_pinned_endpoint(self) -> None:
         payload = {"ok": True, "board": {"running": []}}

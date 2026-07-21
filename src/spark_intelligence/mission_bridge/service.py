@@ -6,6 +6,7 @@ from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
 from spark_intelligence.security.spawner_endpoint import (
+    classify_local_spawner_failure,
     request_local_spawner_json,
     resolve_local_spawner_endpoint,
 )
@@ -46,6 +47,15 @@ def detect_board_intent(message: str) -> dict | None:
 
 
 def fetch_board(spawner_url: str | None = None, *, timeout: float = 5.0) -> dict[str, Any]:
+    board, _ = _fetch_board_with_error(spawner_url, timeout=timeout)
+    return board
+
+
+def _fetch_board_with_error(
+    spawner_url: str | None = None,
+    *,
+    timeout: float = 5.0,
+) -> tuple[dict[str, Any], str | None]:
     try:
         endpoint = resolve_local_spawner_endpoint(
             configured_url=_SPAWNER_URL,
@@ -58,11 +68,11 @@ def fetch_board(spawner_url: str | None = None, *, timeout: float = 5.0) -> dict
             timeout_seconds=timeout,
             max_response_bytes=1024 * 1024,
         )
-    except RuntimeError:
-        return {"ok": False, "board": {}}
+    except RuntimeError as exc:
+        return {"ok": False, "board": {}}, classify_local_spawner_failure(exc)
     if not isinstance(data, dict):
-        return {"ok": False, "board": {}}
-    return data
+        return {"ok": False, "board": {}}, "invalid_response"
+    return data, None
 
 
 def has_live_missions(spawner_url: str | None = None) -> bool:
@@ -118,7 +128,19 @@ def format_board(board_payload: dict[str, Any]) -> str:
 
 
 def format_board_from_spawner(spawner_url: str | None = None) -> str:
-    data = fetch_board(spawner_url)
+    data, error = _fetch_board_with_error(spawner_url)
     if not data.get("ok", True):
+        if error == "endpoint_policy_blocked":
+            return (
+                "I couldn't read the mission board because the local endpoint policy blocked the request. "
+                "Check the configured Spawner endpoint, then try /board again."
+            )
+        if error in {"redirect_blocked", "response_too_large", "invalid_response"}:
+            return (
+                "The local Spawner returned a response Spark couldn't safely use. "
+                "Check Spawner health, then try /board again."
+            )
+        if error == "unavailable":
+            return "The local Spawner is unavailable right now. Try /board again once it's back."
         return "Couldn't reach mission board right now. Try /board directly."
     return format_board(data)

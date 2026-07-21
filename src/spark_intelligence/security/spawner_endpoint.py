@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
+LOCAL_SPAWNER_ENDPOINT_POLICY_BLOCKED = "endpoint_policy_blocked"
+LOCAL_SPAWNER_REDIRECT_BLOCKED = "redirect_blocked"
+LOCAL_SPAWNER_RESPONSE_TOO_LARGE = "response_too_large"
+LOCAL_SPAWNER_INVALID_RESPONSE = "invalid_response"
+LOCAL_SPAWNER_UNAVAILABLE = "unavailable"
+
+
 @dataclass(frozen=True)
 class ResolvedLocalSpawnerEndpoint:
     hostname: str
@@ -90,6 +97,21 @@ def request_local_spawner_json(
             connection.close()
 
     raise RuntimeError("Local Spawner request failed safely.") from None
+
+
+def classify_local_spawner_failure(error: RuntimeError) -> str:
+    """Map governed transport failures to stable, non-sensitive reason codes."""
+
+    message = str(error)
+    if message.startswith("Local Spawner endpoint policy rejected the request:"):
+        return LOCAL_SPAWNER_ENDPOINT_POLICY_BLOCKED
+    if message == "Local Spawner redirect blocked by endpoint policy.":
+        return LOCAL_SPAWNER_REDIRECT_BLOCKED
+    if message == "Local Spawner response exceeded the safe size limit.":
+        return LOCAL_SPAWNER_RESPONSE_TOO_LARGE
+    if message == "Local Spawner returned an invalid response.":
+        return LOCAL_SPAWNER_INVALID_RESPONSE
+    return LOCAL_SPAWNER_UNAVAILABLE
 
 
 def _parse_local_origin(url: str) -> tuple[str, int]:
