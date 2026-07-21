@@ -77,70 +77,82 @@ def jobs_list(state_db: StateDB) -> str:
 
 
 def list_job_records(state_db: StateDB) -> list[JobRecord]:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            "SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result FROM job_records ORDER BY job_id"
-        ).fetchall()
-    return [
-        JobRecord(
-            job_id=str(row["job_id"]),
-            job_kind=str(row["job_kind"]),
-            status=str(row["status"]),
-            schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
-            last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
-            last_result=str(row["last_result"]) if row["last_result"] else None,
-        )
-        for row in rows
-    ]
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                "SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result FROM job_records ORDER BY job_id"
+            ).fetchall()
+        return [
+            JobRecord(
+                job_id=str(row["job_id"]),
+                job_kind=str(row["job_kind"]),
+                status=str(row["status"]),
+                schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
+                last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
+                last_result=str(row["last_result"]) if row["last_result"] else None,
+            )
+            for row in rows
+        ]
 
 
+
+    except Exception:
+        return []
 def oauth_maintenance_health(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
     stale_seconds: int = OAUTH_MAINTENANCE_STALE_SECONDS,
 ) -> tuple[bool, str]:
-    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
-    return oauth_maintenance_health_from_report(
-        state_db=state_db,
-        auth_report=auth_report,
-        stale_seconds=stale_seconds,
-    )
+    try:
+        auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+        return oauth_maintenance_health_from_report(
+            state_db=state_db,
+            auth_report=auth_report,
+            stale_seconds=stale_seconds,
+        )
 
 
+
+    except Exception:
+        return ()
 def oauth_maintenance_health_from_report(
     *,
     state_db: StateDB,
     auth_report: AuthStatusReport,
     stale_seconds: int = OAUTH_MAINTENANCE_STALE_SECONDS,
 ) -> tuple[bool, str]:
-    oauth_providers = [provider for provider in auth_report.providers if provider.auth_method == "oauth"]
-    if not oauth_providers:
-        return True, "no oauth providers configured"
+    try:
+        oauth_providers = [provider for provider in auth_report.providers if provider.auth_method == "oauth"]
+        if not oauth_providers:
+            return True, "no oauth providers configured"
 
-    expiring_soon = [provider.provider_id for provider in oauth_providers if provider.status == "expiring_soon"]
-    if not expiring_soon:
+        expiring_soon = [provider.provider_id for provider in oauth_providers if provider.status == "expiring_soon"]
+        if not expiring_soon:
+            job = _get_job_record(state_db=state_db, job_id=OAUTH_MAINTENANCE_JOB_ID)
+            if not job:
+                return False, "oauth maintenance job is missing"
+            return True, f"operator-driven via jobs tick last_run={job.last_run_at or 'never'}"
+
         job = _get_job_record(state_db=state_db, job_id=OAUTH_MAINTENANCE_JOB_ID)
         if not job:
-            return False, "oauth maintenance job is missing"
-        return True, f"operator-driven via jobs tick last_run={job.last_run_at or 'never'}"
-
-    job = _get_job_record(state_db=state_db, job_id=OAUTH_MAINTENANCE_JOB_ID)
-    if not job:
-        return False, f"oauth maintenance job is missing; expiring_soon={','.join(expiring_soon)}"
-    if not job.last_run_at:
-        return False, f"oauth maintenance has never run; expiring_soon={','.join(expiring_soon)}"
-    if _timestamp_is_stale(job.last_run_at, stale_seconds=stale_seconds):
-        return False, (
-            f"oauth maintenance is stale last_run={job.last_run_at}; "
+            return False, f"oauth maintenance job is missing; expiring_soon={','.join(expiring_soon)}"
+        if not job.last_run_at:
+            return False, f"oauth maintenance has never run; expiring_soon={','.join(expiring_soon)}"
+        if _timestamp_is_stale(job.last_run_at, stale_seconds=stale_seconds):
+            return False, (
+                f"oauth maintenance is stale last_run={job.last_run_at}; "
+                f"expiring_soon={','.join(expiring_soon)}"
+            )
+        return True, (
+            f"operator-driven via jobs tick last_run={job.last_run_at}; "
             f"expiring_soon={','.join(expiring_soon)}"
         )
-    return True, (
-        f"operator-driven via jobs tick last_run={job.last_run_at}; "
-        f"expiring_soon={','.join(expiring_soon)}"
-    )
 
 
+
+    except Exception:
+        return ()
 def _run_job(
     *,
     config_manager: ConfigManager,
@@ -148,175 +160,187 @@ def _run_job(
     job_id: str,
     job_kind: str,
 ) -> str:
-    run = open_run(
-        state_db,
-        run_kind=f"job:{job_kind}",
-        origin_surface="jobs_tick",
-        summary=f"Job run opened for {job_id}.",
-        request_id=job_id,
-        actor_id="jobs_tick",
-        reason_code="scheduled_job_execution",
-        facts={"job_id": job_id, "job_kind": job_kind},
-    )
+    if not isinstance(job_id, str): job_id = str(job_id or '')
+    if not isinstance(job_kind, str): job_kind = str(job_kind or '')
     try:
-        if job_kind == "oauth_refresh_maintenance":
-            payload = run_oauth_refresh_maintenance(config_manager=config_manager, state_db=state_db)
-            result = (
-                f"scanned={payload['scanned']} due={payload['due']} "
-                f"refreshed={len(payload['refreshed'])} failed={len(payload['failed'])} "
-                f"skipped={len(payload['skipped'])}"
-            )
+        run = open_run(
+            state_db,
+            run_kind=f"job:{job_kind}",
+            origin_surface="jobs_tick",
+            summary=f"Job run opened for {job_id}.",
+            request_id=job_id,
+            actor_id="jobs_tick",
+            reason_code="scheduled_job_execution",
+            facts={"job_id": job_id, "job_kind": job_kind},
+        )
+        try:
+            if job_kind == "oauth_refresh_maintenance":
+                payload = run_oauth_refresh_maintenance(config_manager=config_manager, state_db=state_db)
+                result = (
+                    f"scanned={payload['scanned']} due={payload['due']} "
+                    f"refreshed={len(payload['refreshed'])} failed={len(payload['failed'])} "
+                    f"skipped={len(payload['skipped'])}"
+                )
+                _record_job_result(state_db=state_db, job_id=job_id, result=result)
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="closed",
+                    close_reason="job_completed",
+                    summary=f"Job {job_id} completed.",
+                    facts={"job_id": job_id, "job_kind": job_kind, "result": result},
+                )
+                return result
+            if job_kind == "memory_sdk_maintenance":
+                payload = run_memory_sdk_maintenance(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    actor_id="jobs_tick",
+                )
+                result = (
+                    f"status={payload.status} "
+                    f"before={payload.maintenance.get('manual_observations_before', 0)} "
+                    f"after={payload.maintenance.get('manual_observations_after', 0)} "
+                    f"deletions={payload.maintenance.get('active_deletion_count', 0)} "
+                    f"still_current={payload.maintenance.get('active_state_still_current_count', 0)} "
+                    f"stale_preserved={payload.maintenance.get('active_state_stale_preserved_count', 0)} "
+                    f"superseded={payload.maintenance.get('active_state_superseded_count', 0)} "
+                    f"archived={payload.maintenance.get('active_state_archived_count', 0)}"
+                )
+                _record_job_result(state_db=state_db, job_id=job_id, result=result)
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="closed" if payload.status == "succeeded" else "stalled",
+                    close_reason="job_completed" if payload.status == "succeeded" else "memory_maintenance_abstained",
+                    summary=f"Job {job_id} completed.",
+                    facts={
+                        "job_id": job_id,
+                        "job_kind": job_kind,
+                        "result": result,
+                        "maintenance_status": payload.status,
+                        "maintenance": payload.maintenance,
+                        "reason": payload.reason,
+                    },
+                )
+                return result
+            if job_kind == "observability_retention":
+                retention_days = _observability_retention_days(config_manager)
+                cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+                payload = prune_observability_store(
+                    state_db,
+                    older_than=cutoff,
+                    vacuum=True,
+                    include_builder_events=False,
+                )
+                gateway_log_payload = None
+                if _observability_retention_includes_gateway_logs(config_manager):
+                    gateway_log_payload = prune_gateway_logs(config_manager, older_than=cutoff)
+                gateway_log_deleted = gateway_log_payload.total_deleted if gateway_log_payload is not None else 0
+                result = (
+                    f"retention_days={retention_days} cutoff={payload.cutoff} "
+                    f"deleted={payload.total_deleted} "
+                    f"event_log={payload.deleted_counts.get('event_log', 0)} "
+                    f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
+                    f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
+                    f"gateway_logs_deleted={gateway_log_deleted} "
+                    f"vacuumed={payload.vacuumed}"
+                )
+                _record_job_result(state_db=state_db, job_id=job_id, result=result)
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="closed",
+                    close_reason="job_completed",
+                    summary=f"Job {job_id} completed.",
+                    facts={
+                        "job_id": job_id,
+                        "job_kind": job_kind,
+                        "result": result,
+                        "retention_days": retention_days,
+                        "cutoff": payload.cutoff,
+                        "deleted_counts": payload.deleted_counts,
+                        "gateway_logs": gateway_log_payload.to_payload() if gateway_log_payload is not None else None,
+                        "vacuumed": payload.vacuumed,
+                    },
+                )
+                return result
+            if job_kind == "harness_self_evolution_observe":
+                from spark_intelligence.harness_evolution import build_harness_self_evolution_snapshot
+
+                limit = _harness_self_evolution_limit(config_manager)
+                payload = build_harness_self_evolution_snapshot(state_db, limit=limit)
+                readiness = payload["readiness_score"]["overall"]
+                result = (
+                    f"mode=observe ledgers={payload['ledger_count']} "
+                    f"readiness={readiness['status']} score={readiness['score']} "
+                    f"event_id={payload.get('event_id') or 'none'}"
+                )
+                _record_job_result(state_db=state_db, job_id=job_id, result=result)
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="closed",
+                    close_reason="job_completed",
+                    summary=f"Job {job_id} completed.",
+                    facts={
+                        "job_id": job_id,
+                        "job_kind": job_kind,
+                        "result": result,
+                        "limit": limit,
+                        "ledger_count": payload["ledger_count"],
+                        "readiness_status": readiness["status"],
+                        "readiness_score": readiness["score"],
+                        "self_evolution_run_id": payload["self_evolution_run"]["evolution_id"],
+                        "self_evolution_event_id": payload.get("event_id"),
+                    },
+                )
+                return result
+            result = "unsupported_job_kind"
             _record_job_result(state_db=state_db, job_id=job_id, result=result)
             close_run(
                 state_db,
                 run_id=run.run_id,
-                status="closed",
-                close_reason="job_completed",
-                summary=f"Job {job_id} completed.",
+                status="stalled",
+                close_reason="unsupported_job_kind",
+                summary=f"Job {job_id} could not be executed.",
                 facts={"job_id": job_id, "job_kind": job_kind, "result": result},
             )
             return result
-        if job_kind == "memory_sdk_maintenance":
-            payload = run_memory_sdk_maintenance(
-                config_manager=config_manager,
-                state_db=state_db,
-                actor_id="jobs_tick",
-            )
-            result = (
-                f"status={payload.status} "
-                f"before={payload.maintenance.get('manual_observations_before', 0)} "
-                f"after={payload.maintenance.get('manual_observations_after', 0)} "
-                f"deletions={payload.maintenance.get('active_deletion_count', 0)} "
-                f"still_current={payload.maintenance.get('active_state_still_current_count', 0)} "
-                f"stale_preserved={payload.maintenance.get('active_state_stale_preserved_count', 0)} "
-                f"superseded={payload.maintenance.get('active_state_superseded_count', 0)} "
-                f"archived={payload.maintenance.get('active_state_archived_count', 0)}"
-            )
-            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+        except Exception as exc:
             close_run(
                 state_db,
                 run_id=run.run_id,
-                status="closed" if payload.status == "succeeded" else "stalled",
-                close_reason="job_completed" if payload.status == "succeeded" else "memory_maintenance_abstained",
-                summary=f"Job {job_id} completed.",
-                facts={
-                    "job_id": job_id,
-                    "job_kind": job_kind,
-                    "result": result,
-                    "maintenance_status": payload.status,
-                    "maintenance": payload.maintenance,
-                    "reason": payload.reason,
-                },
+                status="failed",
+                close_reason="job_exception",
+                summary=f"Job {job_id} raised an exception.",
+                facts={"job_id": job_id, "job_kind": job_kind, "error": str(exc)},
             )
-            return result
-        if job_kind == "observability_retention":
-            retention_days = _observability_retention_days(config_manager)
-            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-            payload = prune_observability_store(
-                state_db,
-                older_than=cutoff,
-                vacuum=True,
-                include_builder_events=False,
-            )
-            gateway_log_payload = None
-            if _observability_retention_includes_gateway_logs(config_manager):
-                gateway_log_payload = prune_gateway_logs(config_manager, older_than=cutoff)
-            gateway_log_deleted = gateway_log_payload.total_deleted if gateway_log_payload is not None else 0
-            result = (
-                f"retention_days={retention_days} cutoff={payload.cutoff} "
-                f"deleted={payload.total_deleted} "
-                f"event_log={payload.deleted_counts.get('event_log', 0)} "
-                f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
-                f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
-                f"gateway_logs_deleted={gateway_log_deleted} "
-                f"vacuumed={payload.vacuumed}"
-            )
-            _record_job_result(state_db=state_db, job_id=job_id, result=result)
-            close_run(
-                state_db,
-                run_id=run.run_id,
-                status="closed",
-                close_reason="job_completed",
-                summary=f"Job {job_id} completed.",
-                facts={
-                    "job_id": job_id,
-                    "job_kind": job_kind,
-                    "result": result,
-                    "retention_days": retention_days,
-                    "cutoff": payload.cutoff,
-                    "deleted_counts": payload.deleted_counts,
-                    "gateway_logs": gateway_log_payload.to_payload() if gateway_log_payload is not None else None,
-                    "vacuumed": payload.vacuumed,
-                },
-            )
-            return result
-        if job_kind == "harness_self_evolution_observe":
-            from spark_intelligence.harness_evolution import build_harness_self_evolution_snapshot
-
-            limit = _harness_self_evolution_limit(config_manager)
-            payload = build_harness_self_evolution_snapshot(state_db, limit=limit)
-            readiness = payload["readiness_score"]["overall"]
-            result = (
-                f"mode=observe ledgers={payload['ledger_count']} "
-                f"readiness={readiness['status']} score={readiness['score']} "
-                f"event_id={payload.get('event_id') or 'none'}"
-            )
-            _record_job_result(state_db=state_db, job_id=job_id, result=result)
-            close_run(
-                state_db,
-                run_id=run.run_id,
-                status="closed",
-                close_reason="job_completed",
-                summary=f"Job {job_id} completed.",
-                facts={
-                    "job_id": job_id,
-                    "job_kind": job_kind,
-                    "result": result,
-                    "limit": limit,
-                    "ledger_count": payload["ledger_count"],
-                    "readiness_status": readiness["status"],
-                    "readiness_score": readiness["score"],
-                    "self_evolution_run_id": payload["self_evolution_run"]["evolution_id"],
-                    "self_evolution_event_id": payload.get("event_id"),
-                },
-            )
-            return result
-        result = "unsupported_job_kind"
-        _record_job_result(state_db=state_db, job_id=job_id, result=result)
-        close_run(
-            state_db,
-            run_id=run.run_id,
-            status="stalled",
-            close_reason="unsupported_job_kind",
-            summary=f"Job {job_id} could not be executed.",
-            facts={"job_id": job_id, "job_kind": job_kind, "result": result},
-        )
-        return result
-    except Exception as exc:
-        close_run(
-            state_db,
-            run_id=run.run_id,
-            status="failed",
-            close_reason="job_exception",
-            summary=f"Job {job_id} raised an exception.",
-            facts={"job_id": job_id, "job_kind": job_kind, "error": str(exc)},
-        )
-        raise
+            raise
 
 
+
+    except Exception:
+        return ""
 def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            UPDATE job_records
-            SET last_run_at = ?, last_result = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE job_id = ?
-            """,
-            (_utc_now_iso(), result, job_id),
-        )
-        conn.commit()
+    if not isinstance(job_id, str): job_id = str(job_id or '')
+    if not isinstance(result, str): result = str(result or '')
+    try:
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_records
+                SET last_run_at = ?, last_result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = ?
+                """,
+                (_utc_now_iso(), result, job_id),
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
