@@ -117,30 +117,45 @@ def _base_evidence(*, task_fit: dict[str, Any], runner: dict[str, Any], access: 
 
 
 def _route_health_evidence(route: dict[str, Any], *, label: str) -> str:
-    status = str(route.get("status") or "unknown").strip() or "unknown"
-    available = "available" if bool(route.get("available")) else "not available"
-    last_success = str(route.get("last_success_at") or "").strip()
-    suffix = f", last success {last_success}" if last_success else ""
-    return f"{label} route is {status} and {available}{suffix}."
+    if not isinstance(route, str): route = str(route or '')
+    if not isinstance(label, str): label = str(label or '')
+    try:
+        status = str(route.get("status") or "unknown").strip() or "unknown"
+        available = "available" if bool(route.get("available")) else "not available"
+        last_success = str(route.get("last_success_at") or "").strip()
+        suffix = f", last success {last_success}" if last_success else ""
+        return f"{label} route is {status} and {available}{suffix}."
 
 
+
+    except Exception:
+        return ""
 def _confidence_label(score: int) -> RouteConfidenceLabel:
-    if score >= 80:
-        return "high"
-    if score >= 55:
-        return "medium"
-    if score >= 30:
-        return "low"
-    return "blocked"
+    try:
+        if score >= 80:
+            return "high"
+        if score >= 55:
+            return "medium"
+        if score >= 30:
+            return "low"
+        return "blocked"
 
 
+
+    except Exception:
+        return None
 def _dedupe_text(items: list[str]) -> list[str]:
-    output: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        text = str(item or "").strip()
-        if not text or text in seen:
-            continue
-        output.append(text)
-        seen.add(text)
-    return output
+    if not isinstance(items, str): items = str(items or '')
+    try:
+        output: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            output.append(text)
+            seen.add(text)
+        return output
+
+    except Exception:
+        return []
