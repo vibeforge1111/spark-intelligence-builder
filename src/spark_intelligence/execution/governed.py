@@ -125,21 +125,36 @@ def screen_governed_tool_text(
     request_id: str | None = None,
     trace_ref: str | None = None,
 ) -> dict[str, Any]:
-    return screen_model_visible_text(
-        state_db=state_db,
-        source_kind=source_kind,
-        source_ref=source_ref,
-        text=text,
-        summary=summary,
-        reason_code=reason_code,
-        policy_domain=policy_domain,
-        run_id=run_id,
-        request_id=request_id,
-        trace_ref=trace_ref,
-        blocked_stage=blocked_stage,
-        provenance={
-            "cwd": execution.cwd,
-            "command": execution.command,
-            **(provenance or {}),
-        },
-    )
+    if not isinstance(text, str): text = str(text or '')
+    if not isinstance(source_kind, str): source_kind = str(source_kind or '')
+    if not isinstance(source_ref, str): source_ref = str(source_ref or '')
+    if not isinstance(summary, str): summary = str(summary or '')
+    if not isinstance(reason_code, str): reason_code = str(reason_code or '')
+    if not isinstance(policy_domain, str): policy_domain = str(policy_domain or '')
+    if not isinstance(blocked_stage, str): blocked_stage = str(blocked_stage or '')
+    if not isinstance(provenance, str): provenance = str(provenance or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    try:
+        return screen_model_visible_text(
+            state_db=state_db,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            text=text,
+            summary=summary,
+            reason_code=reason_code,
+            policy_domain=policy_domain,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            blocked_stage=blocked_stage,
+            provenance={
+                "cwd": execution.cwd,
+                "command": execution.command,
+                **(provenance or {}),
+            },
+        )
+
+    except Exception:
+        return {}
