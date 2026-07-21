@@ -3045,107 +3045,136 @@ def _format_profile_status(
     session_id: str | None = None,
     turn_id: str | None = None,
 ) -> str:
-    """Format current personality status for the user."""
-    if not profile:
-        return "Personality is not active. Using default balanced style."
+    if not isinstance(profile, str): profile = str(profile or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(turn_id, str): turn_id = str(turn_id or '')
+    try:
+        """Format current personality status for the user."""
+        if not profile:
+            return "Personality is not active. Using default balanced style."
 
-    lines = []
-    name = profile.get("personality_name")
-    if name:
-        lines.append(f"Base personality: {name}")
-    else:
-        lines.append("Base personality: default (balanced)")
-    if agent_id:
-        lines.append(f"Agent id: {agent_id}")
-    if profile.get("agent_persona_name"):
-        lines.append(f"Agent persona: {profile['agent_persona_name']}")
+        lines = []
+        name = profile.get("personality_name")
+        if name:
+            lines.append(f"Base personality: {name}")
+        else:
+            lines.append("Base personality: default (balanced)")
+        if agent_id:
+            lines.append(f"Agent id: {agent_id}")
+        if profile.get("agent_persona_name"):
+            lines.append(f"Agent persona: {profile['agent_persona_name']}")
 
-    lines.append(f"Source: {profile.get('source', 'defaults')}")
-    lines.append("Current style:")
-    labels = profile.get("style_labels") or {}
-    traits = profile.get("traits") or {}
-    for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
-        label = labels.get(trait, "balanced")
-        val = traits.get(trait, 0.5)
-        lines.append(f"  {trait}: {label} ({val:.2f})")
+        lines.append(f"Source: {profile.get('source', 'defaults')}")
+        lines.append("Current style:")
+        labels = profile.get("style_labels") or {}
+        traits = profile.get("traits") or {}
+        for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
+            label = labels.get(trait, "balanced")
+            val = traits.get(trait, 0.5)
+            lines.append(f"  {trait}: {label} ({val:.2f})")
 
-    user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-    agent_base_traits = profile.get("agent_base_traits") or {}
-    if agent_base_traits:
-        lines.append("Agent base persona:")
-        for trait, value in sorted((str(key), float(val)) for key, val in agent_base_traits.items()):
-            lines.append(f"  {trait}: {value:.2f}")
-    if user_deltas:
-        lines.append("User adjustments applied:")
-        for trait, delta in sorted(user_deltas.items()):
-            sign = "+" if delta >= 0 else ""
-            lines.append(f"  {trait}: {sign}{delta:.2f}")
-    else:
-        lines.append("No user adjustments applied.")
+        user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+        agent_base_traits = profile.get("agent_base_traits") or {}
+        if agent_base_traits:
+            lines.append("Agent base persona:")
+            for trait, value in sorted((str(key), float(val)) for key, val in agent_base_traits.items()):
+                lines.append(f"  {trait}: {value:.2f}")
+        if user_deltas:
+            lines.append("User adjustments applied:")
+            for trait, delta in sorted(user_deltas.items()):
+                sign = "+" if delta >= 0 else ""
+                lines.append(f"  {trait}: {sign}{delta:.2f}")
+        else:
+            lines.append("No user adjustments applied.")
 
-    if config_manager is not None:
-        try:
-            memory_state = read_personality_preferences_from_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                session_id=session_id,
-                turn_id=turn_id,
-            )
-            if not memory_state.abstained and not memory_state.shadow_only and memory_state.records:
-                lines.append("Memory-backed current-state facts:")
-                for record in memory_state.records:
-                    predicate = str(record.get("predicate") or "")
-                    value = record.get("value")
-                    trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
-                    if trait:
-                        lines.append(f"  {trait}: {value}")
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
+        if config_manager is not None:
+            try:
+                memory_state = read_personality_preferences_from_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                )
+                if not memory_state.abstained and not memory_state.shadow_only and memory_state.records:
+                    lines.append("Memory-backed current-state facts:")
+                    for record in memory_state.records:
+                        predicate = str(record.get("predicate") or "")
+                        value = record.get("value")
+                        trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
+                        if trait:
+                            lines.append(f"  {trait}: {value}")
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
 
-    return "\n".join(lines)
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> list[str]:
-    """Clear all per-user trait deltas (reset to base personality)."""
-    with state_db.connect() as conn:
-        conn.execute(
-            "DELETE FROM personality_trait_profiles WHERE human_id = ?",
-            (human_id,),
-        )
-        cleared_state_keys = clear_reset_sensitive_scope(
-            conn,
-            scope_kind="human",
-            scope_ref=human_id,
-            component="personality_profile",
-        )
-        conn.commit()
-    return cleared_state_keys
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        """Clear all per-user trait deltas (reset to base personality)."""
+        with state_db.connect() as conn:
+            conn.execute(
+                "DELETE FROM personality_trait_profiles WHERE human_id = ?",
+                (human_id,),
+            )
+            cleared_state_keys = clear_reset_sensitive_scope(
+                conn,
+                scope_kind="human",
+                scope_ref=human_id,
+                component="personality_profile",
+            )
+            conn.commit()
+        return cleared_state_keys
 
 
+
+    except Exception:
+        return []
 def _clear_legacy_user_trait_overlay(*, human_id: str, state_db: StateDB) -> None:
-    with state_db.connect() as conn:
-        conn.execute(
-            "DELETE FROM personality_trait_profiles WHERE human_id = ?",
-            (human_id,),
-        )
-        conn.execute(
-            "DELETE FROM runtime_state WHERE state_key = ?",
-            (_state_key(human_id),),
-        )
-        conn.commit()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            conn.execute(
+                "DELETE FROM personality_trait_profiles WHERE human_id = ?",
+                (human_id,),
+            )
+            conn.execute(
+                "DELETE FROM runtime_state WHERE state_key = ?",
+                (_state_key(human_id),),
+            )
+            conn.commit()
 
 
-# ── Self-observation ──
+    # ── Self-observation ──
 
+
+    except Exception:
+        return None
 def _observation_state_key(human_id: str) -> str:
-    return f"personality:{human_id}:observations"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        return f"personality:{human_id}:observations"
 
 
+
+    except Exception:
+        return ""
 def _evolution_log_state_key(human_id: str) -> str:
-    return f"personality:{human_id}:evolution_log"
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        return f"personality:{human_id}:evolution_log"
 
 
+
+    except Exception:
+        return ""
 def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[str, Any]]:
     try:
         with state_db.connect() as conn:
