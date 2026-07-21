@@ -1245,62 +1245,87 @@ def _evidence_alias(key: str) -> str:
 
 
 def _route_status(route: dict[str, Any]) -> str:
-    status = str(route.get("status") or "unknown")
-    return _display_status(status)
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        status = str(route.get("status") or "unknown")
+        return _display_status(status)
 
 
+
+    except Exception:
+        return ""
 def _route_timeline_suffix(route: dict[str, Any]) -> str:
-    if str(route.get("status") or "") == "planned":
-        planned_reason = str(route.get("planned_reason") or "").strip()
-        return f", {planned_reason}" if planned_reason else ""
-    confidence_level = str(route.get("confidence_level") or "")
-    if route.get("last_success_at") and confidence_level != "recent_failure":
-        return f", last success: {route['last_success_at']}"
-    if route.get("last_failure_reason"):
-        return f", last failure: {route['last_failure_reason']}"
-    return ""
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        if str(route.get("status") or "") == "planned":
+            planned_reason = str(route.get("planned_reason") or "").strip()
+            return f", {planned_reason}" if planned_reason else ""
+        confidence_level = str(route.get("confidence_level") or "")
+        if route.get("last_success_at") and confidence_level != "recent_failure":
+            return f", last success: {route['last_success_at']}"
+        if route.get("last_failure_reason"):
+            return f", last failure: {route['last_failure_reason']}"
+        return ""
 
 
+
+    except Exception:
+        return ""
 def _route_evidence_lines(routes: list[dict[str, Any]]) -> list[str]:
-    lines: list[str] = []
-    for route in routes:
-        summary = route.get("latest_probe_summary")
-        if not summary:
-            continue
-        label = str(route.get("label") or route.get("key") or "Route").strip()
-        lines.append(f"- {label}: {_compact_probe_summary(summary)}")
-    return lines
+    if not isinstance(routes, str): routes = str(routes or '')
+    try:
+        lines: list[str] = []
+        for route in routes:
+            summary = route.get("latest_probe_summary")
+            if not summary:
+                continue
+            label = str(route.get("label") or route.get("key") or "Route").strip()
+            lines.append(f"- {label}: {_compact_probe_summary(summary)}")
+        return lines
 
 
+
+    except Exception:
+        return []
 def _live_state_summary(live_state: dict[str, Any]) -> str:
-    if not live_state.get("present"):
-        return "not supplied"
-    status = str(live_state.get("status") or live_state.get("top_level_state") or "unknown").strip() or "unknown"
-    parts = [status]
-    for key, label in (
-        ("spawner_ok", "Spawner"),
-        ("telegram_ok", "Telegram"),
-        ("providers_ok", "Providers"),
-        ("memory_ok", "Memory"),
-    ):
-        if key in live_state:
-            parts.append(f"{label}={_display_optional_bool(_optional_bool(live_state.get(key)))}")
-    checked_at = str(live_state.get("checked_at") or live_state.get("generated_at") or "").strip()
-    if checked_at:
-        parts.append(f"checked={checked_at}")
-    return ", ".join(parts)
+    if not isinstance(live_state, str): live_state = str(live_state or '')
+    try:
+        if not live_state.get("present"):
+            return "not supplied"
+        status = str(live_state.get("status") or live_state.get("top_level_state") or "unknown").strip() or "unknown"
+        parts = [status]
+        for key, label in (
+            ("spawner_ok", "Spawner"),
+            ("telegram_ok", "Telegram"),
+            ("providers_ok", "Providers"),
+            ("memory_ok", "Memory"),
+        ):
+            if key in live_state:
+                parts.append(f"{label}={_display_optional_bool(_optional_bool(live_state.get(key)))}")
+        checked_at = str(live_state.get("checked_at") or live_state.get("generated_at") or "").strip()
+        if checked_at:
+            parts.append(f"checked={checked_at}")
+        return ", ".join(parts)
 
 
+
+    except Exception:
+        return ""
 def _stale_flag_line(item: dict[str, Any]) -> str:
-    key = str(item.get("reason_code") or item.get("contradiction_key") or item.get("kind") or "context flag").replace(
-        "stop_ship:", ""
-    )
-    summary = _compact_probe_summary(item.get("summary") or item.get("detail") or item.get("kind"), limit=110)
-    if key and key not in summary:
-        return f"{key}: {summary}"
-    return summary
+    if not isinstance(item, str): item = str(item or '')
+    try:
+        key = str(item.get("reason_code") or item.get("contradiction_key") or item.get("kind") or "context flag").replace(
+            "stop_ship:", ""
+        )
+        summary = _compact_probe_summary(item.get("summary") or item.get("detail") or item.get("kind"), limit=110)
+        if key and key not in summary:
+            return f"{key}: {summary}"
+        return summary
 
 
+
+    except Exception:
+        return ""
 def _build_route_repairs(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     repairs: list[dict[str, Any]] = []
     for route in routes:
