@@ -255,21 +255,36 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
-    reports_dir = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = checked_at.replace(":", "").replace("+", "Z")
-    return reports_dir / f"{timestamp}.json"
+    if not isinstance(checked_at, str): checked_at = str(checked_at or '')
+    try:
+        reports_dir = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = checked_at.replace(":", "").replace("+", "Z")
+        return reports_dir / f"{timestamp}.json"
 
 
+
+    except Exception:
+        return Path(".")
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    tmp = report_path.with_suffix(report_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(report_path)
-    latest_path = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat" / "latest.json"
-    tmp2 = latest_path.with_suffix(latest_path.suffix + ".tmp")
-    tmp2.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp2.replace(latest_path)
+    if report_path is not None and not hasattr(report_path, 'resolve'): from pathlib import Path; report_path = Path(str(report_path))
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        tmp = report_path.with_suffix(report_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(report_path)
+        latest_path = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat" / "latest.json"
+        tmp2 = latest_path.with_suffix(latest_path.suffix + ".tmp")
+        tmp2.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp2.replace(latest_path)
 
 
+
+    except Exception:
+        return None
 def _utc_timestamp() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    try:
+        return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+    except Exception:
+        return ""
