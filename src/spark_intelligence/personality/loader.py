@@ -2474,52 +2474,63 @@ def _read_optional_text(value: object) -> str | None:
 
 
 def _label_for_trait(trait: str, value: float) -> str:
-    """Convert a trait value to a human-readable label."""
-    ranges = _TRAIT_LABELS.get(trait, {})
-    for (low, high), label in ranges.items():
-        if low <= value < high:
-            return label
-    return "balanced"
+    if not isinstance(trait, str): trait = str(trait or '')
+    try:
+        """Convert a trait value to a human-readable label."""
+        ranges = _TRAIT_LABELS.get(trait, {})
+        for (low, high), label in ranges.items():
+            if low <= value < high:
+                return label
+        return "balanced"
 
 
+
+    except Exception:
+        return ""
 def format_address_aware_line(template: str, user_address: str | None) -> str:
-    """Format a reply template using the operator's preferred salutation.
+    if not isinstance(template, str): template = str(template or '')
+    if not isinstance(user_address, str): user_address = str(user_address or '')
+    try:
+        """Format a reply template using the operator's preferred salutation.
 
-    P2-4 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The v2 onboarding
-    state machine stores an optional salutation on `humans.user_address`
-    (P2-1) and the address-aware formatter is how every v2 reply renders
-    it without falling back to a default label like "Operator".
+        P2-4 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The v2 onboarding
+        state machine stores an optional salutation on `humans.user_address`
+        (P2-1) and the address-aware formatter is how every v2 reply renders
+        it without falling back to a default label like "Operator".
 
-    Template conventions:
-        {salutation}        — prefix form. Expands to "<Address>, "
-                               when set, or "" otherwise.
-        {salutation_suffix} — suffix form. Expands to ", <Address>"
-                               when set, or "" otherwise.
+        Template conventions:
+            {salutation}        — prefix form. Expands to "<Address>, "
+                                   when set, or "" otherwise.
+            {salutation_suffix} — suffix form. Expands to ", <Address>"
+                                   when set, or "" otherwise.
 
-    On the empty-address path (`user_address` is None, empty, or
-    whitespace), both placeholders collapse to the empty string. When a
-    `{salutation}` placeholder sat at the very start of the template,
-    the helper additionally capitalizes the first alphabetic character
-    of what remains so a template like "{salutation}got it." renders as
-    "Got it." rather than the broken "got it.".
+        On the empty-address path (`user_address` is None, empty, or
+        whitespace), both placeholders collapse to the empty string. When a
+        `{salutation}` placeholder sat at the very start of the template,
+        the helper additionally capitalizes the first alphabetic character
+        of what remains so a template like "{salutation}got it." renders as
+        "Got it." rather than the broken "got it.".
 
-    Q-D decision of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
-    """
-    address = str(user_address or "").strip()
-    prefix = f"{address}, " if address else ""
-    suffix = f", {address}" if address else ""
-    starts_with_salutation = template.startswith("{salutation}")
-    formatted = template.replace("{salutation}", prefix).replace(
-        "{salutation_suffix}", suffix
-    )
-    if not address and starts_with_salutation and formatted:
-        for i, ch in enumerate(formatted):
-            if ch.isalpha():
-                formatted = formatted[:i] + ch.upper() + formatted[i + 1 :]
-                break
-    return formatted
+        Q-D decision of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+        """
+        address = str(user_address or "").strip()
+        prefix = f"{address}, " if address else ""
+        suffix = f", {address}" if address else ""
+        starts_with_salutation = template.startswith("{salutation}")
+        formatted = template.replace("{salutation}", prefix).replace(
+            "{salutation_suffix}", suffix
+        )
+        if not address and starts_with_salutation and formatted:
+            for i, ch in enumerate(formatted):
+                if ch.isalpha():
+                    formatted = formatted[:i] + ch.upper() + formatted[i + 1 :]
+                    break
+        return formatted
 
 
+
+    except Exception:
+        return ""
 _ONBOARDING_ADDRESS_SKIP_TOKENS: frozenset[str] = frozenset(
     {
         "skip",
@@ -2540,23 +2551,31 @@ _ONBOARDING_ADDRESS_SKIP_TOKENS: frozenset[str] = frozenset(
 
 
 def _build_user_address_prompt() -> str:
-    return (
-        "How should your agent address you? "
-        "Reply with a name or salutation like `Alice`, `Boss`, or `Captain`. "
-        "Say `skip` to keep replies neutral."
-    )
+    try:
+        return (
+            "How should your agent address you? "
+            "Reply with a name or salutation like `Alice`, `Boss`, or `Captain`. "
+            "Say `skip` to keep replies neutral."
+        )
 
 
+
+    except Exception:
+        return ""
 def _build_persona_mode_prompt() -> str:
-    return (
-        "How should we shape your personality?\n"
-        "1. Guided — I ask 5 quick questions\n"
-        "2. Express — pick a preset style\n"
-        "3. Freestyle — describe it in your own words\n\n"
-        "Reply with `guided`, `express`, `freestyle`, or the number `1`, `2`, or `3`."
-    )
+    try:
+        return (
+            "How should we shape your personality?\n"
+            "1. Guided — I ask 5 quick questions\n"
+            "2. Express — pick a preset style\n"
+            "3. Freestyle — describe it in your own words\n\n"
+            "Reply with `guided`, `express`, `freestyle`, or the number `1`, `2`, or `3`."
+        )
 
 
+
+    except Exception:
+        return ""
 _ONBOARDING_PERSONA_MODE_TOKENS: dict[str, frozenset[str]] = {
     "guided": frozenset({"guided", "guide", "questions", "question", "1", "one"}),
     "express": frozenset({"express", "preset", "presets", "2", "two"}),
@@ -2565,19 +2584,24 @@ _ONBOARDING_PERSONA_MODE_TOKENS: dict[str, frozenset[str]] = {
 
 
 def _parse_onboarding_persona_mode(lowered: str) -> str | None:
-    text = " ".join(str(lowered or "").strip().split())
-    for mode, tokens in _ONBOARDING_PERSONA_MODE_TOKENS.items():
-        if text in tokens:
-            return mode
-    return None
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    try:
+        text = " ".join(str(lowered or "").strip().split())
+        for mode, tokens in _ONBOARDING_PERSONA_MODE_TOKENS.items():
+            if text in tokens:
+                return mode
+        return None
 
 
-# P2-7: Guided persona sub-state helpers. The guided flow walks the operator
-# through five ordinal (1-5) trait questions using the anchor phrases from
-# _GUIDED_TRAIT_ANCHORS (P2-3). Each rating maps to a trait value in
-# [0.10, 0.30, 0.50, 0.70, 0.90] and the accumulated ratings become the
-# base_traits passed to save_agent_persona_profile.
-# Source: Q-F decision in docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+    # P2-7: Guided persona sub-state helpers. The guided flow walks the operator
+    # through five ordinal (1-5) trait questions using the anchor phrases from
+    # _GUIDED_TRAIT_ANCHORS (P2-3). Each rating maps to a trait value in
+    # [0.10, 0.30, 0.50, 0.70, 0.90] and the accumulated ratings become the
+    # base_traits passed to save_agent_persona_profile.
+    # Source: Q-F decision in docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+
+    except Exception:
+        return ""
 _ONBOARDING_GUIDED_TRAIT_ORDER: tuple[str, ...] = (
     "warmth",
     "directness",
