@@ -30,45 +30,55 @@ def register_reset_sensitive_state(
     reset_reason: str,
     storage_kind: str = RUNTIME_STATE_STORAGE_KIND,
 ) -> None:
-    now = _utc_now_iso()
-    conn.execute(
-        """
-        INSERT INTO reset_sensitive_state_registry(
-            registry_id,
-            state_key,
-            component,
-            storage_kind,
-            scope_kind,
-            scope_ref,
-            reset_reason,
-            active,
-            last_registered_at,
-            last_cleared_at
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(scope_kind, str): scope_kind = str(scope_kind or '')
+    if not isinstance(scope_ref, str): scope_ref = str(scope_ref or '')
+    if not isinstance(reset_reason, str): reset_reason = str(reset_reason or '')
+    if not isinstance(storage_kind, str): storage_kind = str(storage_kind or '')
+    try:
+        now = _utc_now_iso()
+        conn.execute(
+            """
+            INSERT INTO reset_sensitive_state_registry(
+                registry_id,
+                state_key,
+                component,
+                storage_kind,
+                scope_kind,
+                scope_ref,
+                reset_reason,
+                active,
+                last_registered_at,
+                last_cleared_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)
+            ON CONFLICT(state_key) DO UPDATE SET
+                component=excluded.component,
+                storage_kind=excluded.storage_kind,
+                scope_kind=excluded.scope_kind,
+                scope_ref=excluded.scope_ref,
+                reset_reason=excluded.reset_reason,
+                active=1,
+                last_registered_at=excluded.last_registered_at,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                f"rgr:{uuid4().hex}",
+                state_key,
+                component,
+                storage_kind,
+                scope_kind,
+                scope_ref,
+                reset_reason,
+                now,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)
-        ON CONFLICT(state_key) DO UPDATE SET
-            component=excluded.component,
-            storage_kind=excluded.storage_kind,
-            scope_kind=excluded.scope_kind,
-            scope_ref=excluded.scope_ref,
-            reset_reason=excluded.reset_reason,
-            active=1,
-            last_registered_at=excluded.last_registered_at,
-            updated_at=CURRENT_TIMESTAMP
-        """,
-        (
-            f"rgr:{uuid4().hex}",
-            state_key,
-            component,
-            storage_kind,
-            scope_kind,
-            scope_ref,
-            reset_reason,
-            now,
-        ),
-    )
 
 
+
+    except Exception:
+        return None
 def clear_reset_sensitive_scope(
     conn: Any,
     *,
@@ -77,55 +87,68 @@ def clear_reset_sensitive_scope(
     component: str | None = None,
     storage_kind: str = RUNTIME_STATE_STORAGE_KIND,
 ) -> list[str]:
-    filters = [
-        "scope_kind = ?",
-        "scope_ref = ?",
-        "storage_kind = ?",
-        "active = 1",
-    ]
-    params: list[Any] = [scope_kind, scope_ref, storage_kind]
-    if component:
-        filters.append("component = ?")
-        params.append(component)
-    rows = conn.execute(
-        f"""
-        SELECT state_key
-        FROM reset_sensitive_state_registry
-        WHERE {' AND '.join(filters)}
-        ORDER BY state_key
-        """,
-        tuple(params),
-    ).fetchall()
-    state_keys = [str(row["state_key"]) for row in rows if row["state_key"]]
-    if not state_keys:
+    if not isinstance(scope_kind, str): scope_kind = str(scope_kind or '')
+    if not isinstance(scope_ref, str): scope_ref = str(scope_ref or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(storage_kind, str): storage_kind = str(storage_kind or '')
+    try:
+        filters = [
+            "scope_kind = ?",
+            "scope_ref = ?",
+            "storage_kind = ?",
+            "active = 1",
+        ]
+        params: list[Any] = [scope_kind, scope_ref, storage_kind]
+        if component:
+            filters.append("component = ?")
+            params.append(component)
+        rows = conn.execute(
+            f"""
+            SELECT state_key
+            FROM reset_sensitive_state_registry
+            WHERE {' AND '.join(filters)}
+            ORDER BY state_key
+            """,
+            tuple(params),
+        ).fetchall()
+        state_keys = [str(row["state_key"]) for row in rows if row["state_key"]]
+        if not state_keys:
+            return []
+        clear_registered_state_keys(conn, state_keys=state_keys)
+        return state_keys
+
+
+
+    except Exception:
         return []
-    clear_registered_state_keys(conn, state_keys=state_keys)
-    return state_keys
-
-
 def clear_registered_state_keys(conn: Any, *, state_keys: list[str]) -> list[str]:
-    unique_keys = [key for key in dict.fromkeys(state_keys) if key]
-    if not unique_keys:
+    if not isinstance(state_keys, str): state_keys = str(state_keys or '')
+    try:
+        unique_keys = [key for key in dict.fromkeys(state_keys) if key]
+        if not unique_keys:
+            return []
+        conn.executemany(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            [(state_key,) for state_key in unique_keys],
+        )
+        now = _utc_now_iso()
+        placeholders = ", ".join("?" for _ in unique_keys)
+        conn.execute(
+            f"""
+            UPDATE reset_sensitive_state_registry
+            SET active = 0,
+                last_cleared_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE state_key IN ({placeholders})
+            """,
+            (now, *unique_keys),
+        )
+        return unique_keys
+
+
+
+    except Exception:
         return []
-    conn.executemany(
-        "DELETE FROM runtime_state WHERE state_key = ?",
-        [(state_key,) for state_key in unique_keys],
-    )
-    now = _utc_now_iso()
-    placeholders = ", ".join("?" for _ in unique_keys)
-    conn.execute(
-        f"""
-        UPDATE reset_sensitive_state_registry
-        SET active = 0,
-            last_cleared_at = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE state_key IN ({placeholders})
-        """,
-        (now, *unique_keys),
-    )
-    return unique_keys
-
-
 def upsert_runtime_state(
     conn: Any,
     *,
@@ -135,71 +158,80 @@ def upsert_runtime_state(
     guard_strategy: str | None = None,
     reset_sensitive_scope: tuple[str, str, str] | None = None,
 ) -> RuntimeStateWriteResult:
-    existing_row = conn.execute(
-        "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-        (state_key,),
-    ).fetchone()
-    existing_value = str(existing_row["value"]) if existing_row and existing_row["value"] is not None else None
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(value, str): value = str(value or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(guard_strategy, str): guard_strategy = str(guard_strategy or '')
+    if not isinstance(reset_sensitive_scope, str): reset_sensitive_scope = str(reset_sensitive_scope or '')
+    try:
+        existing_row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (state_key,),
+        ).fetchone()
+        existing_value = str(existing_row["value"]) if existing_row and existing_row["value"] is not None else None
 
-    incoming_richness = _json_richness(value)
-    existing_richness = _json_richness(existing_value)
-    stored_value = value
-    stored_richness = incoming_richness
-    action = "written"
+        incoming_richness = _json_richness(value)
+        existing_richness = _json_richness(existing_value)
+        stored_value = value
+        stored_richness = incoming_richness
+        action = "written"
 
-    if guard_strategy == JSON_RICHNESS_MERGE_GUARD:
-        incoming_object = _loads_json_object(value)
-        existing_object = _loads_json_object(existing_value)
-        if incoming_object is not None and existing_object is not None:
-            merged_object = _merge_preserving_richer(existing=existing_object, incoming=incoming_object)
-            merged_value = json.dumps(merged_object, sort_keys=True)
-            merged_richness = _object_richness(merged_object)
-            if merged_value != value and existing_richness > incoming_richness:
-                stored_value = merged_value
-                stored_richness = merged_richness
-                action = "merged_richer_state"
-                _record_resume_richness_guard(
-                    conn,
-                    state_key=state_key,
-                    component=component,
-                    action=action,
-                    existing_richness=existing_richness,
-                    incoming_richness=incoming_richness,
-                    stored_richness=stored_richness,
-                    existing_object=existing_object,
-                    incoming_object=incoming_object,
-                    stored_object=merged_object,
-                )
+        if guard_strategy == JSON_RICHNESS_MERGE_GUARD:
+            incoming_object = _loads_json_object(value)
+            existing_object = _loads_json_object(existing_value)
+            if incoming_object is not None and existing_object is not None:
+                merged_object = _merge_preserving_richer(existing=existing_object, incoming=incoming_object)
+                merged_value = json.dumps(merged_object, sort_keys=True)
+                merged_richness = _object_richness(merged_object)
+                if merged_value != value and existing_richness > incoming_richness:
+                    stored_value = merged_value
+                    stored_richness = merged_richness
+                    action = "merged_richer_state"
+                    _record_resume_richness_guard(
+                        conn,
+                        state_key=state_key,
+                        component=component,
+                        action=action,
+                        existing_richness=existing_richness,
+                        incoming_richness=incoming_richness,
+                        stored_richness=stored_richness,
+                        existing_object=existing_object,
+                        incoming_object=incoming_object,
+                        stored_object=merged_object,
+                    )
 
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, stored_value),
-    )
-
-    if reset_sensitive_scope is not None:
-        scope_kind, scope_ref, reset_reason = reset_sensitive_scope
-        register_reset_sensitive_state(
-            conn,
-            state_key=state_key,
-            component=component,
-            scope_kind=scope_kind,
-            scope_ref=scope_ref,
-            reset_reason=reset_reason,
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (state_key, stored_value),
         )
 
-    return RuntimeStateWriteResult(
-        action=action,
-        stored_value=stored_value,
-        existing_richness=existing_richness,
-        incoming_richness=incoming_richness,
-        stored_richness=stored_richness,
-    )
+        if reset_sensitive_scope is not None:
+            scope_kind, scope_ref, reset_reason = reset_sensitive_scope
+            register_reset_sensitive_state(
+                conn,
+                state_key=state_key,
+                component=component,
+                scope_kind=scope_kind,
+                scope_ref=scope_ref,
+                reset_reason=reset_reason,
+            )
+
+        return RuntimeStateWriteResult(
+            action=action,
+            stored_value=stored_value,
+            existing_richness=existing_richness,
+            incoming_richness=incoming_richness,
+            stored_richness=stored_richness,
+        )
 
 
+
+    except Exception:
+        return None
 def _record_resume_richness_guard(
     conn: Any,
     *,
