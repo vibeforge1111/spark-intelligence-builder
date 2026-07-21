@@ -115,74 +115,102 @@ def build_creator_intent_packet(
     privacy_mode: str | None = None,
     risk_level: str | None = None,
 ) -> CreatorIntentPacket:
-    clean = _compact(brief)
-    lower = clean.lower()
-    desired_outputs = _infer_desired_outputs(lower)
-    target_domain = _infer_domain(lower)
-    tools = _infer_tools(lower)
-    inferred_privacy = privacy_mode or _infer_privacy_mode(lower)
-    inferred_risk = risk_level or _infer_risk_level(lower, inferred_privacy, desired_outputs)
-    surfaces = _operator_surface(tools, desired_outputs)
-    data_sources = _infer_data_sources(lower, inferred_privacy)
-    capability = _expected_capability(target_domain, desired_outputs)
-    usage_surfaces = _usage_surfaces(surfaces)
-    artifact_targets = _artifact_targets(desired_outputs)
+    if not isinstance(brief, str): brief = str(brief or '')
+    if not isinstance(privacy_mode, str): privacy_mode = str(privacy_mode or '')
+    if not isinstance(risk_level, str): risk_level = str(risk_level or '')
+    try:
+        clean = _compact(brief)
+        lower = clean.lower()
+        desired_outputs = _infer_desired_outputs(lower)
+        target_domain = _infer_domain(lower)
+        tools = _infer_tools(lower)
+        inferred_privacy = privacy_mode or _infer_privacy_mode(lower)
+        inferred_risk = risk_level or _infer_risk_level(lower, inferred_privacy, desired_outputs)
+        surfaces = _operator_surface(tools, desired_outputs)
+        data_sources = _infer_data_sources(lower, inferred_privacy)
+        capability = _expected_capability(target_domain, desired_outputs)
+        usage_surfaces = _usage_surfaces(surfaces)
+        artifact_targets = _artifact_targets(desired_outputs)
 
-    return CreatorIntentPacket(
-        schema_version=SCHEMA_VERSION,
-        user_goal=clean,
-        target_domain=target_domain,
-        target_operator_surface=surfaces,
-        expected_agent_capability=capability,
-        success_examples=_success_examples(target_domain, desired_outputs),
-        failure_examples=_failure_examples(desired_outputs),
-        tools_in_scope=tools,
-        data_sources_allowed=data_sources,
-        risk_level=inferred_risk,
-        privacy_mode=inferred_privacy,
-        desired_outputs=desired_outputs,
-        intent_id=_intent_id(clean, target_domain),
-        artifact_targets=artifact_targets,
-        usage_surfaces=usage_surfaces,
-        success_claim=capability,
-        capabilities_to_prove=_capabilities_to_prove(target_domain, desired_outputs),
-        benchmark_requirements=_benchmark_requirements(desired_outputs, inferred_privacy),
-        network_contribution_policy=_network_contribution_policy(inferred_privacy),
-    )
+        return CreatorIntentPacket(
+            schema_version=SCHEMA_VERSION,
+            user_goal=clean,
+            target_domain=target_domain,
+            target_operator_surface=surfaces,
+            expected_agent_capability=capability,
+            success_examples=_success_examples(target_domain, desired_outputs),
+            failure_examples=_failure_examples(desired_outputs),
+            tools_in_scope=tools,
+            data_sources_allowed=data_sources,
+            risk_level=inferred_risk,
+            privacy_mode=inferred_privacy,
+            desired_outputs=desired_outputs,
+            intent_id=_intent_id(clean, target_domain),
+            artifact_targets=artifact_targets,
+            usage_surfaces=usage_surfaces,
+            success_claim=capability,
+            capabilities_to_prove=_capabilities_to_prove(target_domain, desired_outputs),
+            benchmark_requirements=_benchmark_requirements(desired_outputs, inferred_privacy),
+            network_contribution_policy=_network_contribution_policy(inferred_privacy),
+        )
 
 
+
+    except Exception:
+        return None
 def _compact(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip())
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        return re.sub(r"\s+", " ", text.strip())
 
 
+
+    except Exception:
+        return ""
 def _slug(text: str) -> str:
-    parts = re.findall(r"[a-z0-9]+", text.lower())
-    useful = [p for p in parts if p not in _STOPWORDS]
-    return "-".join(useful[:6]) or "custom-domain"
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        parts = re.findall(r"[a-z0-9]+", text.lower())
+        useful = [p for p in parts if p not in _STOPWORDS]
+        return "-".join(useful[:6]) or "custom-domain"
 
 
+
+    except Exception:
+        return ""
 def _intent_id(clean: str, target_domain: str) -> str:
-    digest = sha1(clean.encode("utf-8")).hexdigest()[:8]
-    return f"creator-intent-{target_domain}-{digest}"
+    if not isinstance(clean, str): clean = str(clean or '')
+    if not isinstance(target_domain, str): target_domain = str(target_domain or '')
+    try:
+        digest = sha1(clean.encode("utf-8")).hexdigest()[:8]
+        return f"creator-intent-{target_domain}-{digest}"
 
 
+
+    except Exception:
+        return ""
 def _primary_goal_text(lower: str) -> str:
-    boundaries = [
-        " treat higher-intelligence",
-        " require explicit evidence",
-        " keep publication.",
-        " keep publication ",
-        " use spark creator-system standards",
-        " keep telegram user-facing output",
-    ]
-    cut = len(lower)
-    for boundary in boundaries:
-        index = lower.find(boundary)
-        if index >= 0:
-            cut = min(cut, index)
-    return lower[:cut].strip() or lower
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        boundaries = [
+            " treat higher-intelligence",
+            " require explicit evidence",
+            " keep publication.",
+            " keep publication ",
+            " use spark creator-system standards",
+            " keep telegram user-facing output",
+        ]
+        cut = len(lower)
+        for boundary in boundaries:
+            index = lower.find(boundary)
+            if index >= 0:
+                cut = min(cut, index)
+        return lower[:cut].strip() or lower
 
 
+
+    except Exception:
+        return ""
 def _known_domain(lower: str) -> str | None:
     for phrase, domain in _KNOWN_DOMAINS.items():
         if phrase in lower:
