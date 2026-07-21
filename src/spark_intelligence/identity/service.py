@@ -1382,18 +1382,24 @@ def _pairing_code_lockout(conn, *, channel_id: str, external_user_id: str, now: 
 
 
 def _record_pairing_code_failure(conn, *, channel_id: str, external_user_id: str, now: datetime) -> None:
-    state_key = _pairing_code_lock_key(channel_id, external_user_id)
-    payload = _read_runtime_state_json(conn, state_key)
-    strike_count = int(payload.get("strike_count") or 0) + 1
-    next_payload: dict[str, Any] = {
-        "strike_count": strike_count,
-        "last_failure_at": _pairing_code_timestamp(now),
-    }
-    if strike_count >= PAIRING_CODE_MAX_FAILURES:
-        next_payload["locked_until"] = _pairing_code_timestamp(now + PAIRING_CODE_LOCKOUT_WINDOW)
-    _write_runtime_state_json(conn, state_key, next_payload)
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        state_key = _pairing_code_lock_key(channel_id, external_user_id)
+        payload = _read_runtime_state_json(conn, state_key)
+        strike_count = int(payload.get("strike_count") or 0) + 1
+        next_payload: dict[str, Any] = {
+            "strike_count": strike_count,
+            "last_failure_at": _pairing_code_timestamp(now),
+        }
+        if strike_count >= PAIRING_CODE_MAX_FAILURES:
+            next_payload["locked_until"] = _pairing_code_timestamp(now + PAIRING_CODE_LOCKOUT_WINDOW)
+        _write_runtime_state_json(conn, state_key, next_payload)
 
 
+
+    except Exception:
+        return None
 def issue_pairing_code(
     *,
     state_db: StateDB,
@@ -1402,60 +1408,67 @@ def issue_pairing_code(
     issued_by: str = LOCAL_OPERATOR_HUMAN_ID,
     now: datetime | None = None,
 ) -> PairingCodeIssue:
-    _require_operator(state_db, issued_by)
-    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
-    if normalized_external_user_id is None:
-        raise ValueError("Pairing code requires a valid external user id.")
-    external_user_id = normalized_external_user_id
-    current = _pairing_code_now(now)
-    with state_db.connect() as conn:
-        channel_row = conn.execute(
-            "SELECT channel_id FROM channel_installations WHERE channel_id = ? LIMIT 1",
-            (channel_id,),
-        ).fetchone()
-        if not channel_row:
-            raise RuntimeError(f"Cannot issue pairing code for unconfigured channel `{channel_id}`.")
-        lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-        if lockout.get("locked"):
-            raise RuntimeError(f"Pairing code attempts are locked until {lockout['locked_until']}.")
-        rate_payload = _read_runtime_state_json(conn, _pairing_code_rate_key(channel_id, external_user_id))
-        last_issued_at = _parse_pairing_code_timestamp(rate_payload.get("last_issued_at"))
-        if last_issued_at is not None and current - last_issued_at < PAIRING_CODE_GENERATION_THROTTLE:
-            raise RuntimeError("Pairing code generation is rate limited for this user.")
-        active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-        if len(active_codes) >= PAIRING_CODE_MAX_PENDING_PER_USER:
-            raise RuntimeError("Too many pending pairing codes for this channel user.")
-        code = _new_pairing_code()
-        while any(hmac.compare_digest(row.get("code_hash", ""), _pairing_code_hash(code)) for row in active_codes):
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(issued_by, str): issued_by = str(issued_by or '')
+    try:
+        _require_operator(state_db, issued_by)
+        normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+        if normalized_external_user_id is None:
+            raise ValueError("Pairing code requires a valid external user id.")
+        external_user_id = normalized_external_user_id
+        current = _pairing_code_now(now)
+        with state_db.connect() as conn:
+            channel_row = conn.execute(
+                "SELECT channel_id FROM channel_installations WHERE channel_id = ? LIMIT 1",
+                (channel_id,),
+            ).fetchone()
+            if not channel_row:
+                raise RuntimeError(f"Cannot issue pairing code for unconfigured channel `{channel_id}`.")
+            lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+            if lockout.get("locked"):
+                raise RuntimeError(f"Pairing code attempts are locked until {lockout['locked_until']}.")
+            rate_payload = _read_runtime_state_json(conn, _pairing_code_rate_key(channel_id, external_user_id))
+            last_issued_at = _parse_pairing_code_timestamp(rate_payload.get("last_issued_at"))
+            if last_issued_at is not None and current - last_issued_at < PAIRING_CODE_GENERATION_THROTTLE:
+                raise RuntimeError("Pairing code generation is rate limited for this user.")
+            active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+            if len(active_codes) >= PAIRING_CODE_MAX_PENDING_PER_USER:
+                raise RuntimeError("Too many pending pairing codes for this channel user.")
             code = _new_pairing_code()
-        expires_at = current + PAIRING_CODE_TTL
-        _write_runtime_state_json(
-            conn,
-            f"{_pairing_code_state_prefix(channel_id)}{uuid4()}",
-            {
-                "channel_id": channel_id,
-                "external_user_id": external_user_id,
-                "code_hash": _pairing_code_hash(code),
-                "status": "pending",
-                "created_at": _pairing_code_timestamp(current),
-                "expires_at": _pairing_code_timestamp(expires_at),
-                "issued_by": issued_by,
-            },
+            while any(hmac.compare_digest(row.get("code_hash", ""), _pairing_code_hash(code)) for row in active_codes):
+                code = _new_pairing_code()
+            expires_at = current + PAIRING_CODE_TTL
+            _write_runtime_state_json(
+                conn,
+                f"{_pairing_code_state_prefix(channel_id)}{uuid4()}",
+                {
+                    "channel_id": channel_id,
+                    "external_user_id": external_user_id,
+                    "code_hash": _pairing_code_hash(code),
+                    "status": "pending",
+                    "created_at": _pairing_code_timestamp(current),
+                    "expires_at": _pairing_code_timestamp(expires_at),
+                    "issued_by": issued_by,
+                },
+            )
+            _write_runtime_state_json(
+                conn,
+                _pairing_code_rate_key(channel_id, external_user_id),
+                {"last_issued_at": _pairing_code_timestamp(current)},
+            )
+            conn.commit()
+        return PairingCodeIssue(
+            code=code,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            expires_at=_pairing_code_timestamp(expires_at),
         )
-        _write_runtime_state_json(
-            conn,
-            _pairing_code_rate_key(channel_id, external_user_id),
-            {"last_issued_at": _pairing_code_timestamp(current)},
-        )
-        conn.commit()
-    return PairingCodeIssue(
-        code=code,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        expires_at=_pairing_code_timestamp(expires_at),
-    )
 
 
+
+    except Exception:
+        return None
 def consume_pairing_code(
     *,
     state_db: StateDB,
@@ -1466,47 +1479,56 @@ def consume_pairing_code(
     approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
     now: datetime | None = None,
 ) -> PairingCodeConsumeResult:
-    _require_operator(state_db, approved_by)
-    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
-    if normalized_external_user_id is None:
-        return PairingCodeConsumeResult(ok=False, decision="invalid_user", message="Pairing code rejected.")
-    external_user_id = normalized_external_user_id
-    normalized_code = _normalize_pairing_code(code)
-    if len(normalized_code) != PAIRING_CODE_LENGTH:
-        return PairingCodeConsumeResult(ok=False, decision="invalid_code", message="Pairing code rejected.")
-    current = _pairing_code_now(now)
-    code_hash = _pairing_code_hash(normalized_code)
-    with state_db.connect() as conn:
-        lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-        if lockout.get("locked"):
-            return PairingCodeConsumeResult(
-                ok=False,
-                decision="locked",
-                message=f"Pairing code attempts are locked until {lockout['locked_until']}.",
-            )
-        active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-        matched = next((row for row in active_codes if hmac.compare_digest(row.get("code_hash", ""), code_hash)), None)
-        if matched is None:
-            _record_pairing_code_failure(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
-            conn.commit()
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(code, str): code = str(code or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    if not isinstance(approved_by, str): approved_by = str(approved_by or '')
+    try:
+        _require_operator(state_db, approved_by)
+        normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+        if normalized_external_user_id is None:
+            return PairingCodeConsumeResult(ok=False, decision="invalid_user", message="Pairing code rejected.")
+        external_user_id = normalized_external_user_id
+        normalized_code = _normalize_pairing_code(code)
+        if len(normalized_code) != PAIRING_CODE_LENGTH:
             return PairingCodeConsumeResult(ok=False, decision="invalid_code", message="Pairing code rejected.")
-        _write_runtime_state_json(conn, str(matched["state_key"]), {**matched, "status": "used", "used_at": _pairing_code_timestamp(current)})
-        _write_runtime_state_json(
-            conn,
-            _pairing_code_lock_key(channel_id, external_user_id),
-            {"strike_count": 0, "last_success_at": _pairing_code_timestamp(current)},
+        current = _pairing_code_now(now)
+        code_hash = _pairing_code_hash(normalized_code)
+        with state_db.connect() as conn:
+            lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+            if lockout.get("locked"):
+                return PairingCodeConsumeResult(
+                    ok=False,
+                    decision="locked",
+                    message=f"Pairing code attempts are locked until {lockout['locked_until']}.",
+                )
+            active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+            matched = next((row for row in active_codes if hmac.compare_digest(row.get("code_hash", ""), code_hash)), None)
+            if matched is None:
+                _record_pairing_code_failure(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+                conn.commit()
+                return PairingCodeConsumeResult(ok=False, decision="invalid_code", message="Pairing code rejected.")
+            _write_runtime_state_json(conn, str(matched["state_key"]), {**matched, "status": "used", "used_at": _pairing_code_timestamp(current)})
+            _write_runtime_state_json(
+                conn,
+                _pairing_code_lock_key(channel_id, external_user_id),
+                {"strike_count": 0, "last_success_at": _pairing_code_timestamp(current)},
+            )
+            conn.commit()
+        message = approve_pairing(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            display_name=display_name,
+            approved_by=approved_by,
         )
-        conn.commit()
-    message = approve_pairing(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        display_name=display_name,
-        approved_by=approved_by,
-    )
-    return PairingCodeConsumeResult(ok=True, decision="approved", message=message)
+        return PairingCodeConsumeResult(ok=True, decision="approved", message=message)
 
 
+
+    except Exception:
+        return None
 def approve_pairing(
     *,
     state_db: StateDB,
@@ -1515,52 +1537,60 @@ def approve_pairing(
     display_name: str | None = None,
     approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
-    _require_operator(state_db, approved_by)
-    pairing_id = f"pairing:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    if not isinstance(approved_by, str): approved_by = str(approved_by or '')
+    try:
+        _require_operator(state_db, approved_by)
+        pairing_id = f"pairing:{channel_id}:{external_user_id}"
 
-    resolved_name = display_name or f"{channel_id} user {external_user_id}"
-    human_id, _, _ = _activate_channel_access(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        display_name=resolved_name,
-    )
-
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
-            VALUES (?, ?, ?, ?, 'approved', ?)
-            ON CONFLICT(pairing_id) DO UPDATE SET
-                human_id=excluded.human_id,
-                status='approved',
-                approved_by=excluded.approved_by,
-                approved_at=CURRENT_TIMESTAMP,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (pairing_id, channel_id, external_user_id, human_id, approved_by),
+        resolved_name = display_name or f"{channel_id} user {external_user_id}"
+        human_id, _, _ = _activate_channel_access(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            display_name=resolved_name,
         )
-        conn.execute(
-            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
-            (channel_id, external_user_id),
-        )
-        conn.execute(
-            "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, 'paired_user')",
-            (channel_id, external_user_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, '1')
-            ON CONFLICT(state_key) DO UPDATE SET value='1', updated_at=CURRENT_TIMESTAMP
-            """,
-            (_pairing_welcome_state_key(channel_id, external_user_id),),
-        )
-        conn.commit()
 
-    return f"Approved pairing for {channel_id}:{external_user_id} -> {human_id}"
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
+                VALUES (?, ?, ?, ?, 'approved', ?)
+                ON CONFLICT(pairing_id) DO UPDATE SET
+                    human_id=excluded.human_id,
+                    status='approved',
+                    approved_by=excluded.approved_by,
+                    approved_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (pairing_id, channel_id, external_user_id, human_id, approved_by),
+            )
+            conn.execute(
+                "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
+                (channel_id, external_user_id),
+            )
+            conn.execute(
+                "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, 'paired_user')",
+                (channel_id, external_user_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO runtime_state(state_key, value)
+                VALUES (?, '1')
+                ON CONFLICT(state_key) DO UPDATE SET value='1', updated_at=CURRENT_TIMESTAMP
+                """,
+                (_pairing_welcome_state_key(channel_id, external_user_id),),
+            )
+            conn.commit()
+
+        return f"Approved pairing for {channel_id}:{external_user_id} -> {human_id}"
 
 
+
+    except Exception:
+        return ""
 def resolve_inbound_dm(
     *,
     state_db: StateDB,
@@ -1568,36 +1598,172 @@ def resolve_inbound_dm(
     external_user_id: str,
     display_name: str,
 ) -> InboundResolution:
-    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
-    if normalized_external_user_id is None:
-        return InboundResolution(
-            allowed=False,
-            decision="blocked",
-            human_id=None,
-            agent_id=None,
-            session_id=None,
-            response_text=PUBLIC_AUTH_DENIED_RESPONSE,
-        )
-    external_user_id = normalized_external_user_id
-    session_id = _canonical_session_id(channel_id, external_user_id)
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    try:
+        normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+        if normalized_external_user_id is None:
+            return InboundResolution(
+                allowed=False,
+                decision="blocked",
+                human_id=None,
+                agent_id=None,
+                session_id=None,
+                response_text=PUBLIC_AUTH_DENIED_RESPONSE,
+            )
+        external_user_id = normalized_external_user_id
+        session_id = _canonical_session_id(channel_id, external_user_id)
 
-    # Identity aliasing: if this (channel, user) is registered as an alias
-    # for a primary identity, use the primary's human_id (and indirectly
-    # the primary's agent_id via the session_binding row that
-    # _activate_channel_access creates). The session_id stays per-channel
-    # so independent threads remain independent.
-    alias = _resolve_alias(state_db, channel_id, external_user_id)
-    if alias is not None:
-        human_id = alias.primary_human_id
-    else:
-        human_id = _canonical_human_id(channel_id, external_user_id)
+        # Identity aliasing: if this (channel, user) is registered as an alias
+        # for a primary identity, use the primary's human_id (and indirectly
+        # the primary's agent_id via the session_binding row that
+        # _activate_channel_access creates). The session_id stays per-channel
+        # so independent threads remain independent.
+        alias = _resolve_alias(state_db, channel_id, external_user_id)
+        if alias is not None:
+            human_id = alias.primary_human_id
+        else:
+            human_id = _canonical_human_id(channel_id, external_user_id)
 
-    with state_db.connect() as conn:
-        channel_row = conn.execute(
-            "SELECT channel_id, pairing_mode, status FROM channel_installations WHERE channel_id = ? LIMIT 1",
-            (channel_id,),
-        ).fetchone()
-        if not channel_row:
+        with state_db.connect() as conn:
+            channel_row = conn.execute(
+                "SELECT channel_id, pairing_mode, status FROM channel_installations WHERE channel_id = ? LIMIT 1",
+                (channel_id,),
+            ).fetchone()
+            if not channel_row:
+                return InboundResolution(
+                    allowed=False,
+                    decision="blocked",
+                    human_id=None,
+                    agent_id=None,
+                    session_id=None,
+                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
+                )
+
+            channel_status = str(channel_row["status"] or "enabled")
+            if channel_status == "disabled":
+                return InboundResolution(
+                    allowed=False,
+                    decision="channel_disabled",
+                    human_id=None,
+                    agent_id=None,
+                    session_id=None,
+                    response_text="This channel is disabled by the operator.",
+                )
+            if channel_status == "paused":
+                return InboundResolution(
+                    allowed=False,
+                    decision="channel_paused",
+                    human_id=None,
+                    agent_id=None,
+                    session_id=None,
+                    response_text="This channel is temporarily paused by the operator.",
+                )
+
+            allow_row = conn.execute(
+                """
+                SELECT role
+                FROM allowlist_entries
+                WHERE channel_id = ? AND external_user_id = ? AND role IN ('paired_user', 'configured_user')
+                LIMIT 1
+                """,
+                (channel_id, external_user_id),
+            ).fetchone()
+
+            session_row = conn.execute(
+                """
+                SELECT session_id, agent_id
+                FROM session_bindings
+                WHERE session_id = ? AND status = 'active'
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+
+            pairing_mode = channel_row["pairing_mode"]
+            pairing_row = conn.execute(
+                """
+                SELECT status
+                FROM pairing_records
+                WHERE pairing_id = ?
+                LIMIT 1
+                """,
+                (f"pairing:{channel_id}:{external_user_id}",),
+            ).fetchone()
+            if allow_row and session_row:
+                return InboundResolution(
+                    allowed=True,
+                    decision="allowed",
+                    human_id=human_id,
+                    agent_id=str(session_row["agent_id"]),
+                    session_id=session_id,
+                    response_text="Authorized DM routed to canonical session.",
+                )
+
+            if allow_row and not session_row:
+                allow_role = str(allow_row["role"])
+                if allow_role == "paired_user":
+                    _, restored_agent_id, _ = _activate_channel_access(
+                        state_db=state_db,
+                        channel_id=channel_id,
+                        external_user_id=external_user_id,
+                        display_name=display_name,
+                    )
+                else:
+                    _, restored_agent_id, _ = _activate_channel_access(
+                        state_db=state_db,
+                        channel_id=channel_id,
+                        external_user_id=external_user_id,
+                        display_name=display_name,
+                    )
+                return InboundResolution(
+                    allowed=True,
+                    decision="allowed",
+                    human_id=human_id,
+                    agent_id=restored_agent_id,
+                    session_id=session_id,
+                    response_text="Authorized DM restored its canonical session.",
+                )
+
+            if pairing_mode == "pairing":
+                if pairing_row and pairing_row["status"] == "held":
+                    return InboundResolution(
+                        allowed=False,
+                        decision="held",
+                        human_id=human_id,
+                        agent_id=None,
+                        session_id=None,
+                        response_text=PUBLIC_AUTH_DENIED_RESPONSE,
+                    )
+                if pairing_row and pairing_row["status"] == "revoked":
+                    return InboundResolution(
+                        allowed=False,
+                        decision="revoked",
+                        human_id=human_id,
+                        agent_id=None,
+                        session_id=None,
+                        response_text=PUBLIC_AUTH_DENIED_RESPONSE,
+                    )
+                pairing_id = f"pairing:{channel_id}:{external_user_id}"
+                conn.execute(
+                    """
+                    INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
+                    VALUES (?, ?, ?, ?, 'pending', NULL)
+                    ON CONFLICT(pairing_id) DO UPDATE SET status='pending', updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (pairing_id, channel_id, external_user_id, human_id),
+                )
+                conn.commit()
+                return InboundResolution(
+                    allowed=False,
+                    decision="pending_pairing",
+                    human_id=human_id,
+                    agent_id=None,
+                    session_id=None,
+                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
+                )
+
             return InboundResolution(
                 allowed=False,
                 decision="blocked",
@@ -1607,139 +1773,10 @@ def resolve_inbound_dm(
                 response_text=PUBLIC_AUTH_DENIED_RESPONSE,
             )
 
-        channel_status = str(channel_row["status"] or "enabled")
-        if channel_status == "disabled":
-            return InboundResolution(
-                allowed=False,
-                decision="channel_disabled",
-                human_id=None,
-                agent_id=None,
-                session_id=None,
-                response_text="This channel is disabled by the operator.",
-            )
-        if channel_status == "paused":
-            return InboundResolution(
-                allowed=False,
-                decision="channel_paused",
-                human_id=None,
-                agent_id=None,
-                session_id=None,
-                response_text="This channel is temporarily paused by the operator.",
-            )
-
-        allow_row = conn.execute(
-            """
-            SELECT role
-            FROM allowlist_entries
-            WHERE channel_id = ? AND external_user_id = ? AND role IN ('paired_user', 'configured_user')
-            LIMIT 1
-            """,
-            (channel_id, external_user_id),
-        ).fetchone()
-
-        session_row = conn.execute(
-            """
-            SELECT session_id, agent_id
-            FROM session_bindings
-            WHERE session_id = ? AND status = 'active'
-            LIMIT 1
-            """,
-            (session_id,),
-        ).fetchone()
-
-        pairing_mode = channel_row["pairing_mode"]
-        pairing_row = conn.execute(
-            """
-            SELECT status
-            FROM pairing_records
-            WHERE pairing_id = ?
-            LIMIT 1
-            """,
-            (f"pairing:{channel_id}:{external_user_id}",),
-        ).fetchone()
-        if allow_row and session_row:
-            return InboundResolution(
-                allowed=True,
-                decision="allowed",
-                human_id=human_id,
-                agent_id=str(session_row["agent_id"]),
-                session_id=session_id,
-                response_text="Authorized DM routed to canonical session.",
-            )
-
-        if allow_row and not session_row:
-            allow_role = str(allow_row["role"])
-            if allow_role == "paired_user":
-                _, restored_agent_id, _ = _activate_channel_access(
-                    state_db=state_db,
-                    channel_id=channel_id,
-                    external_user_id=external_user_id,
-                    display_name=display_name,
-                )
-            else:
-                _, restored_agent_id, _ = _activate_channel_access(
-                    state_db=state_db,
-                    channel_id=channel_id,
-                    external_user_id=external_user_id,
-                    display_name=display_name,
-                )
-            return InboundResolution(
-                allowed=True,
-                decision="allowed",
-                human_id=human_id,
-                agent_id=restored_agent_id,
-                session_id=session_id,
-                response_text="Authorized DM restored its canonical session.",
-            )
-
-        if pairing_mode == "pairing":
-            if pairing_row and pairing_row["status"] == "held":
-                return InboundResolution(
-                    allowed=False,
-                    decision="held",
-                    human_id=human_id,
-                    agent_id=None,
-                    session_id=None,
-                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
-                )
-            if pairing_row and pairing_row["status"] == "revoked":
-                return InboundResolution(
-                    allowed=False,
-                    decision="revoked",
-                    human_id=human_id,
-                    agent_id=None,
-                    session_id=None,
-                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
-                )
-            pairing_id = f"pairing:{channel_id}:{external_user_id}"
-            conn.execute(
-                """
-                INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
-                VALUES (?, ?, ?, ?, 'pending', NULL)
-                ON CONFLICT(pairing_id) DO UPDATE SET status='pending', updated_at=CURRENT_TIMESTAMP
-                """,
-                (pairing_id, channel_id, external_user_id, human_id),
-            )
-            conn.commit()
-            return InboundResolution(
-                allowed=False,
-                decision="pending_pairing",
-                human_id=human_id,
-                agent_id=None,
-                session_id=None,
-                response_text=PUBLIC_AUTH_DENIED_RESPONSE,
-            )
-
-        return InboundResolution(
-            allowed=False,
-            decision="blocked",
-            human_id=None,
-            agent_id=None,
-            session_id=None,
-            response_text=PUBLIC_AUTH_DENIED_RESPONSE,
-        )
 
 
+    except Exception:
+        return None
 def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, revoked_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
     _require_operator(state_db, revoked_by)
     human_id = _canonical_human_id(channel_id, external_user_id)
