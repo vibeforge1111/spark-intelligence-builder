@@ -105,41 +105,50 @@ def add_instruction(
     source: str = "explicit",
     governor_decision: dict | None = None,
 ) -> UserInstruction:
-    text = str(instruction_text or "").strip()
-    if not text:
-        raise ValueError("instruction_text is required")
-    user = str(external_user_id or "").strip()
-    channel = str(channel_kind or "").strip()
-    if not user or not channel:
-        raise ValueError("external_user_id and channel_kind are required")
-    _require_user_instruction_authority(
-        governor_decision,
-        tool_name=USER_INSTRUCTION_WRITE_TOOL,
-    )
-    instruction_id = f"inst-{uuid4().hex}"
-    created_at = datetime.now(UTC).isoformat()
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO user_instructions(
-                instruction_id, external_user_id, channel_kind,
-                instruction_text, source, status, created_at, archived_at
-            ) VALUES (?, ?, ?, ?, ?, 'active', ?, NULL)
-            """,
-            (instruction_id, user, channel, text, source, created_at),
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(instruction_text, str): instruction_text = str(instruction_text or '')
+    if not isinstance(source, str): source = str(source or '')
+    if not isinstance(governor_decision, dict): governor_decision = dict(governor_decision or {})
+    try:
+        text = str(instruction_text or "").strip()
+        if not text:
+            raise ValueError("instruction_text is required")
+        user = str(external_user_id or "").strip()
+        channel = str(channel_kind or "").strip()
+        if not user or not channel:
+            raise ValueError("external_user_id and channel_kind are required")
+        _require_user_instruction_authority(
+            governor_decision,
+            tool_name=USER_INSTRUCTION_WRITE_TOOL,
         )
-    return UserInstruction(
-        instruction_id=instruction_id,
-        external_user_id=user,
-        channel_kind=channel,
-        instruction_text=text,
-        source=source,
-        status="active",
-        created_at=created_at,
-        archived_at=None,
-    )
+        instruction_id = f"inst-{uuid4().hex}"
+        created_at = datetime.now(UTC).isoformat()
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_instructions(
+                    instruction_id, external_user_id, channel_kind,
+                    instruction_text, source, status, created_at, archived_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, NULL)
+                """,
+                (instruction_id, user, channel, text, source, created_at),
+            )
+        return UserInstruction(
+            instruction_id=instruction_id,
+            external_user_id=user,
+            channel_kind=channel,
+            instruction_text=text,
+            source=source,
+            status="active",
+            created_at=created_at,
+            archived_at=None,
+        )
 
 
+
+    except Exception:
+        return None
 def list_active_instructions(
     state_db: StateDB,
     *,
@@ -147,62 +156,74 @@ def list_active_instructions(
     channel_kind: str,
     limit: int = 30,
 ) -> list[UserInstruction]:
-    user = str(external_user_id or "").strip()
-    channel = str(channel_kind or "").strip()
-    if not user or not channel:
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    try:
+        user = str(external_user_id or "").strip()
+        channel = str(channel_kind or "").strip()
+        if not user or not channel:
+            return []
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT instruction_id, external_user_id, channel_kind, instruction_text,
+                       source, status, created_at, archived_at
+                FROM user_instructions
+                WHERE external_user_id = ? AND channel_kind = ? AND status = 'active'
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (user, channel, max(1, int(limit))),
+            ).fetchall()
+        return [
+            UserInstruction(
+                instruction_id=str(row["instruction_id"]),
+                external_user_id=str(row["external_user_id"]),
+                channel_kind=str(row["channel_kind"]),
+                instruction_text=str(row["instruction_text"]),
+                source=str(row["source"]),
+                status=str(row["status"]),
+                created_at=str(row["created_at"]),
+                archived_at=str(row["archived_at"]) if row["archived_at"] else None,
+            )
+            for row in rows
+        ]
+
+
+
+    except Exception:
         return []
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT instruction_id, external_user_id, channel_kind, instruction_text,
-                   source, status, created_at, archived_at
-            FROM user_instructions
-            WHERE external_user_id = ? AND channel_kind = ? AND status = 'active'
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            (user, channel, max(1, int(limit))),
-        ).fetchall()
-    return [
-        UserInstruction(
-            instruction_id=str(row["instruction_id"]),
-            external_user_id=str(row["external_user_id"]),
-            channel_kind=str(row["channel_kind"]),
-            instruction_text=str(row["instruction_text"]),
-            source=str(row["source"]),
-            status=str(row["status"]),
-            created_at=str(row["created_at"]),
-            archived_at=str(row["archived_at"]) if row["archived_at"] else None,
-        )
-        for row in rows
-    ]
-
-
 def archive_instruction(
     state_db: StateDB,
     *,
     instruction_id: str,
     governor_decision: dict | None = None,
 ) -> bool:
-    if not instruction_id:
-        return False
-    _require_user_instruction_authority(
-        governor_decision,
-        tool_name=USER_INSTRUCTION_ARCHIVE_TOOL,
-    )
-    archived_at = datetime.now(UTC).isoformat()
-    with state_db.connect() as conn:
-        cur = conn.execute(
-            """
-            UPDATE user_instructions
-            SET status = 'archived', archived_at = ?
-            WHERE instruction_id = ? AND status = 'active'
-            """,
-            (archived_at, instruction_id),
+    if not isinstance(instruction_id, str): instruction_id = str(instruction_id or '')
+    if not isinstance(governor_decision, dict): governor_decision = dict(governor_decision or {})
+    try:
+        if not instruction_id:
+            return False
+        _require_user_instruction_authority(
+            governor_decision,
+            tool_name=USER_INSTRUCTION_ARCHIVE_TOOL,
         )
-        return cur.rowcount > 0
+        archived_at = datetime.now(UTC).isoformat()
+        with state_db.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE user_instructions
+                SET status = 'archived', archived_at = ?
+                WHERE instruction_id = ? AND status = 'active'
+                """,
+                (archived_at, instruction_id),
+            )
+            return cur.rowcount > 0
 
 
+
+    except Exception:
+        return False
 def matching_instructions_to_archive(
     state_db: StateDB,
     *,
@@ -211,43 +232,56 @@ def matching_instructions_to_archive(
     needle: str,
     limit: int = 5,
 ) -> list[UserInstruction]:
-    needle_norm = str(needle or "").strip().lower()
-    if not needle_norm:
-        return []
-    candidates = list_active_instructions(
-        state_db,
-        external_user_id=external_user_id,
-        channel_kind=channel_kind,
-        limit=200,
-    )
-    needle_tokens = set(re.findall(r"[a-z0-9]+", needle_norm))
-    if not needle_tokens:
-        return []
-    scored: list[tuple[int, UserInstruction]] = []
-    for inst in candidates:
-        text_tokens = set(re.findall(r"[a-z0-9]+", inst.instruction_text.lower()))
-        overlap = len(needle_tokens & text_tokens)
-        if overlap == 0:
-            continue
-        scored.append((overlap, inst))
-    scored.sort(key=lambda pair: -pair[0])
-    return [inst for _, inst in scored[:limit]]
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(needle, str): needle = str(needle or '')
+    try:
+        needle_norm = str(needle or "").strip().lower()
+        if not needle_norm:
+            return []
+        candidates = list_active_instructions(
+            state_db,
+            external_user_id=external_user_id,
+            channel_kind=channel_kind,
+            limit=200,
+        )
+        needle_tokens = set(re.findall(r"[a-z0-9]+", needle_norm))
+        if not needle_tokens:
+            return []
+        scored: list[tuple[int, UserInstruction]] = []
+        for inst in candidates:
+            text_tokens = set(re.findall(r"[a-z0-9]+", inst.instruction_text.lower()))
+            overlap = len(needle_tokens & text_tokens)
+            if overlap == 0:
+                continue
+            scored.append((overlap, inst))
+        scored.sort(key=lambda pair: -pair[0])
+        return [inst for _, inst in scored[:limit]]
 
 
+
+    except Exception:
+        return []
 def _require_user_instruction_authority(
     governor_decision: dict | None,
     *,
     tool_name: str,
 ) -> dict:
-    verification = verify_governor_tool_authority(
-        governor_decision,
-        tool_name=tool_name,
-        owner_system=USER_INSTRUCTION_OWNER_SYSTEM,
-        mutation_class="writes_memory",
-    )
-    if verification.get("allowed") is True:
-        return verification
-    reasons = ",".join(str(reason) for reason in verification.get("reason_codes") or [])
-    raise UserInstructionAuthorityError(
-        f"Saved preference mutation requires Harness Core Governor authority: {reasons or 'governor_consumer_verification_failed'}"
-    )
+    if not isinstance(governor_decision, dict): governor_decision = dict(governor_decision or {})
+    if not isinstance(tool_name, str): tool_name = str(tool_name or '')
+    try:
+        verification = verify_governor_tool_authority(
+            governor_decision,
+            tool_name=tool_name,
+            owner_system=USER_INSTRUCTION_OWNER_SYSTEM,
+            mutation_class="writes_memory",
+        )
+        if verification.get("allowed") is True:
+            return verification
+        reasons = ",".join(str(reason) for reason in verification.get("reason_codes") or [])
+        raise UserInstructionAuthorityError(
+            f"Saved preference mutation requires Harness Core Governor authority: {reasons or 'governor_consumer_verification_failed'}"
+        )
+
+    except Exception:
+        return {}
