@@ -184,99 +184,125 @@ def _primary_goal_text(lower: str) -> str:
 
 
 def _known_domain(lower: str) -> str | None:
-    for phrase, domain in _KNOWN_DOMAINS.items():
-        if phrase in lower:
-            return domain
-    return None
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        for phrase, domain in _KNOWN_DOMAINS.items():
+            if phrase in lower:
+                return domain
+        return None
 
 
+
+    except Exception:
+        return ""
 def _infer_domain(lower: str) -> str:
-    primary = _primary_goal_text(lower)
-    match = re.search(
-        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
-        primary,
-    )
-    if match:
-        return _slug(match.group(1))
-
-    known = _known_domain(primary)
-    if known:
-        return known
-
-    known = _known_domain(lower)
-    if known:
-        return known
-
-    if primary != lower:
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        primary = _primary_goal_text(lower)
         match = re.search(
             r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
-            lower,
+            primary,
         )
         if match:
             return _slug(match.group(1))
 
-    return _slug(primary)
+        known = _known_domain(primary)
+        if known:
+            return known
+
+        known = _known_domain(lower)
+        if known:
+            return known
+
+        if primary != lower:
+            match = re.search(
+                r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
+                lower,
+            )
+            if match:
+                return _slug(match.group(1))
+
+        return _slug(primary)
 
 
+
+    except Exception:
+        return ""
 def _has_any(lower: str, words: tuple[str, ...]) -> bool:
-    return any(w in lower for w in words)
+    if not isinstance(lower, str): lower = str(lower or '')
+    if not isinstance(words, str): words = str(words or '')
+    try:
+        return any(w in lower for w in words)
 
 
+
+    except Exception:
+        return False
 def _infer_desired_outputs(lower: str) -> dict[str, bool]:
-    wants_full_path = _has_any(
-        lower,
-        (
-            "full path",
-            "mastery",
-            "super intelligent",
-            "superintelligent",
-            "specialization path",
-            "specialisation path",
-            "spark swarm",
-        ),
-    )
-    wants_chip = wants_full_path or _has_any(
-        lower,
-        ("domain chip", "chip", "operator", "tool usage", "good at", "make spark"),
-    )
-    wants_path = wants_full_path or _has_any(lower, ("specialization", "specialisation", "learning path"))
-    wants_autoloop = wants_full_path or _has_any(
-        lower,
-        ("autoloop", "auto loop", "recursive", "self-improve", "self improve", "mutation"),
-    )
-    wants_telegram = _has_any(lower, ("telegram", "bot", "chat"))
-    wants_spawner = _has_any(lower, ("spawner", "canvas", "kanban", "mission", "trackable"))
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        wants_full_path = _has_any(
+            lower,
+            (
+                "full path",
+                "mastery",
+                "super intelligent",
+                "superintelligent",
+                "specialization path",
+                "specialisation path",
+                "spark swarm",
+            ),
+        )
+        wants_chip = wants_full_path or _has_any(
+            lower,
+            ("domain chip", "chip", "operator", "tool usage", "good at", "make spark"),
+        )
+        wants_path = wants_full_path or _has_any(lower, ("specialization", "specialisation", "learning path"))
+        wants_autoloop = wants_full_path or _has_any(
+            lower,
+            ("autoloop", "auto loop", "recursive", "self-improve", "self improve", "mutation"),
+        )
+        wants_telegram = _has_any(lower, ("telegram", "bot", "chat"))
+        wants_spawner = _has_any(lower, ("spawner", "canvas", "kanban", "mission", "trackable"))
 
-    return {
-        "domain_chip": wants_chip or not (wants_path or wants_autoloop),
-        "specialization_path": wants_path,
-        "benchmark_pack": True,
-        "autoloop_policy": wants_autoloop,
-        "telegram_flow": wants_telegram,
-        "spawner_mission": wants_spawner,
-        "swarm_publish_packet": wants_full_path or _has_any(lower, ("swarm", "network", "share")),
-    }
+        return {
+            "domain_chip": wants_chip or not (wants_path or wants_autoloop),
+            "specialization_path": wants_path,
+            "benchmark_pack": True,
+            "autoloop_policy": wants_autoloop,
+            "telegram_flow": wants_telegram,
+            "spawner_mission": wants_spawner,
+            "swarm_publish_packet": wants_full_path or _has_any(lower, ("swarm", "network", "share")),
+        }
 
 
+
+    except Exception:
+        return {}
 def _infer_tools(lower: str) -> list[str]:
-    tool_map = [
-        ("spark_telegram_bot", ("telegram", "bot")),
-        ("spark_intelligence_builder", ("builder", "runtime")),
-        ("spawner_ui", ("spawner", "mission")),
-        ("spark_canvas", ("canvas",)),
-        ("kanban", ("kanban", "board")),
-        ("spark_swarm", ("swarm", "collective", "network")),
-        ("github", ("github", "pr", "pull request", "repo")),
-        ("startup_bench", ("startup bench", "startup-bench")),
-        ("founder_arena", ("founder arena", "founder-arena")),
-    ]
-    tools: list[str] = []
-    for tool, needles in tool_map:
-        if any(n in lower for n in needles):
-            tools.append(tool)
-    return tools
+    if not isinstance(lower, str): lower = str(lower or '')
+    try:
+        tool_map = [
+            ("spark_telegram_bot", ("telegram", "bot")),
+            ("spark_intelligence_builder", ("builder", "runtime")),
+            ("spawner_ui", ("spawner", "mission")),
+            ("spark_canvas", ("canvas",)),
+            ("kanban", ("kanban", "board")),
+            ("spark_swarm", ("swarm", "collective", "network")),
+            ("github", ("github", "pr", "pull request", "repo")),
+            ("startup_bench", ("startup bench", "startup-bench")),
+            ("founder_arena", ("founder arena", "founder-arena")),
+        ]
+        tools: list[str] = []
+        for tool, needles in tool_map:
+            if any(n in lower for n in needles):
+                tools.append(tool)
+        return tools
 
 
+
+    except Exception:
+        return []
 def _infer_privacy_mode(lower: str) -> str:
     if _has_any(lower, ("private", "local only", "local-only", "do not share", "don't share")):
         return "local_only"
