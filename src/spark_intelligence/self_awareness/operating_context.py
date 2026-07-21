@@ -1177,73 +1177,98 @@ def _contradiction_next_action(reason_code: str) -> str:
 
 
 def _route_evidence_status(evidence: dict[str, Any]) -> str:
-    if evidence.get("last_success_at"):
-        return "last_success_recorded"
-    if evidence.get("last_failure_at") or evidence.get("last_failure_reason"):
-        return "last_failure_recorded"
-    return "current_probe_missing"
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        if evidence.get("last_success_at"):
+            return "last_success_recorded"
+        if evidence.get("last_failure_at") or evidence.get("last_failure_reason"):
+            return "last_failure_recorded"
+        return "current_probe_missing"
 
 
+
+    except Exception:
+        return ""
 def _safe_route_probe(key: str) -> str:
-    probes = {
-        "spark_intelligence_builder": "Run `spark-intelligence self status --json` and record success, failure, latency, and eval source.",
-        "spark_spawner": "Run a Spawner health/status probe and record mission route latency before claiming current mission readiness.",
-        "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path before claiming local work is available.",
-        "spark_browser": "Run a browser-use or legacy Browser status probe before claiming web automation is available.",
-        "spark_voice": "Run voice.status and record Telegram delivery evidence before claiming voice replies are available.",
-        "spark_memory": "Run a memory recall/write smoke with source refs before claiming memory is healthy this turn.",
-        "spark_researcher": "Run a researcher status or read-only query probe before claiming research route health.",
-        "spark_swarm": "Run a swarm route status probe before recommending swarm execution.",
-    }
-    return probes.get(key, f"Run diagnostics or a direct route check for {key}.")
+    if not isinstance(key, str): key = str(key or '')
+    try:
+        probes = {
+            "spark_intelligence_builder": "Run `spark-intelligence self status --json` and record success, failure, latency, and eval source.",
+            "spark_spawner": "Run a Spawner health/status probe and record mission route latency before claiming current mission readiness.",
+            "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path before claiming local work is available.",
+            "spark_browser": "Run a browser-use or legacy Browser status probe before claiming web automation is available.",
+            "spark_voice": "Run voice.status and record Telegram delivery evidence before claiming voice replies are available.",
+            "spark_memory": "Run a memory recall/write smoke with source refs before claiming memory is healthy this turn.",
+            "spark_researcher": "Run a researcher status or read-only query probe before claiming research route health.",
+            "spark_swarm": "Run a swarm route status probe before recommending swarm execution.",
+        }
+        return probes.get(key, f"Run diagnostics or a direct route check for {key}.")
 
 
+
+    except Exception:
+        return ""
 def _access_allows_local_work(value: str) -> bool:
-    return _access_kind(value) in {"workspace", "operator"}
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        return _access_kind(value) in {"workspace", "operator"}
 
 
+
+    except Exception:
+        return False
 def _access_kind(value: str) -> str:
-    lowered = value.lower().strip()
-    if lowered in {
-        "4",
-        "level 4",
-        "access 4",
-        "developer",
-        "sandbox",
-        "sandboxed local access",
-        "local workspace access",
-        "level 4 - full access",
-        "level 4 - local workspace allowed",
-        "level 4 - sandboxed workspace allowed",
-    }:
-        return "workspace"
-    if lowered in {
-        "5",
-        "level 5",
-        "access 5",
-        "operator",
-        "full access",
-        "whole computer",
-        "operating system",
-        "level 5 - whole-computer operator mode",
-    }:
-        return "operator"
-    return "other"
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        lowered = value.lower().strip()
+        if lowered in {
+            "4",
+            "level 4",
+            "access 4",
+            "developer",
+            "sandbox",
+            "sandboxed local access",
+            "local workspace access",
+            "level 4 - full access",
+            "level 4 - local workspace allowed",
+            "level 4 - sandboxed workspace allowed",
+        }:
+            return "workspace"
+        if lowered in {
+            "5",
+            "level 5",
+            "access 5",
+            "operator",
+            "full access",
+            "whole computer",
+            "operating system",
+            "level 5 - whole-computer operator mode",
+        }:
+            return "operator"
+        return "other"
 
 
+
+    except Exception:
+        return ""
 def _evidence_alias(key: str) -> str:
-    aliases = {
-        "spark_browser": "browser-search",
-        "spark_spawner": "spawner",
-        "spark_local_work": "local-work",
-        "spark_intelligence_builder": "spark-intelligence-builder",
-        "spark_memory": "memory",
-        "spark_researcher": "researcher",
-        "spark_swarm": "swarm",
-    }
-    return aliases.get(key, key)
+    if not isinstance(key, str): key = str(key or '')
+    try:
+        aliases = {
+            "spark_browser": "browser-search",
+            "spark_spawner": "spawner",
+            "spark_local_work": "local-work",
+            "spark_intelligence_builder": "spark-intelligence-builder",
+            "spark_memory": "memory",
+            "spark_researcher": "researcher",
+            "spark_swarm": "swarm",
+        }
+        return aliases.get(key, key)
 
 
+
+    except Exception:
+        return ""
 def _route_status(route: dict[str, Any]) -> str:
     status = str(route.get("status") or "unknown")
     return _display_status(status)
