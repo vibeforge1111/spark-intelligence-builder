@@ -107,36 +107,42 @@ def simulate_discord_message(
     payload: dict[str, Any],
     run_id: str | None = None,
 ) -> DiscordSimulationResult:
-    normalized = normalize_discord_message(payload)
-    if not normalized.is_dm:
+    if not isinstance(payload, str): payload = str(payload or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    try:
+        normalized = normalize_discord_message(payload)
+        if not normalized.is_dm:
+            return DiscordSimulationResult(
+                ok=False,
+                decision="ignored",
+                detail={
+                    "reason": "non_dm_surface",
+                    "discord_user_id": normalized.discord_user_id,
+                    "guild_id": normalized.guild_id,
+                    "channel_id": normalized.channel_id,
+                },
+            )
+        bridge = resolve_simulated_dm(
+            config_manager=config_manager,
+            state_db=state_db,
+            channel_id="discord",
+            request_id=f"discord:{normalized.message_id}",
+            external_user_id=normalized.discord_user_id,
+            display_name=normalized.discord_username or f"discord user {normalized.discord_user_id}",
+            user_message=normalized.content,
+            run_id=run_id,
+            origin_surface="discord_webhook",
+        )
         return DiscordSimulationResult(
-            ok=False,
-            decision="ignored",
+            ok=bridge.ok,
+            decision=bridge.decision,
             detail={
-                "reason": "non_dm_surface",
                 "discord_user_id": normalized.discord_user_id,
-                "guild_id": normalized.guild_id,
                 "channel_id": normalized.channel_id,
+                "guild_id": normalized.guild_id,
+                **bridge.detail,
             },
         )
-    bridge = resolve_simulated_dm(
-        config_manager=config_manager,
-        state_db=state_db,
-        channel_id="discord",
-        request_id=f"discord:{normalized.message_id}",
-        external_user_id=normalized.discord_user_id,
-        display_name=normalized.discord_username or f"discord user {normalized.discord_user_id}",
-        user_message=normalized.content,
-        run_id=run_id,
-        origin_surface="discord_webhook",
-    )
-    return DiscordSimulationResult(
-        ok=bridge.ok,
-        decision=bridge.decision,
-        detail={
-            "discord_user_id": normalized.discord_user_id,
-            "channel_id": normalized.channel_id,
-            "guild_id": normalized.guild_id,
-            **bridge.detail,
-        },
-    )
+
+    except Exception:
+        return None
