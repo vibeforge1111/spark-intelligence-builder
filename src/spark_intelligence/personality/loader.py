@@ -3147,43 +3147,48 @@ def _evolution_log_state_key(human_id: str) -> str:
 
 
 def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[str, Any]]:
+    if not isinstance(human_id, str): human_id = str(human_id or '')
     try:
-        with state_db.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT observed_at, user_state, confidence, traits_json
-                FROM personality_observations
-                WHERE human_id = ?
-                ORDER BY observed_at ASC, created_at ASC
-                """,
-                (human_id,),
-            ).fetchall()
-        if rows:
-            return [
-                {
-                    "ts": row["observed_at"],
-                    "user_state": row["user_state"],
-                    "confidence": float(row["confidence"]),
-                    "traits": json.loads(row["traits_json"] or "{}"),
-                }
-                for row in rows
-            ]
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (_observation_state_key(human_id),),
-            ).fetchone()
-        if row and row["value"]:
-            data = json.loads(row["value"])
-            return data.get("observations", []) if isinstance(data, dict) else []
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-    return []
+        try:
+            with state_db.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT observed_at, user_state, confidence, traits_json
+                    FROM personality_observations
+                    WHERE human_id = ?
+                    ORDER BY observed_at ASC, created_at ASC
+                    """,
+                    (human_id,),
+                ).fetchall()
+            if rows:
+                return [
+                    {
+                        "ts": row["observed_at"],
+                        "user_state": row["user_state"],
+                        "confidence": float(row["confidence"]),
+                        "traits": json.loads(row["traits_json"] or "{}"),
+                    }
+                    for row in rows
+                ]
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            pass
+        try:
+            with state_db.connect() as conn:
+                row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                    (_observation_state_key(human_id),),
+                ).fetchone()
+            if row and row["value"]:
+                data = json.loads(row["value"])
+                return data.get("observations", []) if isinstance(data, dict) else []
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            pass
+        return []
 
 
+
+    except Exception:
+        return []
 def _store_observation_runtime_mirror(
     *,
     human_id: str,
@@ -3191,65 +3196,76 @@ def _store_observation_runtime_mirror(
     state_db: StateDB,
     conn: Any | None = None,
 ) -> None:
-    payload = json.dumps({"observations": observations}, sort_keys=True)
-    if conn is not None:
-        upsert_runtime_state(
-            conn,
-            state_key=_observation_state_key(human_id),
-            value=payload,
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
-        )
-        return
-    with state_db.connect() as mirror_conn:
-        upsert_runtime_state(
-            mirror_conn,
-            state_key=_observation_state_key(human_id),
-            value=payload,
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
-        )
-        mirror_conn.commit()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(observations, str): observations = str(observations or '')
+    try:
+        payload = json.dumps({"observations": observations}, sort_keys=True)
+        if conn is not None:
+            upsert_runtime_state(
+                conn,
+                state_key=_observation_state_key(human_id),
+                value=payload,
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+            )
+            return
+        with state_db.connect() as mirror_conn:
+            upsert_runtime_state(
+                mirror_conn,
+                state_key=_observation_state_key(human_id),
+                value=payload,
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+            )
+            mirror_conn.commit()
 
 
+
+    except Exception:
+        return None
 def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str, Any]]:
+    if not isinstance(human_id, str): human_id = str(human_id or '')
     try:
-        with state_db.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT evolved_at, deltas_json, state_weights_json, observation_count
-                FROM personality_evolution_events
-                WHERE human_id = ?
-                ORDER BY evolved_at ASC, created_at ASC
-                """,
-                (human_id,),
-            ).fetchall()
-        if rows:
-            return [
-                {
-                    "ts": row["evolved_at"],
-                    "deltas": json.loads(row["deltas_json"] or "{}"),
-                    "state_weights": json.loads(row["state_weights_json"] or "{}"),
-                    "observation_count": int(row["observation_count"] or 0),
-                }
-                for row in rows
-            ]
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (_evolution_log_state_key(human_id),),
-            ).fetchone()
-        if row and row["value"]:
-            data = json.loads(row["value"])
-            return data.get("events", []) if isinstance(data, dict) else []
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-    return []
+        try:
+            with state_db.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT evolved_at, deltas_json, state_weights_json, observation_count
+                    FROM personality_evolution_events
+                    WHERE human_id = ?
+                    ORDER BY evolved_at ASC, created_at ASC
+                    """,
+                    (human_id,),
+                ).fetchall()
+            if rows:
+                return [
+                    {
+                        "ts": row["evolved_at"],
+                        "deltas": json.loads(row["deltas_json"] or "{}"),
+                        "state_weights": json.loads(row["state_weights_json"] or "{}"),
+                        "observation_count": int(row["observation_count"] or 0),
+                    }
+                    for row in rows
+                ]
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            pass
+        try:
+            with state_db.connect() as conn:
+                row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                    (_evolution_log_state_key(human_id),),
+                ).fetchone()
+            if row and row["value"]:
+                data = json.loads(row["value"])
+                return data.get("events", []) if isinstance(data, dict) else []
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            pass
+        return []
 
 
+
+    except Exception:
+        return []
 def _store_evolution_runtime_mirror(
     *,
     human_id: str,
@@ -3257,27 +3273,33 @@ def _store_evolution_runtime_mirror(
     state_db: StateDB,
     conn: Any | None = None,
 ) -> None:
-    payload = json.dumps({"events": events[-20:]}, sort_keys=True)
-    if conn is not None:
-        upsert_runtime_state(
-            conn,
-            state_key=_evolution_log_state_key(human_id),
-            value=payload,
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
-        )
-        return
-    with state_db.connect() as mirror_conn:
-        upsert_runtime_state(
-            mirror_conn,
-            state_key=_evolution_log_state_key(human_id),
-            value=payload,
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
-        )
-        mirror_conn.commit()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(events, str): events = str(events or '')
+    try:
+        payload = json.dumps({"events": events[-20:]}, sort_keys=True)
+        if conn is not None:
+            upsert_runtime_state(
+                conn,
+                state_key=_evolution_log_state_key(human_id),
+                value=payload,
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+            )
+            return
+        with state_db.connect() as mirror_conn:
+            upsert_runtime_state(
+                mirror_conn,
+                state_key=_evolution_log_state_key(human_id),
+                value=payload,
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+            )
+            mirror_conn.commit()
 
 
+
+    except Exception:
+        return None
 _OBSERVATION_WINDOW = 50  # keep last N observations per user
 
 # Lightweight emotional state inference from user text (subset of room reader patterns)
@@ -3296,25 +3318,30 @@ _USER_STATE_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
 
 
 def _infer_user_state(text: str) -> tuple[str, float]:
-    """Infer the user's emotional state from their message.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Infer the user's emotional state from their message.
 
-    Returns (state_name, confidence). Falls back to ("neutral", 0.0).
-    """
-    if not text:
-        return ("neutral", 0.0)
+        Returns (state_name, confidence). Falls back to ("neutral", 0.0).
+        """
+        if not text:
+            return ("neutral", 0.0)
 
-    best_state = "neutral"
-    best_score = 0.0
+        best_state = "neutral"
+        best_score = 0.0
 
-    for pattern, state, weight in _USER_STATE_PATTERNS:
-        if pattern.search(text):
-            if weight > best_score:
-                best_state = state
-                best_score = weight
+        for pattern, state, weight in _USER_STATE_PATTERNS:
+            if pattern.search(text):
+                if weight > best_score:
+                    best_state = state
+                    best_score = weight
 
-    return (best_state, best_score)
+        return (best_state, best_score)
 
 
+
+    except Exception:
+        return ()
 def record_observation(
     *,
     human_id: str,
