@@ -328,76 +328,105 @@ def _artifact_targets(desired_outputs: dict[str, bool]) -> list[str]:
 
 
 def _infer_data_sources(lower: str, privacy_mode: str) -> list[str]:
-    sources = ["local_repo"]
-    if _has_any(lower, ("github", "repo", "pull request", " pr ")):
-        sources.append("github")
-    if _has_any(lower, ("web", "research", "sources", "internet")):
-        sources.append("web_research")
-    if privacy_mode == "swarm_shared":
-        sources.append("spark_swarm")
-    return sources
+    if not isinstance(lower, str): lower = str(lower or '')
+    if not isinstance(privacy_mode, str): privacy_mode = str(privacy_mode or '')
+    try:
+        sources = ["local_repo"]
+        if _has_any(lower, ("github", "repo", "pull request", " pr ")):
+            sources.append("github")
+        if _has_any(lower, ("web", "research", "sources", "internet")):
+            sources.append("web_research")
+        if privacy_mode == "swarm_shared":
+            sources.append("spark_swarm")
+        return sources
 
 
+
+    except Exception:
+        return []
 def _expected_capability(target_domain: str, desired_outputs: dict[str, bool]) -> str:
-    parts = [f"Improve Spark's measurable capability in {target_domain}"]
-    if desired_outputs.get("domain_chip"):
-        parts.append("through a domain chip")
-    if desired_outputs.get("benchmark_pack"):
-        parts.append("validated by benchmarks")
-    if desired_outputs.get("autoloop_policy"):
-        parts.append("with bounded recursive improvement")
-    if desired_outputs.get("swarm_publish_packet"):
-        parts.append("and Swarm-shareable mastery packets")
-    return " ".join(parts) + "."
+    if not isinstance(target_domain, str): target_domain = str(target_domain or '')
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        parts = [f"Improve Spark's measurable capability in {target_domain}"]
+        if desired_outputs.get("domain_chip"):
+            parts.append("through a domain chip")
+        if desired_outputs.get("benchmark_pack"):
+            parts.append("validated by benchmarks")
+        if desired_outputs.get("autoloop_policy"):
+            parts.append("with bounded recursive improvement")
+        if desired_outputs.get("swarm_publish_packet"):
+            parts.append("and Swarm-shareable mastery packets")
+        return " ".join(parts) + "."
 
 
+
+    except Exception:
+        return ""
 def _capabilities_to_prove(target_domain: str, desired_outputs: dict[str, bool]) -> list[str]:
-    if target_domain == "startup-yc":
-        capabilities = [
-            "prioritize retention proof over shallow acquisition",
-            "detect default-dead risk",
-            "choose narrow design partners",
-            "avoid premature hiring before product-market fit",
-        ]
-    else:
-        capabilities = [
-            f"perform realistic {target_domain} tasks better than baseline",
-            f"explain {target_domain} decisions with evidence and limits",
-        ]
-    if desired_outputs.get("autoloop_policy"):
-        capabilities.append("keep or reject recursive mutations with benchmark evidence")
-    if desired_outputs.get("swarm_publish_packet"):
-        capabilities.append("package reusable lessons with provenance for Swarm review")
-    return capabilities
+    if not isinstance(target_domain, str): target_domain = str(target_domain or '')
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        if target_domain == "startup-yc":
+            capabilities = [
+                "prioritize retention proof over shallow acquisition",
+                "detect default-dead risk",
+                "choose narrow design partners",
+                "avoid premature hiring before product-market fit",
+            ]
+        else:
+            capabilities = [
+                f"perform realistic {target_domain} tasks better than baseline",
+                f"explain {target_domain} decisions with evidence and limits",
+            ]
+        if desired_outputs.get("autoloop_policy"):
+            capabilities.append("keep or reject recursive mutations with benchmark evidence")
+        if desired_outputs.get("swarm_publish_packet"):
+            capabilities.append("package reusable lessons with provenance for Swarm review")
+        return capabilities
 
 
+
+    except Exception:
+        return []
 def _benchmark_requirements(
     desired_outputs: dict[str, bool],
     privacy_mode: str,
 ) -> dict[str, bool | int]:
-    wants_mastery = desired_outputs.get("specialization_path") or desired_outputs.get("swarm_publish_packet")
-    return {
-        "visible_cases": 20 if wants_mastery else 5,
-        "fixed_suite": True,
-        "baseline_vs_specialized_agent": True,
-        "held_out_cases": bool(wants_mastery),
-        "trap_cases": True,
-        "tool_usage_quality": True,
-        "reasoning_quality": True,
-        "keep_revert_decisions": bool(desired_outputs.get("autoloop_policy")),
-        "experiment_ledger": bool(desired_outputs.get("autoloop_policy") or wants_mastery),
-        "simulator_transfer": bool(wants_mastery),
-        "fresh_agent_absorption": bool(desired_outputs.get("specialization_path") or privacy_mode == "swarm_shared"),
-        "human_calibration": False,
-    }
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    if not isinstance(privacy_mode, str): privacy_mode = str(privacy_mode or '')
+    try:
+        wants_mastery = desired_outputs.get("specialization_path") or desired_outputs.get("swarm_publish_packet")
+        return {
+            "visible_cases": 20 if wants_mastery else 5,
+            "fixed_suite": True,
+            "baseline_vs_specialized_agent": True,
+            "held_out_cases": bool(wants_mastery),
+            "trap_cases": True,
+            "tool_usage_quality": True,
+            "reasoning_quality": True,
+            "keep_revert_decisions": bool(desired_outputs.get("autoloop_policy")),
+            "experiment_ledger": bool(desired_outputs.get("autoloop_policy") or wants_mastery),
+            "simulator_transfer": bool(wants_mastery),
+            "fresh_agent_absorption": bool(desired_outputs.get("specialization_path") or privacy_mode == "swarm_shared"),
+            "human_calibration": False,
+        }
 
 
+
+    except Exception:
+        return {}
 def _network_contribution_policy(privacy_mode: str) -> str:
-    if privacy_mode in {"github_pr", "swarm_shared"}:
-        return "github_pr_required"
-    return "workspace_only"
+    if not isinstance(privacy_mode, str): privacy_mode = str(privacy_mode or '')
+    try:
+        if privacy_mode in {"github_pr", "swarm_shared"}:
+            return "github_pr_required"
+        return "workspace_only"
 
 
+
+    except Exception:
+        return ""
 def _success_examples(target_domain: str, desired_outputs: dict[str, bool]) -> list[str]:
     examples = [
         f"Agent performs a realistic {target_domain} task better than baseline.",
