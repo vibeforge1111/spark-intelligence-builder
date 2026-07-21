@@ -540,44 +540,78 @@ def _choose_agent_name(
     incoming_confirmed_at: str | None,
     incoming_source: str,
 ) -> tuple[str | None, str | None, str | None]:
-    resolved_incoming_name = _read_optional_text(incoming_name)
-    if not resolved_incoming_name:
-        return current_name, current_confirmed_at, current_source
-    current_ts = _parse_iso_datetime(current_confirmed_at)
-    incoming_ts = _parse_iso_datetime(incoming_confirmed_at)
-    if current_name and current_ts is not None and incoming_ts is not None and incoming_ts < current_ts:
-        return current_name, current_confirmed_at, current_source
-    return (
-        resolved_incoming_name,
-        incoming_confirmed_at or current_confirmed_at or _utc_now_iso(),
-        incoming_source,
-    )
+    if not isinstance(current_name, str): current_name = str(current_name or '')
+    if not isinstance(current_confirmed_at, str): current_confirmed_at = str(current_confirmed_at or '')
+    if not isinstance(current_source, str): current_source = str(current_source or '')
+    if not isinstance(incoming_name, str): incoming_name = str(incoming_name or '')
+    if not isinstance(incoming_confirmed_at, str): incoming_confirmed_at = str(incoming_confirmed_at or '')
+    if not isinstance(incoming_source, str): incoming_source = str(incoming_source or '')
+    try:
+        resolved_incoming_name = _read_optional_text(incoming_name)
+        if not resolved_incoming_name:
+            return current_name, current_confirmed_at, current_source
+        current_ts = _parse_iso_datetime(current_confirmed_at)
+        incoming_ts = _parse_iso_datetime(incoming_confirmed_at)
+        if current_name and current_ts is not None and incoming_ts is not None and incoming_ts < current_ts:
+            return current_name, current_confirmed_at, current_source
+        return (
+            resolved_incoming_name,
+            incoming_confirmed_at or current_confirmed_at or _utc_now_iso(),
+            incoming_source,
+        )
 
 
+
+    except Exception:
+        return ()
 def _canonical_channel_account_id(channel_id: str, external_user_id: str) -> str:
-    return f"acct:{channel_id}:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"acct:{channel_id}:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _canonical_surface_id(channel_id: str, external_user_id: str) -> str:
-    return f"surface:{channel_id}:dm:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"surface:{channel_id}:dm:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _canonical_session_id(channel_id: str, external_user_id: str) -> str:
-    return f"session:{channel_id}:dm:{external_user_id}"
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"session:{channel_id}:dm:{external_user_id}"
 
 
+
+    except Exception:
+        return ""
 def _normalize_external_user_id(channel_id: str, external_user_id: str) -> str | None:
-    value = str(external_user_id)
-    if channel_id == "telegram":
-        if value != value.strip():
-            return None
-        if not value.isdecimal():
-            return None
-        if int(value) <= 0:
-            return None
-    return value
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        value = str(external_user_id)
+        if channel_id == "telegram":
+            if value != value.strip():
+                return None
+            if not value.isdecimal():
+                return None
+            if int(value) <= 0:
+                return None
+        return value
 
 
+
+    except Exception:
+        return ""
 def resolve_canonical_agent_identity(
     *,
     state_db: StateDB,
