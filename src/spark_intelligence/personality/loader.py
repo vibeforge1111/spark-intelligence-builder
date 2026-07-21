@@ -2409,41 +2409,57 @@ def _agent_onboarding_state_key(human_id: str) -> str:
 
 
 def _load_agent_onboarding_state(*, human_id: str, state_db: StateDB) -> dict[str, Any]:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-            (_agent_onboarding_state_key(human_id),),
-        ).fetchone()
-    if not row or not row["value"]:
-        return {}
+    if not isinstance(human_id, str): human_id = str(human_id or '')
     try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (_agent_onboarding_state_key(human_id),),
+            ).fetchone()
+        if not row or not row["value"]:
+            return {}
+        try:
+            payload = json.loads(str(row["value"]))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+
+
+    except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def _save_agent_onboarding_state(*, human_id: str, payload: dict[str, Any], state_db: StateDB) -> None:
-    with state_db.connect() as conn:
-        upsert_runtime_state(
-            conn,
-            state_key=_agent_onboarding_state_key(human_id),
-            value=json.dumps(payload, sort_keys=True),
-            component="personality_profile",
-            reset_sensitive_scope=("human", human_id, "agent_onboarding_reset"),
-        )
-        conn.commit()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        with state_db.connect() as conn:
+            upsert_runtime_state(
+                conn,
+                state_key=_agent_onboarding_state_key(human_id),
+                value=json.dumps(payload, sort_keys=True),
+                component="personality_profile",
+                reset_sensitive_scope=("human", human_id, "agent_onboarding_reset"),
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def _delete_agent_onboarding_state(*, human_id: str, state_db: StateDB) -> None:
-    with state_db.connect() as conn:
-        conn.execute(
-            "DELETE FROM runtime_state WHERE state_key = ?",
-            (_agent_onboarding_state_key(human_id),),
-        )
-        conn.commit()
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            conn.execute(
+                "DELETE FROM runtime_state WHERE state_key = ?",
+                (_agent_onboarding_state_key(human_id),),
+            )
+            conn.commit()
 
 
+
+    except Exception:
+        return None
 def _complete_agent_onboarding_state(
     *,
     human_id: str,
@@ -2452,27 +2468,39 @@ def _complete_agent_onboarding_state(
     agent_name: str,
     persona_summary: str | None,
 ) -> None:
-    _save_agent_onboarding_state(
-        human_id=human_id,
-        state_db=state_db,
-        payload={
-            "status": "completed",
-            "step": "completed",
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "persona_summary": persona_summary,
-            "completed_at": _utc_now_iso(),
-            "updated_at": _utc_now_iso(),
-        },
-    )
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    if not isinstance(persona_summary, str): persona_summary = str(persona_summary or '')
+    try:
+        _save_agent_onboarding_state(
+            human_id=human_id,
+            state_db=state_db,
+            payload={
+                "status": "completed",
+                "step": "completed",
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "persona_summary": persona_summary,
+                "completed_at": _utc_now_iso(),
+                "updated_at": _utc_now_iso(),
+            },
+        )
 
 
-def _read_optional_text(value: object) -> str | None:
-    if value in {None, ""}:
+
+    except Exception:
         return None
-    return str(value)
+def _read_optional_text(value: object) -> str | None:
+    try:
+        if value in {None, ""}:
+            return None
+        return str(value)
 
 
+
+    except Exception:
+        return ""
 def _label_for_trait(trait: str, value: float) -> str:
     """Convert a trait value to a human-readable label."""
     ranges = _TRAIT_LABELS.get(trait, {})
