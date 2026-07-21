@@ -1041,116 +1041,143 @@ def list_agent_rename_history(
     human_id: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
-            FROM agent_rename_history
-            WHERE human_id = ?
-            ORDER BY created_at DESC, rename_id DESC
-            LIMIT ?
-            """,
-            (human_id, limit),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+                FROM agent_rename_history
+                WHERE human_id = ?
+                ORDER BY created_at DESC, rename_id DESC
+                LIMIT ?
+                """,
+                (human_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
+
+    except Exception:
+        return []
 def set_human_user_address(
     *,
     state_db: StateDB,
     human_id: str,
     user_address: str | None,
 ) -> str | None:
-    normalized: str | None = (user_address or "").strip() or None
-    with state_db.connect() as conn:
-        conn.execute(
-            "UPDATE humans SET user_address = ?, updated_at = CURRENT_TIMESTAMP WHERE human_id = ?",
-            (normalized, human_id),
-        )
-        conn.commit()
-    return normalized
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(user_address, str): user_address = str(user_address or '')
+    try:
+        normalized: str | None = (user_address or "").strip() or None
+        with state_db.connect() as conn:
+            conn.execute(
+                "UPDATE humans SET user_address = ?, updated_at = CURRENT_TIMESTAMP WHERE human_id = ?",
+                (normalized, human_id),
+            )
+            conn.commit()
+        return normalized
 
 
+
+    except Exception:
+        return ""
 def get_human_user_address(
     *,
     state_db: StateDB,
     human_id: str,
 ) -> str | None:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT user_address FROM humans WHERE human_id = ? LIMIT 1",
-            (human_id,),
-        ).fetchone()
-    if row is None:
-        return None
-    value = row["user_address"]
-    if value in (None, ""):
-        return None
-    return str(value)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT user_address FROM humans WHERE human_id = ? LIMIT 1",
+                (human_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = row["user_address"]
+        if value in (None, ""):
+            return None
+        return str(value)
 
 
+
+    except Exception:
+        return ""
 def inspect_canonical_agent(
     *,
     state_db: StateDB,
     human_id: str,
 ) -> CanonicalAgentReport:
-    state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
-    with state_db.connect() as conn:
-        session_rows = conn.execute(
-            """
-            SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
-            FROM session_bindings
-            WHERE agent_id = ?
-            ORDER BY updated_at DESC, session_id DESC
-            """,
-            (state.agent_id,),
-        ).fetchall()
-    payload = {
-        "identity": state.to_payload(),
-        "sessions": [dict(row) for row in session_rows],
-        "rename_history": list_agent_rename_history(state_db=state_db, human_id=human_id, limit=20),
-    }
-    return CanonicalAgentReport(payload=payload)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+        with state_db.connect() as conn:
+            session_rows = conn.execute(
+                """
+                SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
+                FROM session_bindings
+                WHERE agent_id = ?
+                ORDER BY updated_at DESC, session_id DESC
+                """,
+                (state.agent_id,),
+            ).fetchall()
+        payload = {
+            "identity": state.to_payload(),
+            "sessions": [dict(row) for row in session_rows],
+            "rename_history": list_agent_rename_history(state_db=state_db, human_id=human_id, limit=20),
+        }
+        return CanonicalAgentReport(payload=payload)
 
 
+
+    except Exception:
+        return None
 def build_spark_swarm_identity_import_payload(
     *,
     state_db: StateDB,
     human_id: str,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
-    with state_db.connect() as conn:
-        session_rows = conn.execute(
-            """
-            SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
-            FROM session_bindings
-            WHERE agent_id = ?
-            ORDER BY updated_at DESC, session_id DESC
-            """,
-            (state.agent_id,),
-        ).fetchall()
-        pairing_rows = conn.execute(
-            """
-            SELECT pairing_id, channel_id, external_user_id, status, approved_at, approved_by, updated_at
-            FROM pairing_records
-            WHERE human_id = ?
-            ORDER BY updated_at DESC, pairing_id DESC
-            """,
-            (human_id,),
-        ).fetchall()
-    return {
-        "schema_version": "spark-swarm-agent-import-request.v1",
-        "hook": "identity",
-        "requested_at": _utc_now_iso(),
-        "workspace_id": workspace_id or "default",
-        "human_id": human_id,
-        "current_identity": state.to_payload(),
-        "sessions": [dict(row) for row in session_rows],
-        "pairings": [dict(row) for row in pairing_rows],
-    }
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(workspace_id, str): workspace_id = str(workspace_id or '')
+    try:
+        state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+        with state_db.connect() as conn:
+            session_rows = conn.execute(
+                """
+                SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
+                FROM session_bindings
+                WHERE agent_id = ?
+                ORDER BY updated_at DESC, session_id DESC
+                """,
+                (state.agent_id,),
+            ).fetchall()
+            pairing_rows = conn.execute(
+                """
+                SELECT pairing_id, channel_id, external_user_id, status, approved_at, approved_by, updated_at
+                FROM pairing_records
+                WHERE human_id = ?
+                ORDER BY updated_at DESC, pairing_id DESC
+                """,
+                (human_id,),
+            ).fetchall()
+        return {
+            "schema_version": "spark-swarm-agent-import-request.v1",
+            "hook": "identity",
+            "requested_at": _utc_now_iso(),
+            "workspace_id": workspace_id or "default",
+            "human_id": human_id,
+            "current_identity": state.to_payload(),
+            "sessions": [dict(row) for row in session_rows],
+            "pairings": [dict(row) for row in pairing_rows],
+        }
 
 
+
+    except Exception:
+        return {}
 def normalize_spark_swarm_identity_import(
     *,
     human_id: str,
