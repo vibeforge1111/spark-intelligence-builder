@@ -1388,52 +1388,75 @@ def _compact_probe_summary(value: object, limit: int = 120) -> str:
 
 
 def _execution_lane_summary(execution_lane: dict[str, Any]) -> str:
-    docker = execution_lane.get("docker") if isinstance(execution_lane.get("docker"), dict) else {}
-    docker_parts = [
-        f"docker_available={_display_optional_bool(docker.get('available'))}",
-        f"docker_selected={_display_optional_bool(docker.get('selected'))}",
-        f"docker_probed={_display_optional_bool(docker.get('probed'))}",
-    ]
-    return (
-        ", ".join(docker_parts)
-        + f", workspace_sandbox={_display_optional_bool(execution_lane.get('workspace_sandbox'))}"
-        + f", level5_whole_computer_claim_allowed={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
-    )
+    if not isinstance(execution_lane, str): execution_lane = str(execution_lane or '')
+    try:
+        docker = execution_lane.get("docker") if isinstance(execution_lane.get("docker"), dict) else {}
+        docker_parts = [
+            f"docker_available={_display_optional_bool(docker.get('available'))}",
+            f"docker_selected={_display_optional_bool(docker.get('selected'))}",
+            f"docker_probed={_display_optional_bool(docker.get('probed'))}",
+        ]
+        return (
+            ", ".join(docker_parts)
+            + f", workspace_sandbox={_display_optional_bool(execution_lane.get('workspace_sandbox'))}"
+            + f", level5_whole_computer_claim_allowed={bool(execution_lane.get('level5_whole_computer_claim_allowed'))}"
+        )
 
 
+
+    except Exception:
+        return ""
 def _access_automation_summary(access_automation: dict[str, Any]) -> str:
-    action = str(access_automation.get("next_safe_access_action") or access_automation.get("recommended_action") or "unknown")
-    lane = str(access_automation.get("recommended_lane") or "unknown")
-    policy = str(access_automation.get("recommended_run_policy") or "unknown")
-    confirmation = "yes" if access_automation.get("requires_confirmation") else "no"
-    return f"next={action}, lane={lane}, run_policy={policy}, confirmation_required={confirmation}"
+    if not isinstance(access_automation, str): access_automation = str(access_automation or '')
+    try:
+        action = str(access_automation.get("next_safe_access_action") or access_automation.get("recommended_action") or "unknown")
+        lane = str(access_automation.get("recommended_lane") or "unknown")
+        policy = str(access_automation.get("recommended_run_policy") or "unknown")
+        confirmation = "yes" if access_automation.get("requires_confirmation") else "no"
+        return f"next={action}, lane={lane}, run_policy={policy}, confirmation_required={confirmation}"
 
 
+
+    except Exception:
+        return ""
 def _optional_bool(value: object) -> bool | None:
-    if value is None:
+    try:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().casefold()
+        if normalized in {"yes", "true", "1", "y"}:
+            return True
+        if normalized in {"no", "false", "0", "n"}:
+            return False
         return None
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().casefold()
-    if normalized in {"yes", "true", "1", "y"}:
-        return True
-    if normalized in {"no", "false", "0", "n"}:
+
+
+
+    except Exception:
         return False
-    return None
-
-
 def _display_optional_bool(value: object) -> str:
-    if value is True:
-        return "yes"
-    if value is False:
-        return "no"
-    return "unknown"
+    try:
+        if value is True:
+            return "yes"
+        if value is False:
+            return "no"
+        return "unknown"
 
 
+
+    except Exception:
+        return ""
 def _display_status(status: str) -> str:
-    return str(status or "unknown").replace("_", " ")
+    if not isinstance(status, str): status = str(status or '')
+    try:
+        return str(status or "unknown").replace("_", " ")
 
 
+
+    except Exception:
+        return ""
 def _frame_action_summary(actions: object) -> str:
     if not isinstance(actions, list) or not actions:
         return "none"
