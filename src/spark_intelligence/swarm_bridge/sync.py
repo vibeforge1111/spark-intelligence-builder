@@ -1605,75 +1605,102 @@ def _resolve_attachment_repo_root(config_manager: ConfigManager, repo_root_value
 
 
 def _resolve_active_path_record(attachment_context: dict[str, Any]) -> dict[str, Any] | None:
-    active_path_key = str(attachment_context.get("active_path_key") or "").strip()
-    if not active_path_key:
-        return None
-    records = list(attachment_context.get("attached_path_records") or [])
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        if str(record.get("key") or "").strip() == active_path_key:
-            return record
-    return None
-
-
-def _read_json_file_if_exists(path: Path | None) -> dict[str, Any] | None:
-    if path is None or not path.exists():
-        return None
+    if not isinstance(attachment_context, str): attachment_context = str(attachment_context or '')
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        active_path_key = str(attachment_context.get("active_path_key") or "").strip()
+        if not active_path_key:
+            return None
+        records = list(attachment_context.get("attached_path_records") or [])
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("key") or "").strip() == active_path_key:
+                return record
         return None
-    return payload if isinstance(payload, dict) else None
 
 
+
+    except Exception:
+        return {}
+def _read_json_file_if_exists(path: Path | None) -> dict[str, Any] | None:
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
+    try:
+        if path is None or not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+
+
+    except Exception:
+        return {}
 def _resolve_specialization_default_scenario_path(
     repo_root: Path,
     manifest_payload: dict[str, Any] | None,
 ) -> Path | None:
-    profile = (manifest_payload or {}).get("benchmarkProfile")
-    if not isinstance(profile, dict):
-        return None
-    raw = str(profile.get("defaultScenario") or "").strip()
-    if not raw:
-        return None
-    raw_path = Path(raw)
-    if raw_path.suffix.lower() == ".json":
-        candidate = repo_root / raw_path
-        return candidate
-    stem = raw_path.stem
-    return repo_root / "benchmarks" / "scenarios" / f"{stem}.json"
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    if not isinstance(manifest_payload, str): manifest_payload = str(manifest_payload or '')
+    try:
+        profile = (manifest_payload or {}).get("benchmarkProfile")
+        if not isinstance(profile, dict):
+            return None
+        raw = str(profile.get("defaultScenario") or "").strip()
+        if not raw:
+            return None
+        raw_path = Path(raw)
+        if raw_path.suffix.lower() == ".json":
+            candidate = repo_root / raw_path
+            return candidate
+        stem = raw_path.stem
+        return repo_root / "benchmarks" / "scenarios" / f"{stem}.json"
 
 
+
+    except Exception:
+        return Path(".")
 def _resolve_specialization_default_mutation_target_path(
     repo_root: Path,
     manifest_payload: dict[str, Any] | None,
 ) -> Path | None:
-    templates = (manifest_payload or {}).get("templates")
-    if not isinstance(templates, list):
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    if not isinstance(manifest_payload, str): manifest_payload = str(manifest_payload or '')
+    try:
+        templates = (manifest_payload or {}).get("templates")
+        if not isinstance(templates, list):
+            return None
+        for template in templates:
+            if not isinstance(template, dict):
+                continue
+            destination = str(template.get("destination") or "").strip()
+            if destination:
+                return repo_root / destination
         return None
-    for template in templates:
-        if not isinstance(template, dict):
-            continue
-        destination = str(template.get("destination") or "").strip()
-        if destination:
-            return repo_root / destination
-    return None
 
 
+
+    except Exception:
+        return Path(".")
 def _resolve_swarm_auth_source(config_manager: ConfigManager, env_ref: str | None) -> str:
-    if not env_ref:
-        return "unconfigured"
-    if env_ref.startswith("local:"):
-        return "workspace_env"
-    workspace_env = config_manager.read_env_map()
-    if str(workspace_env.get(env_ref) or "").strip():
-        return "workspace_env"
-    if str(os.environ.get(env_ref) or "").strip():
-        return "process_env_only"
-    return "missing_from_workspace_env"
+    if not isinstance(env_ref, str): env_ref = str(env_ref or '')
+    try:
+        if not env_ref:
+            return "unconfigured"
+        if env_ref.startswith("local:"):
+            return "workspace_env"
+        workspace_env = config_manager.read_env_map()
+        if str(workspace_env.get(env_ref) or "").strip():
+            return "workspace_env"
+        if str(os.environ.get(env_ref) or "").strip():
+            return "process_env_only"
+        return "missing_from_workspace_env"
 
 
+
+    except Exception:
+        return ""
 def _specialization_repo_env_var(path_key: str) -> str:
     normalized = str(path_key).strip().upper().replace("-", "_")
     return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
