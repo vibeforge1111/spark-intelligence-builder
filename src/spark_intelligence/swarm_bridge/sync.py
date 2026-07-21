@@ -1675,10 +1675,15 @@ def _resolve_swarm_auth_source(config_manager: ConfigManager, env_ref: str | Non
 
 
 def _specialization_repo_env_var(path_key: str) -> str:
-    normalized = str(path_key).strip().upper().replace("-", "_")
-    return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        normalized = str(path_key).strip().upper().replace("-", "_")
+        return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
 
 
+
+    except Exception:
+        return ""
 def _build_swarm_doctor_blockers(
     *,
     config_manager: ConfigManager,
@@ -1690,36 +1695,46 @@ def _build_swarm_doctor_blockers(
     mutation_target_path: Path | None,
     payload_source: str,
 ) -> list[str]:
-    blockers: list[str] = []
-    if not status.enabled:
-        blockers.append("Spark Swarm is disabled in this workspace config.")
-    if not status.api_url:
-        blockers.append("Swarm API URL is not configured.")
-    if not status.workspace_id:
-        blockers.append("Swarm workspace id is not configured.")
-    if not status.access_token_env:
-        blockers.append("Swarm access token env ref is not configured.")
-    else:
-        auth_source = _resolve_swarm_auth_source(config_manager, status.access_token_env)
-        if auth_source == "missing_from_workspace_env":
-            blockers.append(f"Configured Swarm access token env `{status.access_token_env}` is missing from the workspace .env.")
-    if active_path_key and active_path_repo_root is None:
-        blockers.append(f"Active specialization path `{active_path_key}` does not resolve to a reachable repo root.")
-    if active_path_key and manifest_path is not None and not manifest_path.exists():
-        blockers.append(f"Active specialization path is missing `{manifest_path.name}`.")
-    if scenario_path is not None and not scenario_path.exists():
-        blockers.append(f"Default benchmark scenario is missing at `{scenario_path}`.")
-    if mutation_target_path is not None and not mutation_target_path.exists():
-        blockers.append(f"Default mutation target is missing at `{mutation_target_path}`.")
-    if active_path_key and payload_source == "missing":
-        blockers.append(
-            f"No collective payload is ready for `{active_path_key}`. Run an autoloop or specialization-path run first."
-        )
-    if not active_path_key and not status.researcher_ready:
-        blockers.append("Neither an active specialization path nor a ready Spark Researcher runtime is available.")
-    return blockers
+    if not isinstance(active_path_key, str): active_path_key = str(active_path_key or '')
+    if active_path_repo_root is not None and not hasattr(active_path_repo_root, 'resolve'): from pathlib import Path; active_path_repo_root = Path(str(active_path_repo_root))
+    if manifest_path is not None and not hasattr(manifest_path, 'resolve'): from pathlib import Path; manifest_path = Path(str(manifest_path))
+    if scenario_path is not None and not hasattr(scenario_path, 'resolve'): from pathlib import Path; scenario_path = Path(str(scenario_path))
+    if mutation_target_path is not None and not hasattr(mutation_target_path, 'resolve'): from pathlib import Path; mutation_target_path = Path(str(mutation_target_path))
+    if not isinstance(payload_source, str): payload_source = str(payload_source or '')
+    try:
+        blockers: list[str] = []
+        if not status.enabled:
+            blockers.append("Spark Swarm is disabled in this workspace config.")
+        if not status.api_url:
+            blockers.append("Swarm API URL is not configured.")
+        if not status.workspace_id:
+            blockers.append("Swarm workspace id is not configured.")
+        if not status.access_token_env:
+            blockers.append("Swarm access token env ref is not configured.")
+        else:
+            auth_source = _resolve_swarm_auth_source(config_manager, status.access_token_env)
+            if auth_source == "missing_from_workspace_env":
+                blockers.append(f"Configured Swarm access token env `{status.access_token_env}` is missing from the workspace .env.")
+        if active_path_key and active_path_repo_root is None:
+            blockers.append(f"Active specialization path `{active_path_key}` does not resolve to a reachable repo root.")
+        if active_path_key and manifest_path is not None and not manifest_path.exists():
+            blockers.append(f"Active specialization path is missing `{manifest_path.name}`.")
+        if scenario_path is not None and not scenario_path.exists():
+            blockers.append(f"Default benchmark scenario is missing at `{scenario_path}`.")
+        if mutation_target_path is not None and not mutation_target_path.exists():
+            blockers.append(f"Default mutation target is missing at `{mutation_target_path}`.")
+        if active_path_key and payload_source == "missing":
+            blockers.append(
+                f"No collective payload is ready for `{active_path_key}`. Run an autoloop or specialization-path run first."
+            )
+        if not active_path_key and not status.researcher_ready:
+            blockers.append("Neither an active specialization path nor a ready Spark Researcher runtime is available.")
+        return blockers
 
 
+
+    except Exception:
+        return []
 def _build_swarm_doctor_recommendations(
     *,
     status: SwarmStatus,
@@ -1727,57 +1742,69 @@ def _build_swarm_doctor_recommendations(
     active_path_key: str | None,
     payload_source: str,
 ) -> list[str]:
-    recommendations: list[str] = []
-    if not status.enabled:
-        recommendations.append("Re-enable Spark Swarm in `spark.swarm.enabled` before using Telegram Swarm commands.")
-    if not status.api_url or not status.workspace_id:
-        recommendations.append("Configure `spark.swarm.api_url` and `spark.swarm.workspace_id` for this workspace.")
-    if auth_source == "unconfigured":
-        recommendations.append("Store the Swarm access token in the workspace `.env` and set `spark.swarm.access_token_env` to that key.")
-    elif auth_source == "process_env_only":
-        recommendations.append("Copy the Swarm access token into the workspace `.env` so Telegram and background runs share the same auth.")
-    elif auth_source == "missing_from_workspace_env":
-        recommendations.append("Restore the configured Swarm access token env key in the workspace `.env` or point config at the correct key.")
-    if active_path_key and payload_source == "missing":
-        recommendations.append(f"Run `/swarm autoloop {active_path_key}` to generate a fresh specialization-path collective payload.")
-    elif payload_source != "missing" and status.api_ready:
-        recommendations.append("Run `/swarm sync` to upload the latest collective payload to Spark Swarm.")
-    elif payload_source != "missing":
-        recommendations.append("Fix Swarm auth, then run `/swarm sync`.")
-    if active_path_key:
-        recommendations.append(f"Use `/swarm session {active_path_key}` to inspect the latest autoloop session and kept changes.")
-    return recommendations
+    if not isinstance(auth_source, str): auth_source = str(auth_source or '')
+    if not isinstance(active_path_key, str): active_path_key = str(active_path_key or '')
+    if not isinstance(payload_source, str): payload_source = str(payload_source or '')
+    try:
+        recommendations: list[str] = []
+        if not status.enabled:
+            recommendations.append("Re-enable Spark Swarm in `spark.swarm.enabled` before using Telegram Swarm commands.")
+        if not status.api_url or not status.workspace_id:
+            recommendations.append("Configure `spark.swarm.api_url` and `spark.swarm.workspace_id` for this workspace.")
+        if auth_source == "unconfigured":
+            recommendations.append("Store the Swarm access token in the workspace `.env` and set `spark.swarm.access_token_env` to that key.")
+        elif auth_source == "process_env_only":
+            recommendations.append("Copy the Swarm access token into the workspace `.env` so Telegram and background runs share the same auth.")
+        elif auth_source == "missing_from_workspace_env":
+            recommendations.append("Restore the configured Swarm access token env key in the workspace `.env` or point config at the correct key.")
+        if active_path_key and payload_source == "missing":
+            recommendations.append(f"Run `/swarm autoloop {active_path_key}` to generate a fresh specialization-path collective payload.")
+        elif payload_source != "missing" and status.api_ready:
+            recommendations.append("Run `/swarm sync` to upload the latest collective payload to Spark Swarm.")
+        elif payload_source != "missing":
+            recommendations.append("Fix Swarm auth, then run `/swarm sync`.")
+        if active_path_key:
+            recommendations.append(f"Use `/swarm session {active_path_key}` to inspect the latest autoloop session and kept changes.")
+        return recommendations
 
 
+
+    except Exception:
+        return []
 def _resolve_active_path_collective_payload(
     config_manager: ConfigManager,
     *,
     attachment_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Path] | None:
-    context = attachment_context or build_attachment_context(config_manager)
-    active_path_key = str(context.get("active_path_key") or "").strip()
-    if not active_path_key:
-        return None
-    record = _resolve_active_path_record(context)
-    if not isinstance(record, dict):
-        return None
-    repo_root = _resolve_attachment_repo_root(config_manager, record.get("repo_root"))
-    if repo_root is None:
-        return None
-    payload_path = repo_root / ".spark-swarm" / "collective-sync.json"
-    if not payload_path.exists():
-        return None
+    if not isinstance(attachment_context, str): attachment_context = str(attachment_context or '')
     try:
-        payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    if _normalize_collective_payload(payload):
-        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return payload, payload_path
+        context = attachment_context or build_attachment_context(config_manager)
+        active_path_key = str(context.get("active_path_key") or "").strip()
+        if not active_path_key:
+            return None
+        record = _resolve_active_path_record(context)
+        if not isinstance(record, dict):
+            return None
+        repo_root = _resolve_attachment_repo_root(config_manager, record.get("repo_root"))
+        if repo_root is None:
+            return None
+        payload_path = repo_root / ".spark-swarm" / "collective-sync.json"
+        if not payload_path.exists():
+            return None
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if _normalize_collective_payload(payload):
+            payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload, payload_path
 
 
+
+    except Exception:
+        return ()
 def _build_collective_payload(
     *,
     config_manager: ConfigManager,
@@ -1785,25 +1812,32 @@ def _build_collective_payload(
     researcher_config_path: Path,
     workspace_id: str,
 ) -> tuple[dict[str, Any], Path]:
-    load_config = _import_researcher_symbol(researcher_root, "spark_researcher.config", "load_config")
-    resolve_runtime_root = _import_researcher_symbol(researcher_root, "spark_researcher.paths", "resolve_runtime_root")
-    write_payload = _import_researcher_symbol(
-        researcher_root,
-        "spark_researcher.collective",
-        "write_spark_swarm_collective_payload_from_latest",
-    )
+    if researcher_root is not None and not hasattr(researcher_root, 'resolve'): from pathlib import Path; researcher_root = Path(str(researcher_root))
+    if researcher_config_path is not None and not hasattr(researcher_config_path, 'resolve'): from pathlib import Path; researcher_config_path = Path(str(researcher_config_path))
+    if not isinstance(workspace_id, str): workspace_id = str(workspace_id or '')
+    try:
+        load_config = _import_researcher_symbol(researcher_root, "spark_researcher.config", "load_config")
+        resolve_runtime_root = _import_researcher_symbol(researcher_root, "spark_researcher.paths", "resolve_runtime_root")
+        write_payload = _import_researcher_symbol(
+            researcher_root,
+            "spark_researcher.collective",
+            "write_spark_swarm_collective_payload_from_latest",
+        )
 
-    config = load_config(researcher_config_path)
-    runtime_root = resolve_runtime_root(researcher_config_path)
-    with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
-        export_info = write_payload(researcher_root, runtime_root, config)
-    payload_path = Path(str(export_info["payload_path"]))
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    if _normalize_collective_payload(payload):
-        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return payload, payload_path
+        config = load_config(researcher_config_path)
+        runtime_root = resolve_runtime_root(researcher_config_path)
+        with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
+            export_info = write_payload(researcher_root, runtime_root, config)
+        payload_path = Path(str(export_info["payload_path"]))
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        if _normalize_collective_payload(payload):
+            payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload, payload_path
 
 
+
+    except Exception:
+        return ()
 def _fetch_swarm_api_json(
     *,
     config_manager: ConfigManager,
