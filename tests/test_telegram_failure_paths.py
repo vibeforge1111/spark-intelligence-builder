@@ -18,8 +18,10 @@ class FakePollingClient:
         self.sent_messages: list[dict[str, str]] = []
         self.sent_voices: list[dict[str, object]] = []
         self.sent_documents: list[dict[str, object]] = []
+        self.requested_offsets: list[int | None] = []
 
     def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
+        self.requested_offsets.append(offset)
         if self.update_error is not None:
             raise self.update_error
         return self.updates
@@ -70,6 +72,28 @@ class FakePollingClient:
 
 
 class TelegramFailurePathTests(SparkTestCase):
+    def test_poll_recovers_from_corrupt_persisted_offset(self) -> None:
+        self.add_telegram_channel()
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_state(state_key, value)
+                VALUES ('telegram:last_update_offset', 'not-a-number')
+                ON CONFLICT(state_key) DO UPDATE SET value = excluded.value
+                """
+            )
+        client = FakePollingClient()
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        self.assertEqual(result.fetched_update_count, 0)
+        self.assertEqual(client.requested_offsets, [None])
+
     def test_gateway_start_persists_auth_failure(self) -> None:
         self.add_telegram_channel(bot_token="bad-token")
 

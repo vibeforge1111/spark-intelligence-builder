@@ -8451,8 +8451,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.processed_count, 1)
         self.assertEqual(len(client.sent_voices), 0)
         self.assertEqual(len(client.sent_messages), 1)
-        self.assertIn("voice audio step is not ready", client.sent_messages[0]["text"])
+        self.assertIn("couldn't send audio", client.sent_messages[0]["text"])
         self.assertIn("ELEVENLABS_API_KEY", client.sent_messages[0]["text"])
+        self.assertIn("/voice onboard local", client.sent_messages[0]["text"])
+        self.assertNotIn("Reason:", client.sent_messages[0]["text"])
 
     def test_bridge_voice_ask_failure_is_visible_in_text_fallback(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -8513,9 +8515,11 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertNotIn("voice_media", result.detail)
-        self.assertIn("voice audio step is not ready", result.detail["response_text"])
+        self.assertIn("couldn't send audio", result.detail["response_text"])
         self.assertIn("ElevenLabs rejected the local API key", result.detail["response_text"])
         self.assertIn("Do not paste the key into Telegram", result.detail["response_text"])
+        self.assertIn("/voice onboard local", result.detail["response_text"])
+        self.assertNotIn("Reason:", result.detail["response_text"])
         self.assertNotIn("invalid_api_key", result.detail["response_text"])
         self.assertIn("ElevenLabs rejected the local API key", result.detail["voice_error"])
         self.assertNotIn("invalid_api_key", result.detail["voice_error"])
