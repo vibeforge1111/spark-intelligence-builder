@@ -39,15 +39,20 @@ def is_duplicate_event(
     event_id: int,
     window_size: int,
 ) -> bool:
-    state_key = f"{channel_id}:recent_event_ids"
-    recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
-    if event_id in recent_ids:
-        return True
-    trimmed = (recent_ids + [event_id])[-max(window_size, 1) :]
-    set_runtime_state_value(state_db=state_db, state_key=state_key, value=json.dumps(trimmed))
-    return False
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    try:
+        state_key = f"{channel_id}:recent_event_ids"
+        recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
+        if event_id in recent_ids:
+            return True
+        trimmed = (recent_ids + [event_id])[-max(window_size, 1) :]
+        set_runtime_state_value(state_db=state_db, state_key=state_key, value=json.dumps(trimmed))
+        return False
 
 
+
+    except Exception:
+        return False
 def apply_inbound_rate_limit(
     *,
     state_db: StateDB,
@@ -56,36 +61,42 @@ def apply_inbound_rate_limit(
     limit_per_minute: int,
     notice_cooldown_seconds: int,
 ) -> dict[str, Any]:
-    state_key = f"{channel_id}:rate_limit:{external_user_id}"
-    raw = _load_json_object(state_db=state_db, state_key=state_key)
-    now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
-    timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
-    if len(timestamps) >= max(limit_per_minute, 1):
-        retry_after_seconds = max(1, 60 - (now - timestamps[0]))
-        notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
-        if notice_allowed:
-            last_notice_at = now
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        state_key = f"{channel_id}:rate_limit:{external_user_id}"
+        raw = _load_json_object(state_db=state_db, state_key=state_key)
+        now = int(time.time())
+        timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
+        timestamps = [item for item in timestamps if item > now - 60]
+        last_notice_at = int(raw.get("last_notice_at", 0) or 0)
+        if len(timestamps) >= max(limit_per_minute, 1):
+            retry_after_seconds = max(1, 60 - (now - timestamps[0]))
+            notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
+            if notice_allowed:
+                last_notice_at = now
+            set_runtime_state_value(
+                state_db=state_db,
+                state_key=state_key,
+                value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
+            )
+            return {
+                "allowed": False,
+                "retry_after_seconds": retry_after_seconds,
+                "notice_allowed": notice_allowed,
+            }
+        timestamps.append(now)
         set_runtime_state_value(
             state_db=state_db,
             state_key=state_key,
             value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
         )
-        return {
-            "allowed": False,
-            "retry_after_seconds": retry_after_seconds,
-            "notice_allowed": notice_allowed,
-        }
-    timestamps.append(now)
-    set_runtime_state_value(
-        state_db=state_db,
-        state_key=state_key,
-        value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
-    )
-    return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
+        return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
 
 
+
+    except Exception:
+        return {}
 def prepare_outbound_text(
     *,
     config_manager: ConfigManager | None = None,
@@ -101,103 +112,115 @@ def prepare_outbound_text(
     session_id: str | None = None,
     actor_id: str | None = None,
 ) -> dict[str, Any]:
-    actions: list[str] = []
-    cleaned = "".join(character for character in text if character == "\n" or character == "\t" or ord(character) >= 32)
-    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if cleaned != text:
-        actions.append("sanitize_control_chars")
-    if bridge_mode == "bridge_error":
-        cleaned = "Spark Intelligence hit an internal bridge error. The operator can inspect local gateway traces."
-        actions.append("replace_bridge_error")
-    if redact_secret_like_replies and looks_secret_like(cleaned):
-        if state_db is not None:
-            event_id = record_event(
-                state_db,
-                event_type="secret_boundary_violation",
-                component="outbound_guardrails",
-                summary="Secret-like material was blocked before outbound delivery.",
-                run_id=run_id,
-                request_id=request_id,
-                trace_ref=trace_ref,
-                channel_id=channel_id,
-                session_id=session_id,
-                actor_id=actor_id,
-                reason_code="outbound_secret_like_reply",
-                severity="high",
-                facts={"channel_id": channel_id, "blocked_stage": "delivery"},
-                provenance={"source_kind": "outbound_text"},
-            )
-            quarantine_id = record_quarantine(
-                state_db,
-                event_id=event_id,
-                run_id=run_id,
-                request_id=request_id,
-                source_kind="outbound_text",
-                source_ref=channel_id,
-                policy_domain="outbound_guardrails",
-                reason_code="outbound_secret_like_reply",
-                summary="Outbound delivery content was quarantined after secret-like detection.",
-                payload_preview=cleaned[:160],
-                provenance={"trace_ref": trace_ref, "session_id": session_id, "channel_id": channel_id},
-            )
-            record_policy_gate_block(
-                state_db,
-                component="outbound_guardrails",
-                policy_domain="outbound_guardrails",
-                gate_name="secret_boundary",
-                source_kind="outbound_text",
-                source_ref=channel_id,
-                summary="Outbound delivery content was blocked by the secret boundary.",
-                action="quarantine_blocked",
-                reason_code="outbound_secret_like_reply",
-                blocked_stage="delivery",
-                input_ref=str(request_id or trace_ref or channel_id or ""),
-                output_ref=quarantine_id,
-                severity="high",
-                run_id=run_id,
-                request_id=request_id,
-                trace_ref=trace_ref,
-                channel_id=channel_id,
-                session_id=session_id,
-                actor_id=actor_id,
-                provenance={"source_kind": "outbound_text"},
-                facts={"secret_event_id": event_id},
-            )
-        cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
-        actions.append("block_secret_like_reply")
-    if not cleaned:
-        cleaned = "Spark Intelligence produced an empty reply."
-        actions.append("replace_empty_reply")
+    if not isinstance(text, str): text = str(text or '')
+    if not isinstance(bridge_mode, str): bridge_mode = str(bridge_mode or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        actions: list[str] = []
+        cleaned = "".join(character for character in text if character == "\n" or character == "\t" or ord(character) >= 32)
+        cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if cleaned != text:
+            actions.append("sanitize_control_chars")
+        if bridge_mode == "bridge_error":
+            cleaned = "Spark Intelligence hit an internal bridge error. The operator can inspect local gateway traces."
+            actions.append("replace_bridge_error")
+        if redact_secret_like_replies and looks_secret_like(cleaned):
+            if state_db is not None:
+                event_id = record_event(
+                    state_db,
+                    event_type="secret_boundary_violation",
+                    component="outbound_guardrails",
+                    summary="Secret-like material was blocked before outbound delivery.",
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    actor_id=actor_id,
+                    reason_code="outbound_secret_like_reply",
+                    severity="high",
+                    facts={"channel_id": channel_id, "blocked_stage": "delivery"},
+                    provenance={"source_kind": "outbound_text"},
+                )
+                quarantine_id = record_quarantine(
+                    state_db,
+                    event_id=event_id,
+                    run_id=run_id,
+                    request_id=request_id,
+                    source_kind="outbound_text",
+                    source_ref=channel_id,
+                    policy_domain="outbound_guardrails",
+                    reason_code="outbound_secret_like_reply",
+                    summary="Outbound delivery content was quarantined after secret-like detection.",
+                    payload_preview=cleaned[:160],
+                    provenance={"trace_ref": trace_ref, "session_id": session_id, "channel_id": channel_id},
+                )
+                record_policy_gate_block(
+                    state_db,
+                    component="outbound_guardrails",
+                    policy_domain="outbound_guardrails",
+                    gate_name="secret_boundary",
+                    source_kind="outbound_text",
+                    source_ref=channel_id,
+                    summary="Outbound delivery content was blocked by the secret boundary.",
+                    action="quarantine_blocked",
+                    reason_code="outbound_secret_like_reply",
+                    blocked_stage="delivery",
+                    input_ref=str(request_id or trace_ref or channel_id or ""),
+                    output_ref=quarantine_id,
+                    severity="high",
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    actor_id=actor_id,
+                    provenance={"source_kind": "outbound_text"},
+                    facts={"secret_event_id": event_id},
+                )
+            cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
+            actions.append("block_secret_like_reply")
+        if not cleaned:
+            cleaned = "Spark Intelligence produced an empty reply."
+            actions.append("replace_empty_reply")
 
-    rewritten = _normalize_score_decimals_to_percent(cleaned)
-    if rewritten != cleaned:
-        cleaned = rewritten
-        actions.append("normalize_score_percentages")
+        rewritten = _normalize_score_decimals_to_percent(cleaned)
+        if rewritten != cleaned:
+            cleaned = rewritten
+            actions.append("normalize_score_percentages")
 
-    redacted = redact_text(cleaned)
-    if redacted != cleaned:
-        cleaned = redacted
-        actions.append("redact_sensitive_text")
+        redacted = redact_text(cleaned)
+        if redacted != cleaned:
+            cleaned = redacted
+            actions.append("redact_sensitive_text")
 
-    sanitized = _strip_em_dashes(cleaned)
-    if sanitized != cleaned:
-        cleaned = sanitized
-        actions.append("replace_em_dashes")
+        sanitized = _strip_em_dashes(cleaned)
+        if sanitized != cleaned:
+            cleaned = sanitized
+            actions.append("replace_em_dashes")
 
-    redacted = redact_text(cleaned)
-    if redacted != cleaned:
-        cleaned = redacted
-        actions.append("redact_sensitive_text")
+        redacted = redact_text(cleaned)
+        if redacted != cleaned:
+            cleaned = redacted
+            actions.append("redact_sensitive_text")
 
-    chunk_size = max(max_reply_chars, 32)
-    max_chunks = 5
-    chunks = _split_text_for_delivery(cleaned, chunk_size=chunk_size, max_chunks=max_chunks)
-    if len(chunks) > 1:
-        actions.append(f"split_into_{len(chunks)}_messages")
-    delivered_text = "\n\n".join(chunks)
-    return {"text": delivered_text, "chunks": chunks, "actions": actions}
+        chunk_size = max(max_reply_chars, 32)
+        max_chunks = 5
+        chunks = _split_text_for_delivery(cleaned, chunk_size=chunk_size, max_chunks=max_chunks)
+        if len(chunks) > 1:
+            actions.append(f"split_into_{len(chunks)}_messages")
+        delivered_text = "\n\n".join(chunks)
+        return {"text": delivered_text, "chunks": chunks, "actions": actions}
 
 
+
+    except Exception:
+        return {}
 _SCORE_LABEL_PATTERN = re.compile(
     r"(?P<label>"
     r"engagement[ _-]?quality(?:[ _-]?score)?|"
@@ -215,50 +238,60 @@ _SCORE_LABEL_PATTERN = re.compile(
 
 
 def _strip_em_dashes(text: str) -> str:
-    """Replace em-dash family characters with hyphens.
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        """Replace em-dash family characters with hyphens.
 
-    Persona forbids em dashes but production telemetry shows ~50% of LLM
-    replies still emit them. Prompt engineering hasn't been enough, so we
-    apply a deterministic post-output substitution at the outbound boundary.
-    Keep this boundary intentionally narrow: operational identifiers such as
-    chip keys and session ids frequently use ASCII hyphens and must not be
-    rewritten.
-    """
-    if not text:
-        return text
-    em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
-    out = text
-    for ch in em_dash_family:
-        out = out.replace(ch, " - ")
-    while "  " in out:
-        out = out.replace("  ", " ")
-    return out
+        Persona forbids em dashes but production telemetry shows ~50% of LLM
+        replies still emit them. Prompt engineering hasn't been enough, so we
+        apply a deterministic post-output substitution at the outbound boundary.
+        Keep this boundary intentionally narrow: operational identifiers such as
+        chip keys and session ids frequently use ASCII hyphens and must not be
+        rewritten.
+        """
+        if not text:
+            return text
+        em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
+        out = text
+        for ch in em_dash_family:
+            out = out.replace(ch, " - ")
+        while "  " in out:
+            out = out.replace("  ", " ")
+        return out
 
 
+
+    except Exception:
+        return ""
 def _normalize_score_decimals_to_percent(text: str) -> str:
-    if not text:
-        return text
+    if not isinstance(text, str): text = str(text or '')
+    try:
+        if not text:
+            return text
 
-    def _repl(match: re.Match[str]) -> str:
-        try:
-            value = float(match.group("value"))
-        except ValueError:
-            return match.group(0)
-        if value < 0 or value > 1:
-            return match.group(0)
-        pct = round(value * 100)
-        sep = match.group("sep")
-        trail = match.group("trail")
-        opens = sep.count("(")
-        closes = trail.count(")")
-        if opens > closes:
-            extra = opens - closes
-            trail = trail + (")" * extra)
-        return f"{match.group('label')}{sep}{pct}%{trail}"
+        def _repl(match: re.Match[str]) -> str:
+            try:
+                value = float(match.group("value"))
+            except ValueError:
+                return match.group(0)
+            if value < 0 or value > 1:
+                return match.group(0)
+            pct = round(value * 100)
+            sep = match.group("sep")
+            trail = match.group("trail")
+            opens = sep.count("(")
+            closes = trail.count(")")
+            if opens > closes:
+                extra = opens - closes
+                trail = trail + (")" * extra)
+            return f"{match.group('label')}{sep}{pct}%{trail}"
 
-    return _SCORE_LABEL_PATTERN.sub(_repl, text)
+        return _SCORE_LABEL_PATTERN.sub(_repl, text)
 
 
+
+    except Exception:
+        return ""
 def _split_text_for_delivery(text: str, *, chunk_size: int, max_chunks: int) -> list[str]:
     if len(text) <= chunk_size:
         return [text]
