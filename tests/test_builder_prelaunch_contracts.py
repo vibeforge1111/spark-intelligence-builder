@@ -24,6 +24,7 @@ from spark_intelligence.observability.checks import (
     evaluate_stop_ship_issues,
 )
 from spark_intelligence.observability.store import (
+    _mirror_memory_lane_event,
     build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
@@ -1006,6 +1007,49 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(lane_records[0]["artifact_lane"], "working_scratchpad")
         self.assertIsNone(lane_records[0]["promotion_target_lane"])
         self.assertEqual(lane_records[0]["status"], "blocked")
+
+    def test_duplicate_memory_lane_mirror_preserves_first_historical_record(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="first classified result",
+            request_id="req-memory-lane-history",
+            trace_ref="trace:req-memory-lane-history",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+            provenance={"source_kind": "first_source", "source_ref": "first_ref"},
+        )
+        original = recent_memory_lane_records(self.state_db, limit=1)[0]
+
+        with self.state_db.connect() as conn:
+            _mirror_memory_lane_event(
+                conn,
+                event_id=event_id,
+                event_type="memory_write_succeeded",
+                recorded_at="2099-01-01T00:00:00Z",
+                component="memory_orchestrator",
+                run_id="run:replacement",
+                request_id="req-replacement",
+                trace_ref="trace:replacement",
+                reason_code="replacement_attempt",
+                facts={
+                    "keepability": "durable_user_memory",
+                    "promotion_disposition": "promote_current_state",
+                },
+                provenance={"source_kind": "replacement_source", "source_ref": "replacement_ref"},
+            )
+
+        preserved = recent_memory_lane_records(self.state_db, limit=1)[0]
+
+        self.assertEqual(preserved, original)
+        self.assertEqual(preserved["component"], "researcher_bridge")
+        self.assertEqual(preserved["source_kind"], "first_source")
+        self.assertEqual(preserved["artifact_lane"], "working_scratchpad")
+        self.assertEqual(preserved["status"], "blocked")
 
     def test_memory_lane_records_export_trace_contract_for_memory_decisions(self) -> None:
         record_event(
