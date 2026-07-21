@@ -3694,7 +3694,9 @@ def _read_sib_active_personality_id() -> str | None:
         db = Path(home) / "state.db"
         if not db.exists():
             return None
-        con = sqlite3.connect(str(db))
+        # StateDB owns the persistent journal mode. This read-only resolver only
+        # needs the same bounded lock wait as canonical StateDB connections.
+        con = sqlite3.connect(str(db), timeout=10)
         try:
             cur = con.cursor()
             cur.execute(
