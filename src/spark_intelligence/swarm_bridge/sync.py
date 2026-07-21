@@ -2555,41 +2555,61 @@ def _token_expiry_iso(token: str | None) -> str | None:
 
 
 def _token_is_expired(token: str | None, *, skew_seconds: int = 60) -> bool:
-    claims = _decode_jwt_claims(token)
-    exp = claims.get("exp")
-    if not isinstance(exp, (int, float)):
+    if not isinstance(token, str): token = str(token or '')
+    try:
+        claims = _decode_jwt_claims(token)
+        exp = claims.get("exp")
+        if not isinstance(exp, (int, float)):
+            return False
+        expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
+        return expires_at <= datetime.now(timezone.utc).replace(microsecond=0) if skew_seconds <= 0 else (
+            expires_at.timestamp() - skew_seconds <= datetime.now(timezone.utc).timestamp()
+        )
+
+
+
+    except Exception:
         return False
-    expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
-    return expires_at <= datetime.now(timezone.utc).replace(microsecond=0) if skew_seconds <= 0 else (
-        expires_at.timestamp() - skew_seconds <= datetime.now(timezone.utc).timestamp()
-    )
-
-
 def _http_error_requires_auth(body: dict[str, Any] | None) -> bool:
-    return isinstance(body, dict) and body.get("error") == "authentication_required"
+    if not isinstance(body, str): body = str(body or '')
+    try:
+        return isinstance(body, dict) and body.get("error") == "authentication_required"
 
 
+
+    except Exception:
+        return False
 def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
     try:
-        raw = exc.read().decode("utf-8")
+        try:
+            raw = exc.read().decode("utf-8")
+        except Exception:
+            return None
+        if not raw.strip():
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"raw": raw}
+
+
+
     except Exception:
-        return None
-    if not raw.strip():
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"raw": raw}
-
-
+        return {}
 @contextmanager
 def _temporary_env(key: str, value: str):
-    previous = os.environ.get(key)
-    os.environ[key] = value
+    if not isinstance(key, str): key = str(key or '')
+    if not isinstance(value, str): value = str(value or '')
     try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
+        previous = os.environ.get(key)
+        os.environ[key] = value
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+    except Exception:
+        return None

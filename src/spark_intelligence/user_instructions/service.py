@@ -66,36 +66,41 @@ _FORGET_PREFIXES = (
 
 
 def detect_instruction_intent(message: str) -> dict | None:
-    text = str(message or "").strip()
-    if not text:
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if has_conversation_only_boundary(text) or denies_intent(
+            text,
+            ("remember", "save", "forget", "store", "delete"),
+        ):
+            return None
+        for pattern in _FORGET_PREFIXES:
+            match = pattern.match(text)
+            if match:
+                body = match.group("body").strip().rstrip(".!?")
+                if body:
+                    return {"action": "forget", "instruction_text": body}
+        for pattern in _REMEMBER_PREFIXES:
+            match = pattern.match(text)
+            if match:
+                body = match.group("body").strip().rstrip(".")
+                if body:
+                    return {"action": "remember", "instruction_text": body}
+        inline = _INLINE_DIRECTIVE.search(text)
+        if inline:
+            directive = inline.group("directive").lower()
+            body = inline.group("body").strip().rstrip(".!?,")
+            if body and len(body.split()) >= 2:
+                phrase = f"{directive} {body}".strip()
+                return {"action": "remember", "instruction_text": phrase}
         return None
-    if has_conversation_only_boundary(text) or denies_intent(
-        text,
-        ("remember", "save", "forget", "store", "delete"),
-    ):
-        return None
-    for pattern in _FORGET_PREFIXES:
-        match = pattern.match(text)
-        if match:
-            body = match.group("body").strip().rstrip(".!?")
-            if body:
-                return {"action": "forget", "instruction_text": body}
-    for pattern in _REMEMBER_PREFIXES:
-        match = pattern.match(text)
-        if match:
-            body = match.group("body").strip().rstrip(".")
-            if body:
-                return {"action": "remember", "instruction_text": body}
-    inline = _INLINE_DIRECTIVE.search(text)
-    if inline:
-        directive = inline.group("directive").lower()
-        body = inline.group("body").strip().rstrip(".!?,")
-        if body and len(body.split()) >= 2:
-            phrase = f"{directive} {body}".strip()
-            return {"action": "remember", "instruction_text": phrase}
-    return None
 
 
+
+    except Exception:
+        return {}
 def add_instruction(
     state_db: StateDB,
     *,
