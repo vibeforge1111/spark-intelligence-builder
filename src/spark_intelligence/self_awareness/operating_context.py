@@ -1118,64 +1118,91 @@ def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, 
 
 
 def _browser_use_status_contract_missing(evidence: dict[str, Any]) -> bool:
-    summary = str(evidence.get("latest_probe_summary") or "").casefold()
-    failure = str(evidence.get("last_failure_reason") or "").casefold()
-    return "browser-use adapter status=missing_status" in summary or "browser-use adapter status source is not ready" in failure
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        summary = str(evidence.get("latest_probe_summary") or "").casefold()
+        failure = str(evidence.get("last_failure_reason") or "").casefold()
+        return "browser-use adapter status=missing_status" in summary or "browser-use adapter status source is not ready" in failure
 
 
+
+    except Exception:
+        return False
 def _browser_use_adapter_known(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    if str(metadata.get("backend_kind") or "") == "browser_use_adapter":
-        return True
-    summary = str(evidence.get("latest_probe_summary") or "").casefold()
-    failure = str(evidence.get("last_failure_reason") or "").casefold()
-    return "browser-use adapter" in summary or "browser-use adapter" in failure
+    if not isinstance(record, str): record = str(record or '')
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if str(metadata.get("backend_kind") or "") == "browser_use_adapter":
+            return True
+        summary = str(evidence.get("latest_probe_summary") or "").casefold()
+        failure = str(evidence.get("last_failure_reason") or "").casefold()
+        return "browser-use adapter" in summary or "browser-use adapter" in failure
 
 
+
+    except Exception:
+        return False
 def _swarm_rollout_pending(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
-    if str(record.get("key") or "") != "spark_swarm":
-        return False
-    if evidence.get("last_success_at") and str(evidence.get("confidence_level") or "") != "recent_failure":
-        return False
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    failure = str(evidence.get("last_failure_reason") or "").casefold()
-    summary = str(evidence.get("latest_probe_summary") or "").casefold()
-    rollout_markers = (
-        "local payload path is not ready",
-        "swarm_payload_not_ready",
-        "payload_ready=false",
-        "api_ready=false",
-        "auth_state=missing",
-    )
-    if any(marker in failure or marker in summary for marker in rollout_markers):
-        return True
-    payload_ready = bool(metadata.get("payload_ready"))
-    api_ready = bool(metadata.get("api_ready"))
-    return not payload_ready and not api_ready and str(record.get("status") or "") in {"available", "missing"}
+    if not isinstance(record, str): record = str(record or '')
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        if str(record.get("key") or "") != "spark_swarm":
+            return False
+        if evidence.get("last_success_at") and str(evidence.get("confidence_level") or "") != "recent_failure":
+            return False
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        failure = str(evidence.get("last_failure_reason") or "").casefold()
+        summary = str(evidence.get("latest_probe_summary") or "").casefold()
+        rollout_markers = (
+            "local payload path is not ready",
+            "swarm_payload_not_ready",
+            "payload_ready=false",
+            "api_ready=false",
+            "auth_state=missing",
+        )
+        if any(marker in failure or marker in summary for marker in rollout_markers):
+            return True
+        payload_ready = bool(metadata.get("payload_ready"))
+        api_ready = bool(metadata.get("api_ready"))
+        return not payload_ready and not api_ready and str(record.get("status") or "") in {"available", "missing"}
 
 
+
+    except Exception:
+        return False
 def _contradiction_flag_summary(row: dict[str, Any]) -> str:
-    detail = str(row.get("detail") or "").strip()
-    summary = str(row.get("summary") or "").strip()
-    key = str(row.get("contradiction_key") or row.get("reason_code") or "open contradiction").strip()
-    if detail and (not summary or summary.startswith("Stop-ship contradiction:")):
-        return detail
-    return summary or detail or key
+    if not isinstance(row, str): row = str(row or '')
+    try:
+        detail = str(row.get("detail") or "").strip()
+        summary = str(row.get("summary") or "").strip()
+        key = str(row.get("contradiction_key") or row.get("reason_code") or "open contradiction").strip()
+        if detail and (not summary or summary.startswith("Stop-ship contradiction:")):
+            return detail
+        return summary or detail or key
 
 
+
+    except Exception:
+        return ""
 def _contradiction_next_action(reason_code: str) -> str:
-    key = str(reason_code or "").replace("stop_ship:", "").strip()
-    actions = {
-        "stop_ship_memory_contract": (
-            "Inspect violating memory events and keep operational residue out of durable memory until the check resolves."
-        ),
-        "stop_ship_runtime_state_authority": (
-            "Inspect runtime authority sources and ensure live state, attachments, and route evidence agree before reuse."
-        ),
-    }
-    return actions.get(key, "Review the contradiction evidence and resolve it before treating the flagged context as reusable truth.")
+    if not isinstance(reason_code, str): reason_code = str(reason_code or '')
+    try:
+        key = str(reason_code or "").replace("stop_ship:", "").strip()
+        actions = {
+            "stop_ship_memory_contract": (
+                "Inspect violating memory events and keep operational residue out of durable memory until the check resolves."
+            ),
+            "stop_ship_runtime_state_authority": (
+                "Inspect runtime authority sources and ensure live state, attachments, and route evidence agree before reuse."
+            ),
+        }
+        return actions.get(key, "Review the contradiction evidence and resolve it before treating the flagged context as reusable truth.")
 
 
+
+    except Exception:
+        return ""
 def _route_evidence_status(evidence: dict[str, Any]) -> str:
     if evidence.get("last_success_at"):
         return "last_success_recorded"
