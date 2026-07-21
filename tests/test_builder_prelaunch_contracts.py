@@ -35,6 +35,7 @@ from spark_intelligence.observability.store import (
     recent_observer_packet_records,
     recent_policy_gate_records,
     record_environment_snapshot,
+    record_config_mutation,
     record_event,
     repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
@@ -228,7 +229,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             ).fetchone()
             requested_event = conn.execute(
                 """
-                SELECT request_id, trace_ref
+                SELECT event_id, parent_event_id, correlation_id, request_id, trace_ref
                 FROM builder_events
                 WHERE event_type = 'config_mutation_requested'
                     AND actor_id = 'local-operator'
@@ -239,7 +240,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             ).fetchone()
             applied_event = conn.execute(
                 """
-                SELECT request_id, trace_ref
+                SELECT event_id, parent_event_id, correlation_id, request_id, trace_ref
                 FROM builder_events
                 WHERE event_type = 'config_mutation_applied'
                     AND actor_id = 'local-operator'
@@ -261,7 +262,47 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(applied_event["request_id"], expected_request_id)
         self.assertEqual(requested_event["trace_ref"], f"trace:{expected_request_id}")
         self.assertEqual(applied_event["trace_ref"], f"trace:{expected_request_id}")
+        self.assertEqual(requested_event["correlation_id"], row["mutation_id"])
+        self.assertEqual(applied_event["correlation_id"], row["mutation_id"])
+        self.assertEqual(applied_event["parent_event_id"], requested_event["event_id"])
         self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
+
+    def test_config_mutation_preserves_supplied_request_trace_lineage(self) -> None:
+        mutation_id = record_config_mutation(
+            self.state_db,
+            target_document="config.toml",
+            target_path="runtime.install.profile",
+            actor_id="operator:test",
+            actor_type="human",
+            reason_code="test_trace_lineage",
+            request_source="test",
+            before_payload="local",
+            after_payload="telegram-agent",
+            status="applied",
+            rollback_payload="local",
+            request_id="req-config-lineage",
+            trace_ref="trace:config-lineage",
+        )
+
+        with self.state_db.connect() as conn:
+            events = conn.execute(
+                """
+                SELECT event_id, event_type, parent_event_id, correlation_id, request_id, trace_ref
+                FROM builder_events
+                WHERE correlation_id = ?
+                ORDER BY created_at, event_id
+                """,
+                (mutation_id,),
+            ).fetchall()
+
+        events_by_type = {event["event_type"]: event for event in events}
+        self.assertEqual(set(events_by_type), {"config_mutation_requested", "config_mutation_applied"})
+        self.assertEqual(
+            events_by_type["config_mutation_applied"]["parent_event_id"],
+            events_by_type["config_mutation_requested"]["event_id"],
+        )
+        self.assertTrue(all(event["request_id"] == "req-config-lineage" for event in events))
+        self.assertTrue(all(event["trace_ref"] == "trace:config-lineage" for event in events))
 
     def test_env_secret_noop_upsert_is_rejected_without_rewrite(self) -> None:
         self.config_manager.upsert_env_secret("TEST_SECRET", "abc123")
