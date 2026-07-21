@@ -793,113 +793,125 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
 
 
 def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
-    """Build a Telegram-facing reply contract from saved persona state.
+    if not isinstance(profile, str): profile = str(profile or '')
+    try:
+        """Build a Telegram-facing reply contract from saved persona state.
 
-    This is stronger than the generic personality directive: it tells Builder-owned
-    conversational surfaces how the agent should *feel* in visible Telegram replies.
-    """
-    if not profile:
+        This is stronger than the generic personality directive: it tells Builder-owned
+        conversational surfaces how the agent should *feel* in visible Telegram replies.
+        """
+        if not profile:
+            return ""
+
+        traits = profile.get("traits") or {}
+        personality_name = str(profile.get("personality_name") or "").strip()
+        agent_persona_name = str(profile.get("agent_persona_name") or "").strip()
+        agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+        behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+
+        parts: list[str] = [
+            "Let the saved persona shape the visible Telegram reply, not just hidden reasoning."
+        ]
+        if agent_persona_name:
+            parts.append(f"Speak with the steady voice of '{agent_persona_name}'.")
+        elif personality_name:
+            parts.append(f"Keep the visible Telegram voice consistent with '{personality_name}'.")
+        if agent_persona_summary:
+            parts.append(f"Core stance: {agent_persona_summary}.")
+
+        directness = float(traits.get("directness", 0.5))
+        pacing = float(traits.get("pacing", 0.5))
+        warmth = float(traits.get("warmth", 0.5))
+        playfulness = float(traits.get("playfulness", 0.5))
+        assertiveness = float(traits.get("assertiveness", 0.5))
+
+        if directness >= 0.6 or pacing >= 0.6:
+            parts.append("Lead with the answer, recommendation, or key split in the first sentence.")
+        elif directness <= 0.35 or pacing <= 0.35:
+            parts.append("Add enough context for the user to follow the reasoning before you land the recommendation.")
+
+        if warmth >= 0.6:
+            parts.append("Sound human and present, not sterile or robotic.")
+        elif warmth <= 0.35:
+            parts.append("Keep the tone controlled and matter-of-fact.")
+
+        if assertiveness >= 0.65:
+            parts.append("Make a call when the evidence is good enough instead of over-hedging.")
+        elif assertiveness <= 0.35:
+            parts.append("Use measured uncertainty when the evidence is incomplete.")
+
+        if playfulness >= 0.65:
+            parts.append("A little lightness is fine, but keep it purposeful.")
+        elif playfulness <= 0.35:
+            parts.append("Do not force humor, banter, or performative enthusiasm.")
+
+        parts.append("Treat Telegram like an ongoing 1:1 conversation, not a canned assistant greeting.")
+        parts.append("Continue from the user's actual message or project context instead of resetting the conversation.")
+        parts.append(
+            "When discussing existing Spawner UI, Kanban, Canvas, Mission Control, relay state, or task execution, "
+            "assume those surfaces already exist in spawner-ui. Do not suggest a standalone app or ask whether it should "
+            "be standalone unless the user explicitly asks for a separate tool."
+        )
+        parts.append(
+            "Do not fall back to generic check-in questions like 'What's on your mind?', "
+            "'What are you working on?', or 'How can I help today?' unless the user explicitly asks for an open-ended check-in."
+        )
+        parts.append("When a follow-up helps, ask at most one specific question tied to the user's last message.")
+        parts.append("Prefer a concrete answer, reflection, or next step over filler conversation resets.")
+
+        if behavioral_rules:
+            rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
+            if rules_text:
+                parts.append(
+                    "Honor these saved Telegram reply rules unless the user redirects this turn: "
+                    f"{rules_text}"
+                )
+
+        parts.append("Do not mention persona metadata, trait labels, or hidden style instructions.")
+        return " ".join(parts)
+
+
+
+    except Exception:
         return ""
-
-    traits = profile.get("traits") or {}
-    personality_name = str(profile.get("personality_name") or "").strip()
-    agent_persona_name = str(profile.get("agent_persona_name") or "").strip()
-    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
-    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
-
-    parts: list[str] = [
-        "Let the saved persona shape the visible Telegram reply, not just hidden reasoning."
-    ]
-    if agent_persona_name:
-        parts.append(f"Speak with the steady voice of '{agent_persona_name}'.")
-    elif personality_name:
-        parts.append(f"Keep the visible Telegram voice consistent with '{personality_name}'.")
-    if agent_persona_summary:
-        parts.append(f"Core stance: {agent_persona_summary}.")
-
-    directness = float(traits.get("directness", 0.5))
-    pacing = float(traits.get("pacing", 0.5))
-    warmth = float(traits.get("warmth", 0.5))
-    playfulness = float(traits.get("playfulness", 0.5))
-    assertiveness = float(traits.get("assertiveness", 0.5))
-
-    if directness >= 0.6 or pacing >= 0.6:
-        parts.append("Lead with the answer, recommendation, or key split in the first sentence.")
-    elif directness <= 0.35 or pacing <= 0.35:
-        parts.append("Add enough context for the user to follow the reasoning before you land the recommendation.")
-
-    if warmth >= 0.6:
-        parts.append("Sound human and present, not sterile or robotic.")
-    elif warmth <= 0.35:
-        parts.append("Keep the tone controlled and matter-of-fact.")
-
-    if assertiveness >= 0.65:
-        parts.append("Make a call when the evidence is good enough instead of over-hedging.")
-    elif assertiveness <= 0.35:
-        parts.append("Use measured uncertainty when the evidence is incomplete.")
-
-    if playfulness >= 0.65:
-        parts.append("A little lightness is fine, but keep it purposeful.")
-    elif playfulness <= 0.35:
-        parts.append("Do not force humor, banter, or performative enthusiasm.")
-
-    parts.append("Treat Telegram like an ongoing 1:1 conversation, not a canned assistant greeting.")
-    parts.append("Continue from the user's actual message or project context instead of resetting the conversation.")
-    parts.append(
-        "When discussing existing Spawner UI, Kanban, Canvas, Mission Control, relay state, or task execution, "
-        "assume those surfaces already exist in spawner-ui. Do not suggest a standalone app or ask whether it should "
-        "be standalone unless the user explicitly asks for a separate tool."
-    )
-    parts.append(
-        "Do not fall back to generic check-in questions like 'What's on your mind?', "
-        "'What are you working on?', or 'How can I help today?' unless the user explicitly asks for an open-ended check-in."
-    )
-    parts.append("When a follow-up helps, ask at most one specific question tied to the user's last message.")
-    parts.append("Prefer a concrete answer, reflection, or next step over filler conversation resets.")
-
-    if behavioral_rules:
-        rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
-        if rules_text:
-            parts.append(
-                "Honor these saved Telegram reply rules unless the user redirects this turn: "
-                f"{rules_text}"
-            )
-
-    parts.append("Do not mention persona metadata, trait labels, or hidden style instructions.")
-    return " ".join(parts)
-
-
 def build_telegram_surface_identity_preamble(
     *,
     profile: dict[str, Any] | None,
     agent_name: str | None = None,
     surface: str = "runtime_command",
 ) -> str:
-    """Build a short deterministic preamble for Builder-owned Telegram replies."""
-    resolved_profile = profile or {}
-    visible_name = str(
-        agent_name
-        or resolved_profile.get("agent_persona_name")
-        or resolved_profile.get("personality_name")
-        or ""
-    ).strip()
+    if not isinstance(profile, str): profile = str(profile or '')
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    if not isinstance(surface, str): surface = str(surface or '')
+    try:
+        """Build a short deterministic preamble for Builder-owned Telegram replies."""
+        resolved_profile = profile or {}
+        visible_name = str(
+            agent_name
+            or resolved_profile.get("agent_persona_name")
+            or resolved_profile.get("personality_name")
+            or ""
+        ).strip()
 
-    if surface == "approval_welcome":
-        if not visible_name:
-            return "Pairing approved. Let's set up your agent."
-        traits = resolved_profile.get("traits") or {}
-        warmth = float(traits.get("warmth", 0.5))
-        directness = float(traits.get("directness", 0.5))
-        pacing = float(traits.get("pacing", 0.5))
-        if not resolved_profile:
-            return f"Pairing approved. {visible_name} is live in this Telegram DM now."
-        if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
-            return f"Pairing approved. {visible_name} is live in this Telegram DM now."
-        return f"Pairing approved. {visible_name} is here with you in this Telegram DM now."
+        if surface == "approval_welcome":
+            if not visible_name:
+                return "Pairing approved. Let's set up your agent."
+            traits = resolved_profile.get("traits") or {}
+            warmth = float(traits.get("warmth", 0.5))
+            directness = float(traits.get("directness", 0.5))
+            pacing = float(traits.get("pacing", 0.5))
+            if not resolved_profile:
+                return f"Pairing approved. {visible_name} is live in this Telegram DM now."
+            if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
+                return f"Pairing approved. {visible_name} is live in this Telegram DM now."
+            return f"Pairing approved. {visible_name} is here with you in this Telegram DM now."
 
-    return ""
+        return ""
 
 
+
+    except Exception:
+        return ""
 def apply_telegram_surface_persona(
     *,
     reply_text: str,
@@ -907,110 +919,129 @@ def apply_telegram_surface_persona(
     agent_name: str | None = None,
     surface: str = "runtime_command",
 ) -> str:
-    """Apply light identity/tone framing to deterministic Telegram replies."""
-    normalized_text = _normalize_telegram_conversation_reply(str(reply_text or ""))
-    if not normalized_text:
-        return ""
-    if surface == "approval_welcome":
+    if not isinstance(reply_text, str): reply_text = str(reply_text or '')
+    if not isinstance(profile, str): profile = str(profile or '')
+    if not isinstance(agent_name, str): agent_name = str(agent_name or '')
+    if not isinstance(surface, str): surface = str(surface or '')
+    try:
+        """Apply light identity/tone framing to deterministic Telegram replies."""
+        normalized_text = _normalize_telegram_conversation_reply(str(reply_text or ""))
+        if not normalized_text:
+            return ""
+        if surface == "approval_welcome":
+            preamble = build_telegram_surface_identity_preamble(
+                profile=profile,
+                agent_name=agent_name,
+                surface=surface,
+            )
+            return preamble or normalized_text
+
         preamble = build_telegram_surface_identity_preamble(
             profile=profile,
             agent_name=agent_name,
             surface=surface,
         )
-        return preamble or normalized_text
+        if not preamble:
+            return normalized_text
 
-    preamble = build_telegram_surface_identity_preamble(
-        profile=profile,
-        agent_name=agent_name,
-        surface=surface,
-    )
-    if not preamble:
-        return normalized_text
+        lowered_text = normalized_text.lower()
+        visible_name = str(
+            agent_name
+            or (profile or {}).get("agent_persona_name")
+            or (profile or {}).get("personality_name")
+            or ""
+        ).strip()
+        if visible_name and (
+            lowered_text.startswith(f"{visible_name.lower()}:")
+            or lowered_text.startswith(f"{visible_name.lower()} here.")
+            or lowered_text.startswith(f"`{visible_name.lower()}`")
+        ):
+            return normalized_text
 
-    lowered_text = normalized_text.lower()
-    visible_name = str(
-        agent_name
-        or (profile or {}).get("agent_persona_name")
-        or (profile or {}).get("personality_name")
-        or ""
-    ).strip()
-    if visible_name and (
-        lowered_text.startswith(f"{visible_name.lower()}:")
-        or lowered_text.startswith(f"{visible_name.lower()} here.")
-        or lowered_text.startswith(f"`{visible_name.lower()}`")
-    ):
-        return normalized_text
-
-    lines = normalized_text.splitlines()
-    for index, line in enumerate(lines):
-        if not line.strip():
-            continue
-        lines[index] = f"{preamble} {line.strip()}".strip()
-        break
-    return "\n".join(lines)
+        lines = normalized_text.splitlines()
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            lines[index] = f"{preamble} {line.strip()}".strip()
+            break
+        return "\n".join(lines)
 
 
-def _normalize_telegram_conversation_reply(reply_text: str) -> str:
-    normalized = str(reply_text or "").strip()
-    if not normalized:
+
+    except Exception:
         return ""
+def _normalize_telegram_conversation_reply(reply_text: str) -> str:
+    if not isinstance(reply_text, str): reply_text = str(reply_text or '')
+    try:
+        normalized = str(reply_text or "").strip()
+        if not normalized:
+            return ""
 
-    for pattern, replacement in _TELEGRAM_GENERIC_OPENER_REWRITES:
-        normalized = pattern.sub(replacement, normalized)
+        for pattern, replacement in _TELEGRAM_GENERIC_OPENER_REWRITES:
+            normalized = pattern.sub(replacement, normalized)
 
-    normalized = re.sub(r"[ \t]{2,}", " ", normalized)
-    normalized = re.sub(r" *\n *", "\n", normalized)
-    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
-    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized)
-    normalized = re.sub(r"([.!?]){2,}", r"\1", normalized)
-    normalized = normalized.strip()
+        normalized = re.sub(r"[ \t]{2,}", " ", normalized)
+        normalized = re.sub(r" *\n *", "\n", normalized)
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+        normalized = re.sub(r"\s+([?.!,])", r"\1", normalized)
+        normalized = re.sub(r"([.!?]){2,}", r"\1", normalized)
+        normalized = normalized.strip()
 
-    if _TELEGRAM_TRIVIAL_GREETING_RE.fullmatch(normalized):
-        return "Ready when you are."
+        if _TELEGRAM_TRIVIAL_GREETING_RE.fullmatch(normalized):
+            return "Ready when you are."
 
-    return normalized
+        return normalized
 
 
+
+    except Exception:
+        return ""
 def load_agent_persona_profile(
     *,
     agent_id: str | None,
     human_id: str | None = None,
     state_db: StateDB | None,
 ) -> dict[str, Any]:
-    candidate_ids = _persona_lookup_agent_ids(agent_id=agent_id, human_id=human_id)
-    if not candidate_ids or state_db is None:
-        return {}
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
     try:
-        with state_db.connect() as conn:
-            for candidate_agent_id in candidate_ids:
-                row = conn.execute(
-                    """
-                    SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
-                    FROM agent_persona_profiles
-                    WHERE agent_id = ?
-                    LIMIT 1
-                    """,
-                    (candidate_agent_id,),
-                ).fetchone()
-                if not row:
-                    continue
-                base_traits = json.loads(row["base_traits_json"] or "{}")
-                behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-                provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
-                return {
-                    "agent_id": candidate_agent_id,
-                    "persona_name": _read_optional_text(row["persona_name"]),
-                    "persona_summary": _read_optional_text(row["persona_summary"]),
-                    "base_traits": {k: float(v) for k, v in base_traits.items() if k in _DEFAULT_TRAITS},
-                    "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
-                    "provenance": provenance if isinstance(provenance, dict) else {},
-                    "updated_at": row["updated_at"],
-                }
-        return {}
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
-        return {}
+        candidate_ids = _persona_lookup_agent_ids(agent_id=agent_id, human_id=human_id)
+        if not candidate_ids or state_db is None:
+            return {}
+        try:
+            with state_db.connect() as conn:
+                for candidate_agent_id in candidate_ids:
+                    row = conn.execute(
+                        """
+                        SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
+                        FROM agent_persona_profiles
+                        WHERE agent_id = ?
+                        LIMIT 1
+                        """,
+                        (candidate_agent_id,),
+                    ).fetchone()
+                    if not row:
+                        continue
+                    base_traits = json.loads(row["base_traits_json"] or "{}")
+                    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+                    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+                    return {
+                        "agent_id": candidate_agent_id,
+                        "persona_name": _read_optional_text(row["persona_name"]),
+                        "persona_summary": _read_optional_text(row["persona_summary"]),
+                        "base_traits": {k: float(v) for k, v in base_traits.items() if k in _DEFAULT_TRAITS},
+                        "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
+                        "provenance": provenance if isinstance(provenance, dict) else {},
+                        "updated_at": row["updated_at"],
+                    }
+            return {}
+        except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
+            return {}
 
 
+
+    except Exception:
+        return {}
 def push_agent_persona_undo_snapshot(
     *,
     agent_id: str,
