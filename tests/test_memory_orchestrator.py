@@ -808,6 +808,68 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(relevant), 2)
         self.assertTrue(all((event["facts_json"] or {}).get("reason") is None for event in relevant))
 
+    def test_sdk_unavailable_reads_still_record_requested_events(self) -> None:
+        with patch(
+            "spark_intelligence.memory.orchestrator._load_sdk_client_for_module",
+            return_value=None,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": False, "reason": "sdk_unavailable"},
+        ):
+            historical = lookup_historical_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:test",
+                predicate="profile.current_focus",
+                as_of="2026-07-01T00:00:00Z",
+                actor_id="test",
+            )
+            evidence = read_memory_kernel(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                method="retrieve_evidence",
+                subject="human:test",
+                predicate="profile.current_focus",
+                query="What should we evaluate next?",
+                actor_id="test",
+            )
+            recovery = recover_task_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="What should happen next?",
+                actor_id="test",
+            )
+            episodic = recall_episodic_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="What happened last time?",
+                actor_id="test",
+            )
+
+        assert historical.read_result.reason == "sdk_unavailable"
+        assert evidence.read_result.reason == "sdk_unavailable"
+        assert recovery.read_result.reason == "sdk_unavailable"
+        assert episodic.read_result.reason == "sdk_unavailable"
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="memory_read_requested",
+            limit=10,
+        )
+        facts_by_method = {
+            str((event["facts_json"] or {}).get("method")): event["facts_json"] or {}
+            for event in events
+        }
+        assert {
+            "get_historical_state",
+            "retrieve_evidence",
+            "recover_task_context",
+            "recall_episodic_context",
+        }.issubset(facts_by_method)
+        assert facts_by_method["get_historical_state"]["as_of"] == "2026-07-01T00:00:00Z"
+        assert facts_by_method["retrieve_evidence"]["query"] == "What should we evaluate next?"
+
     def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(

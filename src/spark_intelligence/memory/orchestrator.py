@@ -1999,6 +1999,17 @@ class MemoryKernelAdapter:
         if self.client is None:
             read_result = _memory_kernel_abstained_read_result(method=method, reason="sdk_unavailable", shadow_only=shadow_only)
             if record_activity:
+                _record_memory_read_requested_subject(
+                    state_db=self.state_db,
+                    method=method,
+                    subject=subject,
+                    predicate=predicate,
+                    query=query,
+                    as_of=as_of,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
                 _record_memory_read_event(
                     state_db=self.state_db,
                     result=read_result,
@@ -2066,6 +2077,16 @@ class MemoryKernelAdapter:
         if self.client is None:
             read_result = _memory_kernel_abstained_read_result(method=method, reason="sdk_unavailable", shadow_only=shadow_only)
             if record_activity:
+                _record_memory_read_requested_subject(
+                    state_db=self.state_db,
+                    method=method,
+                    subject=normalized_subject or "",
+                    predicate=normalized_predicate,
+                    query=normalized_query,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
                 _record_memory_read_event(
                     state_db=self.state_db,
                     result=read_result,
@@ -2775,6 +2796,16 @@ def recover_task_context_in_memory(
             reason="sdk_unavailable",
             shadow_only=False,
         )
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="recover_task_context",
+            subject=subject,
+            predicate=None,
+            query=query,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
         _record_memory_read_event(
             state_db=state_db,
             result=read_result,
@@ -2860,6 +2891,16 @@ def recall_episodic_context_in_memory(
             abstained=True,
             reason="sdk_unavailable",
             shadow_only=False,
+        )
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="recall_episodic_context",
+            subject=subject,
+            predicate=None,
+            query=query,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
         )
         _record_memory_read_event(
             state_db=state_db,
