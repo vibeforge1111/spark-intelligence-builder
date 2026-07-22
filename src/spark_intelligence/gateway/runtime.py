@@ -396,6 +396,7 @@ def gateway_start(
                         f"but all {poll_result.failed_send_count} outbound sends failed"
                     ),
                 )
+                ok = False
             else:
                 record_telegram_poll_success(state_db=state_db)
                 if poll_result.failed_send_count > 0:
