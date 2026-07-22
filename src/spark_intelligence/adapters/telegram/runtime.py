@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -17,6 +18,9 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
+
+
+_LOGGER = logging.getLogger(__name__)
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
@@ -828,12 +832,14 @@ def _maybe_save_reply_as_draft(
                 user_message=user_message,
             )
         except Exception:
+            _LOGGER.warning("Telegram draft lookup failed; reply delivery continues.")
             source_draft = None
         if source_draft is not None:
             on_topic = True
             try:
                 on_topic = reply_resembles_draft(source_draft.content, reply)
             except Exception:
+                _LOGGER.warning("Telegram draft similarity check failed; preserving the existing draft.")
                 on_topic = True
             if on_topic:
                 try:
@@ -845,7 +851,7 @@ def _maybe_save_reply_as_draft(
                         governor_decision=governor_decision,
                     )
                 except Exception:
-                    pass
+                    _LOGGER.warning("Telegram draft update failed; reply delivery continues.")
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
             # preserve the original draft and capture the divergent
@@ -861,7 +867,7 @@ def _maybe_save_reply_as_draft(
                     governor_decision=governor_decision,
                 )
             except Exception:
-                pass
+                _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
             return reply_text
         try:
             save_draft(
@@ -874,7 +880,7 @@ def _maybe_save_reply_as_draft(
                 governor_decision=governor_decision,
             )
         except Exception:
-            pass
+            _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
         return reply_text
 
     if is_generative:
@@ -889,7 +895,7 @@ def _maybe_save_reply_as_draft(
                 governor_decision=governor_decision,
             )
         except Exception:
-            pass
+            _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
         return reply_text
 
     return reply_text

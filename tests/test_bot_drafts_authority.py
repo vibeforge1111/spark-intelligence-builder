@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import _maybe_save_reply_as_draft
 from spark_intelligence.bot_drafts import list_recent_drafts, save_draft, update_draft_content
@@ -161,3 +162,29 @@ class BotDraftAuthorityTests(SparkTestCase):
             user_message="write me a post",
         )
         self.assertEqual(self._drafts(), [])
+
+    def test_telegram_logs_bounded_draft_lookup_failure_without_exception_detail(self) -> None:
+        update_payload = self._turn_payload(
+            tool_name=BOT_DRAFT_WRITE_TOOL,
+            owner_system=BOT_DRAFT_OWNER_SYSTEM,
+        )
+        with patch(
+            "spark_intelligence.bot_drafts.find_draft_for_iteration",
+            side_effect=RuntimeError("secret draft database detail"),
+        ), self.assertLogs(
+            "spark_intelligence.adapters.telegram.runtime",
+            level="WARNING",
+        ) as captured:
+            returned = _maybe_save_reply_as_draft(
+                state_db=self.state_db,
+                update_payload=update_payload,
+                external_user_id=self.USER,
+                session_id=f"session:{self.USER}",
+                chip_used=None,
+                reply_text="A safe iteration reply.",
+                user_message="make it shorter",
+            )
+
+        self.assertEqual(returned, "A safe iteration reply.")
+        self.assertIn("draft lookup failed", captured.output[0].lower())
+        self.assertNotIn("secret", "\n".join(captured.output))
