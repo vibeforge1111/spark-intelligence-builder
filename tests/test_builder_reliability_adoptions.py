@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.adapters.telegram.runtime import _prepare_telegram_media_input
 from spark_intelligence.attachments.hooks import _load_json_file
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.channel.service import inspect_telegram_bot_token
@@ -17,6 +19,44 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_voice_transcription_failure_redacts_user_visible_details(self) -> None:
+        authority = SimpleNamespace(
+            allowed=True,
+            governor_decision={},
+            harness_core_envelope={},
+        )
+        normalized = SimpleNamespace(
+            message_kind="voice",
+            text=None,
+            update_id=1,
+            media_file_id="voice-1",
+        )
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.authorize_builder_bridge_action",
+                return_value=authority,
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime._decode_embedded_telegram_audio",
+                side_effect=RuntimeError(
+                    "provider token=supersecret123456 at https://private.example/audio"
+                ),
+            ),
+        ):
+            result = _prepare_telegram_media_input(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                normalized=normalized,
+                update_payload={},
+                client=None,
+            )
+
+        self.assertEqual(result["routing_decision"], "voice_transcription_unavailable")
+        self.assertNotIn("supersecret123456", result["error"])
+        self.assertNotIn("private.example", result["error"])
+        self.assertNotIn("supersecret123456", result["reply_text"])
+        self.assertIn("token=***", result["error"])
+
     def test_attachment_snapshot_uses_atomic_publication(self) -> None:
         with patch("spark_intelligence.attachments.snapshot.atomic_write_text") as atomic_write:
             snapshot = sync_attachment_snapshot(
