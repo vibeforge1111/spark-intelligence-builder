@@ -17,6 +17,17 @@ from tests.test_support import SparkTestCase
 
 
 class RuntimePathPlatformGuardTests(SparkTestCase):
+    @patch("spark_intelligence.swarm_bridge.sync.Path.home")
+    def test_swarm_autodiscovery_uses_canonical_module_source(self, path_home) -> None:
+        path_home.return_value = self.home
+        runtime_root = self.home / ".spark" / "modules" / "spark-swarm" / "source"
+        runtime_root.mkdir(parents=True)
+
+        discovered, source = _discover_swarm_runtime_root(self.config_manager)
+
+        self.assertEqual(discovered, runtime_root)
+        self.assertEqual(source, "autodiscovered")
+
     @patch("spark_intelligence.config.loader._is_wsl_runtime", return_value=False)
     def test_windows_path_is_not_translated_on_plain_posix(self, _is_wsl_runtime) -> None:
         raw = r"C:\Users\USER\Desktop\spark-intelligence-builder"
