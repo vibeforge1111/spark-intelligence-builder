@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.attachments import resolve_chip_record, run_chip_hook
+from spark_intelligence.atomic_io import atomic_write_text
 
 
 @dataclass
@@ -381,7 +382,7 @@ def run_chip_autoloop(
             "history": history,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_text(status_path, json.dumps(payload, indent=2))
         _write_canonical_loop_evidence(
             config_manager=config_manager,
             chip_key=chip_key,

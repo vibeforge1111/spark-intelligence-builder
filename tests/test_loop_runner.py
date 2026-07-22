@@ -4,6 +4,12 @@ from spark_intelligence.loops import runner
 
 
 def test_run_chip_autoloop_fails_when_all_candidate_evaluations_error(monkeypatch, tmp_path):
+    atomic_writes = []
+
+    def spy_atomic_write_text(path, content, **kwargs):
+        atomic_writes.append(path)
+        path.write_text(content, encoding="utf-8")
+
     def fake_run_chip_hook(config_manager, *, chip_key, hook, payload, governor_decision):
         if hook == "suggest":
             return SimpleNamespace(
@@ -20,6 +26,7 @@ def test_run_chip_autoloop_fails_when_all_candidate_evaluations_error(monkeypatc
         )
 
     monkeypatch.setattr(runner, "run_chip_hook", fake_run_chip_hook)
+    monkeypatch.setattr(runner, "atomic_write_text", spy_atomic_write_text)
 
     result = runner.run_chip_autoloop(
         config_manager=object(),
@@ -36,6 +43,7 @@ def test_run_chip_autoloop_fails_when_all_candidate_evaluations_error(monkeypatc
     assert "evaluate failed for all 1 candidate" in (result.error or "")
     assert result.history[0]["best_metric"] is None
     assert (tmp_path / "domain-chip-test.status.json").exists()
+    assert tmp_path / "domain-chip-test.status.json" in atomic_writes
 
 
 def test_run_chip_autoloop_preserves_useful_evaluate_error_tail(monkeypatch, tmp_path):
