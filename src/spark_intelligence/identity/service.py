@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -11,6 +12,9 @@ from uuid import uuid4
 
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 LOCAL_OPERATOR_HUMAN_ID = "local-operator"
@@ -1357,7 +1361,8 @@ def _active_pairing_code_rows(conn, *, channel_id: str, external_user_id: str, n
     for row in rows:
         try:
             payload = json.loads(str(row["value"] or "{}"))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            _LOGGER.warning("Skipping malformed pairing runtime state (%s)", type(error).__name__)
             continue
         if not isinstance(payload, dict):
             continue
