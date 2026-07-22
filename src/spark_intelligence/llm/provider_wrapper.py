@@ -23,8 +23,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    system_prompt = sanitize_prompt_boundary_text(Path(args[0]).read_text(encoding="utf-8"))
-    user_prompt = Path(args[1]).read_text(encoding="utf-8")
+    prompt_text: dict[str, str] = {}
+    for label, path_value in (("system", args[0]), ("user", args[1])):
+        try:
+            prompt_text[label] = Path(path_value).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"provider_wrapper: cannot read {label} prompt at {path_value}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+
+    system_prompt = sanitize_prompt_boundary_text(prompt_text["system"])
+    user_prompt = prompt_text["user"]
     response_path = Path(args[2])
 
     provider = DirectProviderRequest(

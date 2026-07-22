@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from spark_intelligence.llm.provider_wrapper import main as provider_wrapper_main
 
 
@@ -86,3 +88,33 @@ def test_wrapper_preserves_benign_system_prompt_exactly(tmp_path: Path) -> None:
     )
 
     assert system == prompt
+
+
+@pytest.mark.parametrize(
+    ("missing_label", "missing_index"),
+    (("system", 0), ("user", 1)),
+)
+def test_wrapper_reports_unreadable_prompt_before_provider_execution(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    missing_label: str,
+    missing_index: int,
+) -> None:
+    system_path = tmp_path / "system.txt"
+    user_path = tmp_path / "user.txt"
+    response_path = tmp_path / "response.json"
+    system_path.write_text("Trusted system frame", encoding="utf-8")
+    user_path.write_text("What is ready?", encoding="utf-8")
+    paths = [system_path, user_path, response_path]
+    paths[missing_index].unlink()
+
+    with patch(
+        "spark_intelligence.llm.provider_wrapper.execute_direct_provider_prompt"
+    ) as execute:
+        assert provider_wrapper_main([str(path) for path in paths]) == 2
+
+    execute.assert_not_called()
+    assert not response_path.exists()
+    error = capsys.readouterr().err
+    assert f"cannot read {missing_label} prompt" in error
+    assert str(paths[missing_index]) in error
