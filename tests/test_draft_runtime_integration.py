@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from spark_intelligence.adapters.telegram.runtime import (
+    _looks_like_memory_forget_request,
     _looks_like_prompt_injection_instruction,
     _maybe_capture_user_instruction,
     _maybe_save_reply_as_draft,
@@ -30,6 +31,13 @@ FOOTER_MARKER = re.compile(r"_\(draft[^)]*\)_", re.IGNORECASE)
 class DraftRuntimeIntegrationTests(SparkTestCase):
     USER = "tg-test-001"
     CHANNEL = "telegram"
+
+    def test_memory_forget_detection_requires_complete_memory_terms(self) -> None:
+        self.assertTrue(_looks_like_memory_forget_request("Delete my saved memories."))
+        self.assertTrue(_looks_like_memory_forget_request("Remove that profile fact."))
+        self.assertTrue(_looks_like_memory_forget_request("Erase my active current profile."))
+        self.assertFalse(_looks_like_memory_forget_request("Delete the memoryless optimization notes."))
+        self.assertFalse(_looks_like_memory_forget_request("Remove the profile factuality example."))
 
     def _drafts(self) -> list:
         return list_recent_drafts(
