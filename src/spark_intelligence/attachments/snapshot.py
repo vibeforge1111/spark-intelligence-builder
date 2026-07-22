@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.attachments.registry import AttachmentRecord, attachment_status
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import payload_hash, record_event
 from spark_intelligence.state.db import StateDB
@@ -131,7 +132,7 @@ def _hide_superseded_legacy_voice_chip(records: list[AttachmentRecord]) -> list[
 def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB) -> AttachmentSnapshot:
     snapshot = build_attachment_snapshot(config_manager)
     snapshot_path = Path(snapshot.snapshot_path)
-    snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
+    atomic_write_text(snapshot_path, snapshot.to_json(), encoding="utf-8")
     summary = {
         "workspace_id": snapshot.workspace_id,
         "record_count": len(snapshot.records),

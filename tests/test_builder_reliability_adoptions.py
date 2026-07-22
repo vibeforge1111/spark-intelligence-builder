@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.hooks import _load_json_file
+from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.channel.service import inspect_telegram_bot_token
 from spark_intelligence.cli import build_parser
 from spark_intelligence.gateway.guardrails import apply_inbound_rate_limit, set_runtime_state_value
@@ -16,6 +17,18 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_attachment_snapshot_uses_atomic_publication(self) -> None:
+        with patch("spark_intelligence.attachments.snapshot.atomic_write_text") as atomic_write:
+            snapshot = sync_attachment_snapshot(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        atomic_write.assert_called_once()
+        self.assertEqual(Path(atomic_write.call_args.args[0]), Path(snapshot.snapshot_path))
+        self.assertEqual(atomic_write.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(json.loads(atomic_write.call_args.args[1])["workspace_id"], snapshot.workspace_id)
+
     def test_hook_output_reader_treats_unreadable_content_as_missing(self) -> None:
         output_path = self.home / "hook-output.json"
         output_path.write_bytes(b"\xff\xfe\x00")
