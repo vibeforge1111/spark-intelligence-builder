@@ -1695,7 +1695,8 @@ def _resolve_specialization_default_mutation_target_path(
         if not destination:
             continue
         root = repo_root.resolve()
-        resolved = (root / destination).resolve()
+        candidate = repo_root / destination
+        resolved = candidate.resolve()
         try:
             resolved.relative_to(root)
         except ValueError:
@@ -1704,7 +1705,7 @@ def _resolve_specialization_default_mutation_target_path(
                 destination,
             )
             continue
-        return resolved
+        return candidate
     return None
 
 
