@@ -298,7 +298,11 @@ def _run_spawner_status_probe(config_manager: ConfigManager, state_db: StateDB) 
         spawner_surface_degraded=spawner_surface_degraded,
         mission_execution_blocked=mission_execution_blocked,
     )
-    degraded_hint = f" degraded_surfaces={len(degraded_surfaces)}" if degraded_surfaces else ""
+    degraded_hint = ""
+    if degraded_surfaces:
+        preview = ", ".join(degraded_surfaces[:3])
+        suffix = ", ..." if len(degraded_surfaces) > 3 else ""
+        degraded_hint = f" degraded_surfaces={len(degraded_surfaces)} [{preview}{suffix}]"
     return {
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else failure_reason,

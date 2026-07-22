@@ -871,6 +871,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
 
         self.assertEqual(result.status, "success")
         self.assertIn("degraded_surfaces=2", result.probe_summary)
+        self.assertIn("[Spark Swarm payload, Watchtower scheduler]", result.probe_summary)
 
     def test_spawner_route_probe_fails_when_spawner_surface_is_degraded(self) -> None:
         mission_payload = {
