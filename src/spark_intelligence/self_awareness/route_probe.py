@@ -127,7 +127,7 @@ def run_route_probe_and_record(
             route_latency_ms=_elapsed_ms(started),
             eval_ref="self.route-probe.run",
             source_ref=f"route_probe_run:{normalized_key}",
-            failure_reason=f"{type(exc).__name__}: {str(exc)[:180]}",
+            failure_reason=f"route_probe_exception:{type(exc).__name__}",
             actor_id=actor_id,
             request_id=request_id,
             session_id=session_id,

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 SYSTEM_MAP_CONTEXT_SCHEMA_VERSION = "spark.aoc_system_map_context.v1"
@@ -204,7 +208,8 @@ def _read_json_object(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("system_map_json_read_failed error_type=%s", type(exc).__name__)
         return {}
     return payload if isinstance(payload, dict) else {}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,9 @@ from spark_intelligence.browser.service import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _SYSTEM_ROLE_HINTS: dict[str, str] = {
@@ -1166,6 +1170,7 @@ def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str
             "error_message": str(exc),
         }
     if execution is None:
+        _LOGGER.debug("browser_registry_hook_unavailable")
         return None
     hook_output = execution.output if isinstance(execution.output, dict) else {}
     hook_status = _normalize_browser_hook_status(hook_output)

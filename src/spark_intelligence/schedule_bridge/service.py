@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -12,6 +13,9 @@ from spark_intelligence.security.spawner_endpoint import (
     request_local_spawner_json,
     resolve_local_spawner_endpoint,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
@@ -346,7 +350,8 @@ def _load_pending() -> dict[str, Any]:
         return {}
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("schedule_pending_store_load_failed error_type=%s", type(exc).__name__)
         return {}
 
 

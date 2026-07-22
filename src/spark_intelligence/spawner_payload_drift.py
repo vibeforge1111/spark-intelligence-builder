@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,9 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _PAYLOAD_KEY_SIGNALS = (
@@ -314,7 +318,8 @@ def _path_from_reference(reference: str) -> Path | None:
         return None
     try:
         return Path(text).expanduser().resolve()
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("spawner_reference_resolution_failed error_type=%s", type(exc).__name__)
         return Path(text).expanduser()
 
 
