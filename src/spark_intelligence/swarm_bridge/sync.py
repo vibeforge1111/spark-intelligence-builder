@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,6 +30,7 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 
 _SWARM_AUTH_REQUEST_TIMEOUT_SECONDS = 15
 _MAX_SWARM_AUTH_RESPONSE_BYTES = 1024 * 1024
+_TEMPORARY_ENV_LOCK = threading.RLock()
 
 
 @dataclass
@@ -2626,12 +2628,13 @@ def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
 
 @contextmanager
 def _temporary_env(key: str, value: str):
-    previous = os.environ.get(key)
-    os.environ[key] = value
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
+    with _TEMPORARY_ENV_LOCK:
+        previous = os.environ.get(key)
+        os.environ[key] = value
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous

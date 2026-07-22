@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +18,7 @@ from spark_intelligence.swarm_bridge.sync import (
     _read_local_swarm_env_map,
     _record_swarm_sync_state,
     _record_swarm_failure_state,
+    _temporary_env,
     evaluate_swarm_escalation,
     swarm_doctor,
     swarm_status,
@@ -26,6 +29,55 @@ from tests.test_support import SparkTestCase
 
 
 class SwarmSyncTests(SparkTestCase):
+    def test_temporary_env_serializes_threads_and_restores_original_value(self) -> None:
+        key = "SPARK_TEST_TEMPORARY_ENV_LOCK"
+        os.environ[key] = "original"
+        self.addCleanup(os.environ.pop, key, None)
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_attempted = threading.Event()
+        second_entered = threading.Event()
+        observed: list[str] = []
+
+        def hold_first_value() -> None:
+            with _temporary_env(key, "first"):
+                first_entered.set()
+                release_first.wait(timeout=2)
+
+        def observe_second_value() -> None:
+            first_entered.wait(timeout=2)
+            second_attempted.set()
+            with _temporary_env(key, "second"):
+                observed.append(os.environ[key])
+                second_entered.set()
+
+        first = threading.Thread(target=hold_first_value)
+        second = threading.Thread(target=observe_second_value)
+        first.start()
+        second.start()
+        self.assertTrue(first_entered.wait(timeout=2))
+        self.assertTrue(second_attempted.wait(timeout=2))
+        self.assertFalse(second_entered.wait(timeout=0.05))
+        self.assertEqual(os.environ[key], "first")
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(observed, ["second"])
+        self.assertEqual(os.environ[key], "original")
+
+    def test_temporary_env_supports_nested_same_thread_use(self) -> None:
+        key = "SPARK_TEST_NESTED_TEMPORARY_ENV"
+        os.environ.pop(key, None)
+        with _temporary_env(key, "outer"):
+            self.assertEqual(os.environ[key], "outer")
+            with _temporary_env(key, "inner"):
+                self.assertEqual(os.environ[key], "inner")
+            self.assertEqual(os.environ[key], "outer")
+        self.assertNotIn(key, os.environ)
+
     def _make_jwt(self, *, expires_in_seconds: int) -> str:
         header = {"alg": "none", "typ": "JWT"}
         payload = {
