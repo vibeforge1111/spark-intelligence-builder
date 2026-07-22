@@ -68,6 +68,24 @@ def run_governed_command(
             timed_out=True,
             timeout_seconds=rendered_timeout,
         )
+    except FileNotFoundError:
+        return GovernedCommandExecution(
+            command=["<redacted:launch_failed>"],
+            cwd=str(cwd),
+            exit_code=127,
+            stdout="",
+            stderr="Governed command was not found.",
+            timeout_seconds=timeout_seconds,
+        )
+    except OSError:
+        return GovernedCommandExecution(
+            command=["<redacted:launch_failed>"],
+            cwd=str(cwd),
+            exit_code=126,
+            stdout="",
+            stderr="Governed command could not be started.",
+            timeout_seconds=timeout_seconds,
+        )
     return GovernedCommandExecution(
         command=list(command),
         cwd=str(cwd),

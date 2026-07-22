@@ -85,6 +85,34 @@ class GovernedExecutionTests(SparkTestCase):
         self.assertNotIn("secret-token", execution.stderr)
         self.assertEqual(execution.stderr, "Governed command timed out after 7.5 seconds.")
 
+    def test_run_governed_command_returns_safe_missing_command_result(self) -> None:
+        raw_command = ["missing-secret-bearing-command"]
+        with patch(
+            "spark_intelligence.execution.governed.subprocess.run",
+            side_effect=FileNotFoundError("secret launch path"),
+        ):
+            execution = run_governed_command(command=raw_command, cwd=self.home)
+
+        self.assertEqual(execution.exit_code, 127)
+        self.assertEqual(execution.command, ["<redacted:launch_failed>"])
+        self.assertEqual(execution.stderr, "Governed command was not found.")
+        self.assertNotIn("secret", execution.stderr)
+
+    def test_run_governed_command_returns_safe_os_error_result(self) -> None:
+        with patch(
+            "spark_intelligence.execution.governed.subprocess.run",
+            side_effect=OSError("secret executable detail"),
+        ):
+            execution = run_governed_command(
+                command=["private-command"],
+                cwd=self.home,
+            )
+
+        self.assertEqual(execution.exit_code, 126)
+        self.assertEqual(execution.command, ["<redacted:launch_failed>"])
+        self.assertEqual(execution.stderr, "Governed command could not be started.")
+        self.assertNotIn("secret", execution.stderr)
+
     def test_run_governed_command_forwards_encoding_and_errors(self) -> None:
         with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
             run_mock.return_value.returncode = 0
