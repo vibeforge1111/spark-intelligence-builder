@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
+    _sanitize_response_body,
     _normalize_collective_payload,
     _normalize_runtime_source,
     _read_local_swarm_env_map,
@@ -375,6 +376,7 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "hold_local")
 
     def test_record_swarm_failure_state_persists_http_error_response_body(self) -> None:
+        secret = "sk-proj-" + "A" * 30
         _record_swarm_failure_state(
             self.state_db,
             kind="sync",
@@ -386,7 +388,12 @@ class SwarmSyncTests(SparkTestCase):
                 api_url="https://sparkswarm.ai",
                 workspace_id="ws_123",
                 accepted=False,
-                response_body={"error": "authentication_required"},
+                response_body={
+                    "error": "authentication_required",
+                    "message": f"provider rejected {secret}",
+                    "internal_token": "private-response-token",
+                    "debug_payload": {"request": "sensitive"},
+                },
             ),
         )
 
@@ -399,6 +406,39 @@ class SwarmSyncTests(SparkTestCase):
         payload = json.loads(str(row["value"]))
         self.assertEqual(payload["mode"], "http_error")
         self.assertEqual(payload["response_body"]["error"], "authentication_required")
+        self.assertIn("<redacted api key>", payload["response_body"]["message"])
+        self.assertNotIn("internal_token", payload["response_body"])
+        self.assertNotIn("debug_payload", payload["response_body"])
+        self.assertNotIn(secret, str(payload))
+        self.assertNotIn("private-response-token", str(payload))
+
+    def test_swarm_sync_result_redacts_response_body_without_mutating_source(self) -> None:
+        source = {
+            "error": "rate_limit",
+            "code": 429,
+            "status": "error",
+            "message": "Authorization: Bearer " + "A" * 24,
+            "user_emails": ["operator@example.com"],
+        }
+
+        sanitized = _sanitize_response_body(source)
+        payload = json.loads(
+            SwarmSyncResult(
+                ok=False,
+                mode="http_error",
+                message="Swarm rejected the request.",
+                payload_path=None,
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                accepted=False,
+                response_body=source,
+            ).to_json()
+        )
+
+        self.assertEqual(set(sanitized or {}), {"error", "message", "code", "status"})
+        self.assertIn("<redacted>", str((sanitized or {})["message"]))
+        self.assertNotIn("user_emails", payload["response_body"])
+        self.assertIn("user_emails", source)
 
     def test_record_swarm_sync_state_clears_last_failure_on_success(self) -> None:
         _record_swarm_failure_state(

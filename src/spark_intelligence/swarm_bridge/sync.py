@@ -24,6 +24,7 @@ from spark_intelligence.security.https_endpoint import (
     post_https_bytes,
     resolve_public_https_endpoint,
 )
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
@@ -31,6 +32,25 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 _SWARM_AUTH_REQUEST_TIMEOUT_SECONDS = 15
 _MAX_SWARM_AUTH_RESPONSE_BYTES = 1024 * 1024
 _TEMPORARY_ENV_LOCK = threading.RLock()
+_SAFE_SWARM_RESPONSE_BODY_KEYS = {"error", "message", "code", "status"}
+_MAX_SWARM_RESPONSE_FIELD_CHARS = 1000
+
+
+def _sanitize_response_body(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(body, dict):
+        return None
+    sanitized: dict[str, Any] = {}
+    for key in _SAFE_SWARM_RESPONSE_BODY_KEYS:
+        if key not in body:
+            continue
+        value = body[key]
+        if isinstance(value, str):
+            sanitized[key] = redact_text(value)[:_MAX_SWARM_RESPONSE_FIELD_CHARS]
+        elif value is None or isinstance(value, (bool, int, float)):
+            sanitized[key] = value
+        else:
+            sanitized[key] = "<redacted non-scalar>"
+    return sanitized
 
 
 @dataclass
@@ -244,7 +264,7 @@ class SwarmSyncResult:
                 "api_url": self.api_url,
                 "workspace_id": self.workspace_id,
                 "accepted": self.accepted,
-                "response_body": self.response_body,
+                "response_body": _sanitize_response_body(self.response_body),
             },
             indent=2,
         )
@@ -259,8 +279,9 @@ class SwarmSyncResult:
             lines.append(f"- workspace_id: {self.workspace_id}")
         if self.accepted is not None:
             lines.append(f"- accepted: {'yes' if self.accepted else 'no'}")
-        if self.response_body is not None:
-            lines.append(f"- response_body: {json.dumps(self.response_body, sort_keys=True)}")
+        safe_response_body = _sanitize_response_body(self.response_body)
+        if safe_response_body is not None:
+            lines.append(f"- response_body: {json.dumps(safe_response_body, sort_keys=True)}")
         return "\n".join(lines)
 
 
@@ -2179,7 +2200,7 @@ def _record_swarm_failure_state(
                 "api_url": result.api_url,
                 "workspace_id": result.workspace_id,
                 "payload_path": result.payload_path,
-                "response_body": result.response_body,
+                "response_body": _sanitize_response_body(result.response_body),
                 "recorded_at": _utc_now_iso(),
             }
         else:
