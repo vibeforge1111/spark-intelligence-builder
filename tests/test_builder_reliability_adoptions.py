@@ -4,11 +4,27 @@ from unittest.mock import patch
 
 from spark_intelligence.cli import build_parser
 from spark_intelligence.self_awareness.capsule import _build_capability_evidence
+from spark_intelligence.self_awareness.handoff_check import build_handoff_freshness_check
 
 from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_handoff_freshness_blocks_when_git_enumeration_is_unavailable(self) -> None:
+        with patch(
+            "spark_intelligence.self_awareness.handoff_check.subprocess.run",
+            side_effect=OSError("git unavailable"),
+        ):
+            result = build_handoff_freshness_check(
+                config_manager=self.config_manager,
+                write_report=False,
+            ).payload
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["healthy"])
+        self.assertFalse(result["summary"]["git_changed_paths_available"])
+        self.assertIn("handoff_git_changed_paths_unavailable", result["warnings"])
+
     def test_auth_login_rejects_callback_url_with_listener_mode(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(
