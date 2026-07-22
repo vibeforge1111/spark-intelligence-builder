@@ -945,7 +945,7 @@ def _execute_voice_io_harness(
             payload=_build_voice_hook_payload(config_manager=config_manager, state_db=state_db, envelope=envelope),
             run_id=run_id,
         )
-    except Exception as exc:
+    except RuntimeError as exc:
         summary = "Voice I/O harness is blocked because no healthy voice status hook is available."
         _record_voice_harness_block(
             state_db=state_db,
@@ -1014,7 +1014,7 @@ def _execute_voice_io_harness(
                 ),
                 run_id=run_id,
             )
-        except Exception as exc:
+        except RuntimeError as exc:
             summary = "Voice I/O harness could not synthesize speech with the current provider/hook state."
             _record_voice_harness_block(
                 state_db=state_db,
