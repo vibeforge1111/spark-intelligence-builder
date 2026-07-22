@@ -5798,7 +5798,16 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     results: list[dict[str, object]] = []
+    total_entries = len(pack_entries)
     for index, entry in enumerate(pack_entries, start=1):
+        try:
+            print(
+                f"[{index}/{total_entries}] running shadow Telegram pack entry...",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
         try:
             raw = gateway_ask_telegram(
                 config_manager=config_manager,
