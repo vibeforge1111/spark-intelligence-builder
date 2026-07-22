@@ -475,7 +475,7 @@ def _load_json_file(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 

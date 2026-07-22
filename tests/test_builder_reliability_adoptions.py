@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.attachments.hooks import _load_json_file
 from spark_intelligence.channel.service import inspect_telegram_bot_token
 from spark_intelligence.cli import build_parser
 from spark_intelligence.gateway.guardrails import apply_inbound_rate_limit, set_runtime_state_value
@@ -14,6 +16,15 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_hook_output_reader_treats_unreadable_content_as_missing(self) -> None:
+        output_path = self.home / "hook-output.json"
+        output_path.write_bytes(b"\xff\xfe\x00")
+        self.assertEqual(_load_json_file(output_path), {})
+
+        output_path.write_text("{}", encoding="utf-8")
+        with patch.object(Path, "read_text", side_effect=OSError("file vanished")):
+            self.assertEqual(_load_json_file(output_path), {})
+
     def test_jobs_tick_runs_later_jobs_before_propagating_first_failure(self) -> None:
         with self.state_db.connect() as conn:
             conn.executemany(
