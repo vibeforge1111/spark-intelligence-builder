@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.context import build_spark_context_capsule
-from spark_intelligence.context.capsule import _build_current_state_lines
+from spark_intelligence.context.capsule import _build_current_state_lines, _build_diagnostics_lines
 from spark_intelligence.context.recent_conversation import _load_builder_event_turns
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -38,6 +38,22 @@ class ContextCapsuleTests(SparkTestCase):
                 ]
             )
         )
+
+    def test_diagnostics_note_read_degrades_only_for_expected_io_failures(self) -> None:
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        note = diagnostics_dir / "spark-diagnostic-2026-04-27T12-55-14+00-00.md"
+        note.write_text("diagnostic", encoding="utf-8")
+
+        with patch("pathlib.Path.read_text", side_effect=OSError("temporarily unavailable")):
+            self.assertEqual(
+                _build_diagnostics_lines(config_manager=self.config_manager),
+                [f"- latest_note: {note.name}"],
+            )
+
+        with patch("pathlib.Path.read_text", side_effect=RuntimeError("programming bug")):
+            with self.assertRaisesRegex(RuntimeError, "programming bug"):
+                _build_diagnostics_lines(config_manager=self.config_manager)
 
     def test_current_state_lookup_logs_safe_candidate_failure_metadata(self) -> None:
         secret_human_id = "human-secret@example.test"

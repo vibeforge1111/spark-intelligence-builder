@@ -122,7 +122,7 @@ class BoundedFailureDiagnosticsTests(SparkTestCase):
         with (
             patch(
                 "spark_intelligence.config.loader.subprocess.run",
-                side_effect=RuntimeError(secret_marker),
+                side_effect=OSError(secret_marker),
             ),
             patch.dict(
                 "spark_intelligence.config.loader.os.environ",
@@ -135,7 +135,7 @@ class BoundedFailureDiagnosticsTests(SparkTestCase):
 
         self.assertEqual(principal, "DOMAIN\\user")
         rendered = "\n".join(captured.output)
-        self.assertIn("error_type=RuntimeError", rendered)
+        self.assertIn("error_type=OSError", rendered)
         self.assertNotIn(secret_marker, rendered)
 
     def test_stop_ship_reconciliation_logs_only_exception_class(self) -> None:

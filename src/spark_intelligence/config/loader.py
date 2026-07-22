@@ -622,7 +622,7 @@ class ConfigManager:
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
                 return principal
-        except Exception as exc:
+        except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
             _LOGGER.debug(
                 "windows_principal_lookup_failed fallback=environment error_type=%s",
                 type(exc).__name__,

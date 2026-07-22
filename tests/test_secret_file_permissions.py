@@ -146,3 +146,8 @@ class SecretFilePermissionTests(SparkTestCase):
         principal = ConfigManager._windows_current_principal()
 
         self.assertEqual(principal, "DESKTOP-SMVB6C0\\USER")
+
+    @patch("spark_intelligence.config.loader.subprocess.run", side_effect=RuntimeError("programming bug"))
+    def test_windows_current_principal_does_not_hide_programming_errors(self, _mock_run) -> None:
+        with self.assertRaisesRegex(RuntimeError, "programming bug"):
+            ConfigManager._windows_current_principal()
