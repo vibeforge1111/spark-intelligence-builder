@@ -11,7 +11,7 @@ import pytest
 from spark_intelligence.gateway.runtime import gateway_start
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
 from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
-from spark_intelligence.security.redaction import redact_text
+from spark_intelligence.security.redaction import contains_secret_shape, redact_text
 from spark_intelligence.self_awareness.system_map_read_model import _freshness_from_generated_at
 from spark_intelligence.spawner_payload_drift import _extract_repo_references
 from spark_intelligence.swarm_bridge.sync import (
@@ -66,6 +66,7 @@ def test_redaction_hides_local_home_paths() -> None:
 
     assert rendered.count("<redacted local path>") == 2
     assert "alice" not in rendered.lower()
+    assert not contains_secret_shape("diagnostic source: /Users/alice/project/state.json")
 
 
 def test_anthropic_long_system_prompt_uses_cacheable_system_block() -> None:

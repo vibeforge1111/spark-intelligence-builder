@@ -31,10 +31,6 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "authorization_header",
     ),
-    (
-        re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\s'\"<>]+|/(?:Users|home)/[^\s'\"<>]+)", re.I),
-        "<redacted local path>",
-    ),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "Bearer <redacted>"),
     (
         re.compile(
@@ -51,6 +47,13 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "json_field",
     ),
     (re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?!\d)"), "<redacted phone>"),
+)
+
+REDACTION_ONLY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\s'\"<>]+|/(?:Users|home)/[^\s'\"<>]+)", re.I),
+        "<redacted local path>",
+    ),
 )
 
 
@@ -95,4 +98,6 @@ def redact_text(text: str | None) -> str:
             )
         else:
             redacted = pattern.sub(replacement, redacted)
+    for pattern, replacement in REDACTION_ONLY_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
     return redacted
