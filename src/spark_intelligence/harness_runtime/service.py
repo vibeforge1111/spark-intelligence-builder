@@ -477,7 +477,7 @@ def execute_harness_chain(
     current_result = primary_result
     for harness_id in normalized_follow_ups:
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
         derived_task = _derive_follow_up_task(
             current_result=current_result,
@@ -529,13 +529,14 @@ def execute_harness_chain(
             raise
         chained_results.append(current_result)
         if current_result.status not in {"completed", "prepared"}:
-            chain_status = "blocked"
+            chain_status = current_result.status
             break
 
+    top_status = primary_result.status if chain_status == "completed" else chain_status
     return HarnessExecutionResult(
         envelope=primary_result.envelope,
         run_id=primary_result.run_id,
-        status=primary_result.status,
+        status=top_status,
         summary=primary_result.summary,
         artifacts=primary_result.artifacts,
         next_actions=primary_result.next_actions,

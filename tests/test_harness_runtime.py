@@ -624,3 +624,33 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(events[0]["facts_json"]["interrupted_harness_id"], "voice.io")
         self.assertEqual(events[0]["facts_json"]["error_type"], "RuntimeError")
         self.assertNotIn(secret, str(events[0]))
+
+    def test_execute_harness_chain_propagates_needs_input_status(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Prepare a grounded answer, then coordinate it through Swarm.",
+            forced_harness_id="researcher.advisory",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+        researcher_result = SimpleNamespace(
+            reply_text="A grounded answer.", evidence_summary="status=ok", trace_ref="trace:test",
+            mode="external_configured", provider_id="custom", provider_model="MiniMax-M2.7",
+            provider_execution_transport="direct_http", routing_decision="provider_execution",
+            active_chip_key=None,
+        )
+
+        with patch(
+            "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
+            return_value=researcher_result,
+        ):
+            result = execute_harness_chain(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+                follow_up_harness_ids=["swarm.escalation"],
+            )
+
+        self.assertEqual(result.status, "needs_input")
+        self.assertEqual(result.chain_status, "needs_input")
+        self.assertEqual((result.chained_results or [])[0].status, "needs_input")
