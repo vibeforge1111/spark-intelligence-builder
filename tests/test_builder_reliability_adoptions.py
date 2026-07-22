@@ -14,11 +14,21 @@ from spark_intelligence.gateway.guardrails import apply_inbound_rate_limit, set_
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.self_awareness.capsule import _build_capability_evidence
 from spark_intelligence.self_awareness.handoff_check import build_handoff_freshness_check
+from spark_intelligence.self_awareness.operating_context import _default_access_automation_actions
 
 from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_workspace_setup_fallback_requires_confirmation(self) -> None:
+        action = next(
+            item for item in _default_access_automation_actions() if item["id"] == "workspace_setup"
+        )
+        self.assertEqual(action["run_policy"], "confirm_once")
+        self.assertEqual(action["confirmation"], "Set up safe workspace")
+        self.assertIn("after you confirm", action["user_message"])
+        self.assertIn("prior Spark access configuration", action["rollback"])
+
     def test_voice_transcription_failure_redacts_user_visible_details(self) -> None:
         authority = SimpleNamespace(
             allowed=True,
