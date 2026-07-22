@@ -286,6 +286,24 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
 
+    def test_evaluate_swarm_escalation_falls_back_from_invalid_long_task_threshold(self) -> None:
+        attachment_context = self._ready_swarm_attachment_context()
+        for value in ("forty", 0, -1):
+            with self.subTest(value=value):
+                self.config_manager.set_path("spark.swarm.routing.long_task_word_count", value)
+                with patch(
+                    "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+                    return_value=attachment_context,
+                ):
+                    result = evaluate_swarm_escalation(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        task="one two three",
+                    )
+
+                self.assertTrue(result.ok)
+                self.assertNotIn("long_task", result.triggers)
+
     def test_evaluate_swarm_escalation_holds_local_when_payload_not_ready(self) -> None:
         result = evaluate_swarm_escalation(
             config_manager=self.config_manager,

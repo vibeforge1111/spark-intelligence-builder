@@ -319,6 +319,14 @@ class SwarmSession:
     auth_state: str
 
 
+def _coerce_positive_int_setting(value: object, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def swarm_read_overview(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
     payload = _fetch_swarm_api_json(
         config_manager=config_manager,
@@ -1311,8 +1319,9 @@ def evaluate_swarm_escalation(
     auto_recommend_enabled = bool(
         config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
     )
-    long_task_word_count = int(
-        config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
+    long_task_word_count = _coerce_positive_int_setting(
+        config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40),
+        default=40,
     )
     keyword_groups = {
         "explicit_swarm": ["swarm", "delegate", "delegation"],

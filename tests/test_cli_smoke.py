@@ -1754,6 +1754,14 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- provider_fallback_chat:", stdout)
         self.assertIn("- manual_recommended:", stdout)
 
+    def test_connect_route_policy_falls_back_from_invalid_swarm_threshold(self) -> None:
+        self.config_manager.set_path("spark.swarm.routing.long_task_word_count", "not-a-count")
+
+        exit_code, stdout, stderr = self.run_cli("connect", "route-policy", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("long_task_word_count=40", stdout)
+
     def test_connect_route_policy_surfaces_swarm_auth_rejection(self) -> None:
         with patch(
             "spark_intelligence.cli.gateway_status",
