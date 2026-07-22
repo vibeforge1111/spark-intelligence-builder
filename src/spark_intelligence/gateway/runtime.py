@@ -61,6 +61,16 @@ GATEWAY_BLOCKING_DOCTOR_CHECKS = {
     "whatsapp-runtime",
 }
 
+
+def _load_gateway_json_object(path: Path, *, surface: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{surface} payload must contain valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{surface} payload must be a JSON object.")
+    return payload
+
 GATEWAY_STDIO_PROTOCOL = "spark.gateway.stdio.v2"
 GATEWAY_STDIO_MAX_REQUEST_BYTES = 1024 * 1024
 _GATEWAY_STDIO_REQUEST_ID = re.compile(r"^telegram:[A-Za-z0-9_.:-]{1,112}$")
@@ -455,7 +465,7 @@ def gateway_simulate_telegram_update(
     as_json: bool = False,
     simulation: bool = True,
 ) -> str:
-    payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
+    payload = _load_gateway_json_object(update_path, surface="Telegram update")
     result = simulate_telegram_update(
         config_manager=config_manager,
         state_db=state_db,
@@ -687,7 +697,7 @@ def gateway_simulate_discord_message(
     *,
     as_json: bool = False,
 ) -> str:
-    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    payload = _load_gateway_json_object(payload_path, surface="Discord message")
     result = simulate_discord_message(
         config_manager=config_manager,
         state_db=state_db,
@@ -703,7 +713,7 @@ def gateway_simulate_whatsapp_message(
     *,
     as_json: bool = False,
 ) -> str:
-    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    payload = _load_gateway_json_object(payload_path, surface="WhatsApp message")
     result = simulate_whatsapp_message(
         config_manager=config_manager,
         state_db=state_db,
