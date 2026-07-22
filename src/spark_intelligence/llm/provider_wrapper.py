@@ -11,6 +11,7 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
+from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 
 
@@ -47,11 +48,20 @@ def main(argv: list[str] | None = None) -> int:
         model=_required_env("SPARK_INTELLIGENCE_PROVIDER_MODEL"),
         secret_value=_required_provider_secret("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
     )
+    governance = _governance_from_env(provider)
+    if governance is None and (
+        looks_secret_like(system_prompt) or looks_secret_like(user_prompt)
+    ):
+        raise RuntimeError(
+            "Provider wrapper refused model-visible secret-like material before dispatch. "
+            "Remove the material or configure SPARK_INTELLIGENCE_STATE_DB_PATH "
+            "to record the governed quarantine decision."
+        )
     payload = execute_direct_provider_prompt(
         provider=provider,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        governance=_governance_from_env(provider),
+        governance=governance,
     )
     response_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return 0

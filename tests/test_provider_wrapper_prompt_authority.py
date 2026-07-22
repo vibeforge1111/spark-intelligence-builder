@@ -118,3 +118,37 @@ def test_wrapper_reports_unreadable_prompt_before_provider_execution(
     error = capsys.readouterr().err
     assert f"cannot read {missing_label} prompt" in error
     assert str(paths[missing_index]) in error
+
+
+def test_wrapper_blocks_secret_like_prompt_without_state_db_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    system_path = tmp_path / "system.txt"
+    user_path = tmp_path / "user.txt"
+    response_path = tmp_path / "response.json"
+    system_path.write_text("Trusted system frame", encoding="utf-8")
+    user_path.write_text(
+        "api_key: sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+        encoding="utf-8",
+    )
+    env = {
+        "SPARK_INTELLIGENCE_PROVIDER_ID": "custom",
+        "SPARK_INTELLIGENCE_PROVIDER_KIND": "custom",
+        "SPARK_INTELLIGENCE_PROVIDER_AUTH_METHOD": "api_key_env",
+        "SPARK_INTELLIGENCE_PROVIDER_API_MODE": "chat_completions",
+        "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": "https://api.example.com/v1",
+        "SPARK_INTELLIGENCE_PROVIDER_MODEL": "model",
+        "SPARK_INTELLIGENCE_PROVIDER_SECRET": "provider-secret",
+        "SPARK_INTELLIGENCE_STATE_DB_PATH": "",
+    }
+
+    with patch.dict(os.environ, env, clear=False), patch(
+        "spark_intelligence.llm.provider_wrapper.execute_direct_provider_prompt"
+    ) as execute:
+        with pytest.raises(RuntimeError, match="secret-like material before dispatch"):
+            provider_wrapper_main(
+                [str(system_path), str(user_path), str(response_path)]
+            )
+
+    execute.assert_not_called()
+    assert not response_path.exists()
