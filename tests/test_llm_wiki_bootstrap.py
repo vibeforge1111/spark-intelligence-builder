@@ -264,6 +264,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(result.payload["status"], "pass")
         self.assertTrue(result.payload["report_written"])
         self.assertTrue((self.home / "artifacts" / "wiki-heartbeat" / "latest.json").exists())
+        self.assertEqual(list((self.home / "artifacts" / "wiki-heartbeat").glob(".*.tmp")), [])
         self.assertTrue(Path(result.payload["report_path"]).exists())
         self.assertEqual(result.payload["summary"]["stale_page_count"], 0)
         self.assertEqual(result.payload["broken_links"]["broken_link_count"], 0)

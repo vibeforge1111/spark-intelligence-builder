@@ -1657,6 +1657,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(payload["status"], "warn")
         self.assertTrue(payload["report_written"])
         self.assertTrue((self.home / "artifacts" / "capability-drift-heartbeat" / "latest.json").exists())
+        self.assertEqual(list((self.home / "artifacts" / "capability-drift-heartbeat").glob(".*.tmp")), [])
         self.assertTrue(Path(payload["report_path"]).exists())
         self.assertEqual(payload["summary"]["stale_success_count"], 1)
         self.assertEqual(payload["summary"]["recent_failure_count"], 1)

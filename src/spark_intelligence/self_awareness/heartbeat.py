@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.atomic_io import atomic_write_text
+
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
@@ -262,9 +264,10 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
 
 
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    rendered = json.dumps(payload, indent=2)
+    atomic_write_text(report_path, rendered)
     latest_path = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat" / "latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_text(latest_path, rendered)
 
 
 def _utc_timestamp() -> str:
