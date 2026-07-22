@@ -18,6 +18,8 @@ def _make_envelope(*, task: str = "Original task", harness_id: str = "researcher
         backend_kind="provider_bridge",
         session_scope="current_conversation",
         prompt_strategy="ps",
+        retry_policy="none",
+        approval_mode="none",
         route_mode="researcher_advisory",
         required_capabilities=["reasoning"],
         artifacts_expected=["reply_text"],

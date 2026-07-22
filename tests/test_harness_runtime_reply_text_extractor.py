@@ -18,6 +18,8 @@ def _make_envelope() -> HarnessTaskEnvelope:
         backend_kind="b",
         session_scope="s",
         prompt_strategy="p",
+        retry_policy="none",
+        approval_mode="none",
         route_mode="r",
         required_capabilities=[],
         artifacts_expected=[],

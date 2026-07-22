@@ -832,17 +832,12 @@ class HarnessRuntimeTests(SparkTestCase):
             agent_id=None,
         )
 
-        result = execute_harness_task(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            envelope=envelope,
-        )
-
-        self.assertEqual(result.status, "planned")
-        self.assertIn("future.workflow", result.summary)
-        contract = result.artifacts.get("execution_contract") or {}
-        self.assertEqual(contract.get("owner_system"), "builder")
-        self.assertEqual(contract.get("backend_kind"), "future_runner")
+        with self.assertRaisesRegex(ValueError, "Unknown harness id 'future.workflow'"):
+            execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
 
     def test_harness_execution_result_payload_serializes_chain_status_and_chained_results(self) -> None:
         from spark_intelligence.harness_runtime.service import (
