@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import tempfile
@@ -27,6 +28,15 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_positive_int_helper_rejects_non_positive_cli_counts(self) -> None:
+        from spark_intelligence.cli import _positive_int
+
+        self.assertEqual(_positive_int("1"), 1)
+        self.assertEqual(_positive_int("40"), 40)
+        for value in ("0", "-1", "abc", "", "5.5"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                _positive_int(value)
+
     def test_doctor_command_bootstraps_schema_before_attachment_snapshot_sync(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "doctor",
