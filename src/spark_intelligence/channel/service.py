@@ -87,7 +87,7 @@ def inspect_telegram_bot_token(
     result = payload.get("result")
     if not isinstance(result, dict):
         raise RuntimeError("Telegram auth succeeded but returned no bot profile.")
-    if not result.get("is_bot", True):
+    if result.get("is_bot") is not True:
         raise RuntimeError("Telegram token resolved to a non-bot account.")
     bot_id = result.get("id")
     if bot_id is None:

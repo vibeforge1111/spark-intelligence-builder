@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+from spark_intelligence.channel.service import inspect_telegram_bot_token
 from spark_intelligence.cli import build_parser
 from spark_intelligence.gateway.guardrails import apply_inbound_rate_limit, set_runtime_state_value
 from spark_intelligence.self_awareness.capsule import _build_capability_evidence
@@ -12,6 +13,14 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_telegram_token_check_rejects_missing_bot_flag(self) -> None:
+        def transport(method: str, payload: dict[str, object] | None) -> dict[str, object]:
+            self.assertEqual(method, "getMe")
+            return {"ok": True, "result": {"id": 123, "username": "spark_test"}}
+
+        with self.assertRaisesRegex(RuntimeError, "non-bot account"):
+            inspect_telegram_bot_token("test-token", transport=transport)
+
     def test_rate_limit_recovers_from_torn_runtime_state(self) -> None:
         state_key = "telegram:rate_limit:user-1"
         set_runtime_state_value(
