@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.attachments.registry import list_attachments
@@ -13,6 +14,23 @@ from spark_intelligence.swarm_bridge.local import _resolve_swarm_runtime_root
 from spark_intelligence.swarm_bridge.sync import _discover_swarm_runtime_root
 
 from tests.test_support import SparkTestCase
+
+
+class RuntimePathPlatformGuardTests(SparkTestCase):
+    @patch("spark_intelligence.config.loader._is_wsl_runtime", return_value=False)
+    def test_windows_path_is_not_translated_on_plain_posix(self, _is_wsl_runtime) -> None:
+        raw = r"C:\Users\USER\Desktop\spark-intelligence-builder"
+
+        self.assertEqual(self.config_manager.normalize_runtime_path(raw), Path(raw))
+
+    @patch("spark_intelligence.config.loader._is_wsl_runtime", return_value=True)
+    def test_windows_path_is_translated_inside_wsl(self, _is_wsl_runtime) -> None:
+        raw = r"C:\Users\USER\Desktop\spark-intelligence-builder"
+
+        self.assertEqual(
+            self.config_manager.normalize_runtime_path(raw),
+            Path("/mnt/c/Users/USER/Desktop/spark-intelligence-builder"),
+        )
 
 
 class RuntimePathNormalizationTests(SparkTestCase):

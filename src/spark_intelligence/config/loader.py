@@ -21,6 +21,17 @@ from spark_intelligence.state.db import StateDB
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_wsl_runtime() -> bool:
+    if os.name == "nt":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class SparkPaths:
     home: Path
@@ -224,7 +235,7 @@ class ConfigManager:
             translated = Path(f"{drive}:\\{remainder}")
             return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
-        if windows_match and os.name != "nt":
+        if windows_match and _is_wsl_runtime():
             drive = windows_match.group(1).lower()
             remainder = windows_match.group(2).replace("\\", "/")
             translated = Path("/mnt") / drive / remainder
