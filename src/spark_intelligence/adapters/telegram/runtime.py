@@ -11993,8 +11993,8 @@ def _render_swarm_bridge_run_reply(result: Any) -> str:
         return _render_swarm_bridge_failure("run", result)
     path_key = str(getattr(result, "path_key", "") or "unknown")
     path_label = _humanize_swarm_path_key(path_key)
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         f"{path_label} run completed.\n"
         f"Artifacts: {artifacts_path}. Collective payload: {payload_path}.\n"
@@ -12220,7 +12220,7 @@ def _render_swarm_latest_round_detail_lines(
         )
     )
     if latest_round_summary_path:
-        lines.append(f"Round artifact: {latest_round_summary_path}.")
+        lines.append("Round artifact: written locally.")
     return lines
 
 
@@ -12344,8 +12344,8 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
     if not getattr(result, "ok", False):
         return _render_swarm_bridge_failure("rerun request", result)
     path_key = str(getattr(result, "path_key", "") or "latest open path")
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         "Swarm rerun request executed.\n"
         f"Path: {path_key}.\n"
@@ -12360,6 +12360,15 @@ def _render_swarm_bridge_failure(action: str, result: Any) -> str:
         f"Swarm couldn’t complete the {action} (exit code {exit_code}). "
         "I kept the raw command output out of this chat."
     )
+
+
+def _describe_swarm_local_artifact(value: Any, *, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if text.lower() in {"unknown", "not written"}:
+        return text
+    return "written locally"
 
 
 def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:

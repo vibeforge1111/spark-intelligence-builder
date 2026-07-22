@@ -4401,6 +4401,9 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Startup Operator run completed.", str(result.detail["response_text"]))
+        self.assertIn("Artifacts: written locally. Collective payload: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/run-artifacts", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/payload.json", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm autoloop startup-operator` or `/swarm session startup-operator`.", str(result.detail["response_text"]))
         self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
 
@@ -4552,6 +4555,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Quality delta: tool usage +0.1400 (0.6600 -> 0.8000).", str(result.detail["response_text"]))
         self.assertIn("Quality delta: reasoning +0.1100 (0.6800 -> 0.7900).", str(result.detail["response_text"]))
         self.assertIn("Promotion readiness: ready (benchmark_proof_passed).", str(result.detail["response_text"]))
+        self.assertIn("Round artifact: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/round-summary.json", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
 
@@ -4787,6 +4792,8 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Hypothesis: Tighter tool-call sequencing may reduce benchmark drift.", str(result.detail["response_text"]))
         self.assertIn("Round delta: -0.0800 (0.8100 -> 0.7300).", str(result.detail["response_text"]))
         self.assertIn("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.", str(result.detail["response_text"]))
+        self.assertIn("Round artifact: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/session-round-summary.json", str(result.detail["response_text"]))
         self.assertIn("The autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))
         self.assertIn("/swarm continue startup-operator session session-777 rounds 1 force", str(result.detail["response_text"]))
 
@@ -4889,6 +4896,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Swarm rerun request executed.", str(result.detail["response_text"]))
+        self.assertIn("Artifacts: written locally.", str(result.detail["response_text"]))
+        self.assertIn("Collective payload: written locally.", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/rerun-artifacts", str(result.detail["response_text"]))
+        self.assertNotIn("C:/tmp/rerun-payload.json", str(result.detail["response_text"]))
         self.assertEqual(rerun_mock.call_args.kwargs["path_key"], "startup-operator")
 
     def test_swarm_read_failure_returns_bounded_message(self) -> None:
