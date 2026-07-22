@@ -285,6 +285,7 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["voice_status"]["ready"], True)
         self.assertEqual(result.artifacts["spoken_audio"]["filename"], "voice-reply-test.ogg")
         self.assertEqual(result.artifacts["spoken_audio"]["audio_bytes"], 5)
+        self.assertEqual(result.artifacts["spoken_audio"]["text"], "Hello from Spark voice.")
 
     def test_execute_voice_io_harness_without_authority_does_not_run_chip_hook(self) -> None:
         envelope = build_harness_task_envelope(
