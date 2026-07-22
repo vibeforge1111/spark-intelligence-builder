@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _load_module(module_name: str, script_path: Path):
     spec = importlib.util.spec_from_file_location(module_name, script_path)
@@ -12,6 +14,56 @@ def _load_module(module_name: str, script_path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_render_memory_baseline_docs_validates_all_markers_before_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_baseline_docs.py"
+    module = _load_module("render_memory_baseline_docs_atomic_test", script_path)
+    readme = tmp_path / "README.md"
+    live_results = tmp_path / "live.md"
+    handoff = tmp_path / "handoff.md"
+    pointer = tmp_path / "latest-full-run.json"
+    valid = "\n".join(
+        [
+            "prefix",
+            "<!-- AUTO_MEMORY_BASELINE_README_START -->",
+            "old",
+            "<!-- AUTO_MEMORY_BASELINE_README_END -->",
+            "suffix",
+        ]
+    )
+    live_valid = valid.replace("README", "LIVE_RESULTS")
+    readme.write_text(valid, encoding="utf-8")
+    live_results.write_text(live_valid, encoding="utf-8")
+    handoff.write_text("missing handoff markers", encoding="utf-8")
+    pointer.write_text("{}", encoding="utf-8")
+    originals = {
+        readme: readme.read_text(encoding="utf-8"),
+        live_results: live_results.read_text(encoding="utf-8"),
+        handoff: handoff.read_text(encoding="utf-8"),
+    }
+    loaded = iter(
+        [
+            {"run_summary": str(tmp_path / "run-summary.json")},
+            {"output_root": str(tmp_path / "run")},
+        ]
+    )
+    monkeypatch.setattr(module, "README_PATH", readme)
+    monkeypatch.setattr(module, "LIVE_RESULTS_PATH", live_results)
+    monkeypatch.setattr(module, "HANDOFF_PATH", handoff)
+    monkeypatch.setattr(module, "_load_json", lambda _path: next(loaded))
+    monkeypatch.setattr(module, "_load_regression_and_soak", lambda _summary: ({}, {}))
+    monkeypatch.setattr(module, "_build_readme_block", lambda *_args: "new readme")
+    monkeypatch.setattr(module, "_build_live_results_block", lambda *_args: "new live")
+    monkeypatch.setattr(module, "_build_handoff_block", lambda *_args: "new handoff")
+
+    with pytest.raises(ValueError, match="Missing markers"):
+        module.render_docs(latest_run_path=pointer)
+
+    assert {path: path.read_text(encoding="utf-8") for path in originals} == originals
 
 
 def test_render_memory_baseline_docs_updates_marked_sections(tmp_path: Path) -> None:
