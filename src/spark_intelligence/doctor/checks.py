@@ -44,6 +44,7 @@ _DOCTOR_LOCAL_PATH_PATTERN = re.compile(
 
 def _safe_doctor_error_detail(exc: Exception) -> str:
     detail = redact_text(str(exc)).strip()
+    detail = detail.replace("<redacted local path>", "<local-path>")
     detail = _DOCTOR_LOCAL_PATH_PATTERN.sub("<local-path>", detail)
     if len(detail) > 200:
         return f"{detail[:200]}... [truncated]"
