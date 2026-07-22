@@ -26,6 +26,15 @@ class NormalizedTelegramUpdate:
     is_dm: bool
 
 
+def _safe_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _clean_media_turn(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict) or value.get("schema") != "spark.media_turn.v1":
         return None
@@ -105,6 +114,10 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
 
     if update_id is None or message_id is None or chat_id is None or telegram_user_id is None:
         raise ValueError("Telegram update is missing required identifiers")
+    normalized_update_id = _safe_int(update_id)
+    normalized_message_id = _safe_int(message_id)
+    if normalized_update_id is None or normalized_message_id is None:
+        raise ValueError("Telegram update has a non-numeric update_id or message_id")
 
     chat_type = str(chat.get("type") or "")
     is_dm = chat_type == "private"
@@ -120,7 +133,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
         media_payload = {}
     media_file_id = str(media_payload.get("file_id")).strip() if media_payload.get("file_id") else None
     media_mime_type = str(media_payload.get("mime_type")).strip() if media_payload.get("mime_type") else None
-    media_duration_seconds = int(media_payload.get("duration")) if media_payload.get("duration") is not None else None
+    media_duration_seconds = _safe_int(media_payload.get("duration"))
     spark_media = message.get("spark_media") if isinstance(message.get("spark_media"), dict) else {}
     media_audio_base64 = str(spark_media.get("audio_base64")).strip() if spark_media.get("audio_base64") else None
     media_filename = str(spark_media.get("filename")).strip() if spark_media.get("filename") else None
@@ -128,9 +141,9 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
     media_turn = _clean_media_turn(update.get("spark_media_turn")) or _clean_media_turn(message.get("spark_media_turn"))
 
     return NormalizedTelegramUpdate(
-        update_id=int(update_id),
+        update_id=normalized_update_id,
         channel_id=channel_id,
-        message_id=int(message_id),
+        message_id=normalized_message_id,
         telegram_user_id=str(telegram_user_id),
         telegram_username=sender.get("username"),
         chat_id=str(chat_id),
