@@ -597,11 +597,28 @@ def _build_recent_invocation_claims(
 def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> list[CapabilityEvidence]:
     rows: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
+    unavailable_event_types: list[str] = []
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
             events.extend(latest_events_by_type(state_db, event_type=event_type, limit=80))
         except Exception:
-            continue
+            unavailable_event_types.append(event_type)
+    if unavailable_event_types:
+        rows["self_awareness_event_sensor"] = {
+            "capability_key": "self_awareness_event_sensor",
+            "source": "observability.store.latest_events_by_type",
+            "last_success_at": None,
+            "last_failure_at": _now_iso(),
+            "last_failure_reason": (
+                "Recent event evidence is unavailable for: " + ", ".join(unavailable_event_types)
+            ),
+            "last_success_summary": None,
+            "last_failure_summary": "The self-awareness capsule could not read its recent event evidence.",
+            "route_latency_ms": None,
+            "eval_coverage_status": "missing",
+            "eval_coverage_sources": [],
+            "evidence_count": len(unavailable_event_types),
+        }
     events.sort(key=lambda event: (_event_created_at(event), str(event.get("event_id") or "")), reverse=True)
     for event in events:
         capability_key = _capability_key_for_event(event)
