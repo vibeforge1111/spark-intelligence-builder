@@ -4,7 +4,7 @@ import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
-from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.doctor.checks import _safe_doctor_error_detail, run_doctor
 from spark_intelligence.observability.store import record_event
 
 from tests.test_support import SparkTestCase
@@ -65,6 +65,19 @@ class DoctorSourceTruthTests(SparkTestCase):
         git = source / ".git"
         git.mkdir(exist_ok=True)
         (git / "HEAD").write_text(commit, encoding="utf-8")
+
+    def test_doctor_error_detail_redacts_secrets_paths_and_excess_output(self) -> None:
+        secret = "sk-proj-" + "A" * 30
+        detail = _safe_doctor_error_detail(
+            RuntimeError(f"failed at /Users/alice/private/config.yaml with {secret} " + "x" * 240)
+        )
+
+        self.assertIn("<local-path>", detail)
+        self.assertIn("<redacted api key>", detail)
+        self.assertIn("[truncated]", detail)
+        self.assertNotIn("/Users/alice", detail)
+        self.assertNotIn(secret, detail)
+        self.assertLessEqual(len(detail), 215)
 
     def test_doctor_reports_harness_core_runtime_status(self) -> None:
         with (

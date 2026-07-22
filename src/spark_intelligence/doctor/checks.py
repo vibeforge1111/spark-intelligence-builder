@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sqlite3
 import tomllib
 from dataclasses import dataclass
@@ -29,12 +30,24 @@ from spark_intelligence.observability.store import (
     repair_non_promotable_chip_hook_dispositions,
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
 
 EXPECTED_BUILDER_LICENSE = "MIT"
 REQUIRED_BUILDER_DEPENDENCIES = ("jsonschema", "referencing")
+_DOCTOR_LOCAL_PATH_PATTERN = re.compile(
+    r"(?i)(?<![\w.])(?:[A-Z]:[\\/]|/(?:Users|home|usr|var|etc|opt|tmp|root|private|Volumes|workspace|mnt)/)[^\s,;\"']+"
+)
+
+
+def _safe_doctor_error_detail(exc: Exception) -> str:
+    detail = redact_text(str(exc)).strip()
+    detail = _DOCTOR_LOCAL_PATH_PATTERN.sub("<local-path>", detail)
+    if len(detail) > 200:
+        return f"{detail[:200]}... [truncated]"
+    return detail or type(exc).__name__
 
 
 def harness_core_runtime_status() -> dict[str, object]:
@@ -133,14 +146,14 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         config = config_manager.load()
         checks.append(DoctorCheck("config-load", True, f"loaded workspace {config.get('workspace', {}).get('id', 'unknown')}"))
     except Exception as exc:  # pragma: no cover - defensive
-        checks.append(DoctorCheck("config-load", False, str(exc)))
+        checks.append(DoctorCheck("config-load", False, _safe_doctor_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
             conn.execute("SELECT 1 FROM schema_info LIMIT 1").fetchone()
         checks.append(DoctorCheck("state-schema", True, "schema initialized"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("state-schema", False, str(exc)))
+        checks.append(DoctorCheck("state-schema", False, _safe_doctor_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
@@ -149,7 +162,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             ).fetchone()
         checks.append(DoctorCheck("operator-authority", bool(row), "local operator present"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("operator-authority", False, str(exc)))
+        checks.append(DoctorCheck("operator-authority", False, _safe_doctor_error_detail(exc)))
 
     harness_core = harness_core_runtime_status()
     harness_detail = str(harness_core.get("detail") or "unknown")
