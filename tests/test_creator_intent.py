@@ -332,6 +332,22 @@ def test_creator_mission_status_consumer_requires_all_surface_adapters():
     assert {issue.path for issue in issues} == {"surface_adapters.telegram"}
 
 
+def test_creator_mission_status_consumer_accepts_domain_labs_flat_canonical_shape():
+    packet = _creator_mission_status_packet()
+    packet["canonical"] = {
+        "verdict": "ready_for_swarm_packet",
+        "evidence_tier": "transfer_supported",
+        "automation_blocked": False,
+        "recommended_next_command": "review Startup YC operator validation gates",
+    }
+
+    summary = summarize_creator_mission_status(packet)
+
+    assert validate_creator_mission_status(packet) == []
+    assert summary.blocked is False
+    assert summary.recommended_next_command == "review Startup YC operator validation gates"
+
+
 def _creator_mission_status_packet():
     return {
         "schema_version": "adaptive_creator_loop.creator_mission_status.v1",
