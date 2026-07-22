@@ -287,6 +287,48 @@ def test_cold_context_retrieval_can_inject_domain_chip_evidence(monkeypatch) -> 
     assert any(item["source"] == "retrieved_context" and item["count"] > 0 for item in frame.source_ledger)
 
 
+def test_cold_context_retrieval_skips_empty_sibling_lists_before_populated_evidence(monkeypatch) -> None:
+    module = types.ModuleType("domain_chip_memory.builder_read_adapter")
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    def fake_execute(_sdk, _request):
+        return {
+            "event_type": "memory_read_succeeded",
+            "facts": {
+                "retrieval_trace": {
+                    "items": [],
+                    "records": ["not-a-record"],
+                    "evidence": [
+                        {
+                            "text": "The retained cold-memory evidence remains available.",
+                            "predicate": "project.current_fact",
+                            "memory_role": "structured_evidence",
+                        }
+                    ],
+                }
+            },
+        }
+
+    module.BuilderMemoryReadRequest = FakeRequest
+    module.execute_builder_memory_read = fake_execute
+    monkeypatch.setitem(sys.modules, "domain_chip_memory", types.ModuleType("domain_chip_memory"))
+    monkeypatch.setitem(sys.modules, "domain_chip_memory.builder_read_adapter", module)
+
+    items = retrieve_domain_chip_cold_context(
+        sdk=object(),
+        subject="human:telegram:1",
+        query="what evidence remains?",
+        limit=4,
+    )
+
+    assert items
+    assert {item.text for item in items} == {"The retained cold-memory evidence remains available."}
+    assert all(item.metadata["memory_role"] == "structured_evidence" for item in items)
+
+
 def test_cold_context_retrieval_prefers_domain_chip_task_recovery_when_available(monkeypatch) -> None:
     sdk_module = types.ModuleType("domain_chip_memory.sdk")
 

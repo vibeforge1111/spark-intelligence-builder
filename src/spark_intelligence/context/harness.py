@@ -607,8 +607,11 @@ def _build_source_ledger(
 def _cold_context_records_from_trace(trace: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("items", "records", "evidence", "events", "matches"):
         value = trace.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+        if not isinstance(value, list):
+            continue
+        records = [item for item in value if isinstance(item, dict)]
+        if records:
+            return records
     return []
 
 
