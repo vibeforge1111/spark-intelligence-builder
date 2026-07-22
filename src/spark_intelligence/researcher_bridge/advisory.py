@@ -247,14 +247,16 @@ def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
 
 def _profile_fact_record_value(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    return str(
-        record.get("value")
-        or record.get("normalized_value")
-        or metadata.get("value")
-        or metadata.get("normalized_value")
-        or record.get("answer")
-        or ""
-    ).strip()
+    for candidate in (
+        record.get("value"),
+        record.get("normalized_value"),
+        metadata.get("value"),
+        metadata.get("normalized_value"),
+        record.get("answer"),
+    ):
+        if candidate is not None:
+            return str(candidate).strip()
+    return ""
 
 
 def _select_profile_fact_query_value(
@@ -1771,8 +1773,13 @@ def _record_is_suppressed_by_state_deletion(
             continue
         if deleted_entity_key and entity_key != deleted_entity_key:
             continue
-        if deleted_time and record_time and record_time > deleted_time:
-            continue
+        if deleted_time and record_time:
+            parsed_record_time = _parse_memory_timestamp(record_time)
+            parsed_deleted_time = _parse_memory_timestamp(deleted_time)
+            if parsed_record_time is None or parsed_deleted_time is None:
+                continue
+            if parsed_record_time > parsed_deleted_time:
+                continue
         return True
     return False
 
@@ -3404,7 +3411,7 @@ def _is_fast_greeting(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", user_message.strip().lower()).rstrip("!.?")
     if not lowered or len(lowered) > 60:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     return lowered in _FAST_GREETING_PHRASES
 
@@ -3442,7 +3449,7 @@ def _is_conversational_fallback_candidate(
         return False
     if len(lowered) > fallback_max_chars:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     blocked_terms = (
         "http://",
