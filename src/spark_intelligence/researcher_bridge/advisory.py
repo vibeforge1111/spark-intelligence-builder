@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import re
 import sys
@@ -162,6 +163,8 @@ from spark_intelligence.system_registry import (
 )
 from spark_intelligence.user_instructions import list_active_instructions
 from spark_intelligence.bot_drafts import find_draft_for_iteration
+
+_LOGGER = logging.getLogger(__name__)
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 
@@ -9589,8 +9592,33 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        try:
+            record_event(
+                state_db,
+                event_type="researcher_personality_load_failed",
+                component="researcher_bridge",
+                summary="Researcher personality loading failed; the turn continued with the safe base behavior.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="personality_load_failed",
+                severity="medium",
+                facts={
+                    "exception_type": type(exc).__name__[:80],
+                    "recovery": "continue_without_personality_profile",
+                },
+            )
+        except Exception as event_exc:
+            _LOGGER.warning(
+                "researcher_personality_failure_event_record_failed error_type=%s",
+                type(event_exc).__name__,
+            )
 
     # Check for personality queries (status, reset) before NL detection
     try:

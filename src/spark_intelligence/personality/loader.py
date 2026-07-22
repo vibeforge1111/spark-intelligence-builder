@@ -22,6 +22,7 @@ automatically (bounded to +-0.05 per evolution cycle).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -52,6 +53,9 @@ from spark_intelligence.state.hygiene import (
     clear_reset_sensitive_scope,
     upsert_runtime_state,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 # ── Filesystem paths ──
@@ -497,8 +501,11 @@ def load_personality_profile(
             signals = data.get("last_signals") or {}
             personality_id = signals.get("personality_id")
             personality_name = signals.get("personality_name")
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.warning(
+                "personality_evolver_state_load_failed error_type=%s",
+                type(exc).__name__,
+            )
 
     # 2. Merge optional agent-base persona traits
     agent_persona = (
@@ -2114,8 +2121,11 @@ def detect_and_persist_nl_preferences(
                 channel_kind=channel_kind,
                 governor_decision=governor_decision,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.warning(
+                "personality_memory_preference_write_failed error_type=%s",
+                type(exc).__name__,
+            )
 
     return deltas
 
@@ -2241,8 +2251,11 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         if row and row["deltas_json"]:
             data = json.loads(row["deltas_json"])
             return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_trait_profile_read_failed fallback=runtime_state error_type=%s",
+            type(exc).__name__,
+        )
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -2255,7 +2268,11 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
         # Deltas are nested under "deltas" key
         deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
         return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_trait_runtime_fallback_failed error_type=%s",
+            type(exc).__name__,
+        )
         return {}
 
 
@@ -2951,8 +2968,11 @@ def detect_personality_query(
                         turn_id=turn_id,
                         channel_kind=None,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "personality_memory_preference_delete_failed error_type=%s",
+                        type(exc).__name__,
+                    )
             record_event(
                 state_db,
                 event_type="session_reset_performed",
@@ -3100,8 +3120,11 @@ def _format_profile_status(
                     trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
                     if trait:
                         lines.append(f"  {trait}: {value}")
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.debug(
+                "personality_status_memory_read_failed error_type=%s",
+                type(exc).__name__,
+            )
 
     return "\n".join(lines)
 
@@ -3168,8 +3191,11 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
                 }
                 for row in rows
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_observation_table_read_failed fallback=runtime_state error_type=%s",
+            type(exc).__name__,
+        )
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -3179,8 +3205,11 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("observations", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_observation_runtime_fallback_failed error_type=%s",
+            type(exc).__name__,
+        )
     return []
 
 
@@ -3234,8 +3263,11 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
                 }
                 for row in rows
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_evolution_table_read_failed fallback=runtime_state error_type=%s",
+            type(exc).__name__,
+        )
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -3245,8 +3277,11 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
         if row and row["value"]:
             data = json.loads(row["value"])
             return data.get("events", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOGGER.debug(
+            "personality_evolution_runtime_fallback_failed error_type=%s",
+            type(exc).__name__,
+        )
     return []
 
 

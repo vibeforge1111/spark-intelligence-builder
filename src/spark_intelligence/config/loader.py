@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import stat
@@ -15,6 +16,9 @@ import yaml
 
 from spark_intelligence.observability.store import payload_hash, record_config_mutation
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -607,8 +611,11 @@ class ConfigManager:
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
                 return principal
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.debug(
+                "windows_principal_lookup_failed fallback=environment error_type=%s",
+                type(exc).__name__,
+            )
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
         return f"{domain}\\{username}" if domain else username

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
@@ -33,6 +34,9 @@ from spark_intelligence.observability.store import (
     resolve_contradiction,
 )
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 ALLOWED_AUTOSTART_PLATFORMS = {
@@ -121,8 +125,11 @@ def evaluate_stop_ship_issues(
     if emit_contradictions:
         try:
             _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _LOGGER.warning(
+                "stop_ship_contradiction_reconciliation_failed error_type=%s",
+                type(exc).__name__,
+            )
     return issues
 
 
