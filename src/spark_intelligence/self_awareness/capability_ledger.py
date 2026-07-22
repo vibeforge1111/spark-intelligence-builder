@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 
 
@@ -545,10 +546,7 @@ def _read_ledger(path: Path) -> dict[str, Any]:
 
 
 def _write_ledger(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-    tmp_path.replace(path)
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=True))
 
 
 def _event(
