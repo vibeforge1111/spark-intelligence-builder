@@ -558,6 +558,51 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_domain_memory_persist_removes_temp_file_when_replace_fails(self) -> None:
+        persistence_path = self.home / "domain-memory.json"
+        persistence_path.write_text("{}\n", encoding="utf-8")
+        sdk = SimpleNamespace(
+            _manual_observations=[],
+            _manual_events=[],
+            _dashboard_movement_events=[],
+            _dashboard_movement_counter=0,
+        )
+        module = SimpleNamespace(build_current_state_view=lambda _observations: [])
+        adapter = memory_orchestrator._DomainChipMemoryClientAdapter(
+            sdk,
+            module,
+            persistence_path=persistence_path,
+        )
+
+        with patch("pathlib.Path.replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                adapter._persist_manual_state()
+
+        self.assertEqual(persistence_path.read_text(encoding="utf-8"), "{}\n")
+        self.assertEqual(list(self.home.glob("domain-memory.json.*.tmp")), [])
+
+    def test_domain_memory_persist_replaces_target_without_temp_residue(self) -> None:
+        persistence_path = self.home / "domain-memory.json"
+        sdk = SimpleNamespace(
+            _manual_observations=[],
+            _manual_events=[],
+            _dashboard_movement_events=[],
+            _dashboard_movement_counter=0,
+        )
+        module = SimpleNamespace(build_current_state_view=lambda _observations: [])
+        adapter = memory_orchestrator._DomainChipMemoryClientAdapter(
+            sdk,
+            module,
+            persistence_path=persistence_path,
+        )
+
+        adapter._persist_manual_state()
+
+        payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["manual_observations"], [])
+        self.assertEqual(payload["manual_events"], [])
+        self.assertEqual(list(self.home.glob("domain-memory.json.*.tmp")), [])
+
     def test_domain_answer_contract_trace_names_explain_answer_method(self) -> None:
         class AnswerExplanationRequest:
             def __init__(self, **kwargs):
