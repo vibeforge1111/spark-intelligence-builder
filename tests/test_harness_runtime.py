@@ -90,6 +90,24 @@ class HarnessRuntimeTests(SparkTestCase):
             self.assertEqual(run["harness_id"], "builder.direct")
             self.assertTrue(run["run_id"].startswith("run"))
 
+    def test_build_harness_runtime_snapshot_tolerates_malformed_summary_json(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What chips are active right now?",
+        )
+        execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+        with self.state_db.connect() as conn:
+            conn.execute("UPDATE builder_runs SET summary_json = ?", ('{"broken"',))
+
+        snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
+
+        self.assertEqual(snapshot.recent_runs[0]["summary_json"], {})
+
     def test_build_harness_task_envelope_uses_router_selection(self) -> None:
         self._enable_fake_researcher()
         with patch(
