@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import importlib
 import json
+import logging
 import os
 import sys
 import threading
@@ -34,6 +35,7 @@ _MAX_SWARM_AUTH_RESPONSE_BYTES = 1024 * 1024
 _TEMPORARY_ENV_LOCK = threading.RLock()
 _SAFE_SWARM_RESPONSE_BODY_KEYS = {"error", "message", "code", "status"}
 _MAX_SWARM_RESPONSE_FIELD_CHARS = 1000
+_LOGGER = logging.getLogger(__name__)
 
 
 def _sanitize_response_body(body: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1697,7 +1699,7 @@ def _resolve_specialization_default_mutation_target_path(
         try:
             resolved.relative_to(root)
         except ValueError:
-            logger.warning(
+            _LOGGER.warning(
                 "Blocked manifest template destination escaping repo root: %r",
                 destination,
             )
