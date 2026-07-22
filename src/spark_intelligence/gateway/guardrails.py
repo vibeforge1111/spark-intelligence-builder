@@ -59,9 +59,19 @@ def apply_inbound_rate_limit(
     state_key = f"{channel_id}:rate_limit:{external_user_id}"
     raw = _load_json_object(state_db=state_db, state_key=state_key)
     now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
+    raw_timestamps = raw.get("timestamps") if isinstance(raw.get("timestamps"), list) else []
+    timestamps = [
+        int(item)
+        for item in raw_timestamps
+        if isinstance(item, (int, float)) and not isinstance(item, bool)
+    ]
     timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
+    raw_last_notice_at = raw.get("last_notice_at")
+    last_notice_at = (
+        int(raw_last_notice_at)
+        if isinstance(raw_last_notice_at, (int, float)) and not isinstance(raw_last_notice_at, bool)
+        else 0
+    )
     if len(timestamps) >= max(limit_per_minute, 1):
         retry_after_seconds = max(1, 60 - (now - timestamps[0]))
         notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
