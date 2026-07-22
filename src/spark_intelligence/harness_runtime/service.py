@@ -15,6 +15,7 @@ from uuid import uuid4
 from spark_intelligence.auth.runtime import build_runtime_provider_reference_payload
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import close_run, open_run, record_event
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 
 
@@ -27,6 +28,23 @@ _VOICE_SPEAK_RE = re.compile(
     r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+_SWARM_RESPONSE_SECRET_KEY = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)")
+
+
+def _redact_swarm_response_body(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "<redacted>" if _SWARM_RESPONSE_SECRET_KEY.search(str(key)) and item not in (None, "", [], {})
+            else _redact_swarm_response_body(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_swarm_response_body(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_swarm_response_body(item) for item in value)
+    if isinstance(value, str):
+        return redact_text(value)
+    return value
 
 
 class HarnessVoiceAuthorityError(RuntimeError):
@@ -1073,7 +1091,7 @@ def _execute_swarm_escalation_harness(
         "api_url": sync_result.api_url,
         "workspace_id": sync_result.workspace_id,
         "accepted": sync_result.accepted,
-        "response_body": sync_result.response_body,
+        "response_body": _redact_swarm_response_body(sync_result.response_body),
     }
     artifacts["resume_token"] = _build_cli_command_token(
         command_kind="resume",

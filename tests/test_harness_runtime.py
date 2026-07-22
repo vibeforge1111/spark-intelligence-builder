@@ -447,7 +447,11 @@ class HarnessRuntimeTests(SparkTestCase):
                     api_url="https://swarm.example",
                     workspace_id="workspace-1",
                     accepted=None,
-                    response_body={"payload_keys": ["collective"]},
+                    response_body={
+                        "payload_keys": ["collective"],
+                        "token": "private-response-token",
+                        "detail": "provider rejected sk-proj-" + "A" * 30,
+                    },
                 ),
             ),
         ):
@@ -459,6 +463,13 @@ class HarnessRuntimeTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.artifacts["swarm_sync_result"]["mode"], "dry_run")
+        response_body = result.artifacts["swarm_sync_result"]["response_body"]
+        self.assertIsInstance(response_body, dict)
+        self.assertEqual(response_body["payload_keys"], ["collective"])
+        self.assertEqual(response_body["token"], "<redacted>")
+        self.assertIn("<redacted api key>", response_body["detail"])
+        self.assertNotIn("private-response-token", str(response_body))
+        self.assertNotIn("sk-proj-", str(response_body))
         self.assertIn("swarm sync", result.artifacts["resume_token"]["resume_command"])
 
     def test_execute_swarm_escalation_harness_requests_payload_repair_when_not_ready(self) -> None:
