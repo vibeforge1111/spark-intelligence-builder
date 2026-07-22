@@ -289,6 +289,10 @@ def redact_trace_payload(value: Any) -> Any:
         return [redact_trace_payload(item) for item in value]
     if isinstance(value, str):
         redacted = redact_text(value)
+        # Gateway traces have an older, intentionally terse public contract for
+        # local paths.  Preserve it after the shared redactor has removed the
+        # underlying value.
+        redacted = redacted.replace("<redacted local path>", "<path>")
         for pattern in SENSITIVE_TEXT_PATTERNS:
             if pattern.pattern.startswith("(?i)(api"):
                 redacted = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", redacted)
