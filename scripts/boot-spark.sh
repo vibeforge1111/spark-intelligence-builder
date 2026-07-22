@@ -72,6 +72,7 @@ wait_for() {
 
 status_report() {
   local p code label
+  local all_up=1
   echo "=== Spark stack status ==="
   for p in 4174 8788 8907 8011; do
     code=$(check_port "$p")
@@ -85,8 +86,10 @@ status_report() {
       echo "  :$p $label -> UP (http $code)"
     else
       echo "  :$p $label -> down"
+      all_up=0
     fi
   done
+  return $((1 - all_up))
 }
 
 print_plan() {
@@ -139,7 +142,7 @@ fi
 
 if [ "$STATUS_ONLY" = "1" ]; then
   status_report
-  exit 0
+  exit $?
 fi
 
 require_directory builder "$BUILDER_DIR" || exit 1

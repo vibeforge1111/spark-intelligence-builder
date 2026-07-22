@@ -81,7 +81,7 @@ def test_plan_records_explicit_telegram_request_without_launching(
     assert not logs.exists()
 
 
-def test_status_is_read_only_even_when_log_path_does_not_exist(
+def test_status_is_read_only_and_fails_when_services_are_down(
     tmp_path: Path,
 ) -> None:
     bin_dir = tmp_path / "bin"
@@ -93,7 +93,7 @@ def test_status_is_read_only_even_when_log_path_does_not_exist(
 
     result = subprocess.run(
         ["bash", str(SCRIPT), "--status"],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         env={
@@ -103,8 +103,28 @@ def test_status_is_read_only_even_when_log_path_does_not_exist(
         },
     )
 
+    assert result.returncode == 1
     assert result.stdout.count("-> down") == 4
     assert not logs.exists()
+
+
+def test_status_succeeds_when_all_services_are_up(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_curl = bin_dir / "curl"
+    fake_curl.write_text("#!/usr/bin/env bash\nprintf '200'\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--status"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.count("-> UP (http 200)") == 4
 
 
 def test_unknown_option_fails_without_side_effects(tmp_path: Path) -> None:
