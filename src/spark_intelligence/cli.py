@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import yaml
 
+from spark_intelligence import __version__
 from spark_intelligence.attachments import (
     activate_chip,
     add_attachment_root,
@@ -1228,6 +1229,7 @@ def _positive_int(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
+    parser.add_argument("--version", action="version", version=f"spark-intelligence {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_parser = subparsers.add_parser("setup", help="Bootstrap config and state")
@@ -3069,15 +3071,18 @@ def handle_setup(args: argparse.Namespace) -> int:
     else:
         print("Existing config and env preserved; verified state bootstrap.")
     if setup_notes:
+        print("")
         print("Setup integrations:")
         for note in setup_notes:
             print(f"  - {note}")
+    print("")
     print("Next steps:")
     print("  1. spark-intelligence auth connect openai --api-key <key> --model <model>")
     print("  2. spark-intelligence channel telegram-onboard")
     print("  3. spark-intelligence connect status")
     print("  4. spark-intelligence doctor")
     print("  5. spark-intelligence gateway start")
+    print("")
     print("Optional Spark hookups:")
     print("  - spark-intelligence swarm status")
     print("  - spark-intelligence swarm sync --dry-run")
@@ -6063,6 +6068,7 @@ def handle_channel_add(args: argparse.Namespace) -> int:
         print(validation_note)
     print(result)
     if args.channel_kind == "telegram":
+        print("")
         print("Next Telegram steps:")
         print("  1. Open Telegram and send /start to the bot from the account you want to pair.")
         print("  2. Run spark-intelligence gateway start")
@@ -6138,6 +6144,7 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
         metadata={"bot_profile": profile.to_dict()} if profile else None,
     )
     print(result)
+    print("")
     print("Telegram onboarding next steps:")
     print("  1. Open Telegram and send /start to the bot.")
     if effective_allowed_users:
@@ -8216,6 +8223,7 @@ def handle_swarm_configure(args: argparse.Namespace) -> int:
         auth_client_key_env=args.auth_client_key_env,
     )
     print("Spark Swarm bridge config updated.")
+    print("")
     print("Recommended checks:")
     print("  1. spark-intelligence swarm status")
     print("  2. spark-intelligence swarm sync --dry-run")
