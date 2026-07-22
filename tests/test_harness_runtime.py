@@ -158,6 +158,53 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(payload.get("hook_name"), "browser.navigate")
         self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com")
 
+    def test_execute_browser_grounded_harness_strips_terminal_url_punctuation(self) -> None:
+        self._enable_fake_researcher()
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Open https://example.com/report.json, then summarize it.",
+            )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        result = execute_harness_task(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            envelope=envelope,
+        )
+
+        payload = result.artifacts.get("browser_navigate_payload") or {}
+        self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com/report.json")
+
+    def test_execute_browser_grounded_harness_rejects_non_public_ip_with_bounded_event(self) -> None:
+        self._enable_fake_researcher()
+        with patch(
+            "spark_intelligence.system_registry.registry.collect_browser_use_adapter_status",
+            return_value=self._ready_browser_use_status(),
+        ):
+            envelope = build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="Open http://127.0.0.1/admin and inspect it.",
+            )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        with self.assertRaisesRegex(ValueError, "non-public IP"):
+            execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        events = latest_events_by_type(self.state_db, event_type="harness_validation_failed", limit=5)
+        self.assertTrue(events)
+        self.assertEqual(events[0]["facts_json"]["error_type"], "ValueError")
+        self.assertNotIn("127.0.0.1", str(events[0]))
+
     def test_execute_browser_grounded_harness_requires_url_for_first_runner(self) -> None:
         self._enable_fake_researcher()
         with patch(
@@ -316,6 +363,31 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.artifacts["spoken_audio"]["filename"], "voice-reply-test.ogg")
         self.assertEqual(result.artifacts["spoken_audio"]["audio_bytes"], 5)
         self.assertEqual(result.artifacts["spoken_audio"]["text"], "Hello from Spark voice.")
+
+    def test_execute_voice_io_harness_rejects_invalid_base64_audio(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Say: Hello from Spark voice.",
+            forced_harness_id="voice.io",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        def fake_voice_hook(*, hook, **kwargs):
+            if hook == "voice.status":
+                return ({"result": {"ready": True}}, "domain-chip-voice-comms")
+            return ({"result": {"audio_base64": "not valid base64!"}}, "domain-chip-voice-comms")
+
+        with patch("spark_intelligence.harness_runtime.service._run_voice_hook", side_effect=fake_voice_hook):
+            result = execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.artifacts["spoken_audio"]["audio_bytes"], 0)
+        self.assertIsNone(result.artifacts["spoken_audio"]["audio_sha256"])
 
     def test_execute_voice_io_harness_without_authority_does_not_run_chip_hook(self) -> None:
         envelope = build_harness_task_envelope(

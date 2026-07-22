@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -10,6 +12,7 @@ import sys
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from spark_intelligence.auth.runtime import build_runtime_provider_reference_payload
@@ -439,6 +442,32 @@ def execute_harness_task(
             artifacts=artifacts,
             next_actions=list(envelope.next_actions),
         )
+    except ValueError as exc:
+        summary = f"Harness validation failed for {envelope.harness_id}."
+        facts = {"error_type": type(exc).__name__, "harness_id": envelope.harness_id}
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="harness_validation_failed",
+            summary=summary,
+            facts=facts,
+        )
+        record_event(
+            state_db,
+            event_type="harness_validation_failed",
+            component="harness_runtime",
+            summary=summary,
+            run_id=run.run_id,
+            request_id=envelope.envelope_id,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+            actor_id="harness_runtime",
+            reason_code="harness_validation_failed",
+            facts=facts,
+        )
+        raise
     except Exception as exc:
         close_run(
             state_db,
@@ -446,7 +475,7 @@ def execute_harness_task(
             status="failed",
             close_reason="harness_execution_failed",
             summary=f"Harness execution failed for {envelope.harness_id}.",
-            facts={"error": str(exc), "harness_id": envelope.harness_id},
+            facts={"error_type": type(exc).__name__, "harness_id": envelope.harness_id},
         )
         record_event(
             state_db,
@@ -460,7 +489,7 @@ def execute_harness_task(
             agent_id=envelope.agent_id,
             actor_id="harness_runtime",
             reason_code="harness_execution_failed",
-            facts={"error": str(exc), "harness_id": envelope.harness_id},
+            facts={"error_type": type(exc).__name__, "harness_id": envelope.harness_id},
         )
         raise
 
@@ -624,6 +653,7 @@ def _execute_browser_grounded_harness(
             "Browser grounded harness needs an explicit URL before it can prepare a navigate payload.",
             "needs_input",
         )
+    _validate_browser_harness_url(url)
 
     authority = _authorize_harness_action(
         state_db=state_db,
@@ -1017,7 +1047,12 @@ def _execute_voice_io_harness(
             )
         speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
         audio_base64 = str(speak_result.get("audio_base64") or "")
-        audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
+        audio_bytes = b""
+        if audio_base64:
+            try:
+                audio_bytes = base64.b64decode(audio_base64.encode("ascii"), validate=True)
+            except (binascii.Error, UnicodeEncodeError, ValueError):
+                audio_bytes = b""
         artifacts["spoken_audio"] = {
             "chip_key": speak_chip_key,
             "text": task_payload or "",
@@ -1453,7 +1488,26 @@ def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | Non
 
 def _extract_first_url(text: str) -> str | None:
     match = _URL_RE.search(str(text or ""))
-    return match.group(0) if match else None
+    if not match:
+        return None
+    return match.group(0).rstrip(".,;!?}]")
+
+
+def _validate_browser_harness_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Browser harness URL must use HTTP(S) and include a hostname.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Browser harness URL must not contain embedded credentials.")
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname == "localhost" or hostname.endswith((".local", ".internal", ".localhost")):
+        raise ValueError("Browser harness URL must not target a local hostname.")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if not address.is_global:
+        raise ValueError("Browser harness URL must not target a non-public IP address.")
 
 
 def _now_iso() -> str:
