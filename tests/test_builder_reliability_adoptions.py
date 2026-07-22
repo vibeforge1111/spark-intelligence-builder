@@ -15,11 +15,19 @@ from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.self_awareness.capsule import _build_capability_evidence
 from spark_intelligence.self_awareness.handoff_check import build_handoff_freshness_check
 from spark_intelligence.self_awareness.operating_context import _default_access_automation_actions
+from spark_intelligence.schedule_bridge.service import _format_12, humanize_cron
 
 from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_cron_humanizer_keeps_invalid_clock_values_custom(self) -> None:
+        self.assertEqual(humanize_cron("99 25 * * *"), "Custom: 99 25 * * *")
+        self.assertEqual(humanize_cron("*/0 * * * *"), "Custom: */0 * * * *")
+        self.assertEqual(humanize_cron("0 */0 * * *"), "Custom: 0 */0 * * *")
+        self.assertEqual(_format_12(25, 99), "25:99")
+        self.assertEqual(humanize_cron("30 14 * * *"), "Daily at 2:30 PM")
+
     def test_workspace_setup_fallback_requires_confirmation(self) -> None:
         action = next(
             item for item in _default_access_automation_actions() if item["id"] == "workspace_setup"

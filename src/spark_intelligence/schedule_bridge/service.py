@@ -84,6 +84,8 @@ _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "N
 
 
 def _format_12(h: int, m: int) -> str:
+    if not _valid_clock_time(h, m):
+        return f"{h:02d}:{m:02d}"
     hh = ((h + 11) % 12) + 1
     suffix = "AM" if h < 12 else "PM"
     return f"{hh} {suffix}" if m == 0 else f"{hh}:{m:02d} {suffix}"
@@ -99,28 +101,39 @@ def humanize_cron(cron: str) -> str:
             return "Every minute"
         m = re.match(r"^\*/(\d+)$", minute)
         if m:
-            n = m.group(1)
-            return f"Every {n} minute" + ("" if n == "1" else "s")
+            n = int(m.group(1))
+            if not 1 <= n <= 59:
+                return f"Custom: {cron}"
+            return f"Every {n} minute" + ("" if n == 1 else "s")
         if minute.isdigit():
-            return f"At {minute} min past every hour"
+            minute_value = int(minute)
+            if 0 <= minute_value <= 59:
+                return f"At {minute_value} min past every hour"
     if dom == "*" and month == "*" and dow == "*":
         h = re.match(r"^\*/(\d+)$", hour)
         if h and minute.isdigit():
-            n = h.group(1)
-            return f"Every {n} hour" + ("" if n == "1" else "s") + f" at :{int(minute):02d}"
-        if hour.isdigit() and minute.isdigit():
+            n = int(h.group(1))
+            minute_value = int(minute)
+            if 1 <= n <= 23 and 0 <= minute_value <= 59:
+                return f"Every {n} hour" + ("" if n == 1 else "s") + f" at :{minute_value:02d}"
+        if hour.isdigit() and minute.isdigit() and _valid_clock_time(int(hour), int(minute)):
             return f"Daily at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
         dow_int = int(dow)
-        if dow_int < len(_DOW):
+        if dow_int < len(_DOW) and _valid_clock_time(int(hour), int(minute)):
             return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
-        return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
+        if _valid_clock_time(int(hour), int(minute)):
+            return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
         month_int = int(month)
-        if 1 <= month_int <= 12:
+        if 1 <= month_int <= 12 and _valid_clock_time(int(hour), int(minute)):
             return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
     return f"Custom: {cron}"
+
+
+def _valid_clock_time(hour: int, minute: int) -> bool:
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def _format_next_fire(iso: str | None) -> str:
