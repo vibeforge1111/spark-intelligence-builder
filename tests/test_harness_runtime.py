@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -237,6 +238,32 @@ class HarnessRuntimeTests(SparkTestCase):
                 task="Explain this directly.",
                 forced_harness_id="missing.harness",
             )
+
+    def test_build_harness_task_envelope_rejects_empty_task(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="   ",
+            )
+
+    def test_execute_harness_task_rejects_unknown_runtime_envelope_before_opening_run(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Prepare this task.",
+        )
+        unknown = replace(envelope, harness_id="missing.harness")
+
+        with self.assertRaisesRegex(ValueError, "Unknown harness id"):
+            execute_harness_task(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=unknown,
+            )
+
+        snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
+        self.assertEqual(snapshot.summary["recent_run_count"], 0)
 
     def test_execute_voice_io_harness_runs_speak_hook_when_text_present(self) -> None:
         envelope = build_harness_task_envelope(

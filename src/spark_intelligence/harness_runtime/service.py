@@ -160,6 +160,9 @@ def build_harness_task_envelope(
 ) -> HarnessTaskEnvelope:
     from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
+    normalized_task = str(task or "").strip()
+    if not normalized_task:
+        raise ValueError("Harness task cannot be empty or whitespace.")
     normalized_forced_harness_id = str(forced_harness_id or "").strip()
     if normalized_forced_harness_id:
         registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
@@ -188,7 +191,7 @@ def build_harness_task_envelope(
         selection = build_harness_selection(
             config_manager=config_manager,
             state_db=state_db,
-            task=task,
+            task=normalized_task,
         )
         selection_payload = {
             "harness_id": selection.harness_id,
@@ -206,7 +209,7 @@ def build_harness_task_envelope(
         }
     return HarnessTaskEnvelope(
         envelope_id=f"htask:{uuid4().hex[:12]}",
-        task=str(task or "").strip(),
+        task=normalized_task,
         harness_id=str(selection_payload["harness_id"]),
         owner_system=str(selection_payload["owner_system"]),
         backend_kind=str(selection_payload["backend_kind"]),
@@ -312,6 +315,12 @@ def execute_harness_task(
     state_db: StateDB,
     envelope: HarnessTaskEnvelope,
 ) -> HarnessExecutionResult:
+    from spark_intelligence.harness_registry import build_harness_registry
+
+    registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
+    known_harness_ids = {contract.harness_id for contract in registry.contracts}
+    if envelope.harness_id not in known_harness_ids:
+        raise ValueError(f"Unknown harness id '{envelope.harness_id}' in runtime.")
     run = open_run(
         state_db,
         run_kind=f"harness:{envelope.harness_id}",
