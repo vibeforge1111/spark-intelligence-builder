@@ -194,8 +194,8 @@ class DirectProviderExecutionTests(SparkTestCase):
         self.assertEqual(headers["x-api-key"], "anthropic-secret")
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertEqual(captured["body"]["model"], "claude-opus-4-6")
-        self.assertIn("System instructions", captured["body"]["messages"][0]["content"])
-        self.assertIn("User task", captured["body"]["messages"][0]["content"])
+        self.assertEqual(captured["body"]["system"], "System instructions")
+        self.assertEqual(captured["body"]["messages"], [{"role": "user", "content": "User task"}])
 
     def test_unsupported_direct_execution_mode_fails_closed(self) -> None:
         provider = DirectProviderRequest(
