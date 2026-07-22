@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
 from spark_intelligence.runtime_discovery import resolve_installed_module_source
@@ -92,9 +93,7 @@ def export_sdk_maintenance_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    output_tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-    output_tmp_path.replace(output_path)
+    atomic_write_text(output_path, json.dumps(payload, indent=2, ensure_ascii=True))
     report = None
     resolved_report_path = Path(report_write_path) if report_write_path else None
     if run_report:
