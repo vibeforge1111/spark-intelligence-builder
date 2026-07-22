@@ -47,14 +47,23 @@ def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
     if not jobs:
         return "No scheduled jobs due. Scheduler harness is healthy."
     lines = [f"Ran {len(jobs)} scheduled job(s)."]
+    first_error: Exception | None = None
     for job in jobs:
-        result = _run_job(
-            config_manager=config_manager,
-            state_db=state_db,
-            job_id=str(job["job_id"]),
-            job_kind=str(job["job_kind"]),
-        )
+        try:
+            result = _run_job(
+                config_manager=config_manager,
+                state_db=state_db,
+                job_id=str(job["job_id"]),
+                job_kind=str(job["job_kind"]),
+            )
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            lines.append(f"- {job['job_id']} kind={job['job_kind']} result=job_exception")
+            continue
         lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
+    if first_error is not None:
+        raise first_error
     return "\n".join(lines)
 
 

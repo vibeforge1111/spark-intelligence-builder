@@ -6,6 +6,7 @@ from unittest.mock import patch
 from spark_intelligence.channel.service import inspect_telegram_bot_token
 from spark_intelligence.cli import build_parser
 from spark_intelligence.gateway.guardrails import apply_inbound_rate_limit, set_runtime_state_value
+from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.self_awareness.capsule import _build_capability_evidence
 from spark_intelligence.self_awareness.handoff_check import build_handoff_freshness_check
 
@@ -13,6 +14,34 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderReliabilityAdoptionTests(SparkTestCase):
+    def test_jobs_tick_runs_later_jobs_before_propagating_first_failure(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.executemany(
+                "INSERT INTO job_records(job_id, job_kind, status) VALUES (?, ?, 'scheduled')",
+                [
+                    ("a-failing-job", "test_failure"),
+                    ("b-healthy-job", "test_success"),
+                ],
+            )
+            conn.commit()
+
+        invoked: list[str] = []
+
+        def run_job_side_effect(**kwargs: object) -> str:
+            job_id = str(kwargs["job_id"])
+            invoked.append(job_id)
+            if job_id == "a-failing-job":
+                raise RuntimeError("first job failed")
+            return "job completed"
+
+        with patch("spark_intelligence.jobs.service._run_job", side_effect=run_job_side_effect):
+            with self.assertRaisesRegex(RuntimeError, "first job failed"):
+                jobs_tick(self.config_manager, self.state_db)
+
+        self.assertIn("a-failing-job", invoked)
+        self.assertIn("b-healthy-job", invoked)
+        self.assertLess(invoked.index("a-failing-job"), invoked.index("b-healthy-job"))
+
     def test_telegram_token_check_rejects_missing_bot_flag(self) -> None:
         def transport(method: str, payload: dict[str, object] | None) -> dict[str, object]:
             self.assertEqual(method, "getMe")
