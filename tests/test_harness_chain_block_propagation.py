@@ -116,8 +116,8 @@ class HarnessChainBlockPropagationTests(SparkTestCase):
                 follow_up_harness_ids=["voice.io"],
             )
 
-        # Primary completed, follow-up blocked, chain_status reflects that.
-        self.assertEqual(result.status, "completed")
+        # The wrapper propagates the blocked follow-up as its authoritative status.
+        self.assertEqual(result.status, "blocked")
         self.assertEqual(result.chain_status, "blocked")
         self.assertEqual(len(result.chained_results or []), 1)
         voice_result = (result.chained_results or [])[0]

@@ -645,7 +645,7 @@ class HarnessRuntimeTests(SparkTestCase):
         )
 
         self.assertEqual(result.status, "needs_input")
-        self.assertEqual(result.chain_status, "blocked")
+        self.assertEqual(result.chain_status, "needs_input")
         self.assertEqual(result.chained_results or [], [])
 
     def test_execute_harness_chain_returns_primary_unchanged_when_no_follow_ups(self) -> None:
@@ -692,6 +692,8 @@ class HarnessRuntimeTests(SparkTestCase):
                 backend_kind="researcher",
                 session_scope="task",
                 prompt_strategy="direct",
+                retry_policy="none",
+                approval_mode="none",
                 route_mode="router",
                 required_capabilities=[],
                 artifacts_expected=[],

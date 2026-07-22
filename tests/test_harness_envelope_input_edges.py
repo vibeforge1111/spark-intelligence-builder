@@ -11,15 +11,13 @@ class HarnessEnvelopeInputEdgeTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
-    def test_empty_task_string_is_preserved_on_envelope(self) -> None:
-        envelope = build_harness_task_envelope(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            task="",
-        )
-        self.assertEqual(envelope.task, "")
-        # The envelope still gets a router-picked harness_id even with empty task input.
-        self.assertNotEqual(envelope.harness_id, "")
+    def test_empty_task_string_is_rejected_before_routing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            build_harness_task_envelope(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                task="",
+            )
 
     def test_whitespace_task_is_stripped(self) -> None:
         envelope = build_harness_task_envelope(
