@@ -2300,18 +2300,20 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--webhook-verify-token", help="Verification token for adapter webhook handshake flows")
     channel_add_parser.add_argument("--webhook-verify-token-env", help="Env var name used to store the webhook verification token")
     channel_add_parser.add_argument("--interaction-public-key", help="Discord interactions public key for signed HTTP ingress")
-    channel_add_parser.add_argument(
+    legacy_webhook_group = channel_add_parser.add_mutually_exclusive_group()
+    legacy_webhook_group.add_argument(
         "--allow-legacy-message-webhook",
         action="store_true",
         help="Enable the legacy Discord message-shaped webhook compatibility path.",
     )
-    channel_add_parser.add_argument(
+    legacy_webhook_group.add_argument(
         "--disable-legacy-message-webhook",
         action="store_true",
         help="Disable the legacy Discord message-shaped webhook compatibility path and clear its auth ref.",
     )
-    channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
-    channel_add_parser.add_argument(
+    allowed_users_group = channel_add_parser.add_mutually_exclusive_group()
+    allowed_users_group.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
+    allowed_users_group.add_argument(
         "--clear-allowed-users",
         action="store_true",
         help="Clear any existing configured allowed users before applying this update.",
@@ -2333,8 +2335,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     channel_telegram_onboard_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_telegram_onboard_parser.add_argument("--bot-token", help="Telegram bot token from BotFather")
-    channel_telegram_onboard_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
-    channel_telegram_onboard_parser.add_argument(
+    telegram_users_group = channel_telegram_onboard_parser.add_mutually_exclusive_group()
+    telegram_users_group.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    telegram_users_group.add_argument(
         "--clear-allowed-users",
         action="store_true",
         help="Clear any existing configured allowed users before applying this update.",
