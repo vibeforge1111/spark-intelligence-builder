@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import inspect_memory_sdk_runtime
 from spark_intelligence.runtime_discovery import resolve_installed_module_source
@@ -154,15 +155,15 @@ def benchmark_memory_architectures(
             "summary_markdown": str(resolved_summary_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_summary_path.write_text(
+    atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
+    atomic_write_text(
+        resolved_summary_path,
         _build_summary_markdown(
             summary=summary,
             runtime=runtime,
             benchmark_rows=benchmark_rows,
             errors=errors,
         ),
-        encoding="utf-8",
     )
     return MemoryArchitectureBenchmarkResult(output_dir=resolved_output_dir, payload=payload)
 
