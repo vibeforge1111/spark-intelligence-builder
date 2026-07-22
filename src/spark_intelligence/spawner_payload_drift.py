@@ -14,6 +14,10 @@ from spark_intelligence.state.db import StateDB
 
 _LOGGER = logging.getLogger(__name__)
 
+_DRIVE_LETTER_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)([A-Z])")
+_REFERENCE_NON_SLUG_RE = re.compile(r"[^a-z0-9.-]+")
+
 
 _PAYLOAD_KEY_SIGNALS = (
     "repo",
@@ -313,7 +317,7 @@ def _path_from_reference(reference: str) -> Path | None:
     text = str(reference or "").strip()
     if not text:
         return None
-    looks_pathy = "\\" in text or "/" in text or re.match(r"^[A-Za-z]:", text) is not None
+    looks_pathy = "\\" in text or "/" in text or _DRIVE_LETTER_PREFIX_RE.match(text) is not None
     if not looks_pathy:
         return None
     try:
@@ -331,7 +335,7 @@ def _preview_payload(payload: Any) -> str:
 
 
 def _normalize_key(value: str) -> str:
-    return re.sub(r"(?<!^)([A-Z])", r"_\1", str(value or "")).replace("-", "_").casefold()
+    return _CAMEL_BOUNDARY_RE.sub(r"_\1", str(value or "")).replace("-", "_").casefold()
 
 
 def _normalize_reference(value: str) -> str:
@@ -340,4 +344,4 @@ def _normalize_reference(value: str) -> str:
     if "/" in text:
         text = text.split("/")[-1]
     text = text.replace("_", "-").replace(" ", "-")
-    return re.sub(r"[^a-z0-9.-]+", "-", text).strip("-")
+    return _REFERENCE_NON_SLUG_RE.sub("-", text).strip("-")

@@ -65,6 +65,8 @@ _BRIEF_SYSTEM = (
 )
 
 _CODEX_BRIEF_TIMEOUT_SECONDS = 90
+_CODE_FENCE_OPEN_RE = re.compile(r"^```(?:json)?\s*")
+_CODE_FENCE_CLOSE_RE = re.compile(r"\s*```$")
 
 _BRIEF_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -181,8 +183,8 @@ def _evict_stale_chip_labs_modules(root: Path) -> None:
 
 def _strip_code_fences(text: str) -> str:
     text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
+    text = _CODE_FENCE_OPEN_RE.sub("", text)
+    text = _CODE_FENCE_CLOSE_RE.sub("", text)
     return text.strip()
 
 
