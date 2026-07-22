@@ -125,6 +125,9 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "prepared")
         self.assertEqual(result.envelope.harness_id, "builder.direct")
         self.assertIn("execution_contract", result.artifacts)
+        contract = result.artifacts["execution_contract"]
+        self.assertEqual(contract["limitations"], envelope.limitations)
+        self.assertEqual(contract["artifacts_expected"], envelope.artifacts_expected)
 
         snapshot = build_harness_runtime_snapshot(self.config_manager, self.state_db)
         self.assertEqual(snapshot.summary["recent_run_count"], 1)
@@ -576,3 +579,48 @@ class HarnessRuntimeTests(SparkTestCase):
         voice_result = (result.chained_results or [])[0]
         self.assertEqual(voice_result.envelope.harness_id, "voice.io")
         self.assertEqual(voice_result.status, "completed")
+
+    def test_execute_harness_chain_records_bounded_partial_progress_on_failure(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What is the difference between Spark Researcher and Builder?",
+            forced_harness_id="researcher.advisory",
+        )
+        envelope = with_harness_local_operator_turn_intent(envelope)
+
+        researcher_result = SimpleNamespace(
+            reply_text="A grounded answer.", evidence_summary="status=ok", trace_ref="trace:test",
+            mode="external_configured", provider_id="custom", provider_model="MiniMax-M2.7",
+            provider_execution_transport="direct_http", routing_decision="provider_execution",
+            active_chip_key=None,
+        )
+        secret = "sk-proj-" + "A" * 30
+
+        def execute_or_fail(*, config_manager, state_db, envelope):
+            if envelope.harness_id == "voice.io":
+                raise RuntimeError(secret)
+            return execute_harness_task(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+            )
+
+        with (
+            patch("spark_intelligence.harness_runtime.service._run_researcher_bridge_reply", return_value=researcher_result),
+            patch("spark_intelligence.harness_runtime.service.execute_harness_task", side_effect=execute_or_fail),
+            self.assertRaises(RuntimeError),
+        ):
+            execute_harness_chain(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+                follow_up_harness_ids=["voice.io"],
+            )
+
+        events = latest_events_by_type(self.state_db, event_type="harness_chain_interrupted", limit=5)
+        self.assertTrue(events)
+        self.assertEqual(events[0]["facts_json"]["primary_harness_id"], "researcher.advisory")
+        self.assertEqual(events[0]["facts_json"]["interrupted_harness_id"], "voice.io")
+        self.assertEqual(events[0]["facts_json"]["error_type"], "RuntimeError")
+        self.assertNotIn(secret, str(events[0]))
