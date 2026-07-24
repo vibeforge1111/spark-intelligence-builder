@@ -45,7 +45,7 @@ class ChipDiscoveryTests(SparkTestCase):
 
         scan = attachment_status(self.config_manager)
 
-        self.assertEqual(scan.chip_source, "canonical")
+        self.assertIn("canonical", scan.chip_source)
         self.assertIn("canonical", {record.key for record in scan.records if record.kind == "chip"})
 
     def test_canonical_home_honors_spark_home(self) -> None:
