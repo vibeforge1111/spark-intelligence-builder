@@ -421,7 +421,8 @@ def test_builds_memory_read_vnext_turn_intent_for_explicit_recall() -> None:
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "allow"
     assert verdict.governor_decision is not None
-    assert verdict.governor_decision["outcome"] == "execute"
+    assert verdict.governor_decision["outcome"] == "read_only"
+    assert verdict.governor_decision["authority_state"] == "read_only"
 
 
 def test_builds_memory_diagnostic_vnext_turn_intent() -> None:
@@ -684,10 +685,11 @@ def test_blocks_memory_write_when_vnext_action_is_not_proposed() -> None:
     assert "proposed_action_not_authorized" in verdict.reason_codes
     assert verdict.authorization_decision is not None
     assert verdict.authorization_decision["verdict"] == "deny"
-    assert verdict.tool_call_ledger is None
+    assert verdict.tool_call_ledger is not None
+    assert verdict.tool_call_ledger["result"]["status"] == "not_started"
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "deny"
-    assert verdict.governor_decision["tool_ledgers"] == []
+    assert verdict.governor_decision["tool_ledgers"] == [verdict.tool_call_ledger]
 
 
 def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
