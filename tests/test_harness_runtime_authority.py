@@ -52,7 +52,7 @@ class HarnessRuntimeAuthorityTests(SparkTestCase):
 
         self.assertEqual(result.status, "prepared")
         self.assertIn("execution_contract", result.artifacts)
-        self.assertEqual(result.artifacts["harness_authority"]["outcome"], "execute")
+        self.assertEqual(result.artifacts["harness_authority"]["outcome"], "read_only")
         initial = self._ledger_events("tool_call_ledger_recorded")
         final = self._ledger_events("tool_call_ledger_result_recorded")
         self.assertEqual(len(initial), 1)
