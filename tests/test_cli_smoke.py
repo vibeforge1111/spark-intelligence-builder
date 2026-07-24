@@ -12,7 +12,7 @@ from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
-from spark_intelligence.cli import _build_memory_direct_smoke_governor_decision
+from spark_intelligence.cli import _authorize_cli_memory_smoke_write
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
@@ -42,17 +42,15 @@ class CliSmokeTests(SparkTestCase):
                 _positive_int(value)
 
     def test_memory_direct_smoke_builds_distinct_canonical_update_and_delete_authority(self) -> None:
-        update = _build_memory_direct_smoke_governor_decision(
+        update = _authorize_cli_memory_smoke_write(
             state_db=self.state_db,
             subject="human:authority:test",
-            predicate="system.memory.authority",
-            operation="update",
+            operation="write",
         )
-        delete = _build_memory_direct_smoke_governor_decision(
+        delete = _authorize_cli_memory_smoke_write(
             state_db=self.state_db,
             subject="human:authority:test",
-            predicate="system.memory.authority",
-            operation="delete",
+            operation="cleanup",
         )
 
         self.assertIsNotNone(update)
