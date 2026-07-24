@@ -53,6 +53,7 @@ from spark_intelligence.memory.retention_policy import (
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
+_ALLOWED_SDK_MODULE_ROOTS: frozenset[str] = frozenset({"domain_chip_memory"})
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
 DEFAULT_SPARK_MODULES_ROOT = Path.home() / ".spark" / "modules"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
@@ -1578,7 +1579,18 @@ def _local_domain_chip_memory_src_candidates() -> list[Path]:
     return unique
 
 
+def _validate_sdk_module_name(module_name: str) -> str:
+    root = module_name.split(".", 1)[0]
+    if root not in _ALLOWED_SDK_MODULE_ROOTS:
+        raise ValueError(
+            f"sdk_module '{module_name}' is not in the allowlist; "
+            f"allowed roots: {sorted(_ALLOWED_SDK_MODULE_ROOTS)}"
+        )
+    return module_name
+
+
 def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    _validate_sdk_module_name(module_name)
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
