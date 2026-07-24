@@ -35,8 +35,11 @@ class AttachmentRegistryUnreadableRootTests(SparkTestCase):
         ), patch.object(Path, "iterdir", guarded_iterdir):
             roots, source = registry._resolve_chip_roots(self.config_manager)
 
-        self.assertEqual(roots, [expected])
-        self.assertEqual(source, "installed")
+        self.assertEqual(
+            roots,
+            [registry.canonical_chip_home(), expected],
+        )
+        self.assertEqual(source, "canonical+installed")
 
     def test_unreadable_legacy_desktop_returns_missing_instead_of_crashing(self) -> None:
         user_home = self.home / "user"
@@ -55,8 +58,8 @@ class AttachmentRegistryUnreadableRootTests(SparkTestCase):
         ), patch.object(Path, "iterdir", guarded_iterdir):
             roots, source = registry._resolve_chip_roots(self.config_manager)
 
-        self.assertEqual(roots, [])
-        self.assertEqual(source, "missing")
+        self.assertEqual(roots, [registry.canonical_chip_home()])
+        self.assertEqual(source, "canonical")
 
     def test_unresolvable_candidate_does_not_hide_other_valid_chip(self) -> None:
         parent = self.home / "chips"
