@@ -125,7 +125,7 @@ class SecretFilePermissionTests(SparkTestCase):
     def test_doctor_reports_env_permission_check(self) -> None:
         exit_code, stdout, stderr = self.run_cli("doctor", "--home", str(self.home))
 
-        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(exit_code, 0, f"{stderr}\n{stdout}")
         self.assertIn(".env-permissions", stdout)
 
     @patch.dict(os.environ, {"USERDOMAIN": "STALE_DOMAIN", "USERNAME": "STALE_USER"})

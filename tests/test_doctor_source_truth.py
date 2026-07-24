@@ -202,4 +202,4 @@ class DoctorSourceTruthTests(SparkTestCase):
             item for item in pyproject["project"]["dependencies"] if item.startswith("spark-harness-core @ ")
         ]
         self.assertEqual(len(harness_dependencies), 1)
-        self.assertIn("@aa19fd7e49151c9df9e76e38f32da4aba7870bdf", harness_dependencies[0])
+        self.assertIn("@a78c5bb2137a30a3bd9a543fd5a7cfe662245abd", harness_dependencies[0])

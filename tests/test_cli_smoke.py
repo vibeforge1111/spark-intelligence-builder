@@ -3553,7 +3553,7 @@ class CliSmokeTests(SparkTestCase):
             "--home",
             str(self.home),
         )
-        self.assertEqual(status_exit, 0, status_stderr)
+        self.assertEqual(status_exit, 0, f"{status_stderr}\n{status_stdout}")
         self.assertIn("- repair hint: spark-intelligence operator set-channel telegram enabled", status_stdout)
 
     def test_gateway_status_ready_when_only_advisory_doctor_checks_fail(self) -> None:
@@ -4355,7 +4355,7 @@ class CliSmokeTests(SparkTestCase):
             str(self.home),
         )
 
-        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertEqual(doctor_exit, 0, f"{doctor_stderr}\n{doctor_stdout}")
         self.assertIn(
             "[ok] discord-runtime: status=enabled pairing_mode=pairing auth_ref=missing allowed_users=0 ingress=legacy_message_webhook webhook_auth_ref=DISCORD_WEBHOOK_SECRET",
             doctor_stdout,
@@ -4432,7 +4432,7 @@ class CliSmokeTests(SparkTestCase):
             str(self.home),
         )
 
-        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertEqual(doctor_exit, 0, f"{doctor_stderr}\n{doctor_stdout}")
         self.assertIn(
             "[ok] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=meta_webhook webhook_auth_ref=WHATSAPP_WEBHOOK_SECRET webhook_verify_token_ref=WHATSAPP_WEBHOOK_VERIFY_TOKEN",
             doctor_stdout,
