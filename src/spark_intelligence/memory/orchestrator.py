@@ -3621,7 +3621,7 @@ def write_structured_evidence_to_memory(
                 actor_id=f"{actor_id}_belief_consolidator",
                 governor_decision=governor_decision,
             )
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
             _LOGGER.warning(
                 "structured_evidence_belief_consolidation_failed error_type=%s",
                 type(exc).__name__,
@@ -3646,7 +3646,7 @@ def write_structured_evidence_to_memory(
                     actor_id=f"{actor_id}_current_state_consolidator",
                     governor_decision=governor_decision,
                 )
-            except (OSError, ValueError, TypeError) as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 _LOGGER.warning(
                     "structured_evidence_current_state_consolidation_failed error_type=%s",
                     type(exc).__name__,
