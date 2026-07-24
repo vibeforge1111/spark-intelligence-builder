@@ -211,8 +211,8 @@ def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
     installed = resolve_installed_module_source("spark-memory-quality-dashboard", config_manager=config_manager)
     if installed is not None:
         return str(installed)
-    desktop_path = Path.home() / "Desktop" / "spark-memory-quality-dashboard"
-    return str(desktop_path) if desktop_path.exists() else None
+    fallback_path = Path.home() / ".spark" / "memory" / "spark-memory-quality-dashboard"
+    return str(fallback_path) if fallback_path.exists() else None
 
 
 def _run_git(repo: Path, args: list[str]) -> str | None:

@@ -37,6 +37,18 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         self.assertEqual(runtime_root, source.resolve())
         self.assertEqual(source_kind, "installed_module")
 
+    def test_researcher_uses_platform_safe_spark_fallback(self) -> None:
+        fallback = self.user_home / ".spark" / "spark-researcher"
+        fallback.mkdir(parents=True)
+
+        with patch("pathlib.Path.home", return_value=self.user_home):
+            runtime_root, source_kind = discover_researcher_runtime_root(
+                self.config_manager
+            )
+
+        self.assertEqual(runtime_root, fallback)
+        self.assertEqual(source_kind, "autodiscovered")
+
     def test_attachment_discovery_prefers_installed_chip_root_before_legacy_desktop(self) -> None:
         chip = self.spark_home / "chips" / "domain-chip-installed-proof"
         chip.mkdir(parents=True)
@@ -121,6 +133,20 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
             resolved = _known_dashboard_repo_path(self.config_manager)
 
         self.assertEqual(resolved, str(source.resolve()))
+
+    def test_quality_dashboard_uses_platform_safe_spark_fallback(self) -> None:
+        fallback = (
+            self.user_home
+            / ".spark"
+            / "memory"
+            / "spark-memory-quality-dashboard"
+        )
+        fallback.mkdir(parents=True)
+
+        with patch("pathlib.Path.home", return_value=self.user_home):
+            resolved = _known_dashboard_repo_path(self.config_manager)
+
+        self.assertEqual(resolved, str(fallback))
 
     def test_swarm_does_not_invent_unregistered_spark_home_runtime(self) -> None:
         invented = self.spark_home / "spark-swarm"

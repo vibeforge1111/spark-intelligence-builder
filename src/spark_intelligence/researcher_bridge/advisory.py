@@ -3026,7 +3026,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     if installed is not None:
         return installed, "installed_module"
 
-    autodetect = Path.home() / "Desktop" / "spark-researcher"
+    autodetect = Path.home() / ".spark" / "spark-researcher"
     if autodetect.exists():
         return autodetect, "autodiscovered"
     return None, "missing"
