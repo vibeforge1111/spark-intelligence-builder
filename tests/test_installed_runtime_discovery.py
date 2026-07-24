@@ -59,8 +59,11 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         ):
             roots, source_kind = _resolve_chip_roots(self.config_manager)
 
-        self.assertEqual(roots, [chip.resolve()])
-        self.assertEqual(source_kind, "installed")
+        self.assertEqual(
+            [path.resolve() for path in roots],
+            [(self.spark_home / "chips").resolve(), chip.resolve()],
+        )
+        self.assertEqual(source_kind, "canonical+installed")
 
     def test_explicit_spark_home_does_not_mix_default_home_chips(self) -> None:
         configured_chip = self.spark_home / "chips" / "domain-chip-configured"
@@ -76,8 +79,12 @@ class InstalledRuntimeDiscoveryTests(SparkTestCase):
         ):
             roots, source_kind = _resolve_chip_roots(self.config_manager)
 
-        self.assertEqual(roots, [configured_chip.resolve()])
-        self.assertEqual(source_kind, "installed")
+        self.assertEqual(
+            [path.resolve() for path in roots],
+            [(self.spark_home / "chips").resolve(), configured_chip.resolve()],
+        )
+        self.assertNotIn(default_chip.resolve(), [path.resolve() for path in roots])
+        self.assertEqual(source_kind, "canonical+installed")
 
     def test_memory_tools_use_installed_domain_chip_source_before_legacy_desktop(self) -> None:
         source = self._module_source("domain-chip-memory")
