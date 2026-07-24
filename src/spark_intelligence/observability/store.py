@@ -235,6 +235,152 @@ def prune_observability_store(
     )
 
 
+def persist_bound_ledger(
+    state_db: StateDB,
+    *,
+    row: dict[str, Any],
+    component: str | None = None,
+) -> str:
+    del component
+    ledger_json = row.get("ledger_json") if isinstance(row, dict) else None
+    ledger_payload = dict(ledger_json) if isinstance(ledger_json, dict) else {}
+    if isinstance(ledger_json, str):
+        try:
+            parsed = json.loads(ledger_json)
+            ledger_payload = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            ledger_payload = {}
+    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
+    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
+    ledger_id = _ledger_text(row.get("ledger_id") or ledger_payload.get("ledger_id"))
+    if not ledger_id:
+        raise ValueError("tool_call_ledger row requires ledger_id")
+    now = utc_now_iso()
+    values = {
+        "ledger_id": ledger_id,
+        "turn_id": _ledger_text(row.get("turn_id") or ledger_payload.get("turn_id")),
+        "action_id": _ledger_text(row.get("action_id") or ledger_payload.get("action_id")),
+        "capability_id": _ledger_text(row.get("capability_id") or ledger_payload.get("capability_id")),
+        "authorization_decision_id": _ledger_text(row.get("authorization_decision_id")),
+        "tool_name": _ledger_text(row.get("tool_name") or ledger_payload.get("tool_name")),
+        "owner_system": _ledger_text(row.get("owner_system")),
+        "mutation_class": _ledger_text(row.get("mutation_class")),
+        "outcome": _ledger_text(row.get("outcome")),
+        "status": _ledger_text(row.get("status") or result.get("status")),
+        "surface": _ledger_text(row.get("surface")),
+        "request_id": _ledger_text(row.get("request_id")),
+        "trace_ref": _ledger_text(row.get("trace_ref") or trace.get("id")),
+        "summary": _ledger_text(row.get("summary") or result.get("summary") or trace.get("summary")),
+        "ledger_json": json.dumps(ledger_payload if ledger_payload else ledger_json or {}, sort_keys=True),
+        "created_at": _ledger_text(row.get("created_at")) or now,
+        "updated_at": _ledger_text(row.get("updated_at")) or now,
+    }
+    with state_db.connect() as conn:
+        if values["tool_name"] == "voice.speak":
+            existing = conn.execute(
+                """
+                SELECT ledger_id, created_at
+                FROM tool_call_ledger
+                WHERE tool_name = ?
+                  AND turn_id = ?
+                  AND action_id = ?
+                  AND capability_id = ?
+                  AND request_id = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (
+                    values["tool_name"],
+                    values["turn_id"],
+                    values["action_id"],
+                    values["capability_id"],
+                    values["request_id"],
+                ),
+            ).fetchone()
+            if existing is not None:
+                values["ledger_id"] = str(existing["ledger_id"])
+                values["created_at"] = str(existing["created_at"])
+                if isinstance(ledger_payload, dict):
+                    ledger_payload["ledger_id"] = values["ledger_id"]
+                    values["ledger_json"] = json.dumps(ledger_payload, sort_keys=True)
+        conn.execute(
+            """
+            INSERT INTO tool_call_ledger(
+                ledger_id, turn_id, action_id, capability_id,
+                authorization_decision_id, tool_name, owner_system,
+                mutation_class, outcome, status, surface, request_id,
+                trace_ref, summary, ledger_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ledger_id) DO UPDATE SET
+                turn_id = excluded.turn_id,
+                action_id = excluded.action_id,
+                capability_id = excluded.capability_id,
+                authorization_decision_id = excluded.authorization_decision_id,
+                tool_name = excluded.tool_name,
+                owner_system = excluded.owner_system,
+                mutation_class = excluded.mutation_class,
+                outcome = excluded.outcome,
+                status = excluded.status,
+                surface = excluded.surface,
+                request_id = excluded.request_id,
+                trace_ref = excluded.trace_ref,
+                summary = excluded.summary,
+                ledger_json = excluded.ledger_json,
+                updated_at = excluded.updated_at
+            """,
+            tuple(values[column] for column in (
+                "ledger_id", "turn_id", "action_id", "capability_id",
+                "authorization_decision_id", "tool_name", "owner_system",
+                "mutation_class", "outcome", "status", "surface", "request_id",
+                "trace_ref", "summary", "ledger_json", "created_at", "updated_at",
+            )),
+        )
+        conn.commit()
+    return str(values["ledger_id"])
+
+
+def _ledger_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _event_turn_id(
+    explicit_turn_id: Any,
+    facts: dict[str, Any],
+    *,
+    request_id: str | None,
+    trace_ref: str | None,
+) -> str | None:
+    candidates: list[Any] = [explicit_turn_id, facts.get("turn_id")]
+    for key in ("tool_call_ledger", "ledger", "governor_decision"):
+        value = facts.get(key)
+        if isinstance(value, dict):
+            candidates.append(value.get("turn_id"))
+    for candidate in candidates:
+        normalized = _ledger_text(candidate)
+        if normalized:
+            return normalized
+    for candidate in (request_id, trace_ref):
+        normalized = _ledger_text(candidate)
+        if normalized and normalized.startswith("turn:"):
+            return normalized
+    return None
+
+
+def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(surface, ''), 'unknown') AS surface, COUNT(*) AS count
+            FROM tool_call_ledger
+            GROUP BY COALESCE(NULLIF(surface, ''), 'unknown')
+            ORDER BY surface ASC
+            """
+        ).fetchall()
+    return {str(row["surface"]): int(row["count"] or 0) for row in rows}
+
+
 def open_run(
     state_db: StateDB,
     *,
@@ -440,6 +586,7 @@ def record_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
     request_id: str | None = None,
+    turn_id: str | None = None,
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
@@ -457,6 +604,12 @@ def record_event(
     recorded_at = utc_now_iso()
     normalized_facts = dict(facts or {})
     normalized_provenance = dict(provenance or {})
+    normalized_turn_id = _event_turn_id(
+        turn_id,
+        normalized_facts,
+        request_id=request_id,
+        trace_ref=trace_ref,
+    )
     normalized_trace_ref = _event_trace_ref(trace_ref=trace_ref, request_id=request_id)
     with state_db.connect() as conn:
         conn.execute(
@@ -471,6 +624,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                turn_id,
                 trace_ref,
                 channel_id,
                 session_id,
@@ -485,7 +639,7 @@ def record_event(
                 provenance_json,
                 facts_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -497,6 +651,7 @@ def record_event(
                 parent_event_id,
                 correlation_id,
                 request_id,
+                normalized_turn_id,
                 normalized_trace_ref,
                 channel_id,
                 session_id,
@@ -521,6 +676,7 @@ def record_event(
                 workspace_id,
                 trace_ref,
                 request_id,
+                turn_id,
                 run_id,
                 session_id,
                 surface_kind,
@@ -531,7 +687,7 @@ def record_event(
                 severity,
                 payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -540,6 +696,7 @@ def record_event(
                 None,
                 normalized_trace_ref,
                 request_id,
+                normalized_turn_id,
                 run_id,
                 session_id,
                 component,
@@ -554,6 +711,7 @@ def record_event(
                         "truth_kind": truth_kind,
                         "target_surface": target_surface,
                         "component": component,
+                        "turn_id": normalized_turn_id,
                         "evidence_lane": evidence_lane,
                         "reason_code": reason_code,
                         "provenance": normalized_provenance,

@@ -16,6 +16,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory.flags import memory_enabled, memory_shadow_mode
 from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_observation,
     parse_entity_state_deletion,
@@ -5514,7 +5515,7 @@ def _coerce_int(value: Any, *, default: int) -> int:
 
 
 def _human_id_from_subject(subject: str) -> str | None:
-    text = _optional_string(subject)
+    text = _optional_string(_canonical_memory_subject_text(subject))
     if not text:
         return None
     if text.startswith("human:"):
@@ -5523,14 +5524,37 @@ def _human_id_from_subject(subject: str) -> str | None:
 
 
 def _subject_for_human_id(human_id: str) -> str:
-    text = _optional_string(human_id) or ""
+    text = _optional_string(_canonical_memory_subject_text(human_id)) or ""
     if text.startswith("human:"):
         return text
     return f"human:{text}"
 
 
+def _event_human_id_for_memory(value: str | None) -> str | None:
+    text = _optional_string(_canonical_memory_subject_text(value))
+    if not text:
+        return None
+    if text.startswith("human:"):
+        return text
+    return f"human:{text}"
+
+
+def _canonical_memory_subject_text(value: str | None) -> str | None:
+    text = _optional_string(value)
+    if not text:
+        return None
+    while text.startswith("human:human:"):
+        text = text.removeprefix("human:")
+    parts = text.split(":")
+    if len(parts) >= 4 and parts[0] == "human" and parts[2] == "human" and parts[1] == parts[3]:
+        return ":".join(parts[:2] + parts[4:])
+    if len(parts) >= 3 and parts[1] == "human" and parts[0] == parts[2]:
+        return ":".join(parts[:1] + parts[3:])
+    return text
+
+
 def _subject_fallback_candidates(subject: str) -> tuple[str, ...]:
-    normalized_subject = _optional_string(subject)
+    normalized_subject = _optional_string(_canonical_memory_subject_text(subject))
     if not normalized_subject:
         return ()
     candidates = [normalized_subject]
@@ -6141,11 +6165,11 @@ def _normalize_memory_maintenance_payload(raw: Any) -> dict[str, Any]:
 
 
 def _memory_enabled(config_manager: ConfigManager) -> bool:
-    return bool(config_manager.get_path("spark.memory.enabled", default=False))
+    return memory_enabled(config_manager)
 
 
 def _memory_shadow_mode(config_manager: ConfigManager) -> bool:
-    return bool(config_manager.get_path("spark.memory.shadow_mode", default=True))
+    return memory_shadow_mode(config_manager)
 
 
 def _disabled_write_result(*, operation: str, reason: str = "memory_disabled") -> MemoryWriteResult:
@@ -7968,9 +7992,10 @@ def _record_memory_write_requested_observations(
         component="memory_orchestrator",
         summary=summary,
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         facts={
             "operation": operation,
@@ -8320,9 +8345,10 @@ def _record_memory_write_event(
         component="memory_orchestrator",
         summary="Spark memory write completed." if result.accepted_count > 0 else "Spark memory write abstained.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=trace_ref,
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         status=status,
         facts={
@@ -8477,6 +8503,7 @@ def _record_memory_read_requested_subject(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    subject = _subject_for_human_id(subject)
     facts = {"method": method, "memory_role": "current_state", "subject": subject}
     if predicate is not None:
         facts["predicate"] = predicate
@@ -8492,9 +8519,10 @@ def _record_memory_read_requested_subject(
         component="memory_orchestrator",
         summary="Spark memory read requested.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=_human_id_from_subject(subject),
+        human_id=_event_human_id_for_memory(subject),
         actor_id=actor_id,
         facts=facts,
         provenance={"memory_role": "current_state"},
@@ -8516,9 +8544,10 @@ def _record_memory_read_event(
         component="memory_orchestrator",
         summary="Spark memory read completed." if not result.abstained else "Spark memory read abstained.",
         request_id=turn_id,
+        turn_id=turn_id,
         trace_ref=_memory_trace_ref(session_id=session_id, turn_id=turn_id),
         session_id=session_id,
-        human_id=human_id,
+        human_id=_event_human_id_for_memory(human_id),
         actor_id=actor_id,
         status="abstained" if result.abstained else "recorded",
         facts={

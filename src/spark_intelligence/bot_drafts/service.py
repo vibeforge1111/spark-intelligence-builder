@@ -91,6 +91,7 @@ class BotDraft:
     chip_used: str | None
     topic_hint: str | None
     created_at: str
+    updated_at: str
 
     def to_dict(self) -> dict:
         return {
@@ -103,6 +104,7 @@ class BotDraft:
             "chip_used": self.chip_used,
             "topic_hint": self.topic_hint,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
 
@@ -156,11 +158,11 @@ def save_draft(
             """
             INSERT INTO bot_drafts(
                 draft_id, external_user_id, channel_kind, session_id,
-                content, content_length, chip_used, topic_hint, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content, content_length, chip_used, topic_hint, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (draft_id, user, channel, session_id, text, len(text),
-             chip_used, topic_hint, created_at),
+             chip_used, topic_hint, created_at, created_at),
         )
     return BotDraft(
         draft_id=draft_id,
@@ -173,6 +175,7 @@ def save_draft(
         chip_used=chip_used,
         topic_hint=topic_hint,
         created_at=created_at,
+        updated_at=created_at,
     )
 
 
@@ -195,12 +198,25 @@ def update_draft_content(
             """
             UPDATE bot_drafts
             SET content = ?, content_length = ?, chip_used = COALESCE(?, chip_used),
-                topic_hint = COALESCE(?, topic_hint), created_at = ?
+                topic_hint = COALESCE(?, topic_hint), updated_at = ?
             WHERE draft_id = ?
             """,
             (text, len(text), chip_used, topic_hint, updated_at, draft_id),
         )
         return cur.rowcount > 0
+
+
+def prune_aged_drafts(state_db: StateDB, *, older_than: str | datetime) -> int:
+    cutoff = older_than.isoformat() if isinstance(older_than, datetime) else str(older_than)
+    with state_db.connect() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM bot_drafts
+            WHERE COALESCE(updated_at, created_at) < ?
+            """,
+            (cutoff,),
+        )
+        return cur.rowcount
 
 
 def _require_bot_draft_authority(governor_decision: dict | None) -> dict:
@@ -234,10 +250,10 @@ def list_recent_drafts(
         rows = conn.execute(
             """
             SELECT draft_id, external_user_id, channel_kind, session_id,
-                   content, content_length, chip_used, topic_hint, created_at
+                   content, content_length, chip_used, topic_hint, created_at, updated_at
             FROM bot_drafts
             WHERE external_user_id = ? AND channel_kind = ?
-            ORDER BY created_at DESC, rowid DESC
+            ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC, rowid DESC
             LIMIT ?
             """,
             (user, channel, max(1, int(limit))),
@@ -267,11 +283,11 @@ def find_draft_by_handle(
         rows = conn.execute(
             """
             SELECT draft_id, external_user_id, channel_kind, session_id,
-                   content, content_length, chip_used, topic_hint, created_at
+                   content, content_length, chip_used, topic_hint, created_at, updated_at
             FROM bot_drafts
             WHERE external_user_id = ? AND channel_kind = ?
               AND (draft_id = ? OR draft_id LIKE ?)
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
             LIMIT 1
             """,
             (user, channel, f"D-{raw_body}", f"D-{raw_body}%"),
@@ -415,4 +431,5 @@ def _row_to_draft(row) -> BotDraft:
         chip_used=str(row["chip_used"]) if row["chip_used"] else None,
         topic_hint=str(row["topic_hint"]) if row["topic_hint"] else None,
         created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"] or row["created_at"]),
     )

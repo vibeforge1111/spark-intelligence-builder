@@ -59,8 +59,49 @@ class MemoryOrchestratorTraceContextTests(SparkTestCase):
         requested = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=1)
         abstained = latest_events_by_type(self.state_db, event_type="memory_read_abstained", limit=1)
 
+        self.assertEqual(requested[0]["turn_id"], "context_capsule:lookup")
         self.assertEqual(requested[0]["trace_ref"], "trace:memory-retrieval:context_capsule:lookup")
+        self.assertEqual(abstained[0]["turn_id"], "context_capsule:lookup")
         self.assertEqual(abstained[0]["trace_ref"], "trace:memory-retrieval:context_capsule:lookup")
+
+    def test_memory_read_events_canonicalize_top_level_human_identity(self) -> None:
+        _record_memory_read_requested_subject(
+            state_db=self.state_db,
+            method="get_current_state",
+            subject="telegram:human:telegram:222",
+            predicate="profile.current_focus",
+            query="what should I focus on?",
+            session_id="memory-retrieval:identity",
+            turn_id="identity:lookup",
+            actor_id="context_capsule",
+        )
+        _record_memory_read_event(
+            state_db=self.state_db,
+            result=MemoryReadResult(
+                status="supported",
+                method="get_current_state",
+                memory_role="current_state",
+                records=[{"subject": "human:telegram:222", "predicate": "profile.current_focus", "value": "identity QA"}],
+                provenance=[],
+                retrieval_trace={"subject": "human:telegram:222"},
+                answer_explanation=None,
+                abstained=False,
+                reason=None,
+            ),
+            human_id="telegram:human:telegram:222",
+            session_id="memory-retrieval:identity",
+            turn_id="identity:lookup",
+            actor_id="context_capsule",
+        )
+
+        requested = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=1)
+        succeeded = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=1)
+
+        self.assertEqual(requested[0]["turn_id"], "identity:lookup")
+        self.assertEqual(requested[0]["human_id"], "human:telegram:222")
+        self.assertEqual((requested[0]["facts_json"] or {}).get("subject"), "human:telegram:222")
+        self.assertEqual(succeeded[0]["turn_id"], "identity:lookup")
+        self.assertEqual(succeeded[0]["human_id"], "human:telegram:222")
 
     def test_memory_write_request_events_emit_trace_ref_from_turn_context(self) -> None:
         _record_memory_write_requested_observations(
@@ -82,6 +123,7 @@ class MemoryOrchestratorTraceContextTests(SparkTestCase):
 
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=1)
 
+        self.assertEqual(events[0]["turn_id"], "context_capsule:write")
         self.assertEqual(events[0]["trace_ref"], "trace:memory-write:context_capsule:write")
 
     def test_memory_write_succeeded_events_emit_trace_ref_from_turn_context(self) -> None:
@@ -108,4 +150,5 @@ class MemoryOrchestratorTraceContextTests(SparkTestCase):
 
         events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=1)
 
+        self.assertEqual(events[0]["turn_id"], "context_capsule:write")
         self.assertEqual(events[0]["trace_ref"], "trace:memory-write:context_capsule:write")

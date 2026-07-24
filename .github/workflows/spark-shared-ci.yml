@@ -1,0 +1,28 @@
+name: Spark shared CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "codex/**"
+      - "reconcile/**"
+      - "ap-01-*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  conformance:
+    uses: vibeforge1111/spark-cli/.github/workflows/reusable-conformance.yml@ap-01-reusable-ci-v5
+    with:
+      python-version: "3.11"
+      install-command: "python -m pip install PyYAML jsonschema pynacl pytest"
+      test-command: "python -m compileall src"
+      conformance-command: "python -c \"from pathlib import Path; assert Path('src/spark_intelligence/cli.py').exists(); print('Spark runtime core source is present.')\""
+
+  scanners:
+    uses: vibeforge1111/spark-cli/.github/workflows/reusable-scanners.yml@ap-01-reusable-ci-v5

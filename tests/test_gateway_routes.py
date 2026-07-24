@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
+from spark_intelligence.gateway.tool_ledger import tool_ledger_ingest_route
 
 from tests.test_support import SparkTestCase
 
 
 class GatewayRouteRegistryTests(SparkTestCase):
+    def test_tool_ledger_ingest_route_declares_json_post_contract(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(tool_ledger_ingest_route())
+
+        route = registry.validate_request(
+            path="/v1/tool-ledger",
+            method="POST",
+            content_type="application/json; charset=utf-8",
+        )
+
+        self.assertEqual(route.owner, "gateway-core.tool-ledger")
+        self.assertEqual(route.auth_mode, "provider_internal")
+
     def test_registers_normalized_route(self) -> None:
         registry = GatewayRouteRegistry()
 

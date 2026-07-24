@@ -85,8 +85,8 @@ def _build_evolution_packet(
     evidence = [
         evidence_ref(
             "runtime_state",
-            "state.db:builder_events",
-            f"Canonical governed tool-ledger events available: {len(ledgers)}.",
+            "state.db:tool_call_ledger",
+            f"Canonical governed tool ledgers available: {len(ledgers)}.",
             confidence=1.0 if ledgers else 0.0,
         )
     ]
@@ -110,8 +110,8 @@ def _build_evolution_packet(
             ),
             artifact=artifact_ref(
                 "tool_ledger",
-                f"state.db:builder_events/{item['event_id']}",
-                "Canonical Builder event carrying a governed tool-call ledger.",
+                f"state.db:tool_call_ledger/{item['ledger_id']}",
+                "Canonical governed tool-call ledger.",
             ),
             tags=[
                 f"surface:{_tag_value(item.get('surface'))}",
@@ -236,37 +236,31 @@ def _recent_canonical_tool_ledgers(state_db: StateDB, *, limit: int) -> list[dic
     with state_db.connect() as conn:
         rows = conn.execute(
             """
-            SELECT event_id, event_type, component, facts_json, created_at
-            FROM builder_events
-            WHERE event_type IN ('tool_call_ledger_recorded', 'tool_call_ledger_result_recorded')
-            ORDER BY created_at DESC, event_id DESC
+            SELECT ledger_id, tool_name, surface, status, ledger_json, created_at
+            FROM tool_call_ledger
+            ORDER BY created_at DESC, ledger_id DESC
             LIMIT ?
             """,
-            (bounded_limit * 2,),
+            (bounded_limit,),
         ).fetchall()
-    ledgers: dict[str, dict[str, Any]] = {}
+    ledgers: list[dict[str, Any]] = []
     for row in rows:
         try:
-            facts = json.loads(str(row["facts_json"] or "{}"))
+            ledger = json.loads(str(row["ledger_json"] or "{}"))
         except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        ledger = facts.get("tool_call_ledger") if isinstance(facts, dict) else None
+            ledger = {}
         if not isinstance(ledger, dict):
-            continue
-        ledger_id = str(ledger.get("ledger_id") or facts.get("ledger_id") or "").strip()
-        if not ledger_id or ledger_id in ledgers:
-            continue
+            ledger = {}
         result = ledger.get("result") if isinstance(ledger.get("result"), dict) else {}
-        ledgers[ledger_id] = {
-            "event_id": str(row["event_id"]),
+        ledger_id = str(row["ledger_id"])
+        ledgers.append({
+            "event_id": ledger_id,
             "ledger_id": ledger_id,
-            "tool_name": str(ledger.get("tool_name") or facts.get("tool_name") or "unknown"),
-            "surface": str(ledger.get("surface") or facts.get("surface") or row["component"] or "unknown"),
-            "status": str(result.get("status") or facts.get("status") or "unknown"),
-        }
-        if len(ledgers) >= bounded_limit:
-            break
-    return list(ledgers.values())
+            "tool_name": str(row["tool_name"] or ledger.get("tool_name") or "unknown"),
+            "surface": str(row["surface"] or ledger.get("surface") or "unknown"),
+            "status": str(row["status"] or result.get("status") or "unknown"),
+        })
+    return ledgers
 
 
 def _load_change_manifests(paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:

@@ -746,9 +746,6 @@ class SparkTestCase(unittest.TestCase):
             "os.environ",
             {
                 "SPARK_HOME": str(self.home / ".spark"),
-                "SPARK_HARNESS_CORE_SOURCE": str(
-                    Path(spark_harness_core.__file__).resolve().parents[1]
-                ),
             },
         )
         self._spark_home_patcher.start()

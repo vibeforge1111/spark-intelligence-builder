@@ -81,6 +81,7 @@ from spark_intelligence.llm_wiki import (
 )
 from spark_intelligence.memory import run_memory_doctor
 from spark_intelligence.memory.episodic_events import detect_telegram_memory_event_observation
+from spark_intelligence.memory.flags import memory_enabled, memory_shadow_mode
 from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
 from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.personality import (
@@ -2007,9 +2008,9 @@ def simulate_telegram_update(
                         _instruction_intent = None
                     if _instruction_intent is not None:
                         try:
-                            memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
-                            shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
-                            if memory_enabled and not shadow_mode:
+                            memory_enabled_flag = memory_enabled(config_manager)
+                            shadow_mode = memory_shadow_mode(config_manager)
+                            if memory_enabled_flag and not shadow_mode:
                                 from spark_intelligence.memory.generic_observations import (
                                     detect_telegram_generic_deletion as _detect_generic_memory_deletion,
                                 )
@@ -2019,9 +2020,9 @@ def simulate_telegram_update(
                         except Exception:
                             pass
                     try:
-                        memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
-                        shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
-                        if memory_enabled and not shadow_mode:
+                        memory_enabled_flag = memory_enabled(config_manager)
+                        shadow_mode = memory_shadow_mode(config_manager)
+                        if memory_enabled_flag and not shadow_mode:
                             from spark_intelligence.memory.generic_observations import (
                                 detect_telegram_generic_observation as _detect_generic_memory_observation,
                             )
@@ -12511,9 +12512,21 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
 
 def _render_swarm_bridge_failure(action: str, result: Any) -> str:
     exit_code = int(getattr(result, "exit_code", 1) or 1)
-    return (
-        f"Swarm couldn’t complete the {action} (exit code {exit_code}). "
-        "I kept the raw command output out of this chat."
+    stdout = str(getattr(result, "stdout", "") or "").strip()
+    stderr = str(getattr(result, "stderr", "") or "").strip()
+    raw_detail = stderr or stdout
+    if raw_detail:
+        logging.getLogger(__name__).debug(
+            "swarm bridge %s failed (exit_code=%s): %s",
+            action,
+            exit_code,
+            raw_detail,
+        )
+    return "\n".join(
+        (
+            f"Swarm {action} failed. It returned exit code {exit_code}.",
+            "I kept the diagnostic details out of this chat.",
+        )
     )
 
 

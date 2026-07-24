@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,25 @@ POLICY_REASON_PATTERN = re.compile(
 TELEGRAM_SESSION_ID_PATTERN = re.compile(r"^(session:telegram:[^:]+:)(.+)$")
 HARNESS_PROOF_CAPSULE_SCHEMA = "spark.harness_proof.v1"
 HARNESS_PROOF_REF_PATTERN = re.compile(r"^turn:sha256:[a-f0-9]{16}$")
+
+
+@dataclass(frozen=True)
+class GatewayLogPruneResult:
+    cutoff: str
+    deleted_counts: dict[str, int]
+    kept_counts: dict[str, int]
+
+    @property
+    def total_deleted(self) -> int:
+        return sum(self.deleted_counts.values())
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "cutoff": self.cutoff,
+            "deleted_counts": self.deleted_counts,
+            "kept_counts": self.kept_counts,
+            "total_deleted": self.total_deleted,
+        }
 
 
 def trace_log_path(config_manager: ConfigManager) -> Path:
@@ -97,6 +117,80 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
         except (json.JSONDecodeError, ValueError):
             continue
     return records
+
+
+def prune_gateway_logs(
+    config_manager: ConfigManager,
+    *,
+    older_than: str | datetime,
+) -> GatewayLogPruneResult:
+    cutoff = _normalize_gateway_cutoff(older_than)
+    deleted_counts: dict[str, int] = {}
+    kept_counts: dict[str, int] = {}
+    for label, path in (
+        ("gateway_trace", trace_log_path(config_manager)),
+        ("gateway_outbound", outbound_log_path(config_manager)),
+    ):
+        deleted, kept = _prune_gateway_jsonl(path, cutoff)
+        deleted_counts[label] = deleted
+        kept_counts[label] = kept
+    return GatewayLogPruneResult(
+        cutoff=cutoff.isoformat(timespec="seconds"),
+        deleted_counts=deleted_counts,
+        kept_counts=kept_counts,
+    )
+
+
+def _normalize_gateway_cutoff(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        cutoff = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("older_than is required")
+        cutoff = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    return cutoff.astimezone(timezone.utc)
+
+
+def _prune_gateway_jsonl(path: Path, cutoff: datetime) -> tuple[int, int]:
+    if not path.exists():
+        return 0, 0
+    temporary = path.with_name(f"{path.name}.tmp")
+    deleted = 0
+    kept = 0
+    with path.open("r", encoding="utf-8", errors="replace") as source, temporary.open(
+        "w",
+        encoding="utf-8",
+    ) as target:
+        for line in source:
+            keep = True
+            try:
+                payload = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                raw = str(payload.get("recorded_at") or "").strip()
+                try:
+                    recorded_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    recorded_at = None
+                if recorded_at is not None:
+                    if recorded_at.tzinfo is None:
+                        recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+                    if recorded_at.astimezone(timezone.utc) < cutoff:
+                        keep = False
+            if keep:
+                target.write(line)
+                kept += 1
+            else:
+                deleted += 1
+    if deleted:
+        temporary.replace(path)
+    else:
+        temporary.unlink(missing_ok=True)
+    return deleted, kept
 
 
 def redact_gateway_trace_log(

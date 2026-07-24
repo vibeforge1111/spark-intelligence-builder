@@ -10,6 +10,25 @@ from spark_intelligence.memory.retention_policy import (
     active_state_revalidation_days_for as _active_state_revalidation_days_for,
 )
 
+_PROJECT_SCOPED_CURRENT_STATE_PREDICATES = frozenset(
+    {
+        "profile.current_project",
+        "profile.current_mission",
+        "profile.current_focus",
+        "profile.current_plan",
+        "profile.current_decision",
+        "profile.current_blocker",
+        "profile.current_status",
+        "profile.current_commitment",
+        "profile.current_milestone",
+        "profile.current_risk",
+        "profile.current_dependency",
+        "profile.current_constraint",
+        "profile.current_assumption",
+        "profile.current_owner",
+    }
+)
+
 _CITY_PATTERNS = [
     re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
@@ -84,9 +103,42 @@ _TIMEZONE_PATTERNS = [
     re.compile(r"\bset\s+my\s+timezone\s+to\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+timezone\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
+    re.compile(r"\bi(?:'m| am)\s+(?:in|on)\s+([A-Za-z]{2,5})(?=\b|[,.])", re.I),
+    re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z]{2,5})(?=\b|[,.])", re.I),
     re.compile(r"\bi(?:'m| am)\s+on\s+(utc[+-]\d{1,2}(?::\d{2})?)", re.I),
     re.compile(r"\bmy\s+timezone\s+is\s+(utc[+-]\d{1,2}(?::\d{2})?)", re.I),
 ]
+_KNOWN_TIMEZONE_ABBREVIATIONS = {
+    "UTC",
+    "GMT",
+    "GST",
+    "EST",
+    "EDT",
+    "CST",
+    "CDT",
+    "MST",
+    "MDT",
+    "PST",
+    "PDT",
+    "CET",
+    "CEST",
+    "EET",
+    "EEST",
+    "WET",
+    "WEST",
+    "IST",
+    "JST",
+    "KST",
+    "HKT",
+    "SGT",
+    "AEST",
+    "AEDT",
+    "ACST",
+    "ACDT",
+    "AWST",
+    "NZST",
+    "NZDT",
+}
 _STOP_WORDS = {"and", "but", "because", "so", "that", "which", "where", "pronounce", "pronounced"}
 _LOWERCASE_JOINERS = {"and", "of", "the", "de", "al", "bin"}
 _TEMPORAL_TAIL_WORDS = {"now", "today", "currently"}
@@ -1699,6 +1751,62 @@ def active_state_records_past_revalidation(records: list[dict[str, Any]]) -> lis
     return stale_records
 
 
+def is_project_scoped_current_state_predicate(predicate: str | None) -> bool:
+    return str(predicate or "").strip() in _PROJECT_SCOPED_CURRENT_STATE_PREDICATES
+
+
+def _project_scope_record_timestamp(record: dict[str, Any]) -> datetime | None:
+    raw = str(
+        record.get("timestamp")
+        or record.get("document_time")
+        or record.get("recorded_at")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def filter_project_scoped_current_state_records(
+    records: list[dict[str, Any]],
+    *,
+    scope_records: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    latest_project_record: dict[str, Any] | None = None
+    latest_project_timestamp: datetime | None = None
+    project_scope_records = scope_records if scope_records is not None else records
+    for record in project_scope_records:
+        if str(record.get("predicate") or "").strip() != "profile.current_project":
+            continue
+        if not str(record.get("value") or record.get("normalized_value") or "").strip():
+            continue
+        timestamp = _project_scope_record_timestamp(record)
+        if timestamp is None:
+            continue
+        if latest_project_timestamp is None or timestamp > latest_project_timestamp:
+            latest_project_record = record
+            latest_project_timestamp = timestamp
+    if latest_project_record is None or latest_project_timestamp is None:
+        return list(records)
+
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        if not is_project_scoped_current_state_predicate(predicate):
+            filtered.append(record)
+            continue
+        timestamp = _project_scope_record_timestamp(record)
+        if timestamp is None or timestamp >= latest_project_timestamp:
+            filtered.append(record)
+    return filtered
+
+
 def _build_profile_fact_stale_answer(*, query: ProfileFactQuery, value: str) -> str:
     return (
         f'I have an older saved {query.label}: "{value}" '
@@ -2543,6 +2651,8 @@ def _normalize_timezone(raw: str) -> str | None:
             normalized.append("_".join(token.capitalize() for token in cleaned.split("_") if token))
         return "/".join(normalized)
     compact = candidate.replace(" ", "").upper()
+    if compact in _KNOWN_TIMEZONE_ABBREVIATIONS:
+        return compact
     if re.fullmatch(r"UTC[+-]\d{1,2}(?::\d{2})?", compact):
         return compact
     return None

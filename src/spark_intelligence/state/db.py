@@ -14,6 +14,11 @@ def _quote_sqlite_identifier(identifier: str) -> str:
     return f'"{identifier}"'
 
 
+def _is_index_statement(statement: str) -> bool:
+    normalized = statement.lstrip().upper()
+    return normalized.startswith("CREATE INDEX") or normalized.startswith("CREATE UNIQUE INDEX")
+
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS schema_info (
@@ -305,6 +310,27 @@ SCHEMA_STATEMENTS = [
         status TEXT,
         severity TEXT,
         payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tool_call_ledger (
+        ledger_id TEXT PRIMARY KEY,
+        turn_id TEXT,
+        action_id TEXT,
+        capability_id TEXT,
+        authorization_decision_id TEXT,
+        tool_name TEXT,
+        owner_system TEXT,
+        mutation_class TEXT,
+        outcome TEXT,
+        status TEXT,
+        surface TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        summary TEXT,
+        ledger_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """
@@ -791,8 +817,14 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_type_recorded_at ON event_log(event_type, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_trace_ref ON event_log(trace_ref, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_turn_id ON event_log(turn_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_builder_events_turn_id ON builder_events(turn_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_updated_at ON tool_call_ledger(updated_at DESC, created_at DESC, ledger_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_turn_id ON tool_call_ledger(turn_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_surface ON tool_call_ledger(surface, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_status ON tool_call_ledger(status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_run_registry_status ON run_registry(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_status_attempted_at ON delivery_registry(status, attempted_at)",
     "CREATE INDEX IF NOT EXISTS idx_delivery_registry_run_id ON delivery_registry(run_id, attempted_at)",
@@ -851,10 +883,12 @@ SCHEMA_STATEMENTS = [
         content_length INTEGER NOT NULL,
         chip_used TEXT,
         topic_hint TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_bot_drafts_lookup ON bot_drafts(external_user_id, channel_kind, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_bot_drafts_recency ON bot_drafts(external_user_id, channel_kind, updated_at, created_at)",
 ]
 
 
@@ -882,11 +916,22 @@ class StateDB:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    continue
                 conn.execute(statement)
             self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_source", "TEXT")
             self._ensure_column(conn, "humans", "user_address", "TEXT")
+            self._ensure_column(conn, "builder_events", "turn_id", "TEXT")
+            self._ensure_column(conn, "event_log", "turn_id", "TEXT")
+            self._ensure_column(conn, "tool_call_ledger", "turn_id", "TEXT")
+            self._ensure_column(conn, "tool_call_ledger", "created_at", "TEXT")
+            self._ensure_column(conn, "bot_drafts", "updated_at", "TEXT")
+            conn.execute("UPDATE bot_drafts SET updated_at = created_at WHERE updated_at IS NULL")
+            for statement in SCHEMA_STATEMENTS:
+                if _is_index_statement(statement):
+                    conn.execute(statement)
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """

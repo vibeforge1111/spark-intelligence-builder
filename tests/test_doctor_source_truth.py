@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.doctor.checks import _safe_doctor_error_detail, run_doctor
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import persist_bound_ledger
 
 from tests.test_support import SparkTestCase
 
@@ -95,15 +95,16 @@ class DoctorSourceTruthTests(SparkTestCase):
         self.assertTrue(check.ok)
         self.assertIn("total=0", check.detail)
 
-    def test_doctor_counts_existing_event_ledgers_by_surface(self) -> None:
+    def test_doctor_counts_existing_canonical_ledgers_by_surface(self) -> None:
         for surface in ("telegram", "builder"):
-            record_event(
+            persist_bound_ledger(
                 self.state_db,
-                event_type="tool_call_ledger_recorded",
+                row={
+                    "ledger_id": f"ledger:doctor:{surface}",
+                    "surface": surface,
+                    "ledger_json": {"ledger_id": f"ledger:doctor:{surface}", "surface": surface},
+                },
                 component="doctor-test",
-                target_surface=surface,
-                summary="Ledger fixture.",
-                facts={"tool_call_ledger": {"surface": surface}},
             )
 
         check = self._checks()["tool-call-ledger-adoption"]

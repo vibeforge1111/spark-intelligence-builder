@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from spark_intelligence.intent_boundary import has_conversation_only_boundary
 from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_generic_memory_salience
 
 
@@ -100,6 +101,13 @@ _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_CURRENT_PROJECT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:my|our)\s+(?:current\s+)?project\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+(?:thing|project)\s+(?:i(?:'m| am)|we(?:'re| are))\s+(?:building|making|creating|shipping|developing|prototyping|working\s+on)\s+(?:this\s+week\s+)?is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:this\s+week|right\s+now|currently|today|tonight)[:,]?\s+(?:i(?:'m| am)|we(?:'re| are))\s+(?:building|making|creating|shipping|developing|prototyping|working\s+on)\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:i(?:'m| am)|we(?:'re| are))\s+(?:building|making|creating|shipping|developing|prototyping|working\s+on)\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 _LOW_STAKES_TEST_FACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"^(?:for\s+later[:,]?\s*)?((?:my|the)\s+.+?\s+is\s+named\s+[A-Z][A-Za-z0-9_-]*)[.!]?$",
@@ -182,6 +190,12 @@ _CONSTRAINT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+current\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+main\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+main\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+_FOCUS_WINDOW_PATTERN = re.compile(
+    r"\b(?P<owner>my|our|the)\s+(?:real\s+)?focus\s+window\s+"
+    r"(?P<window>(?:starts|begins|opens|is)\s+[^.?!,]+)"
+    r"(?:,\s*so\s+(?P<constraint>[^.?!]+))?",
+    re.IGNORECASE,
 )
 
 _ASSUMPTION_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -465,6 +479,18 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_FOCUS_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current focus", "our priority"),
         deletion_answer_template="I'll forget your current focus.",
+        revalidation_days=21,
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_project",
+        fact_name="current_project",
+        label="current project",
+        retention_class="active_state",
+        update_patterns=_CURRENT_PROJECT_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current project", "our current project", "the current project"),
+        observation_answer_template="I'll remember that your current project is {value}.",
+        deletion_answer_template="I'll forget your current project.",
         revalidation_days=21,
     ),
     TelegramGenericPack(
@@ -786,6 +812,20 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
             domain_pack="relationships",
         )
 
+    focus_window_constraint_value = _focus_window_constraint_value(normalized)
+    if focus_window_constraint_value:
+        return TelegramGenericCandidate(
+            predicate="profile.current_constraint",
+            value=focus_window_constraint_value,
+            evidence_text=text,
+            fact_name="current_constraint",
+            label="current constraint",
+            operation="update",
+            memory_role="current_state",
+            retention_class="active_state",
+            domain_pack="project_state",
+        )
+
     for variant in variants:
         entity_state_fact = parse_entity_state_fact(variant)
         if entity_state_fact is not None and entity_state_fact.attribute != "name":
@@ -850,6 +890,20 @@ def _family_shared_time_members_value(text: str) -> str | None:
     if not found:
         return None
     return ", ".join(found)
+
+
+def _focus_window_constraint_value(text: str) -> str | None:
+    match = _FOCUS_WINDOW_PATTERN.search(text)
+    if match is None:
+        return None
+    window = _clean_value(match.group("window"))
+    if not window:
+        return None
+    value = f"focus window {window}"
+    constraint = _clean_value(match.group("constraint") or "")
+    if constraint:
+        value = f"{value}; {constraint}"
+    return value
 
 
 def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObservation | None:
@@ -1452,7 +1506,9 @@ def _strip_correction_prefix(text: str) -> str:
 def _is_memoryworthy_text(text: str) -> bool:
     if not text or "?" in text:
         return False
-    if len(text) < 8 or len(text) > 220:
+    if has_conversation_only_boundary(text):
+        return False
+    if len(text) < 8 or len(text) > 600:
         return False
     tokens = re.findall(r"[a-z0-9]+(?:[-'][a-z0-9]+)?", text.casefold())
     if len(tokens) <= 2 and not (_BELIEF_PREFIX_PATTERN.search(text) or _STRUCTURED_EVIDENCE_PATTERN.search(text)):

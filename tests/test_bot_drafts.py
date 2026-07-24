@@ -7,6 +7,7 @@ from spark_intelligence.bot_drafts import (
     detect_iteration_intent,
     find_draft_for_iteration,
     list_recent_drafts,
+    prune_aged_drafts,
     reply_resembles_draft,
     save_draft,
     update_draft_content,
@@ -252,3 +253,139 @@ class IterationRoundTripTests(SparkTestCase):
         )
         self.assertEqual(drafts[0].content, "v2 tighter text")
         self.assertEqual(drafts[0].draft_id, draft.draft_id)
+
+    def test_update_preserves_created_at_and_sets_updated_at(self) -> None:
+        governor = _draft_write_governor(self)
+        draft = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="v1 text",
+            governor_decision=governor,
+        )
+        assert draft is not None
+        original_created_at = "2026-03-01T10:00:00+00:00"
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = NULL WHERE draft_id = ?",
+                (original_created_at, draft.draft_id),
+            )
+
+        ok = update_draft_content(
+            self.state_db,
+            draft_id=draft.draft_id,
+            content="v2 tighter text",
+            governor_decision=governor,
+        )
+        self.assertTrue(ok)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT created_at, updated_at FROM bot_drafts WHERE draft_id = ?",
+                (draft.draft_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["created_at"], original_created_at)
+        self.assertIsNotNone(row["updated_at"])
+        self.assertNotEqual(row["updated_at"], original_created_at)
+
+    def test_recent_draft_order_uses_updated_at_without_rewriting_created_at(self) -> None:
+        governor = _draft_write_governor(self)
+        first = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="old draft now revised",
+            governor_decision=governor,
+        )
+        second = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="newer draft untouched",
+            governor_decision=governor,
+        )
+        assert first is not None
+        assert second is not None
+        first_created_at = "2026-03-01T10:00:00+00:00"
+        second_created_at = "2026-03-02T10:00:00+00:00"
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (first_created_at, first_created_at, first.draft_id),
+            )
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (second_created_at, second_created_at, second.draft_id),
+            )
+
+        self.assertTrue(
+            update_draft_content(
+                self.state_db,
+                draft_id=first.draft_id,
+                content="old draft now revised with sharper wording",
+                governor_decision=governor,
+            )
+        )
+
+        drafts = list_recent_drafts(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            limit=2,
+        )
+        self.assertEqual([draft.draft_id for draft in drafts], [first.draft_id, second.draft_id])
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT created_at, updated_at FROM bot_drafts WHERE draft_id = ?",
+                (first.draft_id,),
+            ).fetchone()
+        self.assertEqual(row["created_at"], first_created_at)
+        self.assertGreater(row["updated_at"], second_created_at)
+
+    def test_prune_aged_drafts_deletes_only_rows_older_than_cutoff(self) -> None:
+        governor = _draft_write_governor(self)
+        old = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="old draft",
+            governor_decision=governor,
+        )
+        current = save_draft(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            content="current draft",
+            governor_decision=governor,
+        )
+        assert old is not None
+        assert current is not None
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", old.draft_id),
+            )
+            conn.execute(
+                "UPDATE bot_drafts SET created_at = ?, updated_at = ? WHERE draft_id = ?",
+                (
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-06-01T00:00:00+00:00",
+                    current.draft_id,
+                ),
+            )
+
+        deleted = prune_aged_drafts(
+            self.state_db,
+            older_than="2026-03-01T00:00:00+00:00",
+        )
+
+        self.assertEqual(deleted, 1)
+        drafts = list_recent_drafts(
+            self.state_db,
+            external_user_id="u1",
+            channel_kind="telegram",
+            limit=10,
+        )
+        self.assertEqual([draft.draft_id for draft in drafts], [current.draft_id])

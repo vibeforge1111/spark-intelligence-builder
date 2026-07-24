@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.tracing import prune_gateway_logs
 from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
 from spark_intelligence.observability.store import close_run, open_run, prune_observability_store, record_environment_snapshot
 from spark_intelligence.state.db import StateDB

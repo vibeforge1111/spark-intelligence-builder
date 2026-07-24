@@ -139,10 +139,11 @@ class ConfigManager:
                 reason_code="bootstrap_default_env",
                 target_key="env:*",
                 request_source="config.bootstrap",
+                strict_permissions=False,
             )
             created = True
         else:
-            self.harden_env_file_permissions()
+            self.harden_env_file_permissions(strict=False)
         return created
 
     def default_config(self) -> dict[str, Any]:
@@ -494,9 +495,13 @@ class ConfigManager:
         request_source: str,
         previous_value: str | None = None,
         new_value: str | None = None,
+        strict_permissions: bool = True,
     ) -> None:
         self._write_secret_text(self.paths.env_file, content)
-        self.harden_env_file_permissions()
+        if strict_permissions:
+            self.harden_env_file_permissions()
+        else:
+            self.harden_env_file_permissions(strict=False)
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
         self._record_config_mutation(
@@ -547,18 +552,22 @@ class ConfigManager:
                 except FileNotFoundError:
                     pass
 
-    def harden_env_file_permissions(self) -> None:
+    def harden_env_file_permissions(self, *, strict: bool = True) -> None:
         if not self.paths.env_file.exists():
             return
-        if self.paths.env_file.is_symlink():
-            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
-        if os.name == "nt":
-            self._harden_windows_env_file_permissions()
-            return
-        current_mode = stat.S_IMODE(self.paths.env_file.stat().st_mode)
-        target_mode = 0o600
-        if current_mode != target_mode:
-            os.chmod(self.paths.env_file, target_mode)
+        try:
+            if self.paths.env_file.is_symlink():
+                raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
+            if os.name == "nt":
+                self._harden_windows_env_file_permissions()
+                return
+            current_mode = stat.S_IMODE(self.paths.env_file.stat().st_mode)
+            target_mode = 0o600
+            if current_mode != target_mode:
+                os.chmod(self.paths.env_file, target_mode)
+        except (OSError, subprocess.SubprocessError):
+            if strict:
+                raise
 
     def _harden_windows_env_file_permissions(self) -> None:
         principal = self._windows_current_principal()

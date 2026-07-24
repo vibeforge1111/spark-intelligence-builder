@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -20,6 +23,58 @@ from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
 _MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024
+_BLOCKED_HOSTNAMES = frozenset({
+    "localhost",
+    "0.0.0.0",
+    "metadata.google.internal",
+    "169.254.169.254",
+})
+
+
+def _validate_base_url(url: str) -> None:
+    """Reject provider URLs that resolve outside the public HTTPS internet."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise RuntimeError(
+            f"SSRF policy: provider base URL must use HTTPS, got '{parsed.scheme}': {url}"
+        )
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise RuntimeError(f"SSRF policy: provider base URL has no hostname: {url}")
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
+        raise RuntimeError(
+            f"SSRF policy: provider base URL targets blocked hostname '{hostname}': {url}"
+        )
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise RuntimeError(
+            f"SSRF policy: provider base URL hostname could not be resolved: {hostname}"
+        ) from None
+    for _, _, _, _, sockaddr in addrinfos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            raise RuntimeError(
+                f"SSRF policy: provider base URL resolved to invalid IP '{ip_str}': {url}"
+            ) from None
+        if _is_private_or_reserved(ip):
+            raise RuntimeError(
+                "SSRF policy: provider base URL resolves to private/reserved IP "
+                f"'{ip_str}' (hostname: {hostname}): {url}"
+            )
+
+
+def _is_private_or_reserved(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_reserved
+        or ip.is_unspecified
+        or (isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local)
+    )
 
 
 @dataclass(frozen=True)

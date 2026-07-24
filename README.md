@@ -10,8 +10,10 @@ Builder is intentionally not the whole system. Telegram ingress, mission executi
 flowchart LR
   User["User / operator"] --> Bot["spark-telegram-bot<br/>Telegram gateway"]
   Bot --> Builder["spark-intelligence-builder<br/>runtime core"]
+  Builder --> Harness["spark-harness-core<br/>authority contracts"]
   Builder --> Memory["domain-chip-memory<br/>default memory chip"]
   Builder --> Researcher["spark-researcher<br/>research + advisory"]
+  Builder --> Ledger["state.db<br/>canonical tool_call_ledger"]
   Bot --> Spawner["spawner-ui<br/>missions + project execution"]
   Spawner --> Bot
 ```
@@ -19,7 +21,8 @@ flowchart LR
 Default Spark CLI installs wire this shape automatically:
 
 - `spark-telegram-bot` owns the Telegram token and long polling.
-- `spark-intelligence-builder` owns runtime identity, memory routing, and adapter logic.
+- `spark-intelligence-builder` owns runtime identity, memory routing, adapter logic, and the canonical governed tool-ledger table.
+- `spark-harness-core` provides the TurnIntent, authorization, Governor decision, signature, consumer-verification, and bound-ledger-row contracts.
 - `domain-chip-memory` provides the default memory/domain chip.
 - `spark-researcher` provides advisory, memory-packet, and chip-authoring flows.
 - `spawner-ui` runs missions and project execution.
@@ -55,7 +58,8 @@ python -c "import spark_intelligence.cli; print('Spark runtime core is importabl
 - Conversation context harness policy: hot-turn preservation, artifact extraction, reference resolution, and compaction budgets used by adapters.
 - Provider/auth configuration and health checks.
 - Memory bridge behavior used by Telegram and future adapters.
-- Contracts for Researcher, domain chips, Swarm, and gateway integrations.
+- Contracts for Researcher, domain chips, Swarm, gateway integrations, and Harness Core authority records.
+- Canonical observability for governed tool calls in `state.db:tool_call_ledger`, keyed by `turn_id`, `action_id`, `capability_id`, and `authorization_decision_id`.
 - Bootstrap profiles such as `telegram-agent`.
 
 ## What Builder Does Not Own
@@ -99,6 +103,9 @@ spark-intelligence operator review-pairings
 spark-intelligence agent inspect
 spark-intelligence pairings list
 spark-intelligence sessions list
+spark-intelligence harness tool-ledgers --turn-id <turn-id> --json
+spark-intelligence harness import-cli-ledgers --ledger-dir ~/.spark/state/approval-ledgers
+spark-intelligence jobs prune-observability --older-than 2026-01-01T00:00:00Z --include-gateway-logs
 ```
 
 Telegram-side bootstrap, when testing Builder manually with any OpenAI-compatible provider:
@@ -116,6 +123,19 @@ This prepares Builder's side of the Telegram runtime. It should not make Builder
 
 Provider examples can include OpenAI-compatible APIs such as OpenAI, OpenRouter, Z.AI, MiniMax, or a local compatible gateway. Spark should not require one specific LLM provider.
 
+## Authority And Observability
+
+Builder now treats Harness Core authority records as first-class runtime data:
+
+- governed Builder tool calls are flattened into `tool_call_ledger`;
+- `gateway serve-stdio` accepts an `ingest_tool_ledger` command for bound ledger rows;
+- `gateway ingest-tool-ledger <file>` persists one governed row from JSON;
+- `harness tool-ledgers` reads canonical rows by `turn_id` or surface;
+- `harness import-cli-ledgers` indexes Spark CLI approval ledgers into the same table;
+- `jobs prune-observability` can prune old mirror rows and, when requested, gateway JSONL trace/audit logs.
+
+The ingest path is an observability seam, not an authorization bypass. Surfaces must still gate execution with Harness Core contracts before they publish ledger rows.
+
 ## Docs To Read Next
 
 Use this README as the entry point. Use deeper docs only when you need a specific contract or implementation detail:
@@ -130,6 +150,7 @@ Use this README as the entry point. Use deeper docs only when you need a specifi
 - Installer contract: [docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md](./docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md)
 - Researcher integration: [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - Domain chip attachment: [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
+- Harness contract: [docs/SPARK_HARNESS_CONTRACT.md](./docs/SPARK_HARNESS_CONTRACT.md)
 - Security doctrine: [docs/SECURITY_DOCTRINE_V1.md](./docs/SECURITY_DOCTRINE_V1.md)
 
 ## Memory Validation
@@ -162,10 +183,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_validated_full_cyc
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+AGPL-3.0-only. See [LICENSE](./LICENSE).
 
-Spark Swarm is AGPL-licensed. Other Spark repos are MIT unless their
-LICENSE file says otherwise. Spark Pro hosted services, private corpuses,
-brand assets, deployment secrets, and Pro drops are not included in
-open-source licenses. Pro drops do not grant redistribution rights unless
-a separate written license says so.
+Other Spark repos may use different licenses; always trust each repo's
+own `LICENSE`, `pyproject.toml`, and `spark.toml`. Spark Pro hosted services,
+private corpuses, brand assets, deployment secrets, and Pro drops are not
+included in open-source licenses. Pro drops do not grant redistribution rights
+unless a separate written license says so.

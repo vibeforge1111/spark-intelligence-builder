@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Runtime Runbook
 
-Last updated: 2026-04-27
+Last updated: 2026-06-08
 
 This runbook is for local operators and future implementation sessions. It captures the safe checks to run before calling Builder healthy.
 
@@ -18,13 +18,31 @@ Use JSON output when wiring automation or CI-like checks:
 ```powershell
 spark-intelligence status --json
 spark-intelligence doctor --json
+spark-intelligence harness tool-ledgers --limit 10 --json
 ```
 
 ## Local Development
 
+The current live Builder source-truth line is:
+
+```text
+C:\Users\USER\.spark\modules\spark-intelligence-builder\source
+```
+
+The Desktop checkout is backlog/historical evidence until curated. See
+[SOURCE_TRUTH.md](./SOURCE_TRUTH.md) before porting behavior between Builder
+trees.
+
+`spark-intelligence doctor --json` should report `builder-source-truth` with
+`installs=spark-intelligence-builder`. If an uncurated Desktop checkout exists,
+the same check reports it as `desktop_backlog` when the checkout carries a
+`.spark-source-truth.toml` marker with `canonical = false`. Without that marker
+it reports `desktop_backlog_unmarked`. Both labels are backlog evidence, not
+live runtime truth.
+
 ```powershell
 python -m pip install -e .
-python -m pytest tests/test_secret_file_permissions.py tests/test_gateway_discord_webhook.py tests/test_builder_prelaunch_contracts.py -q
+python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_harness_cli.py tests/test_observability_retention.py -q
 uv lock --check
 ```
 
@@ -79,6 +97,102 @@ Then test one live Telegram turn. Restart Telegram only when:
 If only Builder Python prompt/context logic changed, pulling the installed source
 should be enough because the next bridge call starts a fresh Python process.
 
+## Harness Authority And Ledger Checks
+
+After authority or observability changes, verify the canonical ledger path:
+
+```powershell
+spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
+spark-intelligence harness tool-ledgers --surface spark_cli --limit 5 --json
+spark-intelligence harness trace-turn --turn-id <turn-id> --json
+spark-intelligence jobs observability-report --older-than 2026-01-01T00:00:00Z --include-gateway-logs --include-unowned-jsonl --jsonl-reference-scan --json
+```
+
+Use `harness trace-turn` when debugging one governed turn. It returns exact
+canonical ledger rows plus Builder/event mirror rows that carry the turn id in
+indexed `builder_events.turn_id` / `event_log.turn_id` columns, request/trace
+fields, or JSON payloads. New `record_event` rows infer the indexed turn id from
+explicit `turn_id`, `facts.turn_id`, `facts.tool_call_ledger.turn_id`,
+`facts.ledger.turn_id`, or `facts.governor_decision.turn_id`. Older rows
+without a turn id are still outside the join and should not be claimed as fully
+traceable.
+
+Run `jobs observability-report` before any future prune/VACUUM pass. It reports
+`state.db` size, table counts, prunable row counts for the cutoff, and optional
+gateway JSONL sizes without deleting anything.
+With `--include-unowned-jsonl`, it also lists loose `.jsonl` files under the
+Spark root by size and ownership class without opening, moving, or deleting
+candidate JSONL files. Each reported file includes `manifest_action`, `movement_blocker`,
+reference-scan and owner-signoff flags, `archive_before_quarantine`, and
+`delete_allowed=false` so a future archive/quarantine pass has a checked
+restore manifest instead of relying on prose. The report also separates
+`total_files`, `candidate_files`, `below_min_bytes_files`, and candidate
+classification/action/blocker counts, so limited reports are visibly partial.
+Use `--jsonl-reference-scan` before any archive/quarantine movement; repeat
+`--jsonl-reference-root <path>` when the default installed source/config/modules/tools
+roots are not the intended scan boundary.
+Follow
+[SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md](./SPARK_JSONL_RESIDUE_POLICY_2026-06-08.md)
+before archiving, quarantining, or deleting any loose JSONL river.
+
+For gateway integrations that cannot call Python APIs directly, use the stdio ingest seam:
+
+```json
+{"request_id":"req-ledger","command":"ingest_tool_ledger","row":{"ledger_id":"ledger:...","turn_id":"turn:...","action_id":"action:...","capability_id":"capability:...","authorization_decision_id":"decision:...","surface":"surface-name","ledger_json":{}}}
+```
+
+Rows missing the authority join fields must be rejected. Ingest is audit persistence only; it does not authorize execution.
+
+## Self-Evolution Checks
+
+Builder self-evolution remains supervised. The safe baseline is a no-op
+manifest drill, not autonomous mutation.
+
+For observe-only readiness:
+
+```powershell
+spark-intelligence harness self-evolution-snapshot --json
+```
+
+For a supervised no-op private-promotion drill:
+
+```powershell
+spark-intelligence harness change-manifest-runner `
+  --manifest <change-manifest-v1.json> `
+  --requested-verdict promote_private `
+  --run-tests `
+  --allow-private-promotion `
+  --cwd C:\Users\USER\.spark\modules\spark-intelligence-builder\source `
+  --json
+```
+
+The change-manifest runner writes a canonical `surface=builder`
+`tool_call_ledger` row for the runner execution. After a drill, verify it:
+
+```powershell
+spark-intelligence harness tool-ledgers --surface builder --limit 5 --json
+```
+
+Reference evidence: [SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md](./SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md).
+Executor boundary:
+[SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md](./SPARK_SELF_EVOLUTION_EXECUTOR_BOUNDARY_2026-06-08.md).
+
+Boundary regression checks:
+
+```powershell
+python -m pytest `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_manifest_without_rollback_plan `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_rejects_protected_manifest_without_approval `
+  tests/test_harness_cli.py::HarnessCliTests::test_harness_change_manifest_runner_promotes_protected_manifest_with_approval `
+  -q
+```
+
+Do not claim autonomous self-evolution until a real manifest has exact artifact
+refs, protected-component approvals where needed, dry-run apply proof, test
+proof, and rollback execution proof. The current boundary proof rejects missing
+rollback plans and missing protected approvals, but it does not apply or revert
+patches.
+
 ## Provider Rotation
 
 Provider keys should be rotation-friendly:
@@ -90,6 +204,15 @@ Provider keys should be rotation-friendly:
 5. Run a provider execution smoke through the gateway path.
 
 Long-lived workers should resolve secrets per request or at clearly documented refresh points. Avoid caching secrets at import time.
+
+## Env File Permissions
+
+Bootstrap may continue if platform ACL hardening is temporarily unavailable, so
+first-run setup does not strand the operator before `doctor` can explain the
+problem. Secret writes remain strict: `upsert_env_secret` still raises if the
+`.env` ACL cannot be hardened. Always verify the final state with
+`spark-intelligence doctor`; the `.env-permissions` check is the source of
+truth.
 
 ## Pairing And Identity Checks
 
@@ -129,10 +252,11 @@ Before pushing Builder changes that affect production behavior:
 
 1. Run the focused CI slice locally.
 2. Run `uv lock --check` if dependencies changed.
-3. Confirm no `.env`, `.tmp-*`, token, key, JWT, or local-home files are staged.
-4. Push Builder.
-5. Update the Builder commit pin in `spark-cli/registry.json`.
-6. Run `spark verify --registry-pins` and `spark verify --provenance` from `spark-cli`.
+3. Confirm no `.env`, `.tmp-*`, token, key, JWT, local-home files, or private JSONL rivers are staged.
+4. Confirm `spark.toml`, `pyproject.toml`, and `LICENSE` agree on `AGPL-3.0-only`, and `spark.toml` declares `spark-harness-core` in `[needs].modules`.
+5. Push Builder.
+6. Update the Builder commit pin in `spark-cli/registry.json`.
+7. Run `spark verify --registry-pins` and `spark verify --provenance` from `spark-cli`.
 
 ## Common Failure Modes
 
@@ -143,6 +267,8 @@ Before pushing Builder changes that affect production behavior:
 | Unknown user reaches runtime | Inspect pairing/allowlist state and external id typing |
 | Memory answer follows hostile recall text | Check prompt fencing and memory envelope path |
 | Fresh install gets old behavior | Check `spark-cli/registry.json` pins |
+| Governed tool call is not queryable | Run `spark-intelligence harness tool-ledgers --turn-id <turn-id> --json` and check ingest fallback logs |
+| `state.db` grows quickly | Run `jobs prune-observability` and confirm gateway JSONL rotation is enabled |
 
 ## Operational Redlines
 
@@ -150,4 +276,5 @@ Before pushing Builder changes that affect production behavior:
 - No hidden daemon loops.
 - No production floating git dependencies.
 - No chat-owned runtime restart/config mutation.
-- No destructive host action without explicit policy and, later, approval-engine coverage.
+- No destructive host action without explicit policy and approval-engine coverage.
+- No high-agency tool execution without Harness Core authority and a canonical ledger path.

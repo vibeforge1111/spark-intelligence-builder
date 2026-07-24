@@ -100,11 +100,11 @@ class RuntimePathNormalizationTests(SparkTestCase):
         self.assertTrue(resolved_config.exists())
 
     def test_discover_swarm_runtime_root_uses_translated_windows_path(self) -> None:
-        self.config_manager.set_path("spark.swarm.runtime_root", r"C:\Users\USER\Desktop\spark-swarm")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", r"C:\Users\USER\Desktop\spark-swarm")
 
         runtime_root, source = _discover_swarm_runtime_root(self.config_manager)
 
-        self.assertEqual(source, "configured")
+        self.assertEqual(source, "env")
         self.assertIsNotNone(runtime_root)
         assert runtime_root is not None
         expected = (
@@ -115,8 +115,15 @@ class RuntimePathNormalizationTests(SparkTestCase):
         self.assertEqual(runtime_root, expected)
         self.assertTrue(runtime_root.exists())
 
+    @patch.dict(os.environ, {"SPARK_SWARM_RUNTIME_ROOT": ""})
+    def test_discover_swarm_runtime_root_requires_env_var(self) -> None:
+        runtime_root, source = _discover_swarm_runtime_root(self.config_manager)
+
+        self.assertIsNone(runtime_root)
+        self.assertEqual(source, "missing")
+
     def test_local_swarm_bridge_runtime_root_uses_translated_windows_path(self) -> None:
-        self.config_manager.set_path("spark.swarm.runtime_root", r"C:\Users\USER\Desktop\spark-swarm")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", r"C:\Users\USER\Desktop\spark-swarm")
 
         runtime_root = _resolve_swarm_runtime_root(self.config_manager)
 
@@ -127,6 +134,11 @@ class RuntimePathNormalizationTests(SparkTestCase):
         )
         self.assertEqual(runtime_root, expected)
         self.assertTrue(runtime_root.exists())
+
+    @patch.dict(os.environ, {"SPARK_SWARM_RUNTIME_ROOT": ""})
+    def test_local_swarm_bridge_runtime_root_requires_env_var(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "runtime root is not configured"):
+            _resolve_swarm_runtime_root(self.config_manager)
 
     def test_attachment_registry_uses_translated_windows_roots(self) -> None:
         self.config_manager.set_path(
