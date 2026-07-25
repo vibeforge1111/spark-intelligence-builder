@@ -86,6 +86,16 @@ from spark_intelligence.workflow_recovery import (
 from tests.test_support import SparkTestCase
 
 
+def _import_after_primary_memory_sdk_miss(real_import, calls: list[str]):
+    def import_module(name: str, package: str | None = None):
+        calls.append(name)
+        if name == "domain_chip_memory" and calls.count(name) == 1:
+            raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+        return real_import(name, package)
+
+    return import_module
+
+
 def _memory_write_governor_decision(
     *,
     request_id: str,
@@ -3532,8 +3542,30 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
 
         original_module = sys.modules.pop("domain_chip_memory", None)
+        real_import = memory_orchestrator.importlib.import_module
+        import_calls: list[str] = []
         try:
-            with patch.object(memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", local_root):
+            with patch.dict(
+                "os.environ",
+                {"SPARK_HOME": str(self.home / "missing-spark")},
+                clear=False,
+            ), patch.object(
+                memory_orchestrator,
+                "installed_module_source_candidates",
+                return_value=[],
+            ), patch.object(
+                memory_orchestrator,
+                "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT",
+                local_root,
+            ), patch.object(
+                memory_orchestrator,
+                "DEFAULT_SPARK_MODULES_ROOT",
+                self.home / "missing-modules",
+            ), patch.object(
+                memory_orchestrator.importlib,
+                "import_module",
+                side_effect=_import_after_primary_memory_sdk_miss(real_import, import_calls),
+            ):
                 runtime = memory_orchestrator.inspect_memory_sdk_runtime(
                     config_manager=self.config_manager,
                     sdk_module="domain_chip_memory",
@@ -3549,6 +3581,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["runtime_class"], "SparkMemorySDK")
         self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
+        self.assertEqual(import_calls, ["domain_chip_memory", "domain_chip_memory"])
 
     def test_inspect_memory_sdk_runtime_falls_back_to_spark_module_domain_chip_memory_src(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3565,13 +3598,23 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
 
         original_module = sys.modules.pop("domain_chip_memory", None)
+        real_import = memory_orchestrator.importlib.import_module
+        import_calls: list[str] = []
         try:
             with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch.object(
+                memory_orchestrator,
+                "installed_module_source_candidates",
+                return_value=[],
+            ), patch.object(
                 memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", self.home / "missing"
             ), patch.object(
                 memory_orchestrator,
                 "DEFAULT_SPARK_MODULES_ROOT",
                 modules_root,
+            ), patch.object(
+                memory_orchestrator.importlib,
+                "import_module",
+                side_effect=_import_after_primary_memory_sdk_miss(real_import, import_calls),
             ):
                 runtime = memory_orchestrator.inspect_memory_sdk_runtime(
                     config_manager=self.config_manager,
@@ -3586,6 +3629,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["configured_module"], "domain_chip_memory")
         self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
         self.assertEqual(runtime["client_kind"], "SparkMemorySDK")
+        self.assertEqual(import_calls, ["domain_chip_memory", "domain_chip_memory"])
 
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
