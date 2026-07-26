@@ -26,6 +26,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _authorize_researcher_memory_write,
 )
 from spark_intelligence.state.db import StateDB
+from spark_harness_core import HARNESS_CORE_WIRE_CONTRACT_VERSION
 from spark_harness_core.schemas import validate_instance
 
 
@@ -161,9 +162,12 @@ def test_authorizes_builder_memory_write_through_governed_legacy_adapter() -> No
     assert verdict.governor_decision is not None
     assert verdict.harness_core_envelope["schema_version"] == "turn-intent-envelope-vnext"
     assert verdict.authorization_decision["schema_version"] == "authorization-decision-v1"
+    assert verdict.authorization_decision["wire_contract_version"] == HARNESS_CORE_WIRE_CONTRACT_VERSION
     assert verdict.authorization_decision["verdict"] == "allow"
     assert verdict.tool_call_ledger["schema_version"] == "tool-call-ledger-v1"
+    assert verdict.tool_call_ledger["wire_contract_version"] == HARNESS_CORE_WIRE_CONTRACT_VERSION
     assert verdict.governor_decision["schema_version"] == "governor-decision-v1"
+    assert verdict.governor_decision["wire_contract_version"] == HARNESS_CORE_WIRE_CONTRACT_VERSION
     assert verdict.governor_decision["outcome"] == "execute"
     assert verdict.governor_decision["execution_boundary"]["legacy_authority_demoted"] is True
     validate_instance("governor-decision-v1", verdict.governor_decision)
@@ -690,6 +694,9 @@ def test_blocks_memory_write_when_vnext_action_is_not_proposed() -> None:
     assert verdict.governor_decision is not None
     assert verdict.governor_decision["outcome"] == "deny"
     assert verdict.governor_decision["tool_ledgers"] == [verdict.tool_call_ledger]
+    assert verdict.tool_call_ledger["wire_contract_version"] == HARNESS_CORE_WIRE_CONTRACT_VERSION
+    assert verdict.governor_decision["wire_contract_version"] == HARNESS_CORE_WIRE_CONTRACT_VERSION
+    validate_instance("governor-decision-v1", verdict.governor_decision)
 
 
 def test_blocked_bridge_verdict_cannot_record_success_result(tmp_path) -> None:
