@@ -88,6 +88,17 @@ jobs:
         if: matrix.shard == 0
         run: pip-audit --progress-spinner off .
 
+  test-and-audit-gate:
+    name: test-and-audit
+    needs: test-and-audit
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every complete-suite shard
+        env:
+          SHARD_RESULT: ${{ needs.test-and-audit.result }}
+        run: test "$SHARD_RESULT" = "success"
+
   full-suite-order-check:
     name: full-suite-order-check
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
