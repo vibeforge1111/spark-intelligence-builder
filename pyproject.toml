@@ -14,8 +14,8 @@ dependencies = [
   "PyNaCl>=1.6.2",
   "PyYAML>=6.0",
   "referencing>=0.35.0",
-  "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@9a6a3a637eda4641fafcf4335d5ba5b9f6919d46",
-  "spark-harness-core @ git+https://github.com/vibeforge1111/spark-harness-core.git@a78c5bb2137a30a3bd9a543fd5a7cfe662245abd",
+  "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a",
+  "spark-harness-core @ git+https://github.com/vibeforge1111/spark-harness-core.git@89285932ea10ec9f90d3a5b1157cdc270ebf95b9",
 ]
 
 [project.scripts]

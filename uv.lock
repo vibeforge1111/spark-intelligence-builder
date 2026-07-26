@@ -429,7 +429,7 @@ wheels = [
 [[package]]
 name = "spark-character"
 version = "0.24.0"
-source = { git = "https://github.com/vibeforge1111/spark-character.git?rev=9a6a3a637eda4641fafcf4335d5ba5b9f6919d46#9a6a3a637eda4641fafcf4335d5ba5b9f6919d46" }
+source = { git = "https://github.com/vibeforge1111/spark-character.git?rev=7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a#7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a" }
 dependencies = [
     { name = "httpx" },
     { name = "pyyaml" },
@@ -438,7 +438,7 @@ dependencies = [
 [[package]]
 name = "spark-harness-core"
 version = "0.1.0"
-source = { git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=a78c5bb2137a30a3bd9a543fd5a7cfe662245abd#a78c5bb2137a30a3bd9a543fd5a7cfe662245abd" }
+source = { git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=89285932ea10ec9f90d3a5b1157cdc270ebf95b9#89285932ea10ec9f90d3a5b1157cdc270ebf95b9" }
 dependencies = [
     { name = "jsonschema" },
     { name = "referencing" },
@@ -463,8 +463,8 @@ requires-dist = [
     { name = "pynacl", specifier = ">=1.6.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "referencing", specifier = ">=0.35.0" },
-    { name = "spark-character", git = "https://github.com/vibeforge1111/spark-character.git?rev=9a6a3a637eda4641fafcf4335d5ba5b9f6919d46" },
-    { name = "spark-harness-core", git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=a78c5bb2137a30a3bd9a543fd5a7cfe662245abd" },
+    { name = "spark-character", git = "https://github.com/vibeforge1111/spark-character.git?rev=7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a" },
+    { name = "spark-harness-core", git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=89285932ea10ec9f90d3a5b1157cdc270ebf95b9" },
 ]
 
 [[package]]
