@@ -68,6 +68,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
+from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
 from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log, repair_gateway_trace_proof_continuity
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
@@ -2206,6 +2207,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="simulation",
         help="Fix the trace origin for the lifetime of this parent-owned session",
     )
+    gateway_ingest_tool_ledger_parser = gateway_subparsers.add_parser(
+        "ingest-tool-ledger",
+        help="Persist one schema-valid bound tool-ledger row from JSON",
+    )
+    gateway_ingest_tool_ledger_parser.add_argument(
+        "payload_file",
+        help="JSON payload path, or - to read one payload from stdin",
+    )
+    gateway_ingest_tool_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_ingest_tool_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
         help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
@@ -5678,6 +5689,38 @@ def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
     except ValueError:
         print("Gateway stdio session configuration is invalid.", file=sys.stderr)
         return 2
+
+
+def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
+    max_chars = 1_048_576
+    try:
+        if args.payload_file == "-":
+            payload_text = sys.stdin.read(max_chars + 1)
+        else:
+            payload_path = Path(args.payload_file)
+            if payload_path.stat().st_size > max_chars:
+                raise ValueError("tool ledger ingest payload exceeds 1 MiB")
+            payload_text = payload_path.read_text(encoding="utf-8-sig")
+        if len(payload_text) > max_chars:
+            raise ValueError("tool ledger ingest payload exceeds 1 MiB")
+        payload = json.loads(payload_text)
+        if not isinstance(payload, dict):
+            raise ValueError("tool ledger ingest payload must be a JSON object")
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        print(f"Tool ledger ingest input rejected: {exc}", file=sys.stderr)
+        return 2
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        result = ingest_tool_ledger_payload(state_db, payload)
+    except ValueError as exc:
+        print(f"Tool ledger ingest rejected: {exc}", file=sys.stderr)
+        return 2
+    print(result.to_json() if args.json else result.to_text())
+    return 0
 
 
 def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
@@ -9866,6 +9909,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "serve-stdio":
         return handle_gateway_serve_stdio(args)
+    if args.command == "gateway" and args.gateway_command == "ingest-tool-ledger":
+        return handle_gateway_ingest_tool_ledger(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "shadow-telegram":
