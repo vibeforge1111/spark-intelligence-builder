@@ -11,14 +11,13 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 
 
-_log = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class RecentConversationTurn:
     role: str
     text: str
-    recorded_at: str = ""
 
 
 def load_recent_conversation_turns(
@@ -71,7 +70,7 @@ def _load_builder_event_turns(
         with state_db.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT event_type, request_id, created_at, facts_json
+                SELECT event_type, request_id, facts_json
                 FROM builder_events
                 WHERE component = 'telegram_runtime'
                   AND channel_id = ?
@@ -86,7 +85,10 @@ def _load_builder_event_turns(
                 (channel_kind, session_id, max(turn_limit * 4, 12)),
             ).fetchall()
     except Exception as exc:
-        _log.warning("Failed to load recent conversation turns from DB: %s", exc)
+        _LOGGER.warning(
+            "recent_conversation_builder_event_lookup_failed error_type=%s",
+            type(exc).__name__,
+        )
         return []
 
     transcript: list[RecentConversationTurn] = []
@@ -97,15 +99,17 @@ def _load_builder_event_turns(
             facts = json.loads(row["facts_json"] or "{}")
         except json.JSONDecodeError:
             facts = {}
+        if not isinstance(facts, dict):
+            facts = {}
         event_type = str(row["event_type"] or "")
         if event_type == "intent_committed":
             text = str(facts.get("message_text") or "").strip()
             if text:
-                transcript.append(RecentConversationTurn("user", text, str(row["created_at"] or "").strip()))
+                transcript.append(RecentConversationTurn("user", text))
         elif event_type == "delivery_succeeded":
             text = str(facts.get("delivered_text") or "").strip()
             if text:
-                transcript.append(RecentConversationTurn("assistant", text, str(row["created_at"] or "").strip()))
+                transcript.append(RecentConversationTurn("assistant", text))
     return transcript
 
 
@@ -115,7 +119,6 @@ class _GatewayTurnRecord:
     request_id: str
     user_text: str
     assistant_text: str
-    recorded_at: str
 
 
 def _load_gateway_log_turns(
@@ -154,9 +157,9 @@ def _load_gateway_log_turns(
             continue
         seen_pairs.add(pair_key)
         if record.user_text:
-            transcript.append(RecentConversationTurn("user", record.user_text, record.recorded_at))
+            transcript.append(RecentConversationTurn("user", record.user_text))
         if record.assistant_text:
-            transcript.append(RecentConversationTurn("assistant", record.assistant_text, record.recorded_at))
+            transcript.append(RecentConversationTurn("assistant", record.assistant_text))
     return transcript[-(turn_limit * 2) :]
 
 
@@ -186,14 +189,12 @@ def _gateway_turn_records(
         assistant_text = str(row.get("response_preview") or row.get("delivered_text") or "").strip()
         if not user_text and not assistant_text:
             continue
-        recorded_at = str(row.get("recorded_at") or "").strip()
         records.append(
             _GatewayTurnRecord(
-                sort_key=(_sortable_timestamp(recorded_at), order),
+                sort_key=(_sortable_timestamp(row.get("recorded_at")), order),
                 request_id=str(row.get("request_id") or "").strip(),
                 user_text=user_text,
                 assistant_text=assistant_text,
-                recorded_at=recorded_at,
             )
         )
     return sorted(records, key=lambda record: record.sort_key)

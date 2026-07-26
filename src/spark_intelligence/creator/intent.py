@@ -11,6 +11,13 @@ from spark_intelligence.creator.contracts import CREATOR_INTENT_SCHEMA_VERSION
 SCHEMA_VERSION = CREATOR_INTENT_SCHEMA_VERSION
 
 
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+_SLUG_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_DOMAIN_PHRASE_RE = re.compile(
+    r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)"
+)
+
+
 _STOPWORDS = {
     "a",
     "an",
@@ -83,7 +90,10 @@ class CreatorIntentPacket:
     network_contribution_policy: str = "workspace_only"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        if not d.get("intent_id"):
+            d["intent_id"] = _intent_id(self.user_goal, self.target_domain)
+        return d
 
     def to_text(self) -> str:
         outputs = [
@@ -152,11 +162,11 @@ def build_creator_intent_packet(
 
 
 def _compact(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip())
+    return _WHITESPACE_RUN_RE.sub(" ", text.strip())
 
 
 def _slug(text: str) -> str:
-    parts = re.findall(r"[a-z0-9]+", text.lower())
+    parts = _SLUG_TOKEN_RE.findall(text.lower())
     useful = [p for p in parts if p not in _STOPWORDS]
     return "-".join(useful[:6]) or "custom-domain"
 
@@ -192,10 +202,7 @@ def _known_domain(lower: str) -> str | None:
 
 def _infer_domain(lower: str) -> str:
     primary = _primary_goal_text(lower)
-    match = re.search(
-        r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
-        primary,
-    )
+    match = _DOMAIN_PHRASE_RE.search(primary)
     if match:
         return _slug(match.group(1))
 
@@ -208,10 +215,7 @@ def _infer_domain(lower: str) -> str:
         return known
 
     if primary != lower:
-        match = re.search(
-            r"\b(?:for|around|about|on)\s+([a-z0-9][a-z0-9 _/-]{2,80}?)(?:\s+(?:that|use|using|with|which|so|to|and|from|keep)\b|[,.]|$)",
-            lower,
-        )
+        match = _DOMAIN_PHRASE_RE.search(lower)
         if match:
             return _slug(match.group(1))
 
@@ -248,7 +252,9 @@ def _infer_desired_outputs(lower: str) -> dict[str, bool]:
     wants_spawner = _has_any(lower, ("spawner", "canvas", "kanban", "mission", "trackable"))
 
     return {
-        "domain_chip": wants_chip or not (wants_path or wants_autoloop),
+        "domain_chip": wants_chip or not (
+            wants_path or wants_autoloop or wants_telegram or wants_spawner
+        ),
         "specialization_path": wants_path,
         "benchmark_pack": True,
         "autoloop_policy": wants_autoloop,

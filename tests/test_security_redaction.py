@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from spark_intelligence.security.redaction import redact_text
+from spark_intelligence.security.redaction import contains_secret_shape, mask_secret, redact_text
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text, scan_prompt_boundary_text
 
 
@@ -25,6 +25,69 @@ def test_redact_text_masks_common_credential_shapes() -> None:
     assert "postgres://user:pass" not in redacted
     assert "555-123-4567" not in redacted
     assert "Bearer <redacted>" in redacted
+
+
+def test_mask_secret_never_preserves_secret_fragments() -> None:
+    secret = "abcdefghijklmnopqrstuv"
+
+    masked = mask_secret(secret)
+
+    assert masked == "***"
+    assert secret[:3] not in masked
+    assert secret[-2:] not in masked
+
+
+def test_authorization_scheme_credentials_use_canonical_contextual_redaction() -> None:
+    source = "\n".join(
+        (
+            "Authorization: Token placeholder-token-value-123456",
+            "Authorization=ApiKey placeholder-apikey-value-123456",
+            "Authorization: OAuth placeholder-oauth-value-123456",
+            "Authorization: Bearer placeholder-bearer-value-123456",
+        )
+    )
+
+    redacted = redact_text(source)
+
+    for secret in (
+        "placeholder-token-value-123456",
+        "placeholder-apikey-value-123456",
+        "placeholder-oauth-value-123456",
+        "placeholder-bearer-value-123456",
+    ):
+        assert secret not in redacted
+    assert "Authorization: Token <redacted>" in redacted
+    assert "Authorization=ApiKey <redacted>" in redacted
+    assert "Authorization: OAuth <redacted>" in redacted
+    assert "Authorization: Bearer <redacted>" in redacted
+    assert contains_secret_shape(source)
+
+
+def test_authorization_scheme_redaction_preserves_ordinary_auth_prose() -> None:
+    source = "OAuth authentication is configured. Token counting remains advisory."
+
+    assert redact_text(source) == source
+    assert not contains_secret_shape(source)
+
+
+def test_redact_text_masks_local_user_paths() -> None:
+    text = "\n".join(
+        [
+            "auth failure at /Users/alice/private/auth.json",
+            "poll failure at /home/alice/private/poll.json",
+            r"cache failure at C:\Users\Alice\private\cache.json",
+        ]
+    )
+
+    redacted = redact_text(text)
+
+    assert redacted.count("<redacted local path>") == 3
+    assert "/Users/alice" not in redacted
+    assert "/home/alice" not in redacted
+    assert r"C:\Users\Alice" not in redacted
+    assert "auth.json" not in redacted
+    assert "poll.json" not in redacted
+    assert "cache.json" not in redacted
 
 
 def test_prompt_boundary_sanitizer_blocks_injection_and_invisible_unicode() -> None:

@@ -6,124 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.gateway.runtime import gateway_serve_stdio
-from spark_intelligence.observability.store import recent_tool_call_ledgers
 
 from tests.test_support import SparkTestCase
 
 
 class GatewayAskTelegramCliTests(SparkTestCase):
-    def _tool_ledger_row(self) -> dict[str, object]:
-        return {
-            "ledger_id": "ledger:stdio-ingest",
-            "turn_id": "turn:stdio-ingest",
-            "action_id": "action:stdio-ingest",
-            "capability_id": "capability:stdio-ingest",
-            "authorization_decision_id": "decision:stdio-ingest",
-            "tool_name": "test.tool",
-            "surface": "gateway_stdio_test",
-            "status": "success",
-            "ledger_json": {
-                "schema_version": "tool-call-ledger-v1",
-                "ledger_id": "ledger:stdio-ingest",
-                "turn_id": "turn:stdio-ingest",
-                "action_id": "action:stdio-ingest",
-                "capability_id": "capability:stdio-ingest",
-                "tool_name": "test.tool",
-                "authorization": {"decision_id": "decision:stdio-ingest"},
-                "result": {"status": "success", "summary": "Recorded from stdio."},
-                "trace": {"id": "trace:stdio-ingest"},
-            },
-        }
-
-    def test_gateway_ingest_tool_ledger_cli_persists_canonical_row(self) -> None:
-        ledger_file = self.home / "tool-ledger.json"
-        ledger_file.write_text(json.dumps(self._tool_ledger_row()), encoding="utf-8")
-
-        exit_code, stdout, stderr = self.run_cli(
-            "gateway",
-            "ingest-tool-ledger",
-            str(ledger_file),
-            "--home",
-            str(self.home),
-            "--json",
-        )
-
-        self.assertEqual(exit_code, 0, stderr)
-        payload = json.loads(stdout)
-        self.assertEqual(payload["ledger_id"], "ledger:stdio-ingest")
-        self.assertEqual(payload["turn_id"], "turn:stdio-ingest")
-        records = recent_tool_call_ledgers(self.state_db, turn_id="turn:stdio-ingest")
-        self.assertEqual(records[0]["surface"], "gateway_stdio_test")
-
-    def test_gateway_stdio_worker_ingests_tool_ledger_lines(self) -> None:
-        input_stream = StringIO(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "request_id": "req-ledger",
-                            "command": "ingest_tool_ledger",
-                            "row": self._tool_ledger_row(),
-                        }
-                    ),
-                    json.dumps({"request_id": "req-stop", "command": "shutdown"}),
-                    "",
-                ]
-            )
-        )
-        output_stream = StringIO()
-
-        exit_code = gateway_serve_stdio(
-            self.config_manager,
-            self.state_db,
-            input_stream=input_stream,
-            output_stream=output_stream,
-            simulation=True,
-        )
-
-        lines = [json.loads(line) for line in output_stream.getvalue().splitlines()]
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(lines[1]["request_id"], "req-ledger")
-        self.assertEqual(lines[1]["status"], "ingested")
-        self.assertEqual(lines[1]["turn_id"], "turn:stdio-ingest")
-        records = recent_tool_call_ledgers(self.state_db, turn_id="turn:stdio-ingest")
-        self.assertEqual(records[0]["ledger_id"], "ledger:stdio-ingest")
-
-    def test_gateway_stdio_worker_rejects_unbound_tool_ledgers(self) -> None:
-        row = self._tool_ledger_row()
-        row.pop("turn_id")
-        row["ledger_json"] = {}
-        input_stream = StringIO(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "request_id": "req-ledger",
-                            "command": "ingest_tool_ledger",
-                            "row": row,
-                        }
-                    ),
-                    json.dumps({"request_id": "req-stop", "command": "shutdown"}),
-                    "",
-                ]
-            )
-        )
-        output_stream = StringIO()
-
-        exit_code = gateway_serve_stdio(
-            self.config_manager,
-            self.state_db,
-            input_stream=input_stream,
-            output_stream=output_stream,
-            simulation=True,
-        )
-
-        lines = [json.loads(line) for line in output_stream.getvalue().splitlines()]
-        self.assertEqual(exit_code, 0)
-        self.assertFalse(lines[1]["ok"])
-        self.assertIn("turn_id", lines[1]["error"])
-        self.assertEqual(recent_tool_call_ledgers(self.state_db, turn_id="turn:stdio-ingest"), [])
-
     def test_gateway_ask_telegram_command_prints_runtime_reply(self) -> None:
         with patch(
             "spark_intelligence.cli.gateway_ask_telegram",
@@ -146,25 +33,34 @@ class GatewayAskTelegramCliTests(SparkTestCase):
         self.assertEqual(ask_telegram.call_args.kwargs["user_id"], "111")
         self.assertEqual(ask_telegram.call_args.kwargs["as_json"], False)
 
-    def test_gateway_stdio_worker_serves_telegram_update_lines(self) -> None:
-        input_stream = StringIO(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "request_id": "req-1",
-                            "command": "simulate_telegram_update",
-                            "simulation": False,
-                            "update_payload": {"message": {"text": "status"}},
-                        }
-                    ),
-                    json.dumps({"request_id": "req-stop", "command": "shutdown"}),
-                    "",
-                ]
-            )
-        )
-        output_stream = StringIO()
+    def _stdio_request(self, **overrides: object) -> dict[str, object]:
+        request: dict[str, object] = {
+            "protocol": "spark.gateway.stdio.v2",
+            "command": "telegram_update",
+            "request_id": "telegram:test:1",
+            "session_id": "session-test-1234567890",
+            "session_token": "t" * 48,
+            "update_payload": {"message": {"text": "status"}},
+        }
+        request.update(overrides)
+        return request
 
+    def _run_stdio(self, *requests: dict[str, object]) -> tuple[int, list[dict[str, object]]]:
+        input_stream = StringIO("".join(json.dumps(request) + "\n" for request in requests))
+        output_stream = StringIO()
+        exit_code = gateway_serve_stdio(
+            self.config_manager,
+            self.state_db,
+            input_stream=input_stream,
+            output_stream=output_stream,
+            error_stream=StringIO(),
+            simulation=False,
+            session_token="t" * 48,
+            session_id="session-test-1234567890",
+        )
+        return exit_code, [json.loads(line) for line in output_stream.getvalue().splitlines()]
+
+    def test_gateway_stdio_v2_binds_runtime_origin_to_parent_session(self) -> None:
         with patch(
             "spark_intelligence.gateway.runtime.simulate_telegram_update",
             return_value=SimpleNamespace(
@@ -173,19 +69,57 @@ class GatewayAskTelegramCliTests(SparkTestCase):
                 detail={"response_text": "Spark is connected.", "bridge_mode": "direct"},
             ),
         ) as simulate:
-            exit_code = gateway_serve_stdio(
-                self.config_manager,
-                self.state_db,
-                input_stream=input_stream,
-                output_stream=output_stream,
-                simulation=True,
+            exit_code, lines = self._run_stdio(
+                self._stdio_request(simulation=True),
+                self._stdio_request(
+                    command="shutdown",
+                    request_id="telegram:test:shutdown",
+                    update_payload=None,
+                ),
             )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(lines[0]["protocol"], "spark.gateway.stdio.v2")
+        self.assertEqual(lines[0]["session_id"], "session-test-1234567890")
+        self.assertEqual(lines[1]["request_id"], "telegram:test:1")
+        self.assertEqual(lines[1]["decision"], "answered")
+        self.assertEqual(lines[2]["status"], "shutdown")
+        self.assertEqual(simulate.call_args.kwargs["simulation"], False)
+
+    def test_gateway_stdio_rejects_wrong_session_without_running_turn(self) -> None:
+        with patch("spark_intelligence.gateway.runtime.simulate_telegram_update") as simulate:
+            _, lines = self._run_stdio(self._stdio_request(session_token="wrong" * 12))
+
+        self.assertEqual(lines[1]["error"]["code"], "unauthorized")
+        self.assertNotIn("detail", lines[1]["error"])
+        simulate.assert_not_called()
+
+    def test_gateway_stdio_returns_safe_error_code_without_exception_text(self) -> None:
+        with patch(
+            "spark_intelligence.gateway.runtime.simulate_telegram_update",
+            side_effect=RuntimeError("secret-token-value from /private/runtime/path"),
+        ):
+            _, lines = self._run_stdio(self._stdio_request())
+
+        rendered = json.dumps(lines[1])
+        self.assertEqual(lines[1]["error"]["code"], "turn_failed")
+        self.assertNotIn("secret-token-value", rendered)
+        self.assertNotIn("/private/runtime/path", rendered)
+
+    def test_gateway_stdio_rejects_oversized_request_before_json_decode(self) -> None:
+        input_stream = StringIO("x" * 2049 + "\n")
+        output_stream = StringIO()
+        exit_code = gateway_serve_stdio(
+            self.config_manager,
+            self.state_db,
+            input_stream=input_stream,
+            output_stream=output_stream,
+            simulation=False,
+            session_token="t" * 48,
+            session_id="session-test-1234567890",
+            max_request_bytes=2048,
+        )
 
         lines = [json.loads(line) for line in output_stream.getvalue().splitlines()]
         self.assertEqual(exit_code, 0)
-        self.assertEqual(lines[0]["protocol"], "spark.gateway.stdio.v1")
-        self.assertEqual(lines[1]["request_id"], "req-1")
-        self.assertEqual(lines[1]["decision"], "answered")
-        self.assertEqual(lines[1]["detail"]["response_text"], "Spark is connected.")
-        self.assertEqual(lines[2]["status"], "shutdown")
-        self.assertEqual(simulate.call_args.kwargs["simulation"], False)
+        self.assertEqual(lines[1]["error"]["code"], "request_too_large")

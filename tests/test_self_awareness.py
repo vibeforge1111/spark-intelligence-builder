@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
@@ -34,6 +36,44 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegr
 
 
 class SelfAwarenessCapsuleTests(SparkTestCase):
+    def _memory_smoke_governor_decision(
+        self,
+        *,
+        subject: str,
+        predicate: str,
+    ) -> dict[str, object]:
+        request_id = f"self-awareness-test:{predicate}"
+        envelope = build_vnext_action_intent_envelope(
+            surface="test",
+            actor_id_ref=subject,
+            request_id=request_id,
+            source_kind="self_awareness_memory_fixture",
+            intent_summary="Seed a scoped memory fact for self-awareness verification.",
+            raw_turn_summary="The test fixture explicitly requests a local memory write.",
+            actions=[
+                {
+                    "tool_name": "memory.write",
+                    "owner_system": "domain-chip-memory",
+                    "mutation_class": "writes_memory",
+                    "args_path": f"builder://self-awareness-test/{predicate}",
+                }
+            ],
+        )
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": envelope},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=request_id,
+            human_id=subject,
+            actor_id="self_awareness_test",
+            component="self_awareness_memory_fixture",
+        )
+        self.assertTrue(verdict.allowed, verdict.reason_codes)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return verdict.governor_decision
+
     def test_self_awareness_capsule_separates_observed_recent_unverified_lacks_and_improvements(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -766,6 +806,47 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("memory smoke", result.probe_summary)
         smoke.assert_called_once()
 
+    def test_builder_route_probe_gives_actionable_gateway_warnings(self) -> None:
+        gateway = SimpleNamespace(
+            ready=False,
+            doctor_blocking_ok=False,
+            doctor_blocking_failures=["provider runtime unavailable"],
+            provider_runtime_detail="provider runtime unavailable",
+            configured_providers=[],
+            configured_channels=["telegram"],
+        )
+        with patch("spark_intelligence.gateway.runtime.gateway_status", return_value=gateway):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_intelligence_builder",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertIn("gateway not ready; run `spark doctor`", result.probe_summary)
+        self.assertIn("no providers configured; run `spark providers status`", result.probe_summary)
+
+    def test_builder_route_probe_omits_warnings_when_gateway_is_ready(self) -> None:
+        gateway = SimpleNamespace(
+            ready=True,
+            doctor_blocking_ok=True,
+            doctor_blocking_failures=[],
+            provider_runtime_detail="ready",
+            configured_providers=["openai"],
+            configured_channels=["telegram"],
+        )
+        with patch("spark_intelligence.gateway.runtime.gateway_status", return_value=gateway):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_intelligence_builder",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertNotIn("warnings=[", result.probe_summary)
+
     def test_spawner_route_probe_succeeds_when_unrelated_mission_control_surfaces_are_degraded(self) -> None:
         mission_payload = {
             "summary": {
@@ -790,6 +871,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
 
         self.assertEqual(result.status, "success")
         self.assertIn("degraded_surfaces=2", result.probe_summary)
+        self.assertIn("[Spark Swarm payload, Watchtower scheduler]", result.probe_summary)
 
     def test_spawner_route_probe_fails_when_spawner_surface_is_degraded(self) -> None:
         mission_payload = {
@@ -1409,6 +1491,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.current_focus",
             value="hardening Spark self-awareness",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:test-user-awareness",
+                predicate="profile.current_focus",
+            ),
         )
         run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
@@ -1418,6 +1504,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.current_decision",
             value="keep user context separate from Spark doctrine",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:test-user-awareness",
+                predicate="profile.current_decision",
+            ),
         )
         promote_llm_wiki_user_note(
             config_manager=self.config_manager,
@@ -1568,6 +1658,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(payload["status"], "warn")
         self.assertTrue(payload["report_written"])
         self.assertTrue((self.home / "artifacts" / "capability-drift-heartbeat" / "latest.json").exists())
+        self.assertEqual(list((self.home / "artifacts" / "capability-drift-heartbeat").glob(".*.tmp")), [])
         self.assertTrue(Path(payload["report_path"]).exists())
         self.assertEqual(payload["summary"]["stale_success_count"], 1)
         self.assertEqual(payload["summary"]["recent_failure_count"], 1)
@@ -2181,6 +2272,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="system.memory.route_detection",
             value="ok",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:self-awareness:movement",
+                predicate="system.memory.route_detection",
+            ),
         )
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -2292,6 +2387,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             predicate="profile.favorite_color",
             value="cobalt blue",
             cleanup=False,
+            governor_decision=self._memory_smoke_governor_decision(
+                subject="human:telegram:123",
+                predicate="profile.favorite_color",
+            ),
         )
 
         result = build_researcher_reply(

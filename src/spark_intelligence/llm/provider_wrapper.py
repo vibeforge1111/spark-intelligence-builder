@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
+from spark_intelligence.observability.policy import looks_secret_like
+from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,8 +24,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    system_prompt = Path(args[0]).read_text(encoding="utf-8")
-    user_prompt = Path(args[1]).read_text(encoding="utf-8")
+    prompt_text: dict[str, str] = {}
+    for label, path_value in (("system", args[0]), ("user", args[1])):
+        try:
+            prompt_text[label] = Path(path_value).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"provider_wrapper: cannot read {label} prompt at {path_value}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+
+    system_prompt = sanitize_prompt_boundary_text(prompt_text["system"])
+    user_prompt = prompt_text["user"]
     response_path = Path(args[2])
 
     provider = DirectProviderRequest(
@@ -32,13 +46,22 @@ def main(argv: list[str] | None = None) -> int:
         api_mode=_required_env("SPARK_INTELLIGENCE_PROVIDER_API_MODE"),
         base_url=_required_env("SPARK_INTELLIGENCE_PROVIDER_BASE_URL"),
         model=_required_env("SPARK_INTELLIGENCE_PROVIDER_MODEL"),
-        secret_value=_required_env("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
+        secret_value=_required_provider_secret("SPARK_INTELLIGENCE_PROVIDER_SECRET"),
     )
+    governance = _governance_from_env(provider)
+    if governance is None and (
+        looks_secret_like(system_prompt) or looks_secret_like(user_prompt)
+    ):
+        raise RuntimeError(
+            "Provider wrapper refused model-visible secret-like material before dispatch. "
+            "Remove the material or configure SPARK_INTELLIGENCE_STATE_DB_PATH "
+            "to record the governed quarantine decision."
+        )
     payload = execute_direct_provider_prompt(
         provider=provider,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        governance=_governance_from_env(provider),
+        governance=governance,
     )
     response_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return 0
@@ -48,6 +71,37 @@ def _required_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise RuntimeError(f"Missing required provider wrapper env var: {name}")
+    return value
+
+
+_PLACEHOLDER_SECRET_TOKENS = frozenset(
+    {
+        "changeme",
+        "replace_me",
+        "your_key_here",
+        "your_secret_here",
+        "your_token_here",
+        "your_api_key_here",
+        "sk_placeholder",
+        "placeholder",
+        "todo",
+        "fixme",
+        "example",
+        "test_key",
+        "test_secret",
+        "dummy",
+        "fake",
+        "insert",
+    }
+)
+
+
+def _required_provider_secret(name: str) -> str:
+    value = _required_env(name)
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    repeated_character = len(normalized) >= 4 and len(set(normalized)) == 1
+    if normalized in _PLACEHOLDER_SECRET_TOKENS or repeated_character:
+        raise RuntimeError(f"Env var {name} contains a placeholder provider credential.")
     return value
 
 

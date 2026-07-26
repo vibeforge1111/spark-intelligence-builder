@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
+import re
 import stat
 import subprocess
-import re
+import tempfile
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -13,6 +16,20 @@ import yaml
 
 from spark_intelligence.observability.store import payload_hash, record_config_mutation
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _is_wsl_runtime() -> bool:
+    if os.name == "nt":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -27,12 +44,65 @@ class SparkPaths:
 
 
 class ConfigManager:
+    _VALID_ENV_SECRET_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _PROCESS_CONTROL_ENV_KEYS = frozenset(
+        {
+            "ALL_PROXY",
+            "BASH_ENV",
+            "BASHOPTS",
+            "CDPATH",
+            "COMSPEC",
+            "CURL_CA_BUNDLE",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "EDITOR",
+            "ENV",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "HOME",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "IFS",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "NO_PROXY",
+            "PATH",
+            "PATHEXT",
+            "PROMPT_COMMAND",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "REQUESTS_CA_BUNDLE",
+            "SHELL",
+            "SHELLOPTS",
+            "SSL_CERT_FILE",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "TZ",
+            "USER",
+            "USERPROFILE",
+            "VISUAL",
+            "WINDIR",
+        }
+    )
+
     def __init__(self, paths: SparkPaths):
         self.paths = paths
 
     @classmethod
     def from_home(cls, home: str | None) -> "ConfigManager":
-        root = Path(home).expanduser() if home else Path(os.environ.get("SPARK_INTELLIGENCE_HOME", "~/.spark-intelligence")).expanduser()
+        intelligence_home = os.environ.get("SPARK_INTELLIGENCE_HOME", "").strip()
+        builder_home = os.environ.get("SPARK_BUILDER_HOME", "").strip()
+        root = Path(home).expanduser() if home else Path(
+            intelligence_home or builder_home or "~/.spark-intelligence"
+        ).expanduser()
         paths = SparkPaths(
             home=root,
             config_yaml=root / "config.yaml",
@@ -147,6 +217,8 @@ class ConfigManager:
         if not self.paths.config_yaml.exists():
             return self.default_config()
         data = yaml.safe_load(self.paths.config_yaml.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return self.default_config()
         return data
 
     @staticmethod
@@ -166,20 +238,11 @@ class ConfigManager:
             translated = Path(f"{drive}:\\{remainder}")
             return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
-        if windows_match and os.name != "nt":
-            # Only translate a Windows-style path to a WSL /mnt path when we are
-            # actually running under WSL — on native Linux/macOS this would
-            # invent a /mnt/<drive> path that does not exist.
-            is_wsl = False
-            try:
-                is_wsl = "microsoft" in Path("/proc/version").read_text().lower()
-            except (OSError, AttributeError):
-                is_wsl = False
-            if is_wsl:
-                drive = windows_match.group(1).lower()
-                remainder = windows_match.group(2).replace("\\", "/")
-                translated = Path("/mnt") / drive / remainder
-                return translated
+        if windows_match and _is_wsl_runtime():
+            drive = windows_match.group(1).lower()
+            remainder = windows_match.group(2).replace("\\", "/")
+            translated = Path("/mnt") / drive / remainder
+            return translated
         return path
 
     def save(
@@ -301,6 +364,9 @@ class ConfigManager:
         reason_code: str = "env_secret_upsert",
         request_source: str = "config_manager.upsert_env_secret",
     ) -> None:
+        self._validate_env_secret_key(key)
+        if not isinstance(value, str):
+            raise ValueError("Env secret values must be strings.")
         env_map = self.read_env_map()
         previous = env_map.get(key)
         if previous == value:
@@ -321,7 +387,10 @@ class ConfigManager:
             )
             return
         env_map[key] = value
-        content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
+        content = "# Spark Intelligence secrets\n" + "".join(
+            f"{name}={self._serialize_env_secret_value(env_map[name])}\n"
+            for name in sorted(env_map)
+        )
         self._write_env_file(
             content,
             actor_id=actor_id,
@@ -336,21 +405,71 @@ class ConfigManager:
     def read_env_map(self) -> dict[str, str]:
         if not self.paths.env_file.exists():
             return {}
+        if self.paths.env_file.is_symlink():
+            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
         mapping: dict[str, str] = {}
-        for line in self.paths.env_file.read_text(encoding="utf-8").splitlines():
+        for line in self._read_secret_text(self.paths.env_file).splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
+            self._validate_env_secret_key(key)
             value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            if value.startswith('"'):
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    if len(value) >= 2 and value.endswith('"'):
+                        decoded = value[1:-1]
+                    else:
+                        raise ValueError(
+                            f"Env secret value for {key} has invalid quoted encoding."
+                        ) from exc
+                if not isinstance(decoded, str):
+                    raise ValueError(f"Env secret value for {key} must decode to a string.")
+                value = decoded
+            elif len(value) >= 2 and value[0] == value[-1] == "'":
                 value = value[1:-1]
             mapping[key] = value
         return mapping
 
+    @classmethod
+    def _validate_env_secret_key(cls, key: str) -> None:
+        if not isinstance(key, str) or cls._VALID_ENV_SECRET_KEY.fullmatch(key) is None:
+            raise ValueError("Env secret keys must match [A-Za-z_][A-Za-z0-9_]*.")
+        if key.upper() in cls._PROCESS_CONTROL_ENV_KEYS:
+            raise ValueError("Process-control environment names cannot be stored as Spark secrets.")
+
+    @staticmethod
+    def _serialize_env_secret_value(value: str) -> str:
+        return json.dumps(value, ensure_ascii=True)
+
+    @staticmethod
+    def _read_secret_text(path: Path) -> str:
+        flags = os.O_RDONLY
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            if path.is_symlink():
+                raise ValueError("Spark Intelligence secrets file must not be a symbolic link.") from exc
+            raise
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("Spark Intelligence secrets path must be a regular file.")
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                return handle.read()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
     def env_file_permission_status(self) -> tuple[bool, str]:
         if not self.paths.env_file.exists():
             return (False, "missing")
+        if self.paths.env_file.is_symlink():
+            return (False, "symbolic-link-rejected")
         try:
             if os.name == "nt":
                 return self._windows_env_permission_status()
@@ -378,8 +497,11 @@ class ConfigManager:
         new_value: str | None = None,
         strict_permissions: bool = True,
     ) -> None:
-        self.paths.env_file.write_text(content, encoding="utf-8")
-        self.harden_env_file_permissions(strict=strict_permissions)
+        self._write_secret_text(self.paths.env_file, content)
+        if strict_permissions:
+            self.harden_env_file_permissions()
+        else:
+            self.harden_env_file_permissions(strict=False)
         before_summary = self._secret_summary(target_key, previous_value)
         after_summary = self._secret_summary(target_key, new_value)
         self._record_config_mutation(
@@ -396,10 +518,46 @@ class ConfigManager:
             summary=f"Env secret mutation applied for {target_key}.",
         )
 
+    @staticmethod
+    def _write_secret_text(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
+        if path.exists() and not path.is_file():
+            raise ValueError("Spark Intelligence secrets path must be a regular file.")
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                descriptor = -1
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            temporary = ""
+            if os.name != "nt":
+                os.chmod(path, 0o600)
+                directory_descriptor = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
     def harden_env_file_permissions(self, *, strict: bool = True) -> None:
         if not self.paths.env_file.exists():
             return
         try:
+            if self.paths.env_file.is_symlink():
+                raise ValueError("Spark Intelligence secrets file must not be a symbolic link.")
             if os.name == "nt":
                 self._harden_windows_env_file_permissions()
                 return
@@ -475,8 +633,11 @@ class ConfigManager:
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
                 return principal
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+            _LOGGER.debug(
+                "windows_principal_lookup_failed fallback=environment error_type=%s",
+                type(exc).__name__,
+            )
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
         return f"{domain}\\{username}" if domain else username

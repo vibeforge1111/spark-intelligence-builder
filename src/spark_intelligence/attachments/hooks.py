@@ -43,7 +43,10 @@ class ChipHookExecution:
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0
+        returncode_present, output_returncode = _structured_output_returncode(self.output)
+        return self.exit_code == 0 and (
+            not returncode_present or output_returncode == 0
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -78,7 +81,20 @@ class ChipHookExecution:
             lines.append(f"- stderr: {self.stderr.strip()}")
         if isinstance(result, dict):
             lines.append(f"- result keys: {', '.join(sorted(result.keys())) if result else 'none'}")
+        returncode_present, output_returncode = _structured_output_returncode(self.output)
+        if returncode_present:
+            rendered_returncode = output_returncode if output_returncode is not None else "invalid"
+            lines.append(f"- output_returncode: {rendered_returncode}")
         return "\n".join(lines)
+
+
+def _structured_output_returncode(output: dict[str, Any]) -> tuple[bool, int | None]:
+    if not isinstance(output, dict) or "returncode" not in output:
+        return False, None
+    value = output.get("returncode")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return True, None
+    return True, value
 
 
 def list_active_chip_records(config_manager: ConfigManager) -> list[AttachmentRecord]:
@@ -152,6 +168,14 @@ def run_first_chip_hook_supporting(
     return None
 
 
+SUPPORTED_IO_PROTOCOLS = frozenset({"spark-hook-io.v1"})
+
+
+def io_protocol_supported(declared: str | None) -> bool:
+    """Return whether Builder can safely speak a chip's declared hook protocol."""
+    return declared in {None, ""} or declared in SUPPORTED_IO_PROTOCOLS
+
+
 
 _MINIMAL_ENV_KEYS = {
     "PATH", "HOME", "TMPDIR", "TMP", "TEMP",
@@ -194,9 +218,11 @@ def execute_chip_hook_record(
         raise ValueError(f"Attachment '{record.key}' is not a chip.")
     if _is_disabled_legacy_browser_hook(record.key, hook):
         raise ValueError(LEGACY_BROWSER_DISABLED_MESSAGE)
-    if record.io_protocol not in {None, "", "spark-hook-io.v1"}:
+    if not io_protocol_supported(record.io_protocol):
         raise ValueError(
-            f"Chip '{record.key}' uses unsupported io_protocol '{record.io_protocol}'."
+            f"Chip '{record.key}' declares io_protocol '{record.io_protocol}', which this driver "
+            f"does not support (supported: {', '.join(sorted(SUPPORTED_IO_PROTOCOLS))}). "
+            "Upgrade the driver or regenerate the chip runner from the current template."
         )
     command = list(record.commands.get(hook) or [])
     if not command:
@@ -210,10 +236,14 @@ def execute_chip_hook_record(
 
     repo_root = Path(record.repo_root)
     final_command = _normalize_command(command)
-    env = _build_minimal_chip_env(record, repo_root)
 
     with tempfile.TemporaryDirectory(prefix=f"spark-chip-{record.key}-{hook}-") as temp_dir:
         temp_root = Path(temp_dir)
+        env = _build_chip_hook_environment(
+            record=record,
+            repo_root=repo_root,
+            temp_root=temp_root,
+        )
         input_path = temp_root / "input.json"
         output_path = temp_root / "output.json"
         input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -419,12 +449,74 @@ def _normalize_command(command: list[str]) -> list[str]:
     return command
 
 
+def _build_chip_hook_environment(
+    *,
+    record: AttachmentRecord,
+    repo_root: Path,
+    temp_root: Path,
+) -> dict[str, str]:
+    disposable_home = temp_root / "home"
+    disposable_temp = temp_root / "tmp"
+    disposable_home.mkdir(mode=0o700)
+    disposable_temp.mkdir(mode=0o700)
+    env = {
+        "HOME": str(disposable_home),
+        "USERPROFILE": str(disposable_home),
+        "XDG_CONFIG_HOME": str(disposable_home / ".config"),
+        "APPDATA": str(disposable_home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(disposable_home / "AppData" / "Local"),
+        "TMPDIR": str(disposable_temp),
+        "TMP": str(disposable_temp),
+        "TEMP": str(disposable_temp),
+        "PATH": _chip_hook_executable_path(),
+        "PYTHONUTF8": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+    src_root = repo_root / "src"
+    if src_root.exists():
+        env["PYTHONPATH"] = str(src_root)
+    env.update(_windows_chip_runtime_environment())
+    env.update(_runtime_env_overrides(record))
+    return env
+
+
+def _chip_hook_executable_path() -> str:
+    candidates = [str(Path(sys.executable).resolve().parent), *os.defpath.split(os.pathsep)]
+    entries: list[str] = []
+    for candidate in candidates:
+        normalized = str(candidate or "").strip()
+        if normalized and normalized not in entries:
+            entries.append(normalized)
+    return os.pathsep.join(entries)
+
+
+def _windows_chip_runtime_environment() -> dict[str, str]:
+    if os.name != "nt":
+        return {}
+    raw_root = str(os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR") or "").strip()
+    if not raw_root:
+        return {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    system_root = Path(raw_root)
+    if not system_root.is_absolute() or not system_root.is_dir():
+        return {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    env = {
+        "SYSTEMROOT": str(system_root),
+        "WINDIR": str(system_root),
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+    command_shell = system_root / "System32" / "cmd.exe"
+    if command_shell.is_file():
+        env["COMSPEC"] = str(command_shell)
+    return env
+
+
 def _load_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 

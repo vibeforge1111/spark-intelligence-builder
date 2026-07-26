@@ -66,6 +66,32 @@ def test_creator_plan_defaults_domain_chip_to_benchmarked_local_work():
     assert packet.network_contribution_policy == "workspace_only"
 
 
+def test_creator_plan_does_not_invent_domain_chip_for_telegram_delivery_brief():
+    packet = build_creator_intent_packet("Build me a Telegram bot for customer support")
+
+    assert packet.desired_outputs["telegram_flow"] is True
+    assert packet.desired_outputs["domain_chip"] is False
+    assert packet.artifact_targets == ["benchmark_pack", "tool_integration"]
+
+
+def test_creator_plan_does_not_invent_domain_chip_for_spawner_mission_brief():
+    packet = build_creator_intent_packet("Create a Spawner mission canvas for the launch")
+
+    assert packet.desired_outputs["spawner_mission"] is True
+    assert packet.desired_outputs["domain_chip"] is False
+    assert packet.artifact_targets == ["benchmark_pack", "tool_integration"]
+
+
+def test_creator_plan_keeps_explicit_domain_chip_with_delivery_surfaces():
+    packet = build_creator_intent_packet(
+        "Create a domain chip for support triage with a Telegram bot and Spawner missions"
+    )
+
+    assert packet.desired_outputs["domain_chip"] is True
+    assert packet.desired_outputs["telegram_flow"] is True
+    assert packet.desired_outputs["spawner_mission"] is True
+
+
 def test_creator_plan_honors_explicit_private_mode():
     packet = build_creator_intent_packet(
         "Build a github repo backed benchmark for founder research but keep it private"
@@ -304,6 +330,22 @@ def test_creator_mission_status_consumer_requires_all_surface_adapters():
     issues = validate_creator_mission_status(packet)
 
     assert {issue.path for issue in issues} == {"surface_adapters.telegram"}
+
+
+def test_creator_mission_status_consumer_accepts_domain_labs_flat_canonical_shape():
+    packet = _creator_mission_status_packet()
+    packet["canonical"] = {
+        "verdict": "ready_for_swarm_packet",
+        "evidence_tier": "transfer_supported",
+        "automation_blocked": False,
+        "recommended_next_command": "review Startup YC operator validation gates",
+    }
+
+    summary = summarize_creator_mission_status(packet)
+
+    assert validate_creator_mission_status(packet) == []
+    assert summary.blocked is False
+    assert summary.recommended_next_command == "review Startup YC operator validation gates"
 
 
 def _creator_mission_status_packet():

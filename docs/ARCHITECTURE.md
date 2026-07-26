@@ -73,6 +73,8 @@ Rules for new code:
 - Keep CLI handlers thin: parse arguments, call a service, render result.
 - Do not introduce a second state store for identity, pairing, provider, or runtime health.
 - Do not copy another Spark repo's internals into Builder.
+- Route outbound credential-bearing HTTPS through `security/https_endpoint.py` so URL policy, public-address
+  resolution, DNS pinning, proxy avoidance, redirect rejection, and response bounds have one owner.
 - Add tests at the contract boundary, not only at the CLI text-output layer.
 
 ## Trust Boundaries
@@ -88,6 +90,14 @@ Builder has six high-risk boundaries:
 7. Module provenance: production modules must be commit-pinned by `spark-cli`.
 
 Any feature crossing one of these boundaries needs a test and a doc note.
+
+Direct provider requests enforce the provider URL boundary at dispatch time. Registered
+provider credentials are bound to their registry origin; reviewed custom providers may
+target another public HTTPS origin. Hostnames are resolved once, every answer must be a
+public unicast address, and the connection is pinned to one validated address while TLS
+continues to verify the original hostname. The transport ignores ambient proxy settings
+and does not follow redirects, preventing DNS-rebinding, proxy, and redirect bypasses of
+the preflight decision.
 
 ## Integration Flow
 

@@ -582,11 +582,11 @@ def _refresh_browser_use_status_from_cli(*, status_path: Path, cli_path: str) ->
             errors="replace",
             timeout_seconds=BROWSER_USE_DOCTOR_TIMEOUT_SECONDS,
         )
-    except (OSError, TimeoutExpired) as exc:
+    except (OSError, TimeoutExpired):
         status_doc = _browser_use_doctor_failure_doc(
             checked_at=checked_at,
             cli_path=cli_path,
-            reason=f"browser-use doctor failed to run: {exc}",
+            reason="browser-use doctor could not be started.",
             error_code="BROWSER_USE_DOCTOR_UNAVAILABLE",
         )
         _write_browser_use_status(status_path, status_doc)
@@ -601,14 +601,22 @@ def _refresh_browser_use_status_from_cli(*, status_path: Path, cli_path: str) ->
     if not isinstance(doctor, dict):
         doctor = {}
 
-    if completed.exit_code != 0 or not doctor:
-        stderr = (completed.stderr or "").strip()
-        reason = stderr or stdout or f"browser-use doctor exited with code {completed.exit_code}"
+    if completed.exit_code != 0:
         status_doc = _browser_use_doctor_failure_doc(
             checked_at=checked_at,
             cli_path=cli_path,
-            reason=reason,
+            reason=f"browser-use doctor exited with code {completed.exit_code}.",
             error_code="BROWSER_USE_DOCTOR_FAILED",
+        )
+        _write_browser_use_status(status_path, status_doc)
+        return status_doc
+
+    if not doctor:
+        status_doc = _browser_use_doctor_failure_doc(
+            checked_at=checked_at,
+            cli_path=cli_path,
+            reason="browser-use doctor returned invalid status output.",
+            error_code="BROWSER_USE_DOCTOR_INVALID_OUTPUT",
         )
         _write_browser_use_status(status_path, status_doc)
         return status_doc
@@ -726,8 +734,20 @@ def _run_browser_use_json(command: list[str], *, timeout: int) -> dict[str, Any]
             errors="replace",
             timeout_seconds=timeout,
         )
-    except (OSError, TimeoutExpired) as exc:
-        return {"success": False, "error": str(exc)}
+    except (OSError, TimeoutExpired):
+        return {
+            "success": False,
+            "error": "browser-use could not be started.",
+            "error_code": "BROWSER_USE_UNAVAILABLE",
+        }
+
+    if completed.exit_code != 0:
+        return {
+            "success": False,
+            "error": f"browser-use exited with code {completed.exit_code}.",
+            "error_code": "BROWSER_USE_COMMAND_FAILED",
+            "exit_code": completed.exit_code,
+        }
 
     stdout = (completed.stdout or "").strip()
     try:
@@ -736,9 +756,6 @@ def _run_browser_use_json(command: list[str], *, timeout: int) -> dict[str, Any]
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    if completed.exit_code != 0:
-        payload["success"] = False
-        payload["error"] = (completed.stderr or "").strip() or stdout or f"browser-use exited with code {completed.exit_code}"
     return payload
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from unittest.mock import patch
 
 from spark_intelligence.llm.direct_provider import (
@@ -15,39 +16,24 @@ from spark_intelligence.observability.store import latest_events_by_type
 from tests.test_support import SparkTestCase
 
 
-class _FakeHttpResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self._payload = payload
-
-    def read(self) -> bytes:
-        return json.dumps(self._payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
 class DirectProviderExecutionTests(SparkTestCase):
     def test_chat_completions_execution_uses_bearer_secret(self) -> None:
         captured: dict[str, object] = {}
 
-        def fake_urlopen(request, timeout: int = 30):
-            captured["url"] = request.full_url
-            captured["headers"] = dict(request.header_items())
-            captured["body"] = json.loads(request.data.decode("utf-8"))
-            return _FakeHttpResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "OpenAI-style reply",
-                            }
+        def fake_post_json(url, *, headers, payload, provider):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = payload
+            captured["provider"] = provider
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "OpenAI-style reply",
                         }
-                    ]
-                }
-            )
+                    }
+                ]
+            }
 
         provider = DirectProviderRequest(
             provider_id="openai",
@@ -59,7 +45,7 @@ class DirectProviderExecutionTests(SparkTestCase):
             secret_value="openai-secret",
         )
 
-        with patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("spark_intelligence.llm.direct_provider._post_json", side_effect=fake_post_json):
             payload = execute_direct_provider_prompt(
                 provider=provider,
                 system_prompt="System instructions",
@@ -78,19 +64,17 @@ class DirectProviderExecutionTests(SparkTestCase):
     def test_custom_chat_completions_strips_openai_prefix_for_model(self) -> None:
         captured: dict[str, object] = {}
 
-        def fake_urlopen(request, timeout: int = 30):
-            captured["body"] = json.loads(request.data.decode("utf-8"))
-            return _FakeHttpResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "Normalized custom reply",
-                            }
+        def fake_post_json(url, *, headers, payload, provider):
+            captured["body"] = payload
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Normalized custom reply",
                         }
-                    ]
-                }
-            )
+                    }
+                ]
+            }
 
         provider = DirectProviderRequest(
             provider_id="custom",
@@ -102,7 +86,7 @@ class DirectProviderExecutionTests(SparkTestCase):
             secret_value="custom-secret",
         )
 
-        with patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("spark_intelligence.llm.direct_provider._post_json", side_effect=fake_post_json):
             payload = execute_direct_provider_prompt(
                 provider=provider,
                 system_prompt="System instructions",
@@ -114,18 +98,16 @@ class DirectProviderExecutionTests(SparkTestCase):
         self.assertEqual(captured["body"]["model"], "MiniMax-M2.7")
 
     def test_governed_direct_execution_records_redacted_capability_success(self) -> None:
-        def fake_urlopen(request, timeout: int = 30):
-            return _FakeHttpResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "OK",
-                            }
+        def fake_post_json(url, *, headers, payload, provider):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "OK",
                         }
-                    ]
-                }
-            )
+                    }
+                ]
+            }
 
         provider = DirectProviderRequest(
             provider_id="custom",
@@ -149,14 +131,7 @@ class DirectProviderExecutionTests(SparkTestCase):
             trace_ref="trace:direct-provider-test",
         )
 
-        import socket as _socket_mod
-        with (
-            patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen),
-            patch(
-                "spark_intelligence.llm.direct_provider.socket.getaddrinfo",
-                return_value=[(_socket_mod.AF_INET, _socket_mod.SOCK_STREAM, 0, "", ("93.184.216.34", 0))],
-            ),
-        ):
+        with patch("spark_intelligence.llm.direct_provider._post_json", side_effect=fake_post_json):
             payload = execute_direct_provider_prompt(
                 provider=provider,
                 system_prompt="Reply OK.",
@@ -183,20 +158,18 @@ class DirectProviderExecutionTests(SparkTestCase):
     def test_anthropic_execution_uses_messages_api_headers(self) -> None:
         captured: dict[str, object] = {}
 
-        def fake_urlopen(request, timeout: int = 30):
-            captured["url"] = request.full_url
-            captured["headers"] = dict(request.header_items())
-            captured["body"] = json.loads(request.data.decode("utf-8"))
-            return _FakeHttpResponse(
-                {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Anthropic reply",
-                        }
-                    ]
-                }
-            )
+        def fake_post_json(url, *, headers, payload, provider):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = payload
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Anthropic reply",
+                    }
+                ]
+            }
 
         provider = DirectProviderRequest(
             provider_id="anthropic",
@@ -208,7 +181,7 @@ class DirectProviderExecutionTests(SparkTestCase):
             secret_value="anthropic-secret",
         )
 
-        with patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("spark_intelligence.llm.direct_provider._post_json", side_effect=fake_post_json):
             payload = execute_direct_provider_prompt(
                 provider=provider,
                 system_prompt="System instructions",
@@ -221,8 +194,8 @@ class DirectProviderExecutionTests(SparkTestCase):
         self.assertEqual(headers["x-api-key"], "anthropic-secret")
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertEqual(captured["body"]["model"], "claude-opus-4-6")
-        self.assertIn("System instructions", captured["body"]["messages"][0]["content"])
-        self.assertIn("User task", captured["body"]["messages"][0]["content"])
+        self.assertEqual(captured["body"]["system"], "System instructions")
+        self.assertEqual(captured["body"]["messages"], [{"role": "user", "content": "User task"}])
 
     def test_unsupported_direct_execution_mode_fails_closed(self) -> None:
         provider = DirectProviderRequest(
@@ -241,6 +214,58 @@ class DirectProviderExecutionTests(SparkTestCase):
                 system_prompt="System instructions",
                 user_prompt="User task",
             )
+
+    def test_unsupported_mode_names_the_researcher_bridge_without_raw_provider_fields(self) -> None:
+        provider = DirectProviderRequest(
+            provider_id="private-provider-name",
+            provider_kind="custom",
+            auth_method="oauth",
+            api_mode="private-mode-name",
+            base_url="https://api.example.com",
+            model="model",
+            secret_value="provider-secret",
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_direct_provider_prompt(
+                provider=provider,
+                system_prompt="System instructions",
+                user_prompt="User task",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("Researcher bridge", message)
+        self.assertNotIn("private-provider-name", message)
+        self.assertNotIn("private-mode-name", message)
+
+    def test_provider_failure_redacts_message_and_suppresses_secret_cause(self) -> None:
+        secret = "provider-secret-value-123456"
+        provider = DirectProviderRequest(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            base_url="https://api.example.com/v1",
+            model="model",
+            secret_value=secret,
+        )
+
+        with patch(
+            "spark_intelligence.llm.direct_provider._execute_chat_completions",
+            side_effect=RuntimeError(f"provider echoed {secret}"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                execute_direct_provider_prompt(
+                    provider=provider,
+                    system_prompt="System instructions",
+                    user_prompt="User task",
+                )
+
+        rendered_traceback = "".join(traceback.format_exception(ctx.exception))
+        self.assertNotIn(secret, str(ctx.exception))
+        self.assertNotIn(secret, rendered_traceback)
+        self.assertIn("[REDACTED]", str(ctx.exception))
+        self.assertTrue(ctx.exception.__suppress_context__)
 
     def test_provider_wrapper_blocks_secret_like_prompt_with_state_db_context(self) -> None:
         system_prompt_path = self.home / "system.txt"
@@ -265,7 +290,7 @@ class DirectProviderExecutionTests(SparkTestCase):
         }
 
         with patch.dict(os.environ, env, clear=False), patch(
-            "spark_intelligence.llm.direct_provider.urllib.request.urlopen",
+            "spark_intelligence.llm.direct_provider._post_json",
             side_effect=AssertionError("network should not run when prompt is blocked"),
         ):
             with self.assertRaisesRegex(RuntimeError, "pre-model secret boundary"):

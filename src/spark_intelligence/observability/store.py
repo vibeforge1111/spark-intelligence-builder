@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -65,222 +67,172 @@ class EnvironmentSnapshotRecord:
 @dataclass(frozen=True)
 class ObservabilityPruneResult:
     cutoff: str
+    mode: str
+    eligible_counts: dict[str, int]
     deleted_counts: dict[str, int]
-    total_deleted: int
-    vacuumed: bool
+    protected_tables: tuple[str, ...]
+    plan_sha256: str
+    backup_path: Path | None
+    backup_sha256: str | None
+    recovery_verified: bool
 
 
-@dataclass(frozen=True)
-class ObservabilityStoreReport:
-    state_db_path: str
-    state_db_bytes: int
-    page_count: int
-    freelist_count: int
-    page_size: int
-    table_counts: dict[str, int]
-    cutoff: str | None
-    prunable_counts: dict[str, int]
-    extended_cutoff: str | None = None
-
-    @property
-    def total_prunable(self) -> int:
-        return sum(self.prunable_counts.values())
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "state_db_path": self.state_db_path,
-            "state_db_bytes": self.state_db_bytes,
-            "page_count": self.page_count,
-            "freelist_count": self.freelist_count,
-            "page_size": self.page_size,
-            "table_counts": self.table_counts,
-            "cutoff": self.cutoff,
-            "extended_cutoff": self.extended_cutoff,
-            "prunable_counts": self.prunable_counts,
-            "total_prunable": self.total_prunable,
-        }
-
-
-@dataclass(frozen=True)
-class ToolLedgerAbandonResult:
-    cutoff: str
-    abandoned_count: int
-    abandoned_at: str
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "cutoff": self.cutoff,
-            "abandoned_count": self.abandoned_count,
-            "abandoned_at": self.abandoned_at,
-        }
-
-
-def _normalize_prune_cutoff(value: str | datetime) -> str:
+def _normalize_retention_cutoff(value: str | datetime) -> str:
     if isinstance(value, datetime):
         cutoff = value
-        if cutoff.tzinfo is None:
-            cutoff = cutoff.replace(tzinfo=timezone.utc)
-        return cutoff.isoformat(timespec="seconds")
-    cutoff = str(value).strip()
-    if not cutoff:
-        raise ValueError("older_than is required")
-    return cutoff
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            raise ValueError("older_than is required")
+        try:
+            cutoff = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("older_than must be a valid ISO-8601 timestamp") from exc
+    if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        raise ValueError("older_than must include a timezone")
+    normalized = cutoff.astimezone(timezone.utc)
+    if normalized > datetime.now(timezone.utc):
+        raise ValueError("older_than cannot be in the future")
+    return normalized.isoformat(timespec="seconds")
 
 
-def abandon_stale_tool_call_ledgers(
-    state_db: StateDB,
-    *,
-    older_than: str | datetime,
-    abandoned_at: str | datetime | None = None,
-) -> ToolLedgerAbandonResult:
-    cutoff = _normalize_prune_cutoff(older_than)
-    abandoned_at_text = _normalize_prune_cutoff(abandoned_at or datetime.now(timezone.utc))
-    with state_db.connect() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE tool_call_ledger
-            SET status = 'abandoned',
-                updated_at = ?
-            WHERE status = 'not_started'
-              AND COALESCE(NULLIF(owner_system, ''), '') = ''
-              AND updated_at < ?
-            """,
-            (abandoned_at_text, cutoff),
-        )
-        abandoned_count = max(int(cursor.rowcount or 0), 0)
-        conn.commit()
-    return ToolLedgerAbandonResult(
-        cutoff=cutoff,
-        abandoned_count=abandoned_count,
-        abandoned_at=abandoned_at_text,
+def _retention_mirror_event_ids(conn: sqlite3.Connection, *, cutoff: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT mirror.event_id
+        FROM event_log AS mirror
+        WHERE mirror.recorded_at < ?
+          AND EXISTS (
+              SELECT 1
+              FROM builder_events AS canonical
+              WHERE canonical.event_id = mirror.event_id
+          )
+        ORDER BY mirror.event_id
+        """,
+        (cutoff,),
+    ).fetchall()
+    return [str(row["event_id"]) for row in rows]
+
+
+def _retention_plan_sha256(*, cutoff: str, event_ids: list[str]) -> str:
+    payload = json.dumps(
+        {"cutoff": cutoff, "event_log_event_ids": event_ids},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
     )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-BASE_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
-    ("event_log", "recorded_at"),
-    ("tool_call_ledger", "created_at"),
-    ("provider_runtime_events", "created_at"),
-)
-BUILDER_EVENTS_RETENTION_SPEC = ("builder_events", "created_at")
-EXTENDED_RETENTION_TABLE_SPECS: tuple[tuple[str, str], ...] = (
-    BUILDER_EVENTS_RETENTION_SPEC,
-    ("memory_lane_records", "recorded_at"),
-    ("provenance_mutation_log", "recorded_at"),
-    ("observer_packet_records", "created_at"),
-    ("runtime_environment_snapshots", "created_at"),
-    ("attachment_state_snapshots", "created_at"),
-)
-REPORT_TABLE_SPECS: tuple[tuple[str, str], ...] = (
-    ("event_log", "recorded_at"),
-    *EXTENDED_RETENTION_TABLE_SPECS,
-    ("tool_call_ledger", "created_at"),
-    ("provider_runtime_events", "created_at"),
-)
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def build_observability_store_report(
-    state_db: StateDB,
-    *,
-    older_than: str | datetime | None = None,
-    include_builder_events: bool = False,
-    extended_older_than: str | datetime | None = None,
-) -> ObservabilityStoreReport:
-    cutoff = _normalize_prune_cutoff(older_than) if older_than is not None else None
-    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
-    prunable_specs = list(BASE_RETENTION_TABLE_SPECS)
-    if include_builder_events:
-        prunable_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
-
-    with state_db.connect() as conn:
-        table_counts = {
-            table_name: int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0] or 0)
-            for table_name, _column_name in REPORT_TABLE_SPECS
-        }
-        prunable_counts: dict[str, int] = {}
-        if cutoff is not None:
-            prunable_counts = {
-                table_name: int(
-                    conn.execute(
-                        f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
-                        (cutoff,),
-                    ).fetchone()[0]
-                    or 0
-                )
-                for table_name, column_name in prunable_specs
-            }
-        if extended_cutoff is not None:
-            prunable_counts.update(
-                {
-                    table_name: int(
-                        conn.execute(
-                            f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < ?",
-                            (extended_cutoff,),
-                        ).fetchone()[0]
-                        or 0
-                    )
-                    for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS
-                }
-            )
-        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
-        freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
-        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
-
+def _backup_state_db(state_db: StateDB, *, backup_dir: Path, cutoff: str, expected_count: int) -> tuple[Path, str]:
+    backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = backup_dir / f"{state_db.path.stem}.before-observability-prune.{timestamp}.{uuid4().hex[:8]}.sqlite"
+    source = sqlite3.connect(state_db.path)
+    destination = sqlite3.connect(backup_path)
     try:
-        state_db_bytes = int(state_db.path.stat().st_size)
-    except OSError:
-        state_db_bytes = 0
-
-    return ObservabilityStoreReport(
-        state_db_path=str(state_db.path),
-        state_db_bytes=state_db_bytes,
-        page_count=page_count,
-        freelist_count=freelist_count,
-        page_size=page_size,
-        table_counts=table_counts,
-        cutoff=cutoff,
-        prunable_counts=prunable_counts,
-        extended_cutoff=extended_cutoff,
-    )
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    backup_path.chmod(0o600)
+    with sqlite3.connect(backup_path) as check:
+        integrity = str(check.execute("PRAGMA integrity_check").fetchone()[0])
+        mirrored = int(
+            check.execute(
+                """
+                SELECT COUNT(*)
+                FROM event_log AS mirror
+                WHERE mirror.recorded_at < ?
+                  AND EXISTS (SELECT 1 FROM builder_events AS canonical WHERE canonical.event_id = mirror.event_id)
+                """,
+                (cutoff,),
+            ).fetchone()[0]
+        )
+    if integrity != "ok" or mirrored != expected_count:
+        backup_path.unlink(missing_ok=True)
+        raise RuntimeError("observability retention backup verification failed")
+    return backup_path, _sha256_file(backup_path)
 
 
 def prune_observability_store(
     state_db: StateDB,
     *,
     older_than: str | datetime,
-    include_builder_events: bool = False,
-    extended_older_than: str | datetime | None = None,
-    vacuum: bool = False,
+    apply: bool = False,
+    confirm_plan_sha256: str | None = None,
+    backup_dir: str | Path | None = None,
 ) -> ObservabilityPruneResult:
-    cutoff = _normalize_prune_cutoff(older_than)
-    extended_cutoff = _normalize_prune_cutoff(extended_older_than) if extended_older_than is not None else None
-    delete_specs = list(BASE_RETENTION_TABLE_SPECS)
-    if include_builder_events:
-        delete_specs.append(BUILDER_EVENTS_RETENTION_SPEC)
+    """Preview or remove recoverable event-log mirrors without touching canonical audit truth."""
 
-    deleted_counts: dict[str, int] = {}
+    cutoff = _normalize_retention_cutoff(older_than)
+    protected_tables = ("builder_events", "provider_runtime_events")
     with state_db.connect() as conn:
-        for table_name, column_name in delete_specs:
-            cursor = conn.execute(
-                f"DELETE FROM {table_name} WHERE {column_name} < ?",
-                (cutoff,),
-            )
-            deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
-        if extended_cutoff is not None:
-            for table_name, column_name in EXTENDED_RETENTION_TABLE_SPECS:
-                cursor = conn.execute(
-                    f"DELETE FROM {table_name} WHERE {column_name} < ?",
-                    (extended_cutoff,),
-                )
-                deleted_counts[table_name] = max(int(cursor.rowcount or 0), 0)
+        event_ids = _retention_mirror_event_ids(conn, cutoff=cutoff)
+    plan_sha256 = _retention_plan_sha256(cutoff=cutoff, event_ids=event_ids)
+    eligible_counts = {"event_log": len(event_ids)}
+    if not apply:
+        return ObservabilityPruneResult(
+            cutoff=cutoff,
+            mode="preview",
+            eligible_counts=eligible_counts,
+            deleted_counts={"event_log": 0},
+            protected_tables=protected_tables,
+            plan_sha256=plan_sha256,
+            backup_path=None,
+            backup_sha256=None,
+            recovery_verified=False,
+        )
+    if not confirm_plan_sha256 or not hmac.compare_digest(confirm_plan_sha256, plan_sha256):
+        raise ValueError("apply requires the exact preview digest from the current retention plan")
+
+    resolved_backup_dir = Path(backup_dir).expanduser() if backup_dir else state_db.path.parent / "backups"
+    backup_path, backup_sha256 = _backup_state_db(
+        state_db,
+        backup_dir=resolved_backup_dir,
+        cutoff=cutoff,
+        expected_count=len(event_ids),
+    )
+    with state_db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        locked_event_ids = _retention_mirror_event_ids(conn, cutoff=cutoff)
+        locked_plan = _retention_plan_sha256(cutoff=cutoff, event_ids=locked_event_ids)
+        if not hmac.compare_digest(locked_plan, plan_sha256):
+            conn.rollback()
+            raise RuntimeError("observability retention plan changed after backup; preview again")
+        cursor = conn.execute(
+            """
+            DELETE FROM event_log
+            WHERE recorded_at < ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM builder_events AS canonical
+                  WHERE canonical.event_id = event_log.event_id
+              )
+            """,
+            (cutoff,),
+        )
+        deleted = max(int(cursor.rowcount or 0), 0)
         conn.commit()
-
-        total_deleted = sum(deleted_counts.values())
-        vacuumed = False
-        if vacuum and total_deleted > 0:
-            conn.execute("VACUUM")
-            vacuumed = True
-
-    return ObservabilityPruneResult(cutoff=cutoff, deleted_counts=deleted_counts, total_deleted=total_deleted, vacuumed=vacuumed)
+    return ObservabilityPruneResult(
+        cutoff=cutoff,
+        mode="applied",
+        eligible_counts=eligible_counts,
+        deleted_counts={"event_log": deleted},
+        protected_tables=protected_tables,
+        plan_sha256=plan_sha256,
+        backup_path=backup_path,
+        backup_sha256=backup_sha256,
+        recovery_verified=True,
+    )
 
 
 def persist_bound_ledger(
@@ -354,23 +306,10 @@ def persist_bound_ledger(
         conn.execute(
             """
             INSERT INTO tool_call_ledger(
-                ledger_id,
-                turn_id,
-                action_id,
-                capability_id,
-                authorization_decision_id,
-                tool_name,
-                owner_system,
-                mutation_class,
-                outcome,
-                status,
-                surface,
-                request_id,
-                trace_ref,
-                summary,
-                ledger_json,
-                created_at,
-                updated_at
+                ledger_id, turn_id, action_id, capability_id,
+                authorization_decision_id, tool_name, owner_system,
+                mutation_class, outcome, status, surface, request_id,
+                trace_ref, summary, ledger_json, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ledger_id) DO UPDATE SET
@@ -391,219 +330,14 @@ def persist_bound_ledger(
                 updated_at = excluded.updated_at
             """,
             tuple(values[column] for column in (
-                "ledger_id",
-                "turn_id",
-                "action_id",
-                "capability_id",
-                "authorization_decision_id",
-                "tool_name",
-                "owner_system",
-                "mutation_class",
-                "outcome",
-                "status",
-                "surface",
-                "request_id",
-                "trace_ref",
-                "summary",
-                "ledger_json",
-                "created_at",
-                "updated_at",
+                "ledger_id", "turn_id", "action_id", "capability_id",
+                "authorization_decision_id", "tool_name", "owner_system",
+                "mutation_class", "outcome", "status", "surface", "request_id",
+                "trace_ref", "summary", "ledger_json", "created_at", "updated_at",
             )),
         )
         conn.commit()
-    return ledger_id
-
-
-def recent_tool_call_ledgers(
-    state_db: StateDB,
-    *,
-    turn_id: str | None = None,
-    surface: str | None = None,
-    limit: int = 20,
-) -> list[dict[str, Any]]:
-    bounded_limit = max(1, min(int(limit), 500))
-    filters: list[str] = []
-    params: list[Any] = []
-    if turn_id:
-        filters.append("turn_id = ?")
-        params.append(turn_id)
-    if surface:
-        filters.append("surface = ?")
-        params.append(surface)
-    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT
-                ledger_id,
-                turn_id,
-                action_id,
-                capability_id,
-                authorization_decision_id,
-                tool_name,
-                owner_system,
-                mutation_class,
-                outcome,
-                status,
-                surface,
-                request_id,
-                trace_ref,
-                summary,
-                ledger_json,
-                created_at,
-                updated_at
-            FROM tool_call_ledger
-            {where_sql}
-            ORDER BY updated_at DESC, created_at DESC, ledger_id DESC
-            LIMIT ?
-            """,
-            (*params, bounded_limit),
-        ).fetchall()
-    return [_tool_call_ledger_row_to_dict(row) for row in rows]
-
-
-def trace_turn(state_db: StateDB, *, turn_id: str, limit: int = 100) -> dict[str, Any]:
-    normalized_turn_id = str(turn_id or "").strip()
-    if not normalized_turn_id:
-        raise ValueError("turn_id is required")
-    bounded_limit = max(1, min(int(limit), 500))
-    quoted_turn_id = json.dumps(normalized_turn_id, ensure_ascii=True)
-    quoted_like = f"%{quoted_turn_id}%"
-    with state_db.connect() as conn:
-        ledger_rows = conn.execute(
-            """
-            SELECT *
-            FROM tool_call_ledger
-            WHERE turn_id = ?
-            ORDER BY created_at ASC, updated_at ASC, ledger_id ASC
-            LIMIT ?
-            """,
-            (normalized_turn_id, bounded_limit),
-        ).fetchall()
-        builder_event_rows = conn.execute(
-            """
-            SELECT *
-            FROM builder_events
-            WHERE
-              turn_id = ?
-              OR correlation_id = ?
-              OR request_id = ?
-              OR trace_ref = ?
-              OR (
-                facts_json IS NOT NULL
-                AND (
-                  facts_json LIKE ?
-                  OR (
-                    json_valid(facts_json)
-                    AND (
-                      json_extract(facts_json, '$.turn_id') = ?
-                      OR json_extract(facts_json, '$.tool_call_ledger.turn_id') = ?
-                    )
-                  )
-                )
-              )
-            ORDER BY created_at ASC, event_id ASC
-            LIMIT ?
-            """,
-            (
-                normalized_turn_id,
-                normalized_turn_id,
-                normalized_turn_id,
-                normalized_turn_id,
-                quoted_like,
-                normalized_turn_id,
-                normalized_turn_id,
-                bounded_limit,
-            ),
-        ).fetchall()
-        event_log_rows = conn.execute(
-            """
-            SELECT *
-            FROM event_log
-            WHERE
-              turn_id = ?
-              OR request_id = ?
-              OR trace_ref = ?
-              OR (
-                payload_json IS NOT NULL
-                AND (
-                  payload_json LIKE ?
-                  OR (
-                    json_valid(payload_json)
-                    AND (
-                      json_extract(payload_json, '$.turn_id') = ?
-                      OR json_extract(payload_json, '$.facts.turn_id') = ?
-                      OR json_extract(payload_json, '$.facts.tool_call_ledger.turn_id') = ?
-                    )
-                  )
-                )
-              )
-            ORDER BY recorded_at ASC, event_id ASC
-            LIMIT ?
-            """,
-            (
-                normalized_turn_id,
-                normalized_turn_id,
-                normalized_turn_id,
-                quoted_like,
-                normalized_turn_id,
-                normalized_turn_id,
-                normalized_turn_id,
-                bounded_limit,
-            ),
-        ).fetchall()
-    ledgers = [_tool_call_ledger_row_to_dict(row) for row in ledger_rows]
-    builder_events = [_row_to_dict(row) for row in builder_event_rows]
-    event_log = [_row_to_dict(row) for row in event_log_rows]
-    return {
-        "turn_id": normalized_turn_id,
-        "counts": {
-            "tool_call_ledgers": len(ledgers),
-            "builder_events": len(builder_events),
-            "event_log": len(event_log),
-        },
-        "tool_call_ledgers": ledgers,
-        "builder_events": builder_events,
-        "event_log": event_log,
-        "coverage_note": (
-            "Includes canonical ledgers with exact turn_id plus Builder/event mirror rows "
-            "that carry the turn id in indexed columns or JSON payloads. Older rows without "
-            "turn_id remain outside this query."
-        ),
-    }
-
-
-def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT COALESCE(NULLIF(surface, ''), 'unknown') AS surface, COUNT(*) AS count
-            FROM tool_call_ledger
-            GROUP BY COALESCE(NULLIF(surface, ''), 'unknown')
-            ORDER BY surface ASC
-            """
-        ).fetchall()
-    return {str(row["surface"]): int(row["count"] or 0) for row in rows}
-
-
-def _tool_call_ledger_row_to_dict(row: Any) -> dict[str, Any]:
-    payload = {key: row[key] for key in row.keys()}
-    ledger_json = payload.get("ledger_json")
-    if isinstance(ledger_json, str):
-        try:
-            parsed = json.loads(ledger_json)
-            payload["ledger_json"] = parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            payload["ledger_json"] = {}
-    ledger_payload = payload["ledger_json"] if isinstance(payload.get("ledger_json"), dict) else {}
-    result = ledger_payload.get("result") if isinstance(ledger_payload.get("result"), dict) else {}
-    trace = ledger_payload.get("trace") if isinstance(ledger_payload.get("trace"), dict) else {}
-    payload["tool_name"] = payload.get("tool_name") or ledger_payload.get("tool_name")
-    payload["turn_id"] = payload.get("turn_id") or ledger_payload.get("turn_id")
-    payload["status"] = payload.get("status") or result.get("status")
-    payload["trace_ref"] = payload.get("trace_ref") or trace.get("id")
-    payload["summary"] = payload.get("summary") or result.get("summary") or trace.get("summary")
-    return payload
+    return str(values["ledger_id"])
 
 
 def _ledger_text(value: Any) -> str | None:
@@ -632,6 +366,19 @@ def _event_turn_id(
         if normalized and normalized.startswith("turn:"):
             return normalized
     return None
+
+
+def tool_call_ledger_surface_counts(state_db: StateDB) -> dict[str, int]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(surface, ''), 'unknown') AS surface, COUNT(*) AS count
+            FROM tool_call_ledger
+            GROUP BY COALESCE(NULLIF(surface, ''), 'unknown')
+            ORDER BY surface ASC
+            """
+        ).fetchall()
+    return {str(row["surface"]): int(row["count"] or 0) for row in rows}
 
 
 def open_run(
@@ -857,7 +604,13 @@ def record_event(
     recorded_at = utc_now_iso()
     normalized_facts = dict(facts or {})
     normalized_provenance = dict(provenance or {})
-    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
+    normalized_turn_id = _event_turn_id(
+        turn_id,
+        normalized_facts,
+        request_id=request_id,
+        trace_ref=trace_ref,
+    )
+    normalized_trace_ref = _event_trace_ref(trace_ref=trace_ref, request_id=request_id)
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -899,7 +652,7 @@ def record_event(
                 correlation_id,
                 request_id,
                 normalized_turn_id,
-                trace_ref,
+                normalized_trace_ref,
                 channel_id,
                 session_id,
                 human_id,
@@ -941,7 +694,7 @@ def record_event(
                 event_type,
                 recorded_at,
                 None,
-                trace_ref,
+                normalized_trace_ref,
                 request_id,
                 normalized_turn_id,
                 run_id,
@@ -975,7 +728,7 @@ def record_event(
             event_id=event_id,
             event_type=event_type,
             recorded_at=recorded_at,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             run_id=run_id,
             request_id=request_id,
             session_id=session_id,
@@ -988,7 +741,7 @@ def record_event(
             event_type=event_type,
             recorded_at=recorded_at,
             component=component,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             request_id=request_id,
             run_id=run_id,
             actor_id=actor_id,
@@ -1015,7 +768,7 @@ def record_event(
             component=component,
             run_id=run_id,
             request_id=request_id,
-            trace_ref=trace_ref,
+            trace_ref=normalized_trace_ref,
             reason_code=reason_code,
             facts=normalized_facts,
             provenance=normalized_provenance,
@@ -1027,11 +780,10 @@ def record_event(
         event_type=event_type,
         component=component,
         request_id=request_id,
-        trace_ref=trace_ref,
+        trace_ref=normalized_trace_ref,
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
-        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -1044,11 +796,10 @@ def record_event(
         event_type=event_type,
         component=component,
         request_id=request_id,
-        trace_ref=trace_ref,
+        trace_ref=normalized_trace_ref,
         run_id=run_id,
         channel_id=channel_id,
         session_id=session_id,
-        turn_id=normalized_turn_id,
         actor_id=actor_id,
         reason_code=reason_code,
         severity=severity,
@@ -1056,6 +807,18 @@ def record_event(
         facts=normalized_facts,
     )
     return event_id
+
+
+def _event_trace_ref(*, trace_ref: str | None, request_id: str | None) -> str | None:
+    normalized_trace_ref = str(trace_ref or "").strip()
+    if normalized_trace_ref:
+        return normalized_trace_ref
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return None
+    if normalized_request_id.startswith(("trace:", "trace-")):
+        return normalized_request_id
+    return f"trace:{_trace_token(normalized_request_id)}"
 
 
 def record_policy_gate_block(
@@ -1078,15 +841,10 @@ def record_policy_gate_block(
     trace_ref: str | None = None,
     channel_id: str | None = None,
     session_id: str | None = None,
-    turn_id: str | None = None,
     actor_id: str | None = None,
     provenance: dict[str, Any] | None = None,
     facts: dict[str, Any] | None = None,
 ) -> str:
-    normalized_facts = dict(facts or {})
-    normalized_turn_id = _event_turn_id(turn_id, normalized_facts, request_id=request_id, trace_ref=trace_ref)
-    if normalized_turn_id:
-        normalized_facts.setdefault("turn_id", normalized_turn_id)
     event_id = record_event(
         state_db,
         event_type="policy_gate_blocked",
@@ -1094,7 +852,6 @@ def record_policy_gate_block(
         summary=summary,
         run_id=run_id,
         request_id=request_id,
-        turn_id=normalized_turn_id,
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
@@ -1111,7 +868,7 @@ def record_policy_gate_block(
             "input_ref": input_ref,
             "output_ref": output_ref,
             "action": action,
-            **normalized_facts,
+            **(facts or {}),
         },
         provenance=provenance,
     )
@@ -1133,8 +890,12 @@ def record_config_mutation(
     rollback_payload: Any,
     error_message: str | None = None,
     summary: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> str:
     mutation_id = _prefixed_id("cfg")
+    normalized_request_id = str(request_id or "").strip() or f"config_mutation:{mutation_id}"
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     rollback_ref = f"rollback:{mutation_id}"
     before_hash = payload_hash(before_payload)
     after_hash = payload_hash(after_payload)
@@ -1147,20 +908,20 @@ def record_config_mutation(
     }
     validation_verdict = "semantic_noop" if status == "rejected" and error_message == "semantic_noop" else status
     request_summary = summary or f"{target_document}:{target_path} requested"
-    mutation_request_id = f"config_mutation:{mutation_id}"
-    mutation_trace_ref = f"trace:{mutation_request_id}"
-    record_event(
+    requested_event_id = record_event(
         state_db,
         event_type="config_mutation_requested",
         component="config_manager",
         summary=request_summary,
-        request_id=mutation_request_id,
-        trace_ref=mutation_trace_ref,
+        correlation_id=mutation_id,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         actor_id=actor_id,
         reason_code=reason_code,
         facts={
             "target_document": target_document,
             "target_path": target_path,
+            "mutation_id": mutation_id,
             "mutation_reason": reason_code,
             "source_surface": request_source,
             "before_hash": before_hash,
@@ -1252,8 +1013,10 @@ def record_config_mutation(
         event_type=event_type,
         component="config_manager",
         summary=summary or f"{target_document}:{target_path} {status}",
-        request_id=mutation_request_id,
-        trace_ref=mutation_trace_ref,
+        parent_event_id=requested_event_id,
+        correlation_id=mutation_id,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         actor_id=actor_id,
         reason_code=reason_code,
         severity="high" if status == "rejected" else DEFAULT_SEVERITY,
@@ -1921,7 +1684,7 @@ def record_observer_handoff_record(
     with state_db.connect() as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO observer_handoff_records(
+            INSERT OR IGNORE INTO observer_handoff_records(
                 handoff_id,
                 chip_key,
                 hook,
@@ -2230,13 +1993,18 @@ def record_contradiction(
                 ),
             )
         conn.commit()
+    normalized_request_id = str(request_id or "").strip() or _contradiction_request_id(
+        contradiction_key=contradiction_key,
+        contradiction_id=contradiction_id,
+    )
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     event_id = record_event(
         state_db,
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
-        request_id=request_id,
-        trace_ref=trace_ref,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         reason_code=reason_code,
         severity=severity,
         status="open",
@@ -2318,13 +2086,18 @@ def resolve_contradiction(
             ),
         )
         conn.commit()
+    normalized_request_id = str(request_id or "").strip() or _contradiction_request_id(
+        contradiction_key=contradiction_key,
+        contradiction_id=contradiction_id,
+    )
+    normalized_trace_ref = str(trace_ref or "").strip() or f"trace:{normalized_request_id}"
     event_id = record_event(
         state_db,
         event_type="contradiction_recorded",
         component=component,
         summary=summary,
-        request_id=request_id,
-        trace_ref=trace_ref,
+        request_id=normalized_request_id,
+        trace_ref=normalized_trace_ref,
         reason_code=reason_code,
         severity="low",
         status="resolved",
@@ -2875,7 +2648,7 @@ def _mirror_memory_lane_event(
     )
     conn.execute(
         """
-        INSERT OR REPLACE INTO memory_lane_records(
+        INSERT OR IGNORE INTO memory_lane_records(
             lane_record_id,
             recorded_at,
             event_id,
@@ -2950,7 +2723,6 @@ def _record_follow_on_policy_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
-    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -2983,7 +2755,6 @@ def _record_follow_on_policy_block_if_needed(
         trace_ref=trace_ref,
         channel_id=channel_id,
         session_id=session_id,
-        turn_id=turn_id,
         actor_id=actor_id,
         provenance={
             "source_kind": source_kind,
@@ -3005,7 +2776,6 @@ def _record_follow_on_promotion_gate_block_if_needed(
     run_id: str | None,
     channel_id: str | None,
     session_id: str | None,
-    turn_id: str | None,
     actor_id: str | None,
     reason_code: str | None,
     severity: str,
@@ -3088,7 +2858,6 @@ def _record_follow_on_promotion_gate_block_if_needed(
             trace_ref=trace_ref,
             channel_id=channel_id,
             session_id=session_id,
-            turn_id=turn_id,
             actor_id=actor_id,
             provenance={
                 "source_kind": source_kind,
@@ -3266,6 +3035,297 @@ def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) 
                 repaired += 1
         conn.commit()
     return repaired
+
+
+def repair_missing_event_trace_refs(state_db: StateDB, *, limit: int = 50000) -> int:
+    repaired = 0
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT event_id, request_id
+            FROM builder_events
+            WHERE request_id IS NOT NULL
+              AND trim(request_id) != ''
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            ORDER BY created_at ASC, event_id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"])
+            trace_ref = _event_trace_ref(trace_ref=None, request_id=str(row["request_id"]))
+            if not trace_ref:
+                continue
+            conn.execute(
+                """
+                UPDATE builder_events
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            conn.execute(
+                """
+                UPDATE event_log
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            conn.execute(
+                """
+                UPDATE memory_lane_records
+                SET trace_ref = ?
+                WHERE event_id = ?
+                  AND request_id IS NOT NULL
+                  AND trim(request_id) != ''
+                  AND (trace_ref IS NULL OR trim(trace_ref) = '')
+                """,
+                (trace_ref, event_id),
+            )
+            repaired += 1
+        remaining = max(limit - repaired, 0)
+        if remaining:
+            repaired += _repair_source_used_missing_trace_refs(conn, limit=remaining)
+        remaining = max(limit - repaired, 0)
+        if remaining:
+            repaired += _repair_typed_legacy_missing_trace_refs(conn, limit=remaining)
+        conn.commit()
+    return repaired
+
+
+def _repair_source_used_missing_trace_refs(conn: Any, *, limit: int) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_id, facts_json
+        FROM builder_events
+        WHERE component = 'agent_event_model'
+          AND event_type = 'source_used'
+          AND (trace_ref IS NULL OR trim(trace_ref) = '')
+        ORDER BY created_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        facts = _json_dict(row["facts_json"])
+        trace_ref = _source_used_trace_ref_from_facts(facts)
+        if not trace_ref:
+            continue
+        event_id = str(row["event_id"])
+        trace_kind = (
+            "explicit_or_source"
+            if str(facts.get("trace_ref") or facts.get("source_ref") or "").strip().startswith(("trace:", "trace-"))
+            else "source_ledger_source"
+        )
+        facts["trace_ref"] = trace_ref
+        facts["trace_ref_kind"] = trace_kind
+        conn.execute(
+            """
+            UPDATE builder_events
+            SET trace_ref = ?,
+                facts_json = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (trace_ref, _json_or_none(facts), event_id),
+        )
+        _repair_event_log_trace_ref_and_facts(conn, event_id=event_id, trace_ref=trace_ref, facts=facts)
+        repaired += 1
+    return repaired
+
+
+def _repair_typed_legacy_missing_trace_refs(conn: Any, *, limit: int) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_id, event_type, component, actor_id, facts_json, provenance_json
+        FROM builder_events
+        WHERE trace_ref IS NULL OR trim(trace_ref) = ''
+        ORDER BY created_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        facts = _json_dict(row["facts_json"])
+        provenance = _json_dict(row["provenance_json"])
+        request_id = _typed_legacy_request_id(
+            component=str(row["component"] or ""),
+            event_type=str(row["event_type"] or ""),
+            actor_id=str(row["actor_id"] or ""),
+            facts=facts,
+            provenance=provenance,
+        )
+        if not request_id:
+            continue
+        trace_ref = f"trace:{request_id}"
+        event_id = str(row["event_id"])
+        facts.setdefault("trace_ref", trace_ref)
+        facts.setdefault("trace_ref_kind", "typed_legacy_repair")
+        conn.execute(
+            """
+            UPDATE builder_events
+            SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+                trace_ref = ?,
+                facts_json = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (request_id, trace_ref, _json_or_none(facts), event_id),
+        )
+        _repair_event_log_trace_ref_and_facts(
+            conn,
+            event_id=event_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            facts=facts,
+        )
+        conn.execute(
+            """
+            UPDATE memory_lane_records
+            SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+                trace_ref = ?
+            WHERE event_id = ?
+              AND (trace_ref IS NULL OR trim(trace_ref) = '')
+            """,
+            (request_id, trace_ref, event_id),
+        )
+        repaired += 1
+    return repaired
+
+
+def _typed_legacy_request_id(
+    *,
+    component: str,
+    event_type: str,
+    actor_id: str,
+    facts: dict[str, Any],
+    provenance: dict[str, Any],
+) -> str | None:
+    if component == "config_manager" and event_type in {
+        "config_mutation_requested",
+        "config_mutation_applied",
+        "config_mutation_rejected",
+    }:
+        mutation_id = str(facts.get("mutation_id") or "").strip()
+        if not mutation_id:
+            rollback_ref = str(facts.get("rollback_ref") or "").strip()
+            if rollback_ref.startswith("rollback:"):
+                mutation_id = rollback_ref.removeprefix("rollback:")
+        return f"config_mutation:{mutation_id}" if mutation_id else None
+    if event_type == "runtime_environment_snapshot":
+        surface = _trace_token(str(facts.get("surface") or component or "environment"))
+        config_hash = str(facts.get("config_hash") or "").strip()
+        if not config_hash:
+            return None
+        return f"{surface}:environment_snapshot:{config_hash[:12]}"
+    if component == "memory_orchestrator" and event_type in {"memory_smoke_succeeded", "memory_smoke_failed"}:
+        trace_key = payload_hash(
+            {
+                "actor_id": actor_id,
+                "sdk_module": facts.get("sdk_module"),
+                "subject": facts.get("subject"),
+                "predicate": facts.get("predicate"),
+                "shadow_only_eval": facts.get("shadow_only_eval"),
+            }
+        )[:12]
+        return f"memory_smoke:{trace_key}"
+    if event_type == "contradiction_recorded":
+        contradiction_id = str(facts.get("contradiction_id") or "").strip()
+        contradiction_key = str(facts.get("contradiction_key") or "").strip()
+        if not contradiction_id and not contradiction_key:
+            return None
+        return _contradiction_request_id(
+            contradiction_key=contradiction_key,
+            contradiction_id=contradiction_id,
+        )
+    if component == "attachment_snapshot" and event_type == "plugin_or_chip_influence_recorded":
+        source_kind = str(provenance.get("source_kind") or "").strip()
+        source_ref = str(provenance.get("source_ref") or "").strip()
+        active_path_key = str(facts.get("active_path_key") or "").strip()
+        active_chip_keys = facts.get("active_chip_keys")
+        normalized_chip_keys = (
+            sorted(str(chip).strip() for chip in active_chip_keys if str(chip).strip())
+            if isinstance(active_chip_keys, list)
+            else []
+        )
+        if not source_kind and not source_ref and not active_path_key and not normalized_chip_keys:
+            return None
+        trace_key = payload_hash(
+            {
+                "source_kind": source_kind,
+                "source_ref": source_ref,
+                "active_path_key": active_path_key,
+                "active_chip_keys": normalized_chip_keys,
+            }
+        )[:12]
+        return f"attachment_snapshot:legacy:{trace_key}"
+    return None
+
+
+def _contradiction_request_id(*, contradiction_key: str, contradiction_id: str) -> str:
+    normalized_key = str(contradiction_key or "").strip()
+    if normalized_key.startswith("stop_ship:"):
+        return normalized_key
+    normalized_id = str(contradiction_id or "").strip()
+    if normalized_id:
+        return f"contradiction:{normalized_id}"
+    return f"contradiction:{_trace_token(normalized_key or 'unknown')}"
+
+
+def _source_used_trace_ref_from_facts(facts: dict[str, Any]) -> str | None:
+    explicit = str(facts.get("trace_ref") or "").strip()
+    if explicit:
+        return explicit
+    source_ref = str(facts.get("source_ref") or "").strip()
+    if source_ref.startswith(("trace:", "trace-")):
+        return source_ref
+    source = str(facts.get("source") or "").strip()
+    role = str(facts.get("role") or "").strip()
+    seed = "|".join([source, role, source_ref])
+    if not seed.strip("|"):
+        return None
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"trace:source-ledger-source:{digest}"
+
+
+def _repair_event_log_trace_ref_and_facts(
+    conn: Any,
+    *,
+    event_id: str,
+    request_id: str | None = None,
+    trace_ref: str,
+    facts: dict[str, Any],
+) -> None:
+    row = conn.execute("SELECT payload_json FROM event_log WHERE event_id = ? LIMIT 1", (event_id,)).fetchone()
+    if not row:
+        return
+    payload = _json_dict(row["payload_json"])
+    payload["facts"] = facts
+    conn.execute(
+        """
+        UPDATE event_log
+        SET request_id = COALESCE(NULLIF(trim(request_id), ''), ?),
+            trace_ref = ?,
+            payload_json = ?
+        WHERE event_id = ?
+          AND (trace_ref IS NULL OR trim(trace_ref) = '')
+        """,
+        (request_id, trace_ref, json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str), event_id),
+    )
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(str(value)) if value else {}
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def repair_memory_lane_artifact_lanes(state_db: StateDB, *, limit: int = 50000) -> int:
@@ -4522,7 +4582,7 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
 
     incidents.sort(
         key=lambda item: (
-            str(item.get("severity") or ""),
+            _observer_packet_sort_order(str(item.get("severity") or "")),
             str(item.get("recorded_at") or ""),
             str(item.get("item_ref") or ""),
         ),

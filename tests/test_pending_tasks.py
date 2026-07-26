@@ -18,6 +18,26 @@ from tests.test_support import SparkTestCase
 
 
 class PendingTaskLedgerTests(SparkTestCase):
+    def test_unknown_close_is_actionable_without_disclosing_other_task_keys(self) -> None:
+        upsert_pending_task(
+            self.state_db,
+            task_key="private:other-human-task",
+            original_request="Private work from another scope.",
+            human_id="human:other",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            close_pending_task(
+                self.state_db,
+                task_key="memory:typo",
+                completion_summary="Should not run.",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("unknown_pending_task:memory:typo", message)
+        self.assertIn("inspect authorized open tasks", message)
+        self.assertNotIn("private:other-human-task", message)
+
     def test_upsert_pending_task_records_resumable_work_context(self) -> None:
         record = upsert_pending_task(
             self.state_db,
@@ -111,6 +131,49 @@ class PendingTaskLedgerTests(SparkTestCase):
         close_events = latest_events_by_type(self.state_db, event_type="pending_task_closed", limit=10)
         self.assertTrue(close_events)
         self.assertEqual((close_events[0]["facts_json"] or {}).get("task_key"), "memory:pending-ledger")
+
+    def test_status_filter_and_open_only_excludes_normally_closed_task(self) -> None:
+        upsert_pending_task(
+            self.state_db,
+            task_key="mission:completed",
+            original_request="Finish the supervised mission.",
+            human_id="human:test",
+        )
+        close_pending_task(
+            self.state_db,
+            task_key="mission:completed",
+            completion_summary="Mission finished with evidence.",
+        )
+
+        self.assertEqual(
+            latest_pending_tasks(self.state_db, status="completed", open_only=True),
+            [],
+        )
+        closed = latest_pending_tasks(self.state_db, status="completed", open_only=False)
+        self.assertEqual([record.task_key for record in closed], ["mission:completed"])
+
+    def test_status_filter_and_open_only_excludes_closed_legacy_retry_state(self) -> None:
+        record_pending_task_timeout(
+            self.state_db,
+            task_key="mission:legacy-timeout",
+            original_request="Resume a legacy timed-out mission.",
+            human_id="human:test",
+            timeout_point="legacy runner",
+            last_evidence="The old runner stopped.",
+            next_retry_step="Inspect before retrying.",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "UPDATE pending_task_records SET closed_at = ? WHERE task_key = ?",
+                ("2026-07-17T00:00:00Z", "mission:legacy-timeout"),
+            )
+
+        self.assertEqual(
+            latest_pending_tasks(self.state_db, status="timed_out", open_only=True),
+            [],
+        )
+        closed = latest_pending_tasks(self.state_db, status="timed_out", open_only=False)
+        self.assertEqual([record.task_key for record in closed], ["mission:legacy-timeout"])
 
     def test_watchtower_session_integrity_panel_surfaces_open_pending_tasks(self) -> None:
         record_pending_task_timeout(

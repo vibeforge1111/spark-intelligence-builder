@@ -14,9 +14,6 @@ from spark_intelligence.memory import (
     recall_episodic_context_in_memory,
     recover_task_context_in_memory,
 )
-from spark_intelligence.memory.profile_facts import filter_project_scoped_current_state_records
-from spark_intelligence.memory.profile_facts import is_project_scoped_current_state_predicate
-from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
@@ -24,11 +21,14 @@ from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
-logger = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
+_CAPSULE_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_CAPSULE_TOKEN_STOPWORDS = frozenset(
+    {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
+)
 
 
 _STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
-    ("profile.current_project", "current_project"),
     ("profile.current_focus", "current_focus"),
     ("profile.current_plan", "current_plan"),
     ("profile.current_low_stakes_test_fact", "low_stakes_test_fact"),
@@ -146,7 +146,6 @@ def build_spark_context_capsule(
             state_db=state_db,
             human_id=human_id,
             channel_kind=channel_kind,
-            user_message=user_message,
         ),
         "recent_conversation": _build_recent_conversation_lines(
             config_manager=config_manager,
@@ -200,14 +199,16 @@ def _build_current_state_lines(
     state_db: StateDB,
     human_id: str,
     channel_kind: str,
-    user_message: str = "",
 ) -> list[str]:
     if not human_id:
         return []
-    candidates = _current_state_human_id_candidates(human_id=human_id, channel_kind=channel_kind)
+    candidates: list[str] = []
+    if channel_kind and not human_id.startswith(f"{channel_kind}:"):
+        candidates.append(f"{channel_kind}:{human_id}")
+    candidates.append(human_id)
 
     records: list[dict[str, Any]] = []
-    for candidate in candidates:
+    for candidate_index, candidate in enumerate(candidates):
         try:
             inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
@@ -216,22 +217,19 @@ def _build_current_state_lines(
                 actor_id="context_capsule",
             )
         except Exception as exc:
-            logger.debug(
-                "spark-intelligence: memory inspection failed for candidate %r: %s",
-                candidate,
-                exc,
+            candidate_scope = "channel_scoped" if candidate_index == 0 and len(candidates) > 1 else "direct"
+            _LOGGER.debug(
+                "context_capsule_memory_candidate_failed candidate_scope=%s error_type=%s",
+                candidate_scope,
+                type(exc).__name__,
             )
             continue
         records = (inspection.read_result.records if inspection.read_result else None) or []
         if records:
             break
 
-    current_turn_records = _current_turn_current_state_records(user_message=user_message)
     by_predicate: dict[str, dict[str, Any]] = {}
-    for record in filter_project_scoped_current_state_records(
-        [*records, *current_turn_records],
-        scope_records=[*records, *current_turn_records],
-    ):
+    for record in records:
         predicate = str(record.get("predicate") or "").strip()
         value = str(record.get("value") or record.get("normalized_value") or "").strip()
         if not predicate or not value:
@@ -254,87 +252,6 @@ def _build_current_state_lines(
     return lines
 
 
-def _current_state_human_id_candidates(*, human_id: str, channel_kind: str) -> list[str]:
-    normalized = str(human_id or "").strip()
-    channel = str(channel_kind or "").strip()
-    if not normalized:
-        return []
-    if normalized.startswith("human:"):
-        return [normalized]
-    candidates: list[str] = []
-    if channel and not normalized.startswith(f"{channel}:") and not normalized.startswith("human:"):
-        candidates.append(f"{channel}:{normalized}")
-    candidates.append(normalized)
-    return list(dict.fromkeys(candidates))
-
-
-def _current_turn_current_state_records(*, user_message: str) -> list[dict[str, Any]]:
-    candidate = classify_telegram_generic_memory_candidate(user_message)
-    if candidate is None or candidate.operation != "update":
-        return []
-    predicate = str(candidate.predicate or "").strip()
-    value = str(candidate.value or "").strip()
-    if not predicate or not value:
-        return []
-    allowed_predicates = {predicate for predicate, _label in _STATE_PREDICATE_LABELS}
-    if predicate not in allowed_predicates:
-        return []
-    timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    return [
-        {
-            "predicate": predicate,
-            "value": value,
-            "normalized_value": value,
-            "timestamp": timestamp,
-            "metadata": {
-                "source_surface": "current_turn",
-                "evidence_text": str(candidate.evidence_text or user_message).strip(),
-            },
-        }
-    ]
-
-
-def _latest_current_project_timestamp(records: list[dict[str, Any]]) -> datetime | None:
-    latest: datetime | None = None
-    for record in records:
-        if str(record.get("predicate") or "").strip() != "profile.current_project":
-            continue
-        parsed = _parse_capsule_timestamp(_record_timestamp(record))
-        if parsed is not None and (latest is None or parsed > latest):
-            latest = parsed
-    return latest
-
-
-def _stale_project_scoped_recent_turn(
-    *,
-    text: str,
-    recorded_at: str,
-    current_turn_project_boundary: datetime | None,
-) -> bool:
-    if current_turn_project_boundary is None:
-        return False
-    parsed = _parse_capsule_timestamp(recorded_at)
-    if parsed is None or parsed >= current_turn_project_boundary:
-        return False
-    candidate = classify_telegram_generic_memory_candidate(text)
-    if candidate is None or candidate.operation != "update":
-        return _mentions_project_scoped_current_state_slot(text)
-    return is_project_scoped_current_state_predicate(str(candidate.predicate or "").strip())
-
-
-def _mentions_project_scoped_current_state_slot(text: str) -> bool:
-    normalized = " ".join(str(text or "").casefold().split())
-    if not normalized:
-        return False
-    for predicate, label in _STATE_PREDICATE_LABELS:
-        if not is_project_scoped_current_state_predicate(predicate):
-            continue
-        phrase = re.escape(label.replace("_", " "))
-        if re.search(rf"\b(?:current|our|your|my|the)\s+{phrase}\b", normalized):
-            return True
-    return False
-
-
 def _build_recent_conversation_lines(
     *,
     config_manager: ConfigManager | None = None,
@@ -345,8 +262,6 @@ def _build_recent_conversation_lines(
     user_message: str = "",
     turn_limit: int = 3,
 ) -> list[str]:
-    current_turn_records = _current_turn_current_state_records(user_message=user_message)
-    current_turn_project_boundary = _latest_current_project_timestamp(current_turn_records)
     recent_turns = load_recent_conversation_turns(
         config_manager=config_manager,
         state_db=state_db,
@@ -356,16 +271,7 @@ def _build_recent_conversation_lines(
         current_user_message=user_message,
         turn_limit=turn_limit,
     )
-    filtered_turns = [
-        turn
-        for turn in recent_turns
-        if not _stale_project_scoped_recent_turn(
-            text=turn.text,
-            recorded_at=turn.recorded_at,
-            current_turn_project_boundary=current_turn_project_boundary,
-        )
-    ]
-    return [f"- {turn.role}: {_compact(turn.text, 260)}" for turn in filtered_turns]
+    return [f"- {turn.role}: {_compact(turn.text, 260)}" for turn in recent_turns]
 
 
 def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:
@@ -619,7 +525,7 @@ def _build_diagnostics_lines(*, config_manager: ConfigManager) -> list[str]:
     lines = [f"- latest_note: {latest.name}"]
     try:
         text = latest.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeError):
         return lines
     summary = _extract_diagnostic_summary(text)
     if summary.get("generated_at"):
@@ -742,27 +648,13 @@ def _compact(text: str, max_chars: int) -> str:
 
 
 def _capsule_tokens(text: str) -> set[str]:
-    stopwords = {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
     return {
         token
-        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(text or "").casefold())
-        if token and token not in stopwords
+        for token in _CAPSULE_TOKEN_PATTERN.findall(str(text or "").casefold())
+        if token and token not in _CAPSULE_TOKEN_STOPWORDS
     }
 
 
 def _record_timestamp(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return str(record.get("timestamp") or record.get("recorded_at") or metadata.get("document_time") or "").strip()
-
-
-def _parse_capsule_timestamp(value: str) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)

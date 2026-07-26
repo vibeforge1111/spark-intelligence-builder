@@ -6,13 +6,13 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import yaml
 
+from spark_intelligence import __version__
 from spark_intelligence.attachments import (
     activate_chip,
     add_attachment_root,
@@ -34,7 +34,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
-from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
 from spark_intelligence.browser import (
     BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
@@ -54,11 +54,6 @@ from spark_intelligence.channel.service import (
     set_channel_status,
     test_configured_telegram_channel,
 )
-from spark_intelligence.cli_approval_ledgers import (
-    DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
-    default_cli_approval_ledger_dir,
-    import_cli_approval_ledgers,
-)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.diagnostics import build_diagnostic_report, record_diagnostic_capability_events
 from spark_intelligence.doctor.checks import run_doctor
@@ -73,17 +68,12 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
-from spark_intelligence.gateway.tool_ledger import ingest_tool_ledger_payload
-from spark_intelligence.gateway.tracing import gateway_log_report, prune_gateway_logs, read_gateway_traces
+from spark_intelligence.gateway.tracing import read_gateway_traces, redact_gateway_trace_log, repair_gateway_trace_proof_continuity
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
-from spark_intelligence.harness_contract import (
-    build_vnext_action_intent_envelope,
-    build_vnext_tool_intent_envelope,
-    verify_governor_tool_authority,
-)
+from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 from spark_intelligence.harness_evolution import (
     build_harness_self_evolution_snapshot,
-    run_harness_change_manifest_runner,
+    review_harness_change_manifests,
 )
 from spark_intelligence.identity.service import (
     agent_inspect,
@@ -143,7 +133,6 @@ from spark_intelligence.memory import (
     run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
     write_memory_movement_status_export,
-    write_structured_evidence_to_memory,
 )
 from spark_intelligence.memory.approval_inbox import build_memory_approval_inbox, record_memory_approval_decision
 from spark_intelligence.memory.constitution import build_memory_preflight_proof_card
@@ -156,19 +145,16 @@ from spark_intelligence.personality import (
     save_agent_persona_profile,
     write_personality_evolver_state,
 )
+from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import (
-    build_observability_store_report,
     build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
     open_run,
     prune_observability_store,
-    recent_tool_call_ledgers,
     record_event,
     record_observer_handoff_record,
-    trace_turn,
 )
-from spark_intelligence.observability.jsonl_residue import build_jsonl_residue_report
 from spark_intelligence.ops import (
     build_observer_handoff_payload,
     build_personality_report,
@@ -900,6 +886,14 @@ def _swarm_auth_state(swarm) -> str:
     return "missing"
 
 
+def _coerce_positive_int_setting(value: object, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
@@ -1141,8 +1135,9 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "auto_recommend_enabled": bool(
                 config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
             ),
-            "long_task_word_count": int(
-                config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
+            "long_task_word_count": _coerce_positive_int_setting(
+                config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40),
+                default=40,
             ),
             "last_decision_mode": (swarm.last_decision or {}).get("mode"),
             "last_failure_mode": _swarm_last_failure_payload(swarm).get("mode"),
@@ -1223,19 +1218,10 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
 
 
 def _positive_int(value: str) -> int:
-    """argparse type for an int that must be > 0.
-
-    Used by --limit on the wiki subcommands (inventory, candidates,
-    scan-candidates, query, answer). The default `type=int` accepts
-    0 and negative values, which then propagate into downstream
-    SQL LIMIT / slice calls and either silently emit zero rows or
-    surface as a less actionable error than the argparse failure
-    surfaced here.
-    """
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}") from exc
     if parsed <= 0:
         raise argparse.ArgumentTypeError(f"expected a positive integer, got {parsed}")
     return parsed
@@ -1243,6 +1229,7 @@ def _positive_int(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
+    parser.add_argument("--version", action="version", version=f"spark-intelligence {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_parser = subparsers.add_parser("setup", help="Bootstrap config and state")
@@ -1359,8 +1346,8 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_scan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     diagnostics_scan_parser.add_argument("--logs-root", help="Override or add an explicit logs root/file to scan")
     diagnostics_scan_parser.add_argument("--output-dir", help="Directory for Obsidian-flavored markdown output")
-    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
-    diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
+    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=_positive_int, default=2000, help="Tail window per log source")
+    diagnostics_scan_parser.add_argument("--recurring-threshold", type=_positive_int, default=2, help="Count needed to mark a signature recurring")
     diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
     diagnostics_scan_parser.add_argument("--record-aoc-events", action="store_true", help="Record diagnostic capability evidence in the AOC black box")
     diagnostics_scan_parser.add_argument("--request-id", default="", help="Request id for recorded AOC events")
@@ -1496,7 +1483,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_black_box_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     self_black_box_parser.add_argument("--request-id", default="", help="Optional request id for trace filtering")
-    self_black_box_parser.add_argument("--limit", type=int, default=20, help="Maximum black-box events to show")
+    self_black_box_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum black-box events to show")
     self_black_box_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_source_used_parser = self_subparsers.add_parser(
         "source-used",
@@ -1533,7 +1520,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="pending",
         help="Memory approval inbox filter",
     )
-    self_memory_inbox_parser.add_argument("--limit", type=int, default=20, help="Maximum inbox items to show")
+    self_memory_inbox_parser.add_argument("--limit", type=_positive_int, default=20, help="Maximum inbox items to show")
     self_memory_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_memory_decision_parser = self_subparsers.add_parser(
         "memory-decision",
@@ -1712,7 +1699,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
     self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
-    self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--limit", type=_positive_int, default=5, help="Maximum wiki hits to use")
     self_improve_parser.add_argument("--record-ledger", action="store_true", help="Record the capability proposal in the durable proposal/activation ledger")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_ledger_parser = self_subparsers.add_parser(
@@ -2081,7 +2068,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_set_channel_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
     operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
+    operator_history_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of events to show")
     operator_history_parser.add_argument("--action", help="Filter history to one action")
     operator_history_parser.add_argument("--target-kind", help="Filter history to one target kind")
     operator_history_parser.add_argument("--contains", help="Filter history by target, reason, or details substring")
@@ -2099,15 +2086,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_personality_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_personality_parser.add_argument("--human-id", help="Inspect one human id instead of the global overview")
-    operator_personality_parser.add_argument("--observation-limit", type=int, default=10, help="Observation rows to include for one human")
-    operator_personality_parser.add_argument("--evolution-limit", type=int, default=10, help="Evolution rows to include for one human")
+    operator_personality_parser.add_argument("--observation-limit", type=_positive_int, default=10, help="Observation rows to include for one human")
+    operator_personality_parser.add_argument("--evolution-limit", type=_positive_int, default=10, help="Evolution rows to include for one human")
     operator_personality_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_observer_packets_parser = operator_subparsers.add_parser(
         "observer-packets",
         help="Show persisted observer packet records",
     )
     operator_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_packets_parser.add_argument("--limit", type=int, default=50, help="Number of packet rows to show")
+    operator_observer_packets_parser.add_argument("--limit", type=_positive_int, default=50, help="Number of packet rows to show")
     operator_observer_packets_parser.add_argument("--kind", help="Filter to one packet kind")
     operator_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2116,7 +2103,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write an observer packet handoff bundle for external consumption",
     )
     operator_export_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_export_observer_packets_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to export")
+    operator_export_observer_packets_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to export")
     operator_export_observer_packets_parser.add_argument("--kind", help="Filter export to one packet kind")
     operator_export_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_export_observer_packets_parser.add_argument("--write", help="Explicit path for the exported JSON bundle")
@@ -2128,7 +2115,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_handoff_observer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_handoff_observer_parser.add_argument("--chip-key", help="Explicit chip key to run. Defaults to the first active chip exposing packets.")
-    operator_handoff_observer_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to hand off")
+    operator_handoff_observer_parser.add_argument("--limit", type=_positive_int, default=200, help="Maximum packets to hand off")
     operator_handoff_observer_parser.add_argument("--kind", help="Filter handoff to one packet kind")
     operator_handoff_observer_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
     operator_handoff_observer_parser.add_argument("--write-bundle", help="Explicit path for the handoff bundle JSON")
@@ -2140,7 +2127,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show typed observer handoff records",
     )
     operator_observer_handoffs_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    operator_observer_handoffs_parser.add_argument("--limit", type=int, default=20, help="Number of handoff rows to show")
+    operator_observer_handoffs_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of handoff rows to show")
     operator_observer_handoffs_parser.add_argument("--chip-key", help="Filter to one chip key")
     operator_observer_handoffs_parser.add_argument("--status", help="Filter to one handoff status")
     operator_observer_handoffs_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -2149,7 +2136,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Temporarily suppress one webhook alert family from operator surfaces",
     )
     operator_snooze_webhook_parser.add_argument("event", choices=list_webhook_alert_events())
-    operator_snooze_webhook_parser.add_argument("--minutes", type=int, default=60, help="Snooze duration in minutes")
+    operator_snooze_webhook_parser.add_argument("--minutes", type=_positive_int, default=60, help="Snooze duration in minutes")
     operator_snooze_webhook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_snooze_webhook_parser.add_argument("--reason", help="Short audit reason for this snooze")
     operator_list_webhook_snoozes_parser = operator_subparsers.add_parser(
@@ -2176,7 +2163,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep polling in the foreground until interrupted or --max-cycles is reached",
     )
-    gateway_start_parser.add_argument("--max-cycles", type=int, help="Limit gateway poll cycles")
+    gateway_start_parser.add_argument("--max-cycles", type=_positive_int, help="Limit gateway poll cycles")
     gateway_start_parser.add_argument(
         "--poll-timeout-seconds",
         type=int,
@@ -2210,22 +2197,15 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_serve_stdio_parser = gateway_subparsers.add_parser(
         "serve-stdio",
-        help="Serve Telegram gateway turns over newline-delimited JSON on stdio",
+        help="Serve a parent-authenticated Telegram gateway session over bounded NDJSON stdio",
     )
     gateway_serve_stdio_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_serve_stdio_parser.add_argument(
         "--origin",
         choices=("simulation", "telegram-runtime"),
         default="simulation",
-        help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
+        help="Fix the trace origin for the lifetime of this parent-owned session",
     )
-    gateway_ingest_tool_ledger_parser = gateway_subparsers.add_parser(
-        "ingest-tool-ledger",
-        help="Persist one governed tool-ledger row into the canonical observability store",
-    )
-    gateway_ingest_tool_ledger_parser.add_argument("ledger_file", help="JSON ledger row file, or '-' for stdin")
-    gateway_ingest_tool_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_ingest_tool_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
         help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
@@ -2273,15 +2253,30 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_whatsapp_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
+    gateway_traces_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of trace events to show")
     gateway_traces_parser.add_argument("--channel-id", help="Filter trace events by channel id")
     gateway_traces_parser.add_argument("--event", help="Filter trace events by event name")
     gateway_traces_parser.add_argument("--user", help="Filter trace events by user id or chat id")
     gateway_traces_parser.add_argument("--decision", help="Filter trace events by decision")
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_redact_traces_parser = gateway_subparsers.add_parser(
+        "redact-traces",
+        help="Rewrite the gateway trace log through the metadata redactor",
+    )
+    gateway_redact_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_redact_traces_parser.add_argument("--no-backup", action="store_true", help="Do not keep a raw backup copy")
+    gateway_redact_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_repair_proof_parser = gateway_subparsers.add_parser(
+        "repair-proof",
+        help="Rewrite the gateway trace log with proof-continuity gap markers",
+    )
+    gateway_repair_proof_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_repair_proof_parser.add_argument("--dry-run", action="store_true", help="Report changes without rewriting the trace log")
+    gateway_repair_proof_parser.add_argument("--no-backup", action="store_true", help="Do not keep a proof repair backup")
+    gateway_repair_proof_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
+    gateway_outbound_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of outbound events to show")
     gateway_outbound_parser.add_argument("--channel-id", help="Filter outbound events by channel id")
     gateway_outbound_parser.add_argument("--event", help="Filter outbound events by event name")
     gateway_outbound_parser.add_argument("--user", help="Filter outbound events by user id or chat id")
@@ -2305,18 +2300,20 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--webhook-verify-token", help="Verification token for adapter webhook handshake flows")
     channel_add_parser.add_argument("--webhook-verify-token-env", help="Env var name used to store the webhook verification token")
     channel_add_parser.add_argument("--interaction-public-key", help="Discord interactions public key for signed HTTP ingress")
-    channel_add_parser.add_argument(
+    legacy_webhook_group = channel_add_parser.add_mutually_exclusive_group()
+    legacy_webhook_group.add_argument(
         "--allow-legacy-message-webhook",
         action="store_true",
         help="Enable the legacy Discord message-shaped webhook compatibility path.",
     )
-    channel_add_parser.add_argument(
+    legacy_webhook_group.add_argument(
         "--disable-legacy-message-webhook",
         action="store_true",
         help="Disable the legacy Discord message-shaped webhook compatibility path and clear its auth ref.",
     )
-    channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
-    channel_add_parser.add_argument(
+    allowed_users_group = channel_add_parser.add_mutually_exclusive_group()
+    allowed_users_group.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
+    allowed_users_group.add_argument(
         "--clear-allowed-users",
         action="store_true",
         help="Clear any existing configured allowed users before applying this update.",
@@ -2338,8 +2335,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     channel_telegram_onboard_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_telegram_onboard_parser.add_argument("--bot-token", help="Telegram bot token from BotFather")
-    channel_telegram_onboard_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
-    channel_telegram_onboard_parser.add_argument(
+    telegram_users_group = channel_telegram_onboard_parser.add_mutually_exclusive_group()
+    telegram_users_group.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    telegram_users_group.add_argument(
         "--clear-allowed-users",
         action="store_true",
         help="Clear any existing configured allowed users before applying this update.",
@@ -2423,8 +2421,8 @@ def build_parser() -> argparse.ArgumentParser:
     loops_subparsers = loops_parser.add_subparsers(dest="loops_command", required=True)
     loops_run_parser = loops_subparsers.add_parser("run", help="Run N rounds of suggest/evaluate against a chip")
     loops_run_parser.add_argument("--chip", required=True, help="Chip key (e.g. domain-chip-brand-sentiment-tracking)")
-    loops_run_parser.add_argument("--rounds", type=int, default=3, help="Number of rounds (default 3)")
-    loops_run_parser.add_argument("--suggest-limit", type=int, default=3, help="Max candidates per round (default 3)")
+    loops_run_parser.add_argument("--rounds", type=_positive_int, default=3, help="Number of rounds (default 3)")
+    loops_run_parser.add_argument("--suggest-limit", type=_positive_int, default=3, help="Max candidates per round (default 3)")
     loops_run_parser.add_argument("--pause-seconds", type=float, default=0.0, help="Sleep between rounds")
     loops_run_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     loops_run_parser.add_argument("--json", action="store_true", help="Emit JSON result")
@@ -2509,6 +2507,11 @@ def build_parser() -> argparse.ArgumentParser:
     attachments_set_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     attachments_clear_path_parser = attachments_subparsers.add_parser("clear-path", help="Clear the active specialization path")
     attachments_clear_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_clear_path_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the active specialization path without clearing it",
+    )
     attachments_run_hook_parser = attachments_subparsers.add_parser(
         "run-hook",
         help="Run a manifest-backed chip hook using the standard spark-hook-io.v1 contract",
@@ -2564,8 +2567,9 @@ def build_parser() -> argparse.ArgumentParser:
     auth_login_parser.add_argument("provider", choices=list_oauth_provider_ids())
     auth_login_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_login_parser.add_argument("--redirect-uri", help="Override the default OAuth callback URI")
-    auth_login_parser.add_argument("--callback-url", help="Full callback URL captured after OAuth approval")
-    auth_login_parser.add_argument("--listen", action="store_true", help="Wait for the loopback OAuth callback and complete login automatically")
+    auth_mode_group = auth_login_parser.add_mutually_exclusive_group()
+    auth_mode_group.add_argument("--callback-url", help="Full callback URL captured after OAuth approval")
+    auth_mode_group.add_argument("--listen", action="store_true", help="Wait for the loopback OAuth callback and complete login automatically")
     auth_login_parser.add_argument("--timeout-seconds", type=int, default=120, help="Maximum time to wait for a loopback OAuth callback")
     auth_login_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     auth_logout_parser = auth_subparsers.add_parser("logout", help="Revoke locally stored OAuth credentials for a provider")
@@ -2638,29 +2642,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not write a memory-read event for this inspection",
     )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    memory_write_telegram_note_parser = memory_subparsers.add_parser(
-        "write-telegram-note",
-        help="Write one explicit Telegram memory note through the governed memory kernel",
-    )
-    memory_write_telegram_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    memory_write_telegram_note_parser.add_argument("--sdk-module", help="Override the SDK module for this write")
-    memory_write_telegram_note_parser.add_argument("--human-id", required=True, help="Builder human id to write under")
-    memory_write_telegram_note_parser.add_argument("--text", required=True, help="Exact Telegram note text to preserve")
-    memory_write_telegram_note_parser.add_argument("--domain-pack", required=True, help="Memory domain pack label")
-    memory_write_telegram_note_parser.add_argument("--evidence-kind", required=True, help="Evidence kind label")
-    memory_write_telegram_note_parser.add_argument("--session-id", help="Source session id")
-    memory_write_telegram_note_parser.add_argument("--turn-id", help="Source turn id")
-    memory_write_telegram_note_parser.add_argument(
-        "--actor-id",
-        default="telegram_memory_direct_adapter",
-        help="Actor id to record for the write",
-    )
-    memory_write_telegram_note_parser.add_argument(
-        "--governor-decision-file",
-        required=True,
-        help="JSON file containing the Harness Core Governor decision authorizing this memory write",
-    )
-    memory_write_telegram_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -2717,7 +2698,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compile a Spark KB/wiki vault directly from Builder Telegram state.db events",
     )
     memory_compile_kb_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    memory_compile_kb_parser.add_argument("--output-dir", help="Knowledge-base output directory")
+    memory_compile_kb_parser.add_argument(
+        "--output-dir",
+        help="Knowledge-base output directory (must be below <home>/artifacts)",
+    )
     memory_compile_kb_parser.add_argument("--limit", type=int, default=25, help="Maximum Telegram conversations to scan from Builder state.db")
     memory_compile_kb_parser.add_argument("--chat-id", help="Restrict the compile to one Telegram chat id")
     memory_compile_kb_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
@@ -2903,169 +2887,42 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    jobs_prune_observability_parser = jobs_subparsers.add_parser(
+    jobs_prune_parser = jobs_subparsers.add_parser(
         "prune-observability",
-        help="Prune old observability mirror rows and optionally VACUUM state.db",
+        help="Preview or apply recoverable observability-mirror retention",
     )
-    jobs_prune_observability_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    jobs_prune_observability_parser.add_argument("--older-than", required=True, help="Delete rows older than this ISO-8601 timestamp")
-    jobs_prune_observability_parser.add_argument("--vacuum", action="store_true", help="Run VACUUM if rows were deleted")
-    jobs_prune_observability_parser.add_argument(
-        "--include-builder-events",
-        action="store_true",
-        help="Also prune builder_events; omitted by default because Watchtower reads this table",
-    )
-    jobs_prune_observability_parser.add_argument(
-        "--include-gateway-logs",
-        action="store_true",
-        help="Also prune gateway JSONL trace and outbound audit records older than the cutoff",
-    )
-    jobs_prune_observability_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    jobs_observability_report_parser = jobs_subparsers.add_parser(
-        "observability-report",
-        help="Report state.db and gateway observability size/counts without pruning",
-    )
-    jobs_observability_report_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    jobs_observability_report_parser.add_argument(
-        "--older-than",
-        help="Include counts that would be pruned by this ISO-8601 cutoff",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--extended-older-than",
-        help="Include growth-table counts that would be pruned by the extended retention cutoff",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--include-builder-events",
-        action="store_true",
-        help="Include builder_events in prunable counts; omitted by default because Watchtower reads this table",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--include-gateway-logs",
-        action="store_true",
-        help="Also report gateway JSONL trace and outbound audit sizes/counts",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--include-unowned-jsonl",
-        action="store_true",
-        help="Also report loose JSONL files under the Spark root without opening or deleting them",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--spark-root",
-        help="Override Spark root for loose JSONL reporting; defaults to SPARK_HOME or the .spark ancestor of --home",
-    )
-    jobs_observability_report_parser.add_argument("--jsonl-limit", type=int, default=40, help="Maximum loose JSONL files to list")
-    jobs_observability_report_parser.add_argument("--jsonl-min-bytes", type=int, default=0, help="Minimum loose JSONL size to list")
-    jobs_observability_report_parser.add_argument(
-        "--jsonl-reference-scan",
-        action="store_true",
-        help="Scan non-JSONL code/config text for references to reported loose JSONL paths",
-    )
-    jobs_observability_report_parser.add_argument(
-        "--jsonl-reference-root",
-        action="append",
-        default=[],
-        help="Reference root to scan; repeatable. Defaults to installed source/config/modules/tools with nested roots deduped",
-    )
-    jobs_observability_report_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    jobs_prune_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    jobs_prune_parser.add_argument("--older-than", required=True, help="Timezone-aware ISO-8601 retention cutoff")
+    jobs_prune_parser.add_argument("--apply", action="store_true", help="Apply the exact previously previewed plan")
+    jobs_prune_parser.add_argument("--confirm-plan", help="Exact SHA-256 digest emitted by preview")
+    jobs_prune_parser.add_argument("--backup-dir", help="Directory for the mandatory verified SQLite backup")
+    jobs_prune_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
     harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
     harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
     harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    harness_tool_ledgers_parser = harness_subparsers.add_parser(
-        "tool-ledgers",
-        help="Show canonical governed tool ledgers from state.db",
-    )
-    harness_tool_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    harness_tool_ledgers_parser.add_argument("--turn-id", help="Filter ledgers by turn id")
-    harness_tool_ledgers_parser.add_argument("--surface", help="Filter ledgers by producing surface")
-    harness_tool_ledgers_parser.add_argument("--limit", type=int, default=20, help="Maximum ledgers to show")
-    harness_tool_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    harness_trace_turn_parser = harness_subparsers.add_parser(
-        "trace-turn",
-        help="Show canonical ledgers and event mirror rows for one turn id",
-    )
-    harness_trace_turn_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    harness_trace_turn_parser.add_argument("--turn-id", required=True, help="Turn id to trace")
-    harness_trace_turn_parser.add_argument("--limit", type=int, default=100, help="Maximum rows per section")
-    harness_trace_turn_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    harness_import_cli_ledgers_parser = harness_subparsers.add_parser(
-        "import-cli-ledgers",
-        help="Import Spark CLI approval ledgers into the canonical tool-ledger table",
-    )
-    harness_import_cli_ledgers_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    harness_import_cli_ledgers_parser.add_argument(
-        "--ledger-dir",
-        default=str(default_cli_approval_ledger_dir()),
-        help="Directory containing Spark CLI approval ledger JSON files",
-    )
-    harness_import_cli_ledgers_parser.add_argument(
-        "--retention-cap",
-        type=int,
-        default=DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES,
-        help="Keep only this many newest approval-ledger JSON files after import",
-    )
-    harness_import_cli_ledgers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    harness_self_evolution_parser = harness_subparsers.add_parser(
+    harness_evolution_parser = harness_subparsers.add_parser(
         "self-evolution-snapshot",
-        help="Build an observe-only Harness Core self-evolution run from canonical tool ledgers",
+        help="Observe canonical Harness evidence without executing or promoting changes",
     )
-    harness_self_evolution_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    harness_self_evolution_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
-    harness_self_evolution_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
-    harness_change_runner_parser = harness_subparsers.add_parser(
-        "change-manifest-runner",
-        help="Evaluate Harness Core change manifests against Builder ledger and test evidence",
+    harness_evolution_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_evolution_parser.add_argument("--limit", type=int, default=20, help="Maximum canonical ledgers to observe")
+    harness_evolution_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_manifest_review_parser = harness_subparsers.add_parser(
+        "change-manifest-review",
+        help="Validate and review Harness change manifests without running their commands",
     )
-    harness_change_runner_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    harness_change_runner_parser.add_argument(
+    harness_manifest_review_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_manifest_review_parser.add_argument(
         "--manifest",
         action="append",
         required=True,
-        help="Path to a change-manifest-v1 JSON file; repeat for multiple manifests",
+        help="Path to a change-manifest-v1 JSON file; repeat for multiple files",
     )
-    harness_change_runner_parser.add_argument("--limit", type=int, default=20, help="Maximum recent tool ledgers to include")
-    harness_change_runner_parser.add_argument(
-        "--mode",
-        default="promote",
-        choices=["observe", "propose", "sandbox", "live_qa", "promote", "rollback"],
-        help="Self-evolution mode to feed into Harness Core",
-    )
-    harness_change_runner_parser.add_argument(
-        "--requested-verdict",
-        choices=["promote_private", "promote_release_candidate", "rollback"],
-        help="Promotion or rollback verdict requested from the gated runner",
-    )
-    harness_change_runner_parser.add_argument(
-        "--command",
-        action="append",
-        dest="runner_commands",
-        help="Test command to record or run; repeat to override manifest required_tests",
-    )
-    harness_change_runner_parser.add_argument(
-        "--run-tests",
-        action="store_true",
-        help="Run allowlisted test commands with shell disabled before asking the runner to promote",
-    )
-    harness_change_runner_parser.add_argument(
-        "--allow-private-promotion",
-        action="store_true",
-        help="Allow the adapter to mark local private-promotion readiness when tests and manifests pass",
-    )
-    harness_change_runner_parser.add_argument(
-        "--live-surface-required",
-        action="store_true",
-        help="Keep live-surface proof marked as required, which blocks promotion",
-    )
-    harness_change_runner_parser.add_argument("--cwd", help="Working directory for allowlisted test commands")
-    harness_change_runner_parser.add_argument(
-        "--timeout-seconds",
-        type=int,
-        default=120,
-        help="Per-test-command timeout when --run-tests is used",
-    )
-    harness_change_runner_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_manifest_review_parser.add_argument("--limit", type=int, default=20, help="Maximum canonical ledgers to observe")
+    harness_manifest_review_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
     harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
     harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -3223,15 +3080,18 @@ def handle_setup(args: argparse.Namespace) -> int:
     else:
         print("Existing config and env preserved; verified state bootstrap.")
     if setup_notes:
+        print("")
         print("Setup integrations:")
         for note in setup_notes:
             print(f"  - {note}")
+    print("")
     print("Next steps:")
     print("  1. spark-intelligence auth connect openai --api-key <key> --model <model>")
     print("  2. spark-intelligence channel telegram-onboard")
     print("  3. spark-intelligence connect status")
     print("  4. spark-intelligence doctor")
     print("  5. spark-intelligence gateway start")
+    print("")
     print("Optional Spark hookups:")
     print("  - spark-intelligence swarm status")
     print("  - spark-intelligence swarm sync --dry-run")
@@ -3882,8 +3742,7 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
     platform = config_manager.get_path("runtime.autostart.platform")
     if platform == "windows_startup_folder":
         wrapper_path = _windows_startup_wrapper_path(config_manager, task_name)
-        if wrapper_path.exists():
-            wrapper_path.unlink()
+        wrapper_path.unlink(missing_ok=True)
     else:
         try:
             subprocess.run(
@@ -4865,10 +4724,16 @@ def handle_self_context(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
-        runner_writable=runner_writable,
+        runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
-        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
-        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
+        execution_lane_state=_parse_optional_json_object(
+            str(getattr(args, "execution_lane_json", "") or ""),
+            arg_name="--execution-lane-json",
+        ),
+        live_state=_parse_optional_json_object(
+            str(getattr(args, "live_state_json", "") or ""),
+            arg_name="--live-state-json",
+        ),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
@@ -4890,11 +4755,23 @@ def handle_self_panel(args: argparse.Namespace) -> int:
         spark_access_level=str(getattr(args, "spark_access_level", "") or ""),
         runner_writable=_parse_runner_writable(str(getattr(args, "runner_writable", "unknown") or "unknown")),
         runner_label=str(getattr(args, "runner_label", "") or ""),
-        execution_lane_state=_parse_optional_json_object(str(getattr(args, "execution_lane_json", "") or "")),
-        live_state=_parse_optional_json_object(str(getattr(args, "live_state_json", "") or "")),
+        execution_lane_state=_parse_optional_json_object(
+            str(getattr(args, "execution_lane_json", "") or ""),
+            arg_name="--execution-lane-json",
+        ),
+        live_state=_parse_optional_json_object(
+            str(getattr(args, "live_state_json", "") or ""),
+            arg_name="--live-state-json",
+        ),
         memory_inbox_status=str(getattr(args, "memory_inbox_status", "pending") or "pending"),
-        stale_live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
-        stale_context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        stale_live_claims=_parse_json_object_values(
+            list(getattr(args, "live_claim_json", []) or []),
+            arg_name="--live-claim-json",
+        ),
+        stale_context_claims=_parse_json_object_values(
+            list(getattr(args, "context_claim_json", []) or []),
+            arg_name="--context-claim-json",
+        ),
     )
     print(json.dumps(panel.to_payload(), indent=2) if args.json else panel.to_text())
     return 0
@@ -4905,8 +4782,14 @@ def handle_self_route_confidence_gate(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    latest_spawner_job = _parse_optional_json_object(str(getattr(args, "latest_spawner_job_json", "") or ""))
-    route_context = _parse_optional_json_object(str(getattr(args, "route_context_json", "") or ""))
+    latest_spawner_job = _parse_optional_json_object(
+        str(getattr(args, "latest_spawner_job_json", "") or ""),
+        arg_name="--latest-spawner-job-json",
+    )
+    route_context = _parse_optional_json_object(
+        str(getattr(args, "route_context_json", "") or ""),
+        arg_name="--route-context-json",
+    )
     if not latest_spawner_job:
         context = build_agent_operating_context(
             config_manager=config_manager,
@@ -5130,20 +5013,25 @@ def handle_self_mission_state(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_optional_json_object(raw: str) -> dict[str, object] | None:
+def _parse_optional_json_object(raw: str, *, arg_name: str) -> dict[str, object] | None:
     text = str(raw or "").strip()
     if not text:
         return None
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"{arg_name} must be valid JSON: {exc.msg} at line {exc.lineno} column {exc.colno}"
+        ) from exc
     if not isinstance(value, dict):
-        raise SystemExit("--memory-candidate-json must be a JSON object")
+        raise SystemExit(f"{arg_name} must be a JSON object")
     return value
 
 
-def _parse_json_object_values(values: list[str]) -> list[dict[str, object]]:
+def _parse_json_object_values(values: list[str], *, arg_name: str) -> list[dict[str, object]]:
     parsed: list[dict[str, object]] = []
     for raw in values:
-        value = _parse_optional_json_object(raw)
+        value = _parse_optional_json_object(raw, arg_name=arg_name)
         if value is not None:
             parsed.append(value)
     return parsed
@@ -5165,8 +5053,14 @@ def handle_self_turn_trace(args: argparse.Namespace) -> int:
         active_reference_items=[str(item) for item in getattr(args, "active_reference_item", []) if str(item).strip()],
         proposed_action=str(getattr(args, "proposed_action", "") or "") or None,
         draft_answer=getattr(args, "draft_answer", None),
-        source_refs=_parse_json_object_values(list(getattr(args, "source_json", []) or [])),
-        memory_candidate=_parse_optional_json_object(str(getattr(args, "memory_candidate_json", "") or "")),
+        source_refs=_parse_json_object_values(
+            list(getattr(args, "source_json", []) or []),
+            arg_name="--source-json",
+        ),
+        memory_candidate=_parse_optional_json_object(
+            str(getattr(args, "memory_candidate_json", "") or ""),
+            arg_name="--memory-candidate-json",
+        ),
     )
     payload = trace.to_payload()
     if args.json:
@@ -5191,8 +5085,14 @@ def handle_self_stale_sweep(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = build_stale_context_sweep(
-        live_claims=_parse_json_object_values(list(getattr(args, "live_claim_json", []) or [])),
-        context_claims=_parse_json_object_values(list(getattr(args, "context_claim_json", []) or [])),
+        live_claims=_parse_json_object_values(
+            list(getattr(args, "live_claim_json", []) or []),
+            arg_name="--live-claim-json",
+        ),
+        context_claims=_parse_json_object_values(
+            list(getattr(args, "context_claim_json", []) or []),
+            arg_name="--context-claim-json",
+        ),
         state_db=state_db if bool(getattr(args, "record_contradictions", False)) else None,
         record_contradictions=bool(getattr(args, "record_contradictions", False)),
         request_id=str(getattr(args, "request_id", "") or ""),
@@ -5340,7 +5240,7 @@ def _json_object_arg(raw: str, arg_name: str) -> dict[str, object]:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{arg_name} must be valid JSON") from exc
+        raise ValueError(f"{arg_name} must be valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg})") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"{arg_name} must be a JSON object")
     return payload
@@ -5757,36 +5657,27 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
 
 
 def handle_gateway_serve_stdio(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    return gateway_serve_stdio(
-        config_manager,
-        state_db,
-        input_stream=sys.stdin,
-        output_stream=sys.stdout,
-        error_stream=sys.stderr,
-        simulation=args.origin != "telegram-runtime",
-    )
-
-
-def handle_gateway_ingest_tool_ledger(args: argparse.Namespace) -> int:
+    session_token = str(os.environ.get("SPARK_GATEWAY_STDIO_TOKEN") or "")
+    if len(session_token) < 32:
+        print("Gateway stdio requires an inherited session token.", file=sys.stderr)
+        return 2
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
     try:
-        raw_payload = sys.stdin.read() if args.ledger_file == "-" else Path(args.ledger_file).read_text(encoding="utf-8-sig")
-        payload = json.loads(raw_payload)
-        if not isinstance(payload, dict):
-            raise ValueError("ledger file must contain a JSON object")
-        result = ingest_tool_ledger_payload(state_db, payload)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print(result.to_json() if args.json else result.to_text())
-    return 0
+        return gateway_serve_stdio(
+            config_manager,
+            state_db,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+            error_stream=sys.stderr,
+            simulation=args.origin != "telegram-runtime",
+            session_token=session_token,
+        )
+    except ValueError:
+        print("Gateway stdio session configuration is invalid.", file=sys.stderr)
+        return 2
 
 
 def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
@@ -5831,12 +5722,21 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     if args.json:
+        try:
+            parsed_result = json.loads(result)
+        except json.JSONDecodeError as exc:
+            print(
+                "Builder Telegram shadow validation returned invalid JSON: "
+                f"{exc.msg} at line {exc.lineno} column {exc.colno}",
+                file=sys.stderr,
+            )
+            return 1
         print(
             json.dumps(
                 {
                     "ingress_owner": "spark-telegram-bot",
                     "migration_status": "builder_shadow_validation_only",
-                    "result": json.loads(result),
+                    "result": parsed_result,
                 },
                 indent=2,
             )
@@ -5852,7 +5752,10 @@ def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
 
 def _load_shadow_telegram_pack(path: Path) -> list[dict[str, str | None]]:
     if path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Shadow Telegram pack must contain valid JSON.") from exc
         if not isinstance(payload, list):
             raise ValueError("Shadow Telegram pack JSON must be a list.")
         entries: list[dict[str, str | None]] = []
@@ -5896,7 +5799,16 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     results: list[dict[str, object]] = []
+    total_entries = len(pack_entries)
     for index, entry in enumerate(pack_entries, start=1):
+        try:
+            print(
+                f"[{index}/{total_entries}] running shadow Telegram pack entry...",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
         try:
             raw = gateway_ask_telegram(
                 config_manager=config_manager,
@@ -6009,6 +5921,44 @@ def handle_gateway_traces(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def handle_gateway_redact_traces(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = redact_gateway_trace_log(config_manager, backup=not args.no_backup)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif result.get("ok"):
+        backup = f" Backup: {result.get('backup_path')}" if result.get("backup_path") else ""
+        print(f"Redacted {result.get('rows_written')} gateway trace row(s).{backup}")
+    else:
+        print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") or result.get("error") == "trace_log_missing" else 1
+
+
+def handle_gateway_repair_proof(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = repair_gateway_trace_proof_continuity(
+        config_manager,
+        backup=not args.no_backup,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif result.get("ok"):
+        backup = f" Backup: {result.get('backup_path')}" if result.get("backup_path") else ""
+        dry_run = " Dry run." if result.get("dry_run") else ""
+        print(
+            "Repaired "
+            f"{result.get('rows_written')} gateway trace row(s); "
+            f"gap capsules added={result.get('gap_capsules_added')}; "
+            f"not execution={result.get('not_execution_marked')}.{backup}{dry_run}"
+        )
+    else:
+        print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") or result.get("error") == "trace_log_missing" else 1
 
 
 def handle_gateway_outbound(args: argparse.Namespace) -> int:
@@ -6136,6 +6086,7 @@ def handle_channel_add(args: argparse.Namespace) -> int:
         print(validation_note)
     print(result)
     if args.channel_kind == "telegram":
+        print("")
         print("Next Telegram steps:")
         print("  1. Open Telegram and send /start to the bot from the account you want to pair.")
         print("  2. Run spark-intelligence gateway start")
@@ -6211,6 +6162,7 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
         metadata={"bot_profile": profile.to_dict()} if profile else None,
     )
     print(result)
+    print("")
     print("Telegram onboarding next steps:")
     print("  1. Open Telegram and send /start to the bot.")
     if effective_allowed_users:
@@ -6233,7 +6185,7 @@ def handle_channel_test(args: argparse.Namespace) -> int:
         )
         print(report.to_json() if args.json else report.to_text())
         return 0 if report.ok else 1
-    print(f"Unsupported channel test target: {args.channel_kind}", file=sys.stderr)
+    print(f"Unsupported channel test target: {args.channel_kind!r}. Currently only --channel-kind telegram is supported.", file=sys.stderr)
     return 2
 
 
@@ -6285,7 +6237,11 @@ def handle_drafts_show(args: argparse.Namespace) -> int:
         handle_or_id=args.handle,
     )
     if draft is None:
-        print(f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}")
+        print(
+            f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}. "
+            f"Run `spark-intelligence drafts list --user-id {args.user_id} --channel {args.channel}` "
+            f"to see recent draft handles."
+        )
         return 1
     print(f"=== Draft {draft.handle} ===")
     print(f"created_at: {draft.created_at}")
@@ -6461,6 +6417,7 @@ def handle_loops_run(args: argparse.Namespace) -> int:
 
 def handle_chips_create(args: argparse.Namespace) -> int:
     from pathlib import Path as _Path
+    import hashlib as _hashlib
     import json as _json
     from spark_intelligence.chip_create import create_chip_from_prompt
 
@@ -6471,6 +6428,13 @@ def handle_chips_create(args: argparse.Namespace) -> int:
     output_dir = _Path(args.output_dir) if args.output_dir else None
     chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
     governor_decision = _load_governor_decision_json(args.governor_decision_json)
+    if governor_decision is None:
+        request_hash = _hashlib.sha256(str(args.prompt).encode("utf-8")).hexdigest()[:12]
+        governor_decision, _authority_reasons = _authorize_cli_chip_create(
+            state_db=state_db,
+            request_id=f"chips-create-{request_hash}",
+            prompt=args.prompt,
+        )
     result = create_chip_from_prompt(
         prompt=args.prompt,
         config_manager=config_manager,
@@ -6478,6 +6442,7 @@ def handle_chips_create(args: argparse.Namespace) -> int:
         output_dir=output_dir,
         chip_labs_root=chip_labs_root,
         governor_decision=governor_decision,
+        command_receipt_context=_chips_create_command_receipt_context(args),
     )
     if args.json:
         print(_json.dumps(result.to_dict(), indent=2, default=str))
@@ -6491,6 +6456,82 @@ def handle_chips_create(args: argparse.Namespace) -> int:
         else:
             print(f"error: {result.error}")
     return 0 if result.ok else 1
+
+
+def _chips_create_command_receipt_context(args: argparse.Namespace) -> dict[str, object]:
+    argv_shape: list[str] = [
+        "-m",
+        "spark_intelligence.cli",
+        "chips",
+        "create",
+        "--home",
+        "[redacted-path]" if args.home else "[default-home]",
+        "--prompt",
+        "[redacted-prompt]",
+    ]
+    flags_present = ["--home", "--prompt"]
+    if args.output_dir:
+        argv_shape.extend(["--output-dir", "[redacted-path]"])
+        flags_present.append("--output-dir")
+    if args.chip_labs_root:
+        argv_shape.extend(["--chip-labs-root", "[redacted-path]"])
+        flags_present.append("--chip-labs-root")
+    if args.governor_decision_json:
+        argv_shape.extend(["--governor-decision-json", "[redacted-json]"])
+        flags_present.append("--governor-decision-json")
+    if args.json:
+        argv_shape.append("--json")
+        flags_present.append("--json")
+    return {
+        "command_source": "spark_intelligence.cli chips create",
+        "argv_shape": argv_shape,
+        "flags_present": sorted(set(flags_present)),
+    }
+
+
+def _authorize_cli_chip_create(
+    *,
+    state_db: StateDB | None,
+    request_id: str,
+    prompt: str,
+    component: str = "cli_chips_create",
+    actor_id: str = "local-operator",
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+    action: dict[str, object] = {
+        "tool_name": "chip.create",
+        "owner_system": "spark-intelligence-builder",
+        "mutation_class": "creates_chip",
+        "args_path": f"builder://{component}/{request_id}/chip.create",
+    }
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref=human_id or actor_id,
+        request_id=request_id,
+        source_kind=component,
+        intent_summary="Create a private Domain Chip starter kit.",
+        raw_turn_summary=str(prompt or "Create a private Domain Chip starter kit."),
+        actions=[action],
+    )
+    if not isinstance(envelope, dict):
+        return None, ("harness_core_vnext_envelope_unavailable",)
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="chip.create",
+        owner_system="spark-intelligence-builder",
+        mutation_class="creates_chip",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        component=component,
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision, ()
+    return None, tuple(authority.reason_codes or ("missing_governor_decision",))
 
 
 def handle_creator_plan(args: argparse.Namespace) -> int:
@@ -6614,6 +6655,10 @@ def handle_attachments_set_path(args: argparse.Namespace) -> int:
 
 def handle_attachments_clear_path(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    if args.dry_run:
+        current = config_manager.get_path("spark.specialization_paths.active_path_key") or "none"
+        print(f"Active path would be cleared: {current}")
+        return 0
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
@@ -6856,7 +6901,6 @@ def _run_browser_hook(
         args,
         hook_name=hook_name,
         payload=payload,
-        render_result=render_result,
         action=action,
         target_ref=target_ref,
     )
@@ -6874,7 +6918,6 @@ def _execute_browser_hook(
     *,
     hook_name: str,
     payload: dict[str, object],
-    render_result,
     action: str,
     target_ref: str,
 ) -> tuple[int, dict[str, object] | None, str | None]:
@@ -7233,7 +7276,6 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
         payload=payload,
-        render_result=render_browser_page_snapshot,
         action="browser_page_snapshot",
         target_ref=args.origin,
     )
@@ -7258,7 +7300,6 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_NAVIGATE_HOOK,
         payload=navigate_payload,
-        render_result=lambda result: "Browser navigation completed.",
         action="browser_page_snapshot_navigate",
         target_ref=args.origin,
     )
@@ -7295,7 +7336,6 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         args,
         hook_name=BROWSER_TAB_WAIT_HOOK,
         payload=wait_payload,
-        render_result=lambda result: "Browser tab wait completed.",
         action="browser_page_snapshot_wait",
         target_ref=tab_id,
     )
@@ -7660,175 +7700,6 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_governor_decision_file(path_value: str) -> dict:
-    path = Path(path_value)
-    parsed = json.loads(path.read_text(encoding="utf-8-sig"))
-    if not isinstance(parsed, dict):
-        raise ValueError("--governor-decision-file must decode to a JSON object")
-    return parsed
-
-
-def _trace_id_from_governor_decision(governor_decision: dict[str, Any] | None) -> str | None:
-    if not isinstance(governor_decision, dict):
-        return None
-    trace = governor_decision.get("trace") if isinstance(governor_decision.get("trace"), dict) else {}
-    return (
-        str(governor_decision.get("traceId") or "").strip()
-        or str(governor_decision.get("trace_id") or "").strip()
-        or str(trace.get("id") or "").strip()
-        or None
-    )
-
-
-def _derive_telegram_memory_materialization_governor(
-    *,
-    upstream_governor_decision: dict[str, Any],
-    state_db: StateDB,
-    human_id: str,
-    session_id: str | None,
-    turn_id: str | None,
-    actor_id: str,
-) -> dict[str, Any]:
-    upstream_verification = verify_governor_tool_authority(
-        upstream_governor_decision,
-        tool_name="memory.write",
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        require_pre_execution_ledger=True,
-    )
-    if not upstream_verification.get("allowed"):
-        reasons = upstream_verification.get("reason_codes")
-        reason_text = ", ".join(str(reason) for reason in reasons if str(reason)) or "upstream_governor_not_allowed"
-        raise ValueError(f"upstream Telegram memory authority is invalid: {reason_text}")
-
-    upstream_trace = _trace_id_from_governor_decision(upstream_governor_decision)
-    request_id = str(turn_id or upstream_governor_decision.get("turn_id") or session_id or human_id).strip()
-    envelope = build_vnext_tool_intent_envelope(
-        surface="telegram",
-        actor_id_ref=human_id,
-        request_id=request_id,
-        source_kind="telegram_memory_direct_adapter",
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        intent_summary="Fresh Telegram Harness Core authority selected this exact Builder/domain-chip memory materialization.",
-        raw_turn_summary=(
-            "Upstream Telegram Governor authorized a scoped memory.write; "
-            f"source turn={turn_id or 'unknown'} session={session_id or 'unknown'} "
-            f"upstream_trace={upstream_trace or 'unknown'}. Raw note text remains in the memory write payload."
-        ),
-        args_path=f"builder://telegram-memory/{request_id}/domain-chip-memory-write",
-    )
-    if not isinstance(envelope, dict):
-        raise ValueError("could not build downstream memory materialization envelope")
-
-    authority = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": envelope},
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        state_db=state_db,
-        request_id=request_id,
-        channel_id="telegram",
-        session_id=session_id,
-        human_id=human_id,
-        actor_id=actor_id,
-        component="telegram_memory_write_cli",
-    )
-    if authority.allowed and isinstance(authority.governor_decision, dict):
-        return authority.governor_decision
-
-    reasons = tuple(authority.reason_codes or ("downstream_memory_materialization_not_authorized",))
-    reason_text = ", ".join(str(reason) for reason in reasons if str(reason))
-    raise ValueError(f"downstream memory materialization authority is invalid: {reason_text}")
-
-
-def handle_memory_write_telegram_note(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    if args.sdk_module:
-        config_manager.set_path("spark.memory.sdk_module", args.sdk_module)
-    try:
-        upstream_governor_decision = _load_governor_decision_file(args.governor_decision_file)
-        governor_decision = _derive_telegram_memory_materialization_governor(
-            upstream_governor_decision=upstream_governor_decision,
-            state_db=state_db,
-            human_id=args.human_id,
-            session_id=args.session_id,
-            turn_id=args.turn_id,
-            actor_id=args.actor_id,
-        )
-        result = write_structured_evidence_to_memory(
-            config_manager=config_manager,
-            state_db=state_db,
-            human_id=args.human_id,
-            evidence_text=args.text,
-            domain_pack=args.domain_pack,
-            evidence_kind=args.evidence_kind,
-            session_id=args.session_id,
-            turn_id=args.turn_id,
-            channel_kind="telegram",
-            actor_id=args.actor_id,
-            governor_decision=governor_decision,
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        payload = {
-            "schema_version": "spark.telegram_memory_write.v1",
-            "status": "failed",
-            "accepted_count": 0,
-            "rejected_count": 1,
-            "skipped_count": 0,
-            "abstained": False,
-            "reason": str(exc),
-            "human_id": args.human_id,
-            "domain_pack": args.domain_pack,
-            "evidence_kind": args.evidence_kind,
-            "session_id": args.session_id,
-            "turn_id": args.turn_id,
-        }
-        print(json.dumps(payload, indent=2) if args.json else f"Telegram memory write blocked: {exc}")
-        return 1
-
-    result_payload = asdict(result)
-    governor_trace = _trace_id_from_governor_decision(governor_decision)
-    governor_outcome = governor_decision.get("outcome") or governor_decision.get("decision")
-    payload = {
-        "schema_version": "spark.telegram_memory_write.v1",
-        "status": result.status,
-        "accepted_count": result.accepted_count,
-        "rejected_count": result.rejected_count,
-        "skipped_count": result.skipped_count,
-        "abstained": result.abstained,
-        "reason": result.reason,
-        "operation": result.operation,
-        "method": result.method,
-        "memory_role": result.memory_role,
-        "human_id": args.human_id,
-        "domain_pack": args.domain_pack,
-        "evidence_kind": args.evidence_kind,
-        "session_id": args.session_id,
-        "turn_id": args.turn_id,
-        "authority": {
-            "source": "governor_decision_file",
-            "trace_id": governor_trace,
-            "outcome": governor_outcome,
-        },
-        "retrieval_trace": result_payload.get("retrieval_trace"),
-        "provenance": result_payload.get("provenance") or [],
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2))
-    else:
-        print(
-            "Telegram memory write "
-            f"{result.status}: accepted={result.accepted_count} "
-            f"rejected={result.rejected_count} skipped={result.skipped_count}"
-        )
-    return 0 if result.accepted_count > 0 and not result.abstained else 1
-
-
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8132,45 +8003,45 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
     return 0 if int(summary.get("completed_runs") or 0) > 0 else 1
 
 
-def _build_memory_direct_smoke_governor_decision(
+def _authorize_cli_memory_smoke_write(
     *,
     state_db: StateDB,
     subject: str,
-    predicate: str,
     operation: str,
-    actor_id: str = "memory_cli",
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     request_id = f"memory-direct-smoke:{operation}:{uuid4().hex}"
-    envelope = build_vnext_tool_intent_envelope(
+    action = {
+        "tool_name": "memory.write",
+        "owner_system": "domain-chip-memory",
+        "mutation_class": "writes_memory",
+        "args_path": f"builder://memory-direct-smoke/{request_id}",
+    }
+    envelope = build_vnext_action_intent_envelope(
         surface="cli",
-        actor_id_ref=actor_id,
+        actor_id_ref=str(subject),
         request_id=request_id,
-        source_kind="memory_cli_direct_smoke",
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        intent_summary=f"CLI direct memory smoke authorized a scoped {operation} operation.",
-        raw_turn_summary=(
-            f"subject:{subject}\n"
-            f"predicate:{predicate}\n"
-            f"operation:{operation}\n"
-            "Raw memory value remains in the smoke payload."
-        ),
-        args_path=f"builder://memory-direct-smoke/{request_id}/{operation}",
+        source_kind="cli_memory_direct_smoke",
+        intent_summary=f"Run the local memory direct-smoke {operation} step.",
+        raw_turn_summary="Local operator explicitly invoked the memory direct-smoke command.",
+        actions=[action],
     )
     if not isinstance(envelope, dict):
         return None
     authority = authorize_builder_bridge_action(
         {"turn_intent_envelope_vnext": envelope},
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
+        tool_name="memory.write",
         owner_system="domain-chip-memory",
         mutation_class="writes_memory",
         state_db=state_db,
         request_id=request_id,
-        actor_id=actor_id,
-        component="memory_direct_smoke_cli",
+        channel_id="cli",
+        human_id=str(subject),
+        actor_id="memory_cli",
+        component="cli_memory_direct_smoke",
     )
-    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+    return None
 
 
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
@@ -8178,22 +8049,18 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    governor_decision = _build_memory_direct_smoke_governor_decision(
+    write_governor = _authorize_cli_memory_smoke_write(
         state_db=state_db,
         subject=args.subject,
-        predicate=args.predicate,
-        operation="update",
+        operation="write",
     )
-    cleanup_governor_decision = (
-        _build_memory_direct_smoke_governor_decision(
+    cleanup_governor = None
+    if not bool(args.no_cleanup):
+        cleanup_governor = _authorize_cli_memory_smoke_write(
             state_db=state_db,
             subject=args.subject,
-            predicate=args.predicate,
-            operation="delete",
+            operation="cleanup",
         )
-        if not bool(args.no_cleanup)
-        else None
-    )
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
@@ -8202,8 +8069,8 @@ def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
         predicate=args.predicate,
         value=args.value,
         cleanup=not bool(args.no_cleanup),
-        governor_decision=governor_decision,
-        cleanup_governor_decision=cleanup_governor_decision,
+        governor_decision=write_governor,
+        cleanup_governor_decision=cleanup_governor,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.write_result.accepted_count <= 0:
@@ -8325,7 +8192,10 @@ def handle_config_show(args: argparse.Namespace) -> int:
 def handle_config_set(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    parsed_value = yaml.safe_load(args.value)
+    try:
+        parsed_value = yaml.safe_load(args.value)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"Invalid YAML value for {args.path}: {exc}") from exc
     config_manager.set_path(args.path, parsed_value)
     print(f"Set {args.path} = {json.dumps(parsed_value)}")
     return 0
@@ -8338,7 +8208,11 @@ def handle_config_unset(args: argparse.Namespace) -> int:
     if removed:
         print(f"Removed {args.path}")
         return 0
-    print(f"Config path not found: {args.path}", file=sys.stderr)
+    print(
+        f"Config path not found: {args.path}. "
+        f"Run `spark-intelligence config show` (or `config show {args.path.rsplit('.', 1)[0] if '.' in args.path else args.path}`) to see existing keys.",
+        file=sys.stderr,
+    )
     return 1
 
 
@@ -8379,6 +8253,7 @@ def handle_swarm_configure(args: argparse.Namespace) -> int:
         auth_client_key_env=args.auth_client_key_env,
     )
     print("Spark Swarm bridge config updated.")
+    print("")
     print("Recommended checks:")
     print("  1. spark-intelligence swarm status")
     print("  2. spark-intelligence swarm sync --dry-run")
@@ -8432,6 +8307,12 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
                 notes.append(f"discovered spark-researcher config at {resolved}")
 
     swarm_runtime_root = args.swarm_runtime_root
+    if not swarm_runtime_root:
+        current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
+        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
+        if not current_swarm_root and default_swarm_root.exists():
+            swarm_runtime_root = str(default_swarm_root)
+            notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
 
     if any(
         [
@@ -8459,7 +8340,7 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         if args.swarm_workspace_id:
             notes.append(f"configured spark.swarm.workspace_id = {args.swarm_workspace_id}")
         if swarm_runtime_root:
-            notes.append(f"configured SPARK_SWARM_RUNTIME_ROOT = {Path(swarm_runtime_root).expanduser()}")
+            notes.append(f"configured spark.swarm.runtime_root = {Path(swarm_runtime_root).expanduser()}")
         if args.swarm_access_token:
             notes.append(f"stored spark.swarm access token in {args.swarm_access_token_env}")
 
@@ -8501,9 +8382,7 @@ def _configure_swarm(
         config_manager.set_path("spark.swarm.workspace_id", workspace_id)
         config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", workspace_id)
     if runtime_root:
-        normalized_root = str(Path(runtime_root).expanduser())
-        config_manager.set_path("spark.swarm.runtime_root", normalized_root)
-        config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", normalized_root)
+        config_manager.set_path("spark.swarm.runtime_root", str(Path(runtime_root).expanduser()))
     if access_token:
         env_name = access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
         config_manager.upsert_env_secret(env_name, access_token)
@@ -8549,120 +8428,36 @@ def handle_jobs_prune_observability(args: argparse.Namespace) -> int:
     state_db.initialize()
     result = prune_observability_store(
         state_db,
-        older_than=str(getattr(args, "older_than", "") or ""),
-        vacuum=bool(getattr(args, "vacuum", False)),
-        include_builder_events=bool(getattr(args, "include_builder_events", False)),
+        older_than=args.older_than,
+        apply=bool(args.apply),
+        confirm_plan_sha256=args.confirm_plan,
+        backup_dir=args.backup_dir,
     )
-    gateway_logs_result = None
-    if bool(getattr(args, "include_gateway_logs", False)):
-        gateway_logs_result = prune_gateway_logs(
-            config_manager,
-            older_than=str(getattr(args, "older_than", "") or ""),
-        )
     payload = {
         "cutoff": result.cutoff,
+        "mode": result.mode,
+        "eligible_counts": result.eligible_counts,
         "deleted_counts": result.deleted_counts,
-        "total_deleted": result.total_deleted,
-        "vacuumed": result.vacuumed,
-        "gateway_logs": gateway_logs_result.to_payload() if gateway_logs_result is not None else None,
+        "protected_tables": list(result.protected_tables),
+        "plan_sha256": result.plan_sha256,
+        "backup_path": str(result.backup_path) if result.backup_path else None,
+        "backup_sha256": result.backup_sha256,
+        "recovery_verified": result.recovery_verified,
     }
     if args.json:
         print(json.dumps(payload, indent=2))
+    elif result.mode == "preview":
+        print(
+            "Retention preview is ready. "
+            f"{result.eligible_counts['event_log']} recoverable event-log mirror row(s) are eligible; "
+            "canonical Builder events and provider security events remain protected.\n"
+            f"To apply this exact plan, pass --apply --confirm-plan {result.plan_sha256}."
+        )
     else:
-        lines = ["Observability prune complete"]
-        lines.append(f"- cutoff: {result.cutoff}")
-        lines.append(f"- deleted: {result.total_deleted}")
-        for table, count in sorted(result.deleted_counts.items()):
-            lines.append(f"- {table}: {count}")
-        if gateway_logs_result is not None:
-            lines.append(f"- gateway_logs: {gateway_logs_result.total_deleted}")
-            for log_name, count in sorted(gateway_logs_result.deleted_counts.items()):
-                lines.append(f"- {log_name}: {count}")
-        lines.append(f"- vacuumed: {'yes' if result.vacuumed else 'no'}")
-        print("\n".join(lines))
-    return 0
-
-
-def handle_jobs_observability_report(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    older_than = str(getattr(args, "older_than", "") or "").strip() or None
-    extended_older_than = str(getattr(args, "extended_older_than", "") or "").strip() or None
-    state_report = build_observability_store_report(
-        state_db,
-        older_than=older_than,
-        include_builder_events=bool(getattr(args, "include_builder_events", False)),
-        extended_older_than=extended_older_than,
-    )
-    gateway_report = None
-    if bool(getattr(args, "include_gateway_logs", False)):
-        gateway_report = gateway_log_report(config_manager, older_than=older_than)
-    jsonl_report = None
-    if bool(getattr(args, "include_unowned_jsonl", False)):
-        jsonl_report = build_jsonl_residue_report(
-            config_manager,
-            root=getattr(args, "spark_root", None),
-            limit=int(getattr(args, "jsonl_limit", 40) or 40),
-            min_bytes=int(getattr(args, "jsonl_min_bytes", 0) or 0),
-            reference_scan=bool(getattr(args, "jsonl_reference_scan", False)),
-            reference_roots=list(getattr(args, "jsonl_reference_root", []) or []),
-        ).to_payload()
-    payload = {
-        "state_db": state_report.to_payload(),
-        "gateway_logs": gateway_report,
-        "unowned_jsonl": jsonl_report,
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2))
-    else:
-        lines = ["Observability report"]
-        lines.append(f"- state_db: {state_report.state_db_path}")
-        lines.append(f"- state_db_bytes: {state_report.state_db_bytes}")
-        lines.append(f"- page_count: {state_report.page_count}")
-        lines.append(f"- freelist_count: {state_report.freelist_count}")
-        for table, count in sorted(state_report.table_counts.items()):
-            lines.append(f"- {table}: {count}")
-        if state_report.cutoff is not None:
-            lines.append(f"- cutoff: {state_report.cutoff}")
-        if state_report.extended_cutoff is not None:
-            lines.append(f"- extended_cutoff: {state_report.extended_cutoff}")
-        if state_report.cutoff is not None or state_report.extended_cutoff is not None:
-            lines.append(f"- total_prunable: {state_report.total_prunable}")
-            for table, count in sorted(state_report.prunable_counts.items()):
-                lines.append(f"- prunable {table}: {count}")
-        if gateway_report is not None:
-            lines.append(f"- gateway_log_bytes: {gateway_report['total_bytes']}")
-            lines.append(f"- gateway_log_records: {gateway_report['total_records']}")
-            lines.append(f"- gateway_log_old_records: {gateway_report['total_old_records']}")
-        if jsonl_report is not None:
-            lines.append(f"- unowned_jsonl_root: {jsonl_report['root']}")
-            lines.append(f"- unowned_jsonl_files: {jsonl_report['total_files']}")
-            lines.append(f"- unowned_jsonl_bytes: {jsonl_report['total_bytes']}")
-            lines.append(f"- unowned_jsonl_candidates: {jsonl_report['candidate_files']}")
-            lines.append(f"- unowned_jsonl_below_min_bytes: {jsonl_report['below_min_bytes_files']}")
-            for action, count in sorted(jsonl_report["candidate_manifest_action_counts"].items()):
-                lines.append(f"- unowned_jsonl_action {action}: {count}")
-            if jsonl_report.get("reference_scan_enabled"):
-                for status, count in sorted(jsonl_report["candidate_reference_scan_status_counts"].items()):
-                    lines.append(f"- unowned_jsonl_reference_scan {status}: {count}")
-            for item in jsonl_report["reported_files"][:10]:
-                reference_scan = item.get("reference_scan") or {}
-                reference_detail = ""
-                if reference_scan:
-                    reference_detail = (
-                        f" ref_scan={reference_scan.get('status', 'unknown')}"
-                        f" matches={int(reference_scan.get('match_count') or 0)}"
-                    )
-                lines.append(
-                    f"- jsonl {item['relative_path']} "
-                    f"bytes={item['bytes']} class={item['classification']} "
-                    f"action={item['manifest_action']} "
-                    f"blocked_by={item['movement_blocker'] or 'none'}"
-                    f"{reference_detail}"
-                )
-        print("\n".join(lines))
+        print(
+            f"Retention applied to {result.deleted_counts['event_log']} recoverable mirror row(s). "
+            f"Recovery backup verified at {result.backup_path}."
+        )
     return 0
 
 
@@ -8693,85 +8488,6 @@ def handle_harness_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_harness_tool_ledgers(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    ledgers = recent_tool_call_ledgers(
-        state_db,
-        turn_id=getattr(args, "turn_id", None),
-        surface=getattr(args, "surface", None),
-        limit=int(getattr(args, "limit", 20) or 20),
-    )
-    if args.json:
-        print(json.dumps({"count": len(ledgers), "ledgers": ledgers}, indent=2))
-    else:
-        lines = ["Spark harness tool ledgers"]
-        lines.append(f"- count: {len(ledgers)}")
-        for row in ledgers:
-            lines.append(
-                f"- {row.get('ledger_id') or 'unknown'} "
-                f"turn={row.get('turn_id') or 'unknown'} "
-                f"surface={row.get('surface') or 'unknown'} "
-                f"tool={row.get('tool_name') or 'unknown'} "
-                f"status={row.get('status') or 'unknown'}"
-            )
-        print("\n".join(lines))
-    return 0
-
-
-def handle_harness_trace_turn(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    payload = trace_turn(
-        state_db,
-        turn_id=str(getattr(args, "turn_id", "") or ""),
-        limit=int(getattr(args, "limit", 100) or 100),
-    )
-    if args.json:
-        print(json.dumps(payload, indent=2))
-    else:
-        counts = payload["counts"]
-        lines = ["Spark harness turn trace"]
-        lines.append(f"- turn_id: {payload['turn_id']}")
-        lines.append(f"- tool_call_ledgers: {counts['tool_call_ledgers']}")
-        lines.append(f"- builder_events: {counts['builder_events']}")
-        lines.append(f"- event_log: {counts['event_log']}")
-        for row in payload["tool_call_ledgers"]:
-            lines.append(
-                f"- ledger {row.get('ledger_id') or 'unknown'} "
-                f"surface={row.get('surface') or 'unknown'} "
-                f"tool={row.get('tool_name') or 'unknown'} "
-                f"status={row.get('status') or 'unknown'}"
-            )
-        for row in payload["builder_events"]:
-            lines.append(
-                f"- event {row.get('event_id') or 'unknown'} "
-                f"type={row.get('event_type') or 'unknown'} "
-                f"component={row.get('component') or 'unknown'} "
-                f"status={row.get('status') or 'unknown'}"
-            )
-        print("\n".join(lines))
-    return 0
-
-
-def handle_harness_import_cli_ledgers(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    result = import_cli_approval_ledgers(
-        state_db,
-        ledger_dir=Path(str(getattr(args, "ledger_dir", "") or default_cli_approval_ledger_dir())),
-        retention_cap=int(getattr(args, "retention_cap", DEFAULT_CLI_APPROVAL_LEDGER_KEEP_FILES)),
-    )
-    print(result.to_json() if args.json else result.to_text())
-    return 1 if result.errors and result.imported == 0 else 0
-
-
 def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8781,55 +8497,31 @@ def handle_harness_self_evolution_snapshot(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        readiness = payload["readiness_score"]["overall"]
-        run = payload["self_evolution_run"]
-        lines = ["Spark harness self-evolution snapshot"]
-        lines.append("- mode: observe")
-        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
-        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
-        lines.append(f"- evolution: {run['evolution_id']}")
-        lines.append("- commands: observe-only; no commands executed")
-        if payload.get("event_id"):
-            lines.append(f"- event: {payload['event_id']}")
-        print("\n".join(lines))
+        print(
+            "Harness evidence snapshot recorded in observe-only mode. "
+            f"It found {payload['ledger_count']} canonical governed ledger(s); "
+            "execution, promotion, rollback, and publication remain blocked."
+        )
     return 0
 
 
-def handle_harness_change_manifest_runner(args: argparse.Namespace) -> int:
+def handle_harness_change_manifest_review(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    payload = run_harness_change_manifest_runner(
+    payload = review_harness_change_manifests(
         state_db,
         manifest_paths=args.manifest,
-        mode=args.mode,
-        requested_verdict=args.requested_verdict,
-        commands=args.runner_commands,
-        run_tests=bool(args.run_tests),
-        allow_private_promotion=bool(args.allow_private_promotion),
-        cwd=args.cwd,
-        timeout_seconds=args.timeout_seconds,
         limit=args.limit,
-        live_surface_required=bool(args.live_surface_required),
     )
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        readiness = payload["readiness_score"]["overall"]
-        run = payload["self_evolution_run"]
-        decision = run["promotion_decision"]
-        lines = ["Spark harness change-manifest runner"]
-        lines.append(f"- mode: {payload['mode']}")
-        lines.append(f"- manifests: {int(payload.get('manifest_count') or 0)}")
-        lines.append(f"- ledgers: {int(payload.get('ledger_count') or 0)}")
-        lines.append(f"- tests: {'run' if payload.get('run_tests') else 'not run'}")
-        lines.append(f"- readiness: {readiness['status']} ({readiness['score']})")
-        lines.append(f"- decision: {decision['verdict']}")
-        lines.append(f"- evolution: {run['evolution_id']}")
-        if payload.get("event_id"):
-            lines.append(f"- event: {payload['event_id']}")
-        print("\n".join(lines))
+        print(
+            f"Reviewed {payload['manifest_count']} Harness change manifest(s) as proposals only. "
+            "No requested command ran, and no promotion or publication authority was issued."
+        )
     return 0
 
 
@@ -9898,7 +9590,7 @@ def handle_identity_link(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(
-            f"Linked {payload['alias']} Ã¢â€ â€™ {payload['primary']}\n"
+            f"Linked {payload['alias']} -> {payload['primary']}\n"
             f"  human_id: {alias.primary_human_id}\n"
             f"  agent_id: {alias.primary_agent_id}"
         )
@@ -9931,7 +9623,10 @@ def handle_identity_unlink(args: argparse.Namespace) -> int:
         if removed:
             print(f"Unlinked {args.alias}")
         else:
-            print(f"No alias found for {args.alias}")
+            print(
+                f"No alias found for {args.alias}. "
+                f"Run `spark-intelligence identity list` to see registered aliases."
+            )
     return 0 if removed else 1
 
 
@@ -9968,7 +9663,7 @@ def handle_identity_list(args: argparse.Namespace) -> int:
             for a in aliases:
                 print(
                     f"  {a.alias_channel}:{a.alias_external_user}"
-                    f"  Ã¢â€ â€™  {a.primary_channel}:{a.primary_external_user}"
+                    f"  ->  {a.primary_channel}:{a.primary_external_user}"
                 )
                 print(f"      human_id: {a.primary_human_id}")
                 print(f"      agent_id: {a.primary_agent_id}")
@@ -10171,8 +9866,6 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "serve-stdio":
         return handle_gateway_serve_stdio(args)
-    if args.command == "gateway" and args.gateway_command == "ingest-tool-ledger":
-        return handle_gateway_ingest_tool_ledger(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "shadow-telegram":
@@ -10185,6 +9878,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_whatsapp_message(args)
     if args.command == "gateway" and args.gateway_command == "traces":
         return handle_gateway_traces(args)
+    if args.command == "gateway" and args.gateway_command == "redact-traces":
+        return handle_gateway_redact_traces(args)
+    if args.command == "gateway" and args.gateway_command == "repair-proof":
+        return handle_gateway_repair_proof(args)
     if args.command == "gateway" and args.gateway_command == "outbound":
         return handle_gateway_outbound(args)
     if args.command == "channel" and args.channel_command == "add":
@@ -10263,8 +9960,6 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "inspect-capsule":
         return handle_memory_inspect_capsule(args)
-    if args.command == "memory" and args.memory_command == "write-telegram-note":
-        return handle_memory_write_telegram_note(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
@@ -10311,20 +10006,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_list(args)
     if args.command == "jobs" and args.jobs_command == "prune-observability":
         return handle_jobs_prune_observability(args)
-    if args.command == "jobs" and args.jobs_command == "observability-report":
-        return handle_jobs_observability_report(args)
     if args.command == "harness" and args.harness_command == "status":
         return handle_harness_status(args)
-    if args.command == "harness" and args.harness_command == "tool-ledgers":
-        return handle_harness_tool_ledgers(args)
-    if args.command == "harness" and args.harness_command == "trace-turn":
-        return handle_harness_trace_turn(args)
-    if args.command == "harness" and args.harness_command == "import-cli-ledgers":
-        return handle_harness_import_cli_ledgers(args)
     if args.command == "harness" and args.harness_command == "self-evolution-snapshot":
         return handle_harness_self_evolution_snapshot(args)
-    if args.command == "harness" and args.harness_command == "change-manifest-runner":
-        return handle_harness_change_manifest_runner(args)
+    if args.command == "harness" and args.harness_command == "change-manifest-review":
+        return handle_harness_change_manifest_review(args)
     if args.command == "harness" and args.harness_command == "plan":
         return handle_harness_plan(args)
     if args.command == "harness" and args.harness_command == "execute":

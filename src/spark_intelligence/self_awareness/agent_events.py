@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -115,12 +116,14 @@ class BlackBoxEntry:
     changed: list[str]
     memory_candidate: dict[str, Any] | None
     summary: str
+    trace_ref: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "event_type": self.event_type,
             "created_at": self.created_at,
+            "trace_ref": self.trace_ref,
             "perceived_intent": self.perceived_intent,
             "route_chosen": self.route_chosen,
             "sources_used": list(self.sources_used),
@@ -137,12 +140,14 @@ class AgentBlackBoxReport:
     checked_at: str
     request_id: str | None
     entries: list[BlackBoxEntry]
+    session_id: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "schema_version": AGENT_EVENT_SCHEMA_VERSION,
             "checked_at": self.checked_at,
             "request_id": self.request_id,
+            "session_id": self.session_id,
             "counts": {
                 "entries": len(self.entries),
                 "blocker_events": sum(1 for entry in self.entries if entry.blockers),
@@ -168,7 +173,36 @@ def _looks_like_trace_ref(value: str | None) -> bool:
     return normalized.startswith(("trace:", "trace-"))
 
 
-def _infer_trace_ref_from_agent_event(event: AgentEvent, explicit_trace_ref: str | None) -> str | None:
+def _trace_ref_from_request_id(prefix: str, request_id: str | None) -> str | None:
+    normalized = str(request_id or "").strip()
+    if not normalized:
+        return None
+    safe_request = "".join(ch if ch.isalnum() or ch in (":", "-", "_", ".") else "-" for ch in normalized)
+    return f"trace:{prefix}:{safe_request}"
+
+
+def _trace_ref_from_source_metadata(prefix: str, event: AgentEvent) -> str | None:
+    source = next((entry for entry in event.sources if entry.source or entry.role or entry.source_ref), None)
+    if not source:
+        return None
+    seed = "|".join(
+        [
+            event.event_type,
+            str(source.source or "").strip(),
+            str(source.role or "").strip(),
+            str(source.freshness or "").strip(),
+            str(source.source_ref or "").strip(),
+        ]
+    )
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"trace:{prefix}:{digest}"
+
+
+def _infer_trace_ref_from_agent_event(
+    event: AgentEvent,
+    explicit_trace_ref: str | None,
+    request_id: str | None,
+) -> str | None:
     normalized = str(explicit_trace_ref or "").strip()
     if normalized:
         return normalized
@@ -178,6 +212,11 @@ def _infer_trace_ref_from_agent_event(event: AgentEvent, explicit_trace_ref: str
     for source in event.sources:
         if _looks_like_trace_ref(source.source_ref):
             return str(source.source_ref).strip()
+    if event.event_type == "source_used":
+        return _trace_ref_from_request_id("agent-event", request_id) or _trace_ref_from_source_metadata(
+            "agent-event-source",
+            event,
+        )
     return None
 
 
@@ -195,7 +234,7 @@ def record_agent_event(
     parent_event_id: str | None = None,
     correlation_id: str | None = None,
 ) -> str:
-    normalized_trace_ref = _infer_trace_ref_from_agent_event(event, trace_ref)
+    normalized_trace_ref = _infer_trace_ref_from_agent_event(event, trace_ref, request_id)
     return record_event(
         state_db,
         event_type=event.event_type,
@@ -338,10 +377,16 @@ def build_agent_black_box_entries(
     state_db: StateDB,
     *,
     request_id: str | None = None,
+    session_id: str | None = None,
     limit: int = 20,
     external_entries: list[BlackBoxEntry] | None = None,
 ) -> list[BlackBoxEntry]:
-    rows = _recent_agent_event_rows(state_db, request_id=request_id, limit=limit)
+    rows = _recent_agent_event_rows(
+        state_db,
+        request_id=request_id,
+        session_id=session_id,
+        limit=limit,
+    )
     entries = [_black_box_entry_from_row(row) for row in rows]
     entries.extend(external_entries or [])
     entries.sort(key=lambda entry: (entry.created_at or "", entry.event_id), reverse=True)
@@ -352,15 +397,18 @@ def build_agent_black_box_report(
     state_db: StateDB,
     *,
     request_id: str | None = None,
+    session_id: str | None = None,
     limit: int = 20,
     external_entries: list[BlackBoxEntry] | None = None,
 ) -> AgentBlackBoxReport:
     return AgentBlackBoxReport(
         checked_at=utc_now_iso(),
         request_id=request_id,
+        session_id=session_id,
         entries=build_agent_black_box_entries(
             state_db,
             request_id=request_id,
+            session_id=session_id,
             limit=limit,
             external_entries=external_entries,
         ),
@@ -371,6 +419,7 @@ def _recent_agent_event_rows(
     state_db: StateDB,
     *,
     request_id: str | None,
+    session_id: str | None = None,
     limit: int,
 ) -> list[dict[str, Any]]:
     placeholders = ", ".join("?" for _ in AGENT_EVENT_TYPES)
@@ -380,6 +429,9 @@ def _recent_agent_event_rows(
     if request_id:
         where.append("request_id = ?")
         params.append(request_id)
+    if session_id:
+        where.append("session_id = ?")
+        params.append(session_id)
     params.append(max(1, int(limit)))
     with state_db.connect() as conn:
         rows = conn.execute(
@@ -409,6 +461,7 @@ def _black_box_entry_from_row(row: dict[str, Any]) -> BlackBoxEntry:
         changed=_as_text_list(facts.get("changed")),
         memory_candidate=facts.get("memory_candidate") if isinstance(facts.get("memory_candidate"), dict) else None,
         summary=str(row.get("summary") or ""),
+        trace_ref=_as_optional_text(row.get("trace_ref")),
     )
 
 

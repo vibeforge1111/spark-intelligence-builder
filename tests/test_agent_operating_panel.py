@@ -9,6 +9,7 @@ from tests.test_support import SparkTestCase
 
 class AgentOperatingPanelTests(SparkTestCase):
     def test_panel_combines_aoc_black_box_memory_inbox_and_stale_sweep(self) -> None:
+        self.write_trace_repair_system_map()
         record_agent_event(
             self.state_db,
             AgentEvent(
@@ -94,6 +95,8 @@ class AgentOperatingPanelTests(SparkTestCase):
         self.assertIn("Next safe access action: spark access setup", rendered)
         self.assertIn("Sources:", rendered)
         self.assertIn("Trace repair: needs_repair", rendered)
+        self.assertIn("current high severity=0", rendered)
+        self.assertIn("historical high severity=1", rendered)
         self.assertIn("Next safe action: start_or_route_to_writable_spawner_codex_mission", rendered)
         self.assertIn("Memory approvals pending: 1", rendered)
         self.assertIn("Stale context: 1 stale", rendered)

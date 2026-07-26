@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.registry import attachment_status
-from spark_intelligence.attachments.hooks import run_chip_hook, run_first_active_chip_hook
+from spark_intelligence.attachments.hooks import ChipHookExecution, run_chip_hook, run_first_active_chip_hook
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -15,6 +15,35 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip, make_turn_i
 
 
 class AttachmentHookTests(SparkTestCase):
+    @staticmethod
+    def _chip_hook_execution(*, exit_code: int = 0, output: dict[str, object]) -> ChipHookExecution:
+        return ChipHookExecution(
+            chip_key="test-chip",
+            hook="evaluate",
+            repo_root="/redacted/test-chip",
+            command=["python", "hook.py"],
+            exit_code=exit_code,
+            stdout="",
+            stderr="",
+            payload={},
+            output=output,
+        )
+
+    def test_chip_hook_execution_respects_strict_structured_returncode(self) -> None:
+        self.assertFalse(self._chip_hook_execution(output={"returncode": 1}).ok)
+        self.assertFalse(self._chip_hook_execution(output={"returncode": "0"}).ok)
+        self.assertFalse(self._chip_hook_execution(output={"returncode": True}).ok)
+        self.assertTrue(self._chip_hook_execution(output={"result": {}}).ok)
+        self.assertFalse(self._chip_hook_execution(exit_code=1, output={"returncode": 0}).ok)
+        self.assertIn(
+            "output_returncode: 1",
+            self._chip_hook_execution(output={"returncode": 1}).to_text(),
+        )
+        self.assertIn(
+            "output_returncode: invalid",
+            self._chip_hook_execution(output={"returncode": "0"}).to_text(),
+        )
+
     def _governor_decision_for_hook(
         self,
         *,
@@ -80,6 +109,37 @@ class AttachmentHookTests(SparkTestCase):
             ],
         )
 
+    def _browser_turn_intent_vnext(self, *, request_id: str = "req-browser-vnext-test") -> dict[str, object]:
+        from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
+
+        browser_hooks = [
+            "browser.status",
+            "browser.navigate",
+            "browser.tab.wait",
+            "browser.page.dom_extract",
+            "browser.page.interactives.list",
+            "browser.page.text_extract",
+            "browser.page.snapshot",
+        ]
+        return build_vnext_action_intent_envelope(
+            surface="telegram",
+            actor_id_ref="human-1",
+            request_id=request_id,
+            source_kind="test_browser_search_explicit",
+            intent_summary="User explicitly requested browser-grounded source capture.",
+            raw_turn_summary="Raw browser-search turn is offloaded in the fixture.",
+            actions=[
+                {
+                    "tool_name": hook,
+                    "owner_system": "spark-browser",
+                    "mutation_class": "external_network",
+                    "external_network": True,
+                    "args_path": f"builder://browser-test/{hook.replace('.', '-')}",
+                }
+                for hook in browser_hooks
+            ],
+        )
+
     def test_legacy_browser_extension_hooks_are_disabled_at_execution_boundary(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
@@ -94,22 +154,24 @@ class AttachmentHookTests(SparkTestCase):
         self.assertIn("legacy browser extension lane is disabled", str(active.exception))
 
     def test_attachment_status_autodiscovers_generic_spark_chip_repo(self) -> None:
-        desktop_root = self.home / "Desktop"
-        desktop_root.mkdir(parents=True, exist_ok=True)
-        chip_root = create_fake_hook_chip(desktop_root, chip_key="spark-browser")
-        generic_root = desktop_root / "spark-browser-extension"
+        compatibility_root = self.home / ".spark" / "attachments"
+        compatibility_root.mkdir(parents=True, exist_ok=True)
+        chip_root = create_fake_hook_chip(compatibility_root, chip_key="spark-browser")
+        generic_root = compatibility_root / "spark-browser-extension"
         chip_root.rename(generic_root)
 
-        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+        with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch(
+            "spark_intelligence.attachments.registry.Path.home", return_value=self.home
+        ):
             scan = attachment_status(self.config_manager)
 
-        self.assertEqual(scan.chip_source, "autodiscovered")
+        self.assertIn("autodiscovered", scan.chip_source)
         self.assertTrue(any(record.key == "spark-browser" for record in scan.records))
 
     def test_attachment_status_ignores_configured_duplicate_autodiscovery_roots(self) -> None:
-        desktop_root = self.home / "Desktop"
-        canonical_root = desktop_root / "domain-chip-duplicate"
-        compare_root = desktop_root / "domain-chip-duplicate-compare"
+        compatibility_root = self.home / ".spark" / "attachments"
+        canonical_root = compatibility_root / "domain-chip-duplicate"
+        compare_root = compatibility_root / "domain-chip-duplicate-compare"
         canonical_root.mkdir(parents=True, exist_ok=True)
         compare_root.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -123,11 +185,13 @@ class AttachmentHookTests(SparkTestCase):
         (compare_root / "spark-chip.json").write_text(json.dumps(manifest), encoding="utf-8")
         self.config_manager.set_path("spark.chips.ignored_roots", [str(compare_root)])
 
-        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+        with patch.dict("os.environ", {"SPARK_HOME": str(self.home / ".spark")}, clear=False), patch(
+            "spark_intelligence.attachments.registry.Path.home", return_value=self.home
+        ):
             scan = attachment_status(self.config_manager)
 
         duplicate_records = [record for record in scan.records if record.key == "domain-chip-duplicate"]
-        self.assertEqual(scan.chip_source, "autodiscovered")
+        self.assertIn("autodiscovered", scan.chip_source)
         self.assertEqual(len(duplicate_records), 1)
         self.assertEqual(Path(duplicate_records[0].repo_root), canonical_root)
         self.assertFalse(any("duplicate chip key 'domain-chip-duplicate'" in warning for warning in scan.warnings))
@@ -870,9 +934,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertTrue(matching)
         self.assertEqual(matching[0]["facts_json"]["authority_state"], "legacy_present_without_governor")
 
-    def test_researcher_bridge_injects_browser_search_evidence_from_non_active_chip(self) -> None:
-        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
-        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+    def test_researcher_bridge_injects_browser_search_evidence_from_governed_vnext_browser_lane(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
 
         runtime_root = self.home / "fake-researcher"
@@ -913,6 +975,99 @@ class AttachmentHookTests(SparkTestCase):
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run")
 
+        browser_hook_outputs = [
+            (
+                {
+                    "status": "succeeded",
+                    "result": {"extension": {"running": True}},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                        "tab": {"id": "tab-search-1"},
+                        "wait_hint": {
+                            "target": {
+                                "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                                "tab_id": "tab-search-1",
+                            }
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "title": "BTC price search at DuckDuckGo",
+                        "origin": "https://duckduckgo.com/?q=current+BTC+price+in+USD",
+                        "dom_outline": {
+                            "nodes": [
+                                {
+                                    "tag": "a",
+                                    "role": "link",
+                                    "text_summary": "Bitcoin price today, BTC to USD live price, market cap and chart | CoinGecko",
+                                    "href": "https://www.coingecko.com/en/coins/bitcoin",
+                                }
+                            ]
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                        "tab": {"id": "tab-source-1"},
+                        "wait_hint": {
+                            "target": {
+                                "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                                "tab_id": "tab-source-1",
+                            }
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {},
+                },
+                "browser-use",
+            ),
+            (
+                {
+                    "status": "succeeded",
+                    "result": {
+                        "title": "Bitcoin price today | CoinGecko",
+                        "origin": "https://www.coingecko.com/en/coins/bitcoin",
+                        "visible_text": {
+                            "summary": "Bitcoin price today is $84,321.18 USD according to the CoinGecko Bitcoin page.",
+                            "excerpt": "CoinGecko lists the live BTC to USD price and market summary.",
+                            "character_count": 112,
+                            "truncated": False,
+                            "redacted": False,
+                        },
+                    },
+                },
+                "browser-use",
+            ),
+        ]
+
         with patch(
             "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
             return_value=(runtime_root, "configured"),
@@ -938,7 +1093,10 @@ class AttachmentHookTests(SparkTestCase):
                 (),
                 {"provider": provider, "model_family": "generic", "error": None},
             )(),
-        ):
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=browser_hook_outputs,
+        ) as hook_mock:
             result = build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -948,31 +1106,29 @@ class AttachmentHookTests(SparkTestCase):
                 session_id="session-1",
                 channel_kind="telegram",
                 user_message="Search the web and tell me the current BTC price in USD with the source you used.",
-                turn_intent_envelope=make_turn_intent_envelope(
-                    turn_id="turn:browser-fallback",
-                    trace_id="trace:browser-fallback",
-                    owner_system="spark-browser",
-                    action="browser.navigate",
-                    allowed_tools=[
-                        "answer.compose",
-                        "browser.status",
-                        "browser.navigate",
-                        "browser.tab.wait",
-                        "browser.page.dom_extract",
-                        "browser.page.interactives.list",
-                        "browser.page.text_extract",
-                        "browser.page.snapshot",
-                    ],
-                    mutation_classes_allowed=["none", "read_only", "external_network"],
-                    can_mutate_files=False,
-                    can_use_external_network=True,
-                ),
+                turn_intent_envelope_vnext=self._browser_turn_intent_vnext(request_id="req-browser-fallback"),
             )
 
         self.assertIn("Source: https://www.coingecko.com/en/coins/bitcoin", result.reply_text)
         self.assertRegex(str(captured["system_prompt"]), r"Do not (?:say|claim) you cannot browse")
-        self.assertNotIn("[Browser search evidence]", str(captured["user_prompt"]))
-        self.assertIn("spark-browser mode=available router_invokable=no", str(captured["user_prompt"]))
+        self.assertIn("[Browser search evidence]", str(captured["user_prompt"]))
+        self.assertIn("search_query=current BTC price in USD", str(captured["user_prompt"]))
+        self.assertIn("source_url=https://www.coingecko.com/en/coins/bitcoin", str(captured["user_prompt"]))
+        self.assertIn("Bitcoin price today is $84,321.18 USD", str(captured["user_prompt"]))
+        self.assertEqual(
+            [call.kwargs["hook"] for call in hook_mock.call_args_list],
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.dom_extract",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.text_extract",
+            ],
+        )
+        for call in hook_mock.call_args_list:
+            self.assertIsInstance(call.kwargs.get("turn_intent_envelope_vnext"), dict)
 
     def test_researcher_bridge_returns_explicit_browser_permission_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -995,9 +1151,9 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is blocked because the legacy browser extension does not have host access "
-                    "for https://duckduckgo.com. Open the legacy extension popup and grant explicit site "
-                    "access for https://duckduckgo.com, then retry the search."
+                    "Web search is blocked because browser-use does not have host access "
+                    "for https://duckduckgo.com. Grant explicit site access for https://duckduckgo.com, "
+                    "then retry the search."
                 ),
                 "blocked_code": "HOST_PERMISSION_REQUIRED",
             },
@@ -1030,7 +1186,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "browser_permission_required")
         self.assertEqual(result.escalation_hint, "grant_origin_access")
         self.assertIn("does not have host access for https://duckduckgo.com", result.reply_text)
-        self.assertIn("grant explicit site access for https://duckduckgo.com", result.reply_text)
+        self.assertIn("Grant explicit site access for https://duckduckgo.com", result.reply_text)
 
     def test_researcher_bridge_returns_explicit_browser_session_unavailable_block(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -1053,8 +1209,8 @@ class AttachmentHookTests(SparkTestCase):
             return_value={
                 "context": "",
                 "blocked_reply": (
-                    "Web search is currently unavailable because the legacy browser extension live session "
-                    "is disconnected. Reload or reconnect the extension, then retry the search."
+                    "Web search is currently unavailable because the governed browser-use session "
+                    "is disconnected. Reconnect browser-use, then retry the search."
                 ),
                 "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
             },
@@ -1086,4 +1242,4 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(result.mode, "blocked")
         self.assertEqual(result.routing_decision, "browser_unavailable")
         self.assertEqual(result.escalation_hint, "reconnect_browser_session")
-        self.assertIn("live session is disconnected", result.reply_text)
+        self.assertIn("governed browser-use session is disconnected", result.reply_text)

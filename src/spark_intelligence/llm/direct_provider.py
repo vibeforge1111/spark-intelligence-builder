@@ -3,18 +3,26 @@ from __future__ import annotations
 import ipaddress
 import json
 import socket
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
+from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import record_event
+from spark_intelligence.security.https_endpoint import (
+    PinnedHTTPSConnection,
+    ResolvedHTTPSEndpoint,
+    canonical_https_origin,
+    post_https_bytes,
+    resolve_public_https_endpoint,
+)
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
+_MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024
 _BLOCKED_HOSTNAMES = frozenset({
     "localhost",
     "0.0.0.0",
@@ -24,68 +32,49 @@ _BLOCKED_HOSTNAMES = frozenset({
 
 
 def _validate_base_url(url: str) -> None:
-    """Validate that a provider base URL targets a public host over HTTPS.
-
-    Raises RuntimeError if the URL points to a loopback, link-local, private
-    network, or uses an insecure scheme.
-    """
+    """Reject provider URLs that resolve outside the public HTTPS internet."""
     parsed = urllib.parse.urlparse(url)
-
     if parsed.scheme != "https":
         raise RuntimeError(
             f"SSRF policy: provider base URL must use HTTPS, got '{parsed.scheme}': {url}"
         )
-
     hostname = parsed.hostname or ""
     if not hostname:
         raise RuntimeError(f"SSRF policy: provider base URL has no hostname: {url}")
-
-    lower_host = hostname.lower()
-    if lower_host in _BLOCKED_HOSTNAMES:
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
         raise RuntimeError(
             f"SSRF policy: provider base URL targets blocked hostname '{hostname}': {url}"
         )
-
-    # Resolve hostname to IP addresses and check for private/range-bound targets
     try:
         addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror:
         raise RuntimeError(
             f"SSRF policy: provider base URL hostname could not be resolved: {hostname}"
-        )
-
-    for family, _, _, _, sockaddr in addrinfos:
+        ) from None
+    for _, _, _, _, sockaddr in addrinfos:
         ip_str = sockaddr[0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             raise RuntimeError(
                 f"SSRF policy: provider base URL resolved to invalid IP '{ip_str}': {url}"
-            )
+            ) from None
         if _is_private_or_reserved(ip):
             raise RuntimeError(
-                f"SSRF policy: provider base URL resolves to private/reserved IP "
+                "SSRF policy: provider base URL resolves to private/reserved IP "
                 f"'{ip_str}' (hostname: {hostname}): {url}"
             )
 
 
 def _is_private_or_reserved(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Return True if the IP address belongs to a private, loopback, link-local,
-    or other reserved range that should not be reachable from provider configs."""
-    if ip.is_loopback:
-        return True
-    if ip.is_link_local:
-        return True
-    if ip.is_private:
-        return True
-    if ip.is_reserved:
-        return True
-    if ip.is_unspecified:
-        return True
-    if isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local:
-        return True
-    return False
-
+    return bool(
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_reserved
+        or ip.is_unspecified
+        or (isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local)
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +101,10 @@ class DirectProviderGovernance:
     request_id: str | None = None
     trace_ref: str | None = None
     provenance: dict[str, object] | None = None
+
+
+_ResolvedProviderEndpoint = ResolvedHTTPSEndpoint
+_PinnedHTTPSConnection = PinnedHTTPSConnection
 
 
 def execute_direct_provider_prompt(
@@ -165,11 +158,11 @@ def execute_direct_provider_prompt(
             )
         else:
             raise RuntimeError(
-                f"Provider '{provider.provider_id}' uses api_mode '{provider.api_mode}' "
-                f"which requires the researcher bridge wrapper, not direct HTTP execution. "
-                f"Check the provider's execution_transport configuration."
+                "Provider uses an unsupported direct execution mode on this path. "
+                "Use the configured Researcher bridge for non-direct provider execution."
             )
     except Exception as exc:
+        failure_reason = _redact_provider_error(exc, provider)
         _record_provider_execution_event(
             state_db=state_db,
             provider=provider,
@@ -177,9 +170,9 @@ def execute_direct_provider_prompt(
             event_type="dispatch_failed",
             summary=f"Direct provider {provider.provider_id} failed.",
             route_latency_ms=_elapsed_ms(started),
-            failure_reason=_redact_provider_error(exc, provider),
+            failure_reason=failure_reason,
         )
-        raise
+        raise RuntimeError(failure_reason) from None
     _record_provider_execution_event(
         state_db=state_db,
         provider=provider,
@@ -249,7 +242,8 @@ def _redact_provider_error(exc: Exception, provider: DirectProviderRequest) -> s
     message = str(exc)
     if provider.secret_value:
         message = message.replace(provider.secret_value, "[REDACTED]")
-    return message[:240]
+    message = redact_text(message).strip()
+    return (message or "Direct provider execution failed.")[:240]
 
 
 def _execute_chat_completions(
@@ -275,6 +269,7 @@ def _execute_chat_completions(
             "Content-Type": "application/json",
         },
         payload=payload,
+        provider=provider,
     )
     content = _extract_chat_completion_text(response)
     return {
@@ -284,6 +279,14 @@ def _execute_chat_completions(
         "api_mode": provider.api_mode,
         "response": response,
     }
+
+
+# Anthropic prompt-caching: when the system prompt is long enough to be
+# cache-eligible (~1024 tokens, ~4KB), send it as a structured `system`
+# block with cache_control so repeat calls within the 5-minute ephemeral
+# window reuse the cached prefix instead of re-billing it as fresh input
+# tokens. Short prompts retain the existing plain system-field shape.
+_ANTHROPIC_SYSTEM_CACHE_MIN_CHARS = 4096
 
 
 def _execute_anthropic_messages(
@@ -296,13 +299,28 @@ def _execute_anthropic_messages(
     payload: dict[str, object] = {
         "model": provider.model,
         "max_tokens": 1024,
-        "messages": [
+    }
+    stripped_system = system_prompt.strip() if isinstance(system_prompt, str) else ""
+    if stripped_system and len(stripped_system) >= _ANTHROPIC_SYSTEM_CACHE_MIN_CHARS:
+        payload["system"] = [
+            {
+                "type": "text",
+                "text": stripped_system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        payload["messages"] = [
+            {"role": "user", "content": user_prompt.strip()},
+        ]
+    else:
+        payload["messages"] = [
             {
                 "role": "user",
-                "content": _merge_prompts(system_prompt=system_prompt, user_prompt=user_prompt),
+                "content": user_prompt.strip(),
             }
-        ],
-    }
+        ]
+        if stripped_system:
+            payload["system"] = stripped_system
     if tools:
         payload["tools"] = tools
     response = _post_json(
@@ -313,6 +331,7 @@ def _execute_anthropic_messages(
             "Content-Type": "application/json",
         },
         payload=payload,
+        provider=provider,
     )
     content = _extract_anthropic_text(response)
     return {
@@ -324,22 +343,61 @@ def _execute_anthropic_messages(
     }
 
 
-def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
-    _validate_base_url(url)
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
+def _post_json(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, object],
+    provider: DirectProviderRequest,
+) -> dict[str, object]:
+    endpoint = _resolve_provider_endpoint(url, provider=provider)
+    body = json.dumps(payload).encode("utf-8")
+    response_body = post_https_bytes(
+        endpoint,
+        body=body,
         headers=headers,
-        method="POST",
+        timeout_seconds=_REQUEST_TIMEOUT_SECONDS,
+        max_response_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
     )
     try:
-        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Provider HTTP {exc.code}: {body}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Provider network error: {exc.reason}") from exc
+        decoded = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Provider returned an invalid JSON response.") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("Provider returned an invalid JSON response.")
+    return decoded
+
+
+def _resolve_provider_endpoint(
+    url: str,
+    *,
+    provider: DirectProviderRequest,
+) -> _ResolvedProviderEndpoint:
+    expected_origin = _registered_provider_origin(provider=provider)
+    return resolve_public_https_endpoint(
+        url,
+        expected_origin=expected_origin,
+    )
+
+
+def _registered_provider_origin(
+    *,
+    provider: DirectProviderRequest,
+) -> tuple[str, int] | None:
+    if provider.provider_id == "custom":
+        return None
+    try:
+        spec = get_provider_spec(provider.provider_id)
+    except ValueError as exc:
+        raise RuntimeError(
+            "HTTPS endpoint policy rejected the request: the provider identity is not registered."
+        ) from exc
+    if not spec.default_base_url:
+        raise RuntimeError(
+            "HTTPS endpoint policy rejected the request: the provider has no registered direct origin."
+        )
+    return canonical_https_origin(spec.default_base_url)
+
 
 def _chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []

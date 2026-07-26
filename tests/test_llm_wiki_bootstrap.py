@@ -264,6 +264,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(result.payload["status"], "pass")
         self.assertTrue(result.payload["report_written"])
         self.assertTrue((self.home / "artifacts" / "wiki-heartbeat" / "latest.json").exists())
+        self.assertEqual(list((self.home / "artifacts" / "wiki-heartbeat").glob(".*.tmp")), [])
         self.assertTrue(Path(result.payload["report_path"]).exists())
         self.assertEqual(result.payload["summary"]["stale_page_count"], 0)
         self.assertEqual(result.payload["broken_links"]["broken_link_count"], 0)
@@ -396,6 +397,39 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("scope_kind", hit)
         self.assertIn("source_of_truth", hit)
         self.assertEqual(hit["authority"], "supporting_not_authoritative")
+
+    def test_wiki_query_returns_error_payload_for_expected_runtime_failure(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+
+        with patch(
+            "spark_intelligence.llm_wiki.query.hybrid_memory_retrieve",
+            side_effect=RuntimeError("wiki retrieval lock contention"),
+        ):
+            result = build_llm_wiki_query(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="Spark self-awareness contract",
+                limit=3,
+            )
+
+        self.assertEqual(result.payload["wiki_retrieval_status"], "error")
+        self.assertEqual(result.payload["hit_count"], 0)
+        self.assertIn("wiki_query_failed:RuntimeError", result.payload["warnings"])
+
+    def test_wiki_query_lets_programming_faults_propagate(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+
+        with patch(
+            "spark_intelligence.llm_wiki.query.hybrid_memory_retrieve",
+            side_effect=AttributeError("typo in retrieval module"),
+        ):
+            with self.assertRaises(AttributeError):
+                build_llm_wiki_query(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    query="Spark self-awareness contract",
+                    limit=3,
+                )
 
     def test_wiki_query_cli_can_emit_machine_readable_hits(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

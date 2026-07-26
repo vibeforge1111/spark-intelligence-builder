@@ -152,6 +152,46 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "WhatsApp webhook verify token is not configured.")
 
+    def test_unresolved_verify_token_ref_stays_out_of_public_error(self) -> None:
+        verify_token_ref = "INTERNAL_WHATSAPP_VERIFY_TOKEN_REF"
+        self._add_whatsapp_channel(webhook_verify_token=None)
+        self.config_manager.set_path(
+            "channels.records.whatsapp.webhook_verify_token_ref",
+            verify_token_ref,
+        )
+
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="GET",
+            content_type=None,
+            headers={},
+            body=b"",
+            query_params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "whatsapp-verify-token",
+                "hub.challenge": "challenge-code",
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "WhatsApp webhook verify token is not configured.")
+        self.assertNotIn(verify_token_ref, response.body)
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_verification_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertIn(verify_token_ref, traces[0]["reason"])
+
     def test_rejects_missing_signature_header(self) -> None:
         self._add_whatsapp_channel()
         response = handle_whatsapp_webhook(
@@ -180,6 +220,38 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["reason"], "WhatsApp webhook signature header is missing.")
         self.assertEqual(traces[0]["status_code"], 401)
+
+    def test_unresolved_webhook_auth_ref_stays_out_of_public_error(self) -> None:
+        secret_ref = "INTERNAL_WHATSAPP_WEBHOOK_SECRET_REF"
+        self._add_whatsapp_channel(webhook_secret=None)
+        self.config_manager.set_path("channels.records.whatsapp.webhook_auth_ref", secret_ref)
+
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={"X-Hub-Signature-256": "sha256=local-only"},
+            body=b"{}",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "WhatsApp webhook authentication failed.")
+        self.assertNotIn(secret_ref, response.body)
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertIn(secret_ref, traces[0]["reason"])
 
     def test_rejects_invalid_signature_header(self) -> None:
         self._add_whatsapp_channel()
@@ -273,7 +345,9 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         )
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], "wamid-1")
-        self.assertEqual(traces[0]["external_user_id"], "wa-user-1")
+        self.assertNotIn("external_user_id", traces[0])
+        self.assertRegex(traces[0]["external_user_ref"], r"^external_user:sha256:[a-f0-9]{16}$")
+        self.assertNotIn("wa-user-1", json.dumps(traces))
         with self.state_db.connect() as conn:
             run_row = conn.execute(
                 """

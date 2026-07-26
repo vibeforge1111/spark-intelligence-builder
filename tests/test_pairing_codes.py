@@ -3,12 +3,36 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from spark_intelligence.identity.service import consume_pairing_code, issue_pairing_code
+from spark_intelligence.identity.service import _active_pairing_code_rows, consume_pairing_code, issue_pairing_code
 
 from tests.test_support import SparkTestCase
 
 
 class PairingCodeTests(SparkTestCase):
+    def test_malformed_pairing_state_logs_only_the_failure_class(self) -> None:
+        self.add_telegram_channel()
+        secret_state_key = "pairing_code:telegram:secret-row-id"
+        secret_payload = '{"external_user_id":"secret-user"'
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT INTO runtime_state(state_key, value) VALUES (?, ?)",
+                (secret_state_key, secret_payload),
+            )
+            with self.assertLogs("spark_intelligence.identity.service", level="WARNING") as captured:
+                rows = _active_pairing_code_rows(
+                    conn,
+                    channel_id="telegram",
+                    external_user_id="secret-user",
+                    now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+                )
+
+        self.assertEqual(rows, [])
+        rendered = "\n".join(captured.output)
+        self.assertIn("JSONDecodeError", rendered)
+        self.assertNotIn(secret_state_key, rendered)
+        self.assertNotIn(secret_payload, rendered)
+        self.assertNotIn("secret-user", rendered)
+
     def test_issue_pairing_code_uses_unambiguous_short_code_without_plaintext_storage(self) -> None:
         self.add_telegram_channel()
         issued = issue_pairing_code(

@@ -200,14 +200,14 @@ def build_telegram_regression_sample_specs(
     sample_specs: list[dict[str, Any]] = []
     history_by_namespace: dict[str, list[dict[str, Any]]] = {}
     for index, (case, payload) in enumerate(zip(selected_cases, case_payloads), start=1):
-        namespace = str(getattr(case, "case_id", f"case-{index}")) if getattr(case, "isolate_memory", False) else "shared"
+        namespace = str(getattr(case, "case_id", f"case-{index:03d}")) if getattr(case, "isolate_memory", False) else "shared"
         prior_sessions = list(history_by_namespace.get(namespace, []))
         if _is_comparable_case(case=case, payload=payload):
             question_spec = _build_question_spec(case=case, payload=payload, prior_sessions=prior_sessions)
             sample_specs.append(
                 {
                     "benchmark_name": _DEFAULT_BENCHMARK_NAME,
-                    "sample_id": str(getattr(case, "case_id", f"case-{index}")),
+                    "sample_id": str(getattr(case, "case_id", f"case-{index:03d}")),
                     "sessions": prior_sessions,
                     "questions": [question_spec],
                     "metadata": {
@@ -230,16 +230,17 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
 
 
 def _resolve_default_validator_root() -> Path:
-    candidates = [DEFAULT_DOMAIN_CHIP_MEMORY_ROOT]
     env_root = os.environ.get("DOMAIN_CHIP_MEMORY_REPO", "").strip()
     if env_root:
-        candidates.append(Path(env_root))
+        return Path(env_root).expanduser()
+    candidates: list[Path] = []
     for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
         if not entry:
             continue
-        path = Path(entry)
+        path = Path(entry).expanduser()
         if path.name == "src" and path.parent.name == "domain-chip-memory":
             candidates.append(path.parent)
+    candidates.append(DEFAULT_DOMAIN_CHIP_MEMORY_ROOT)
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -259,7 +260,7 @@ def _build_session_spec(*, case: Any, payload: dict[str, Any], index: int, names
     message = str(getattr(case, "message", "") or "").strip()
     user_timestamp = _iso_timestamp(index * 2)
     assistant_timestamp = _iso_timestamp(index * 2 + 1)
-    case_id = str(getattr(case, "case_id", f"case-{index}"))
+    case_id = str(getattr(case, "case_id", f"case-{index:03d}"))
     return {
         "session_id": f"{namespace}:{case_id}",
         "timestamp": user_timestamp,
@@ -782,11 +783,12 @@ def _baseline_row(
             question_text=str(question.get("question") or ""),
             expected_fragments=expected_fragments,
         )
+        predicted_answer_lower = predicted_answer.lower()
         missing_fragments = [
-            fragment for fragment in required_fragments if fragment.lower() not in predicted_answer.lower()
+            fragment for fragment in required_fragments if fragment.lower() not in predicted_answer_lower
         ]
         forbidden_hits = [
-            fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer.lower()
+            fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer_lower
         ]
         abstention_expected = bool(question.get("should_abstain"))
         abstention_respected = abstention_expected and _is_truthful_abstention_answer(predicted_answer) and not forbidden_hits

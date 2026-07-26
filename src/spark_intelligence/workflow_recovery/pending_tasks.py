@@ -230,7 +230,10 @@ def close_pending_task(
 ) -> PendingTaskRecord:
     existing = get_pending_task(state_db, task_key=task_key)
     if existing is None:
-        raise ValueError(f"unknown_pending_task:{task_key}")
+        raise ValueError(
+            f"unknown_pending_task:{task_key} "
+            "(inspect authorized open tasks before retrying)"
+        )
     evidence = dict(existing.evidence)
     evidence["completion_summary"] = completion_summary
     record = upsert_pending_task(
@@ -306,6 +309,7 @@ def latest_pending_tasks(
         placeholders = ", ".join("?" for _ in OPEN_PENDING_TASK_STATUSES)
         clauses.append(f"status IN ({placeholders})")
         params.extend(sorted(OPEN_PENDING_TASK_STATUSES))
+    if open_only:
         clauses.append("closed_at IS NULL")
     if clauses:
         query += " WHERE " + " AND ".join(clauses)

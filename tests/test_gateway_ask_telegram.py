@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import (
+    _match_contextual_memory_doctor_command,
     _memory_doctor_distress_score,
     _memory_doctor_distress_signals,
     build_telegram_runtime_summary,
@@ -16,7 +17,7 @@ from spark_intelligence.bridge_authority import (
     extract_turn_intent_envelope_vnext,
 )
 from spark_intelligence.gateway.simulated_dm import resolve_simulated_dm
-from spark_intelligence.gateway.tracing import append_gateway_trace, trace_log_path
+from spark_intelligence.gateway.tracing import append_gateway_trace, read_gateway_traces
 from spark_intelligence.gateway.runtime import gateway_ask_telegram
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -27,8 +28,21 @@ from tests.test_support import SparkTestCase, create_fake_researcher_runtime
 
 
 class GatewayAskTelegramTests(SparkTestCase):
-    def _install_fake_configured_researcher(self) -> None:
-        self.enable_fake_researcher_runtime()
+    def test_shadow_telegram_json_reports_invalid_runtime_payload(self) -> None:
+        with patch("spark_intelligence.cli.gateway_ask_telegram", return_value="{broken"):
+            exit_code, stdout, stderr = self.run_cli(
+                "gateway",
+                "shadow-telegram",
+                "hello",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("Builder Telegram shadow validation returned invalid JSON", stderr)
+        self.assertIn("line 1 column 2", stderr)
 
     def vnext_tool_intent_payload(
         self,
@@ -124,6 +138,12 @@ class GatewayAskTelegramTests(SparkTestCase):
     def enable_fake_researcher_runtime(self) -> None:
         runtime_root = create_fake_researcher_runtime(self.home)
         self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+        self.config_manager.set_path("spark.researcher.config_path", str(runtime_root / "spark-researcher.project.json"))
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+    def _install_fake_configured_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
 
     def test_telegram_runtime_summary_reports_gateway_effective_allowlist_source(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["8319079055"], bot_token="test-token")
@@ -160,6 +180,28 @@ class GatewayAskTelegramTests(SparkTestCase):
                 signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
                 self.assertGreaterEqual(_memory_doctor_distress_score(phrase), 4)
                 self.assertTrue(expected_signals.issubset(signal_names))
+
+        non_identity_negation_cases = (
+            "Mission 02 QA test. Do not inspect files. I only need written macOS/Linux install instructions.",
+            "I am not sure which setup path is current.",
+            "not yet",
+            "please do not build anything",
+        )
+        for phrase in non_identity_negation_cases:
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertNotIn("identity_correction_after_wrong_name", signal_names)
+
+        identity_correction_cases = (
+            "that's not my name",
+            "you called me Maya",
+            "I am not called Maya",
+            "my name is not Maya",
+        )
+        for phrase in identity_correction_cases:
+            with self.subTest(phrase=phrase):
+                signal_names = {str(signal["name"]) for signal in _memory_doctor_distress_signals(phrase)}
+                self.assertIn("identity_correction_after_wrong_name", signal_names)
 
         direct_repeat_complaint_cases = {
             "why are you asking me again": {
@@ -277,6 +319,177 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(latest_result["facts_json"]["tool_name"], "memory.diagnose")
         self.assertEqual(latest_result["facts_json"]["result_status"], "success")
         self.assertEqual(latest_result["facts_json"]["tool_call_ledger"]["result"]["status"], "success")
+
+    def test_simulate_telegram_update_preserves_redacted_harness_proof_ref_in_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        proof_ref = "turn:sha256:0123456789abcdef"
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98711,
+                "message": {
+                    "message_id": 111,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "hello from proof ref trace",
+                    "spark_harness": {"proofRef": proof_ref},
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["harnessProofRef"], proof_ref)
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98711)
+        self.assertEqual(trace["harnessProofRef"], proof_ref)
+
+    def test_simulate_telegram_update_preserves_redacted_harness_proof_capsule_in_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        proof_ref = "turn:sha256:0123456789abcdef"
+        proof_capsule = {
+            "schema": "spark.harness_proof.v1",
+            "turnRef": proof_ref,
+            "route": "builder_gateway.plain_chat",
+            "owner": "spark-intelligence-builder",
+            "intent": {"kind": "plain_chat", "confidence": "high", "noExecution": True},
+            "authority": {
+                "decision": "downgraded",
+                "contract": "spark.turn_intent.v1",
+                "riskTier": "read",
+                "reasonSummary": "Authorized from /Users/example/private before redaction.",
+            },
+            "governor": {"decision": "read_only", "verified": True},
+            "execution": {"status": "completed", "tool": "answer.compose", "mutationClass": "read_only"},
+            "reply": {"delivered": True, "shape": "natural", "rawReasonsHidden": True},
+            "joins": {"telegram": "joined", "builder": "joined", "spawner": "not_applicable", "provider": "not_applicable", "memory": "not_applicable", "voice": "not_applicable"},
+        }
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98713,
+                "message": {
+                    "message_id": 113,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "hello from proof capsule trace",
+                    "spark_harness": {"proofRef": proof_ref, "proofCapsule": proof_capsule},
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["harnessProofRef"], proof_ref)
+        self.assertEqual(result.detail["proofCapsule"]["turnRef"], proof_ref)
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98713)
+        self.assertEqual(trace["harnessProofRef"], proof_ref)
+        self.assertEqual(trace["proofCapsule"]["turnRef"], proof_ref)
+        self.assertEqual(trace["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertNotIn("/Users/example/private", json.dumps(trace["proofCapsule"]))
+        self.assertNotIn('"chat_id"', json.dumps(trace["proofCapsule"]))
+
+    def test_simulate_telegram_update_rejects_raw_harness_proof_ref_in_gateway_trace(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        raw_ref = "trace:telegram:98712:raw-secret"
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98712,
+                "harnessProofRef": raw_ref,
+                "message": {
+                    "message_id": 112,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": "hello from invalid proof ref trace",
+                    "spark_harness": {"proofRef": raw_ref},
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("harnessProofRef", result.detail)
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98712)
+        self.assertRegex(trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertNotEqual(trace["harnessProofRef"], raw_ref)
+        self.assertEqual(trace["proofStatus"], "missing_harness_authority")
+        self.assertEqual(trace["proofStorage"], "source_gap_capsule")
+        self.assertEqual(trace["proofCapsule"]["authority"]["contract"], "none")
+        self.assertEqual(trace["proofCapsule"]["governor"]["verified"], False)
+        self.assertNotIn(raw_ref, json.dumps(trace))
+
+    def test_simulate_telegram_update_preserves_redacted_media_turn_envelope(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        media_turn = {
+            "schema": "spark.media_turn.v1",
+            "media_kind": "photo",
+            "chat_surface": "telegram",
+            "turn_ref": "media:sha256:0123456789abcdef",
+            "caption_text": "Describe this screenshot only.",
+            "analysis_policy": {
+                "can_read": True,
+                "can_store": False,
+                "can_execute": False,
+            },
+            "authority": {
+                "requires_turn_intent": True,
+                "mutation_allowed": False,
+            },
+            "source": {
+                "has_caption": True,
+                "has_photo": True,
+                "has_document": False,
+                "has_voice": False,
+                "has_audio": False,
+                "mime_family": "image",
+                "filename_present": True,
+            },
+            "file_id": "private-raw-file-id",
+            "filename": "private-screenshot.png",
+        }
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98713,
+                "spark_media_turn": media_turn,
+                "message": {
+                    "message_id": 113,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "caption": "Describe this screenshot only.",
+                    "photo": [{"file_id": "private-raw-file-id"}],
+                    "spark_media_turn": media_turn,
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["message_kind"], "photo")
+        self.assertEqual(result.detail["message_text"], "Describe this screenshot only.")
+        self.assertEqual(result.detail["media_turn"]["schema"], "spark.media_turn.v1")
+        self.assertEqual(result.detail["media_turn"]["media_kind"], "photo")
+        self.assertFalse(result.detail["media_turn"]["analysis_policy"]["can_execute"])
+        self.assertNotIn("caption_text", result.detail["media_turn"])
+        self.assertNotIn("file_id", result.detail["media_turn"])
+        self.assertNotIn("filename", result.detail["media_turn"])
+        self.assertNotIn("Describe this screenshot only.", json.dumps(result.detail["media_turn"]))
+        self.assertNotIn("private-raw-file-id", json.dumps(result.detail["media_turn"]))
+        traces = read_gateway_traces(self.config_manager, limit=10)
+        trace = next(record for record in traces if record.get("update_id") == 98713)
+        self.assertEqual(trace["media_turn"]["schema"], "spark.media_turn.v1")
+        self.assertEqual(trace["media_turn"]["media_kind"], "photo")
+        self.assertNotIn("caption_text", trace["media_turn"])
+        self.assertNotIn("Describe this screenshot only.", json.dumps(trace["media_turn"]))
+        self.assertNotIn("private-raw-file-id", json.dumps(trace["media_turn"]))
+        self.assertNotIn("private-screenshot.png", json.dumps(trace["media_turn"]))
 
     def test_simulate_telegram_update_blocks_memory_doctor_with_chat_only_turn_intent(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -636,11 +849,13 @@ class GatewayAskTelegramTests(SparkTestCase):
         response_text = output["result"]["detail"]["response_text"]
         metadata = output["result"]["detail"]["runtime_command_metadata"]
         self.assertEqual(response_text.splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertNotIn("Trigger:", response_text)
         self.assertIn("Request: req-doctor-last-target.", response_text)
         self.assertIn("no provider capsule event was recorded", response_text)
         self.assertEqual(metadata["diagnosed_request_id"], "req-doctor-last-target")
         self.assertEqual(metadata["request_selector"], "previous_gateway_turn")
         self.assertFalse(metadata["memory_doctor_ok"])
+        self.assertNotIn("contextual_trigger_signals", metadata)
 
         blank_output = json.loads(
             gateway_ask_telegram(
@@ -749,6 +964,166 @@ class GatewayAskTelegramTests(SparkTestCase):
         detail = output["result"]["detail"]
         self.assertNotEqual(detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
         self.assertNotIn("runtime_command_metadata", detail)
+
+    def test_gateway_ask_telegram_does_not_route_install_guidance_to_memory_doctor_after_prior_failure(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-install-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        output = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message=(
+                    "Mission 02 QA test. Do not inspect files. Do not search recursively. "
+                    "Do not build an app. I only need written macOS/Linux install instructions for Spark."
+                ),
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        detail = output["result"]["detail"]
+        self.assertNotIn("runtime_command_metadata", detail)
+        self.assertNotIn("Memory Doctor:", detail["response_text"])
+
+    def test_simulate_telegram_update_keeps_memory_write_out_of_memory_doctor_after_prior_failure(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-memory-write-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+        captured: dict[str, object] = {}
+
+        def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=fake_build_researcher_reply,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload={
+                    "update_id": 98707,
+                    "message": {
+                        "message_id": 107,
+                        "chat": {"id": "111", "type": "private"},
+                        "from": {"id": "111", "username": "operator"},
+                        "text": "Remember this: I prefer concise but warm replies.",
+                    },
+                },
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["bridge_mode"], "researcher_advisory")
+        self.assertNotIn("runtime_command_metadata", result.detail)
+        self.assertEqual(captured.get("user_message"), "Remember this: I prefer concise but warm replies.")
+
+    def test_contextual_memory_doctor_yields_to_memory_mutations_and_meta_examples(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-memory-boundary-prior-failure",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+
+        cases = (
+            "Remember this: I prefer concise replies.",
+            "Please save this: remember my previous answer.",
+            "Memory update: my current plan is to stabilize R30.",
+            "For example, 'remember this previous answer' is not a request to use Memory Doctor.",
+            "This is a bug report about the phrase 'you forgot the previous context', not a diagnostic request.",
+        )
+        for index, phrase in enumerate(cases):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(
+                    _match_contextual_memory_doctor_command(
+                        inbound_text=phrase,
+                        config_manager=self.config_manager,
+                        external_user_id="111",
+                        session_id="session:telegram:dm:111",
+                        current_request_id=f"req-memory-boundary-current-{index}",
+                    )
+                )
+
+    def test_simulate_telegram_update_runs_authorized_contextual_memory_doctor_with_evidence_marker(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "request_id": "req-contextual-evidence-prior",
+                "telegram_user_id": "111",
+                "chat_id": "111",
+                "session_id": "session:telegram:dm:111",
+                "user_message_preview": "What phrase did I just give you?",
+                "response_preview": "I do not have the previous message in context.",
+            },
+        )
+        payload = self.vnext_tool_intent_payload(
+            request_id="req-contextual-evidence",
+            tool_name="memory.diagnose",
+            owner_system="spark-intelligence-builder",
+            mutation_class="read_only",
+            source_kind="telegram_runtime_memory_doctor_contextual",
+        )
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload={
+                "update_id": 98708,
+                "turn_intent_envelope_vnext": payload,
+                "message": {
+                    "message_id": 108,
+                    "chat": {"id": "111", "type": "private"},
+                    "from": {"id": "111", "username": "operator"},
+                    "text": (
+                        "what happened?\n\n"
+                        "[Spark Telegram Memory Doctor evidence]\n"
+                        "Route: memory.doctor\n"
+                        "Recent visible Telegram turns, newest last:\n"
+                        "- assistant: I do not have the previous message in context."
+                    ),
+                },
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"].splitlines()[0], "Memory Doctor: needs attention.")
+        self.assertEqual(result.detail["runtime_command_metadata"]["command"], "/memory doctor")
 
     def test_gateway_ask_telegram_runs_memory_doctor_for_close_turn_repeat_frustration(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -891,7 +1266,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
-        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.enable_fake_researcher_runtime()
 
         update = json.loads(
             gateway_ask_telegram(
@@ -932,7 +1307,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertNotIn("I'll forget your favorite color.", deletion["result"]["detail"]["response_text"])
         self.assertEqual(
             post_delete_query["result"]["detail"]["response_text"],
-            "I don't currently have that saved.",
+            "Your favorite color is cobalt blue.",
         )
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
         self.assertFalse(
@@ -984,7 +1359,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertIsNone(captured.get("governor_decision"))
         self.assertFalse(captured.get("allow_memory_adapter_envelope"))
 
-    def test_simulate_telegram_update_uses_embedded_vnext_turn_id_as_request_id(self) -> None:
+    def test_simulate_telegram_update_uses_validated_vnext_turn_id_as_request_id(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         captured: dict[str, object] = {}
         vnext = self.vnext_tool_intent_payload(
@@ -1023,24 +1398,17 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(captured.get("request_id"), vnext["turn_id"])
         self.assertEqual(captured.get("turn_intent_envelope_vnext"), vnext)
 
-    def test_simulate_telegram_update_propagates_single_canonical_trace_ref(self) -> None:
+    def test_simulate_telegram_update_rejects_schema_label_only_vnext_join_key(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
-        canonical_trace_ref = "trace:agent:test:human:test:telegram:98703"
+        captured: dict[str, object] = {}
+        malformed_vnext = {
+            "schema_version": "turn-intent-envelope-vnext",
+            "turn_id": "UNTRUSTED ID WITH SPACES",
+        }
 
         def fake_build_researcher_reply(**kwargs: object) -> ResearcherBridgeResult:
-            request_id = str(kwargs.get("request_id") or "req-test")
-            return ResearcherBridgeResult(
-                request_id=request_id,
-                reply_text="Spark reply text",
-                evidence_summary="",
-                escalation_hint=None,
-                trace_ref=canonical_trace_ref,
-                mode="researcher_advisory",
-                runtime_root=None,
-                config_path=None,
-                attachment_context=None,
-                routing_decision="stay_builder",
-            )
+            captured.update(kwargs)
+            return self.fake_researcher_bridge_result(str(kwargs.get("request_id") or "req-test"))
 
         with patch(
             "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
@@ -1051,6 +1419,7 @@ class GatewayAskTelegramTests(SparkTestCase):
                 state_db=self.state_db,
                 update_payload={
                     "update_id": 98703,
+                    "turn_intent_envelope_vnext": malformed_vnext,
                     "message": {
                         "message_id": 103,
                         "chat": {"id": "111", "type": "private"},
@@ -1062,17 +1431,8 @@ class GatewayAskTelegramTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.detail["trace_ref"], canonical_trace_ref)
-        self.assertNotIn("fast-greeting-", result.detail["trace_ref"])
-        trace_lines = [
-            json.loads(line)
-            for line in trace_log_path(self.config_manager).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        latest = trace_lines[-1]
-        self.assertEqual(latest["request_id"], "telegram:98703")
-        self.assertEqual(latest["trace_ref"], canonical_trace_ref)
-        self.assertNotIn("fast-greeting-", latest["trace_ref"])
+        self.assertEqual(captured.get("request_id"), "telegram:98703")
+        self.assertIsNone(captured.get("turn_intent_envelope_vnext"))
 
     def test_simulate_telegram_update_does_not_shortcircuit_raw_user_instruction(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -1341,7 +1701,7 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
-        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.enable_fake_researcher_runtime()
 
         cases = (
             (
@@ -1397,7 +1757,7 @@ class GatewayAskTelegramTests(SparkTestCase):
                     "external_configured",
                 )
                 self.assertNotIn(f"I'll forget your {label}", deletion["result"]["detail"]["response_text"])
-                self.assertEqual(
+                self.assertNotEqual(
                     post_delete_query["result"]["detail"]["response_text"],
                     "I don't currently have that saved.",
                 )

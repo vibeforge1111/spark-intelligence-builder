@@ -525,6 +525,37 @@ class MemoryArchitectureSoakTests(SparkTestCase):
                     run_timeout_seconds=30,
                 )
 
+    def test_run_regression_subprocess_preserves_typed_timeout_semantics(self) -> None:
+        with patch(
+            "spark_intelligence.memory.architecture_soak.run_governed_command",
+            return_value=SimpleNamespace(
+                timed_out=True,
+                timeout_seconds=30.0,
+                exit_code=124,
+                stdout="",
+                stderr="Governed command timed out after 30 seconds.",
+            ),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "regression_subprocess_timeout:core_profile_baseline:30s"):
+                from spark_intelligence.memory.architecture_soak import _BenchmarkRunSpec, _run_regression_subprocess
+
+                _run_regression_subprocess(
+                    config_manager=self.config_manager,
+                    run_spec=_BenchmarkRunSpec(
+                        pack_id="core_profile_baseline",
+                        title="Core Profile Baseline",
+                        description="",
+                    ),
+                    output_dir=self.home / "artifacts" / "architecture-soak-typed-timeout",
+                    user_id="telegram-user",
+                    username="memory-soak",
+                    chat_id="telegram-chat",
+                    kb_limit=25,
+                    validator_root=None,
+                    baseline_names=["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    run_timeout_seconds=30,
+                )
+
     def test_default_benchmark_pack_suite_grows_beyond_original_nine_packs(self) -> None:
         packs = default_telegram_memory_benchmark_packs()
 

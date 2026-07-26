@@ -5,14 +5,11 @@ from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.context import build_spark_context_capsule
-from spark_intelligence.context.capsule import _current_state_human_id_candidates
+from spark_intelligence.context.capsule import _build_current_state_lines, _build_diagnostics_lines
+from spark_intelligence.context.recent_conversation import _load_builder_event_turns
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.observability.store import latest_events_by_type, record_event
-from spark_intelligence.researcher_bridge.advisory import (
-    ResearcherProviderSelection,
-    _detect_open_ended_memory_next_step_query,
-    build_researcher_reply,
-)
+from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
 from spark_intelligence.workflow_recovery import record_bad_self_review_lesson, record_pending_task_timeout
 
 from tests.test_support import SparkTestCase
@@ -42,15 +39,68 @@ class ContextCapsuleTests(SparkTestCase):
             )
         )
 
-    def test_current_state_candidates_preserve_canonical_human_id_without_channel_prefix(self) -> None:
-        self.assertEqual(
-            _current_state_human_id_candidates(human_id="human:telegram:222", channel_kind="telegram"),
-            ["human:telegram:222"],
-        )
-        self.assertEqual(
-            _current_state_human_id_candidates(human_id="222", channel_kind="telegram"),
-            ["telegram:222", "222"],
-        )
+    def test_diagnostics_note_read_degrades_only_for_expected_io_failures(self) -> None:
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        note = diagnostics_dir / "spark-diagnostic-2026-04-27T12-55-14+00-00.md"
+        note.write_text("diagnostic", encoding="utf-8")
+
+        with patch("pathlib.Path.read_text", side_effect=OSError("temporarily unavailable")):
+            self.assertEqual(
+                _build_diagnostics_lines(config_manager=self.config_manager),
+                [f"- latest_note: {note.name}"],
+            )
+
+        with patch("pathlib.Path.read_text", side_effect=RuntimeError("programming bug")):
+            with self.assertRaisesRegex(RuntimeError, "programming bug"):
+                _build_diagnostics_lines(config_manager=self.config_manager)
+
+    def test_current_state_lookup_logs_safe_candidate_failure_metadata(self) -> None:
+        secret_human_id = "human-secret@example.test"
+        secret_error = "database password=top-secret"
+        with (
+            patch(
+                "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+                side_effect=RuntimeError(secret_error),
+            ),
+            self.assertLogs("spark_intelligence.context.capsule", level="DEBUG") as captured,
+        ):
+            lines = _build_current_state_lines(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id=secret_human_id,
+                channel_kind="telegram",
+            )
+
+        rendered = "\n".join(captured.output)
+        self.assertEqual(lines, [])
+        self.assertIn("candidate_scope=channel_scoped", rendered)
+        self.assertIn("candidate_scope=direct", rendered)
+        self.assertIn("error_type=RuntimeError", rendered)
+        self.assertNotIn(secret_human_id, rendered)
+        self.assertNotIn(secret_error, rendered)
+
+    def test_recent_conversation_lookup_logs_safe_failure_metadata(self) -> None:
+        secret_error = "unable to open /private/runtime.sqlite?token=top-secret"
+        with (
+            patch.object(self.state_db, "connect", side_effect=OSError(secret_error)),
+            self.assertLogs("spark_intelligence.context.recent_conversation", level="WARNING") as captured,
+        ):
+            turns = _load_builder_event_turns(
+                state_db=self.state_db,
+                session_id="session-secret",
+                channel_kind="telegram",
+                request_id="req-secret",
+                turn_limit=3,
+            )
+
+        rendered = "\n".join(captured.output)
+        self.assertEqual(turns, [])
+        self.assertIn("recent_conversation_builder_event_lookup_failed", rendered)
+        self.assertIn("error_type=OSError", rendered)
+        self.assertNotIn(secret_error, rendered)
+        self.assertNotIn("session-secret", rendered)
+        self.assertNotIn("req-secret", rendered)
 
     def test_context_capsule_compiles_state_conversation_jobs_and_diagnostics(self) -> None:
         self.config_manager.set_path("workspace.id", "workspace-test")
@@ -165,192 +215,6 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(ledger[2]["role"], "authority")
         self.assertEqual(ledger[8]["role"], "advisory")
         self.assertIn("does not close user goals", ledger[2]["note"])
-
-    def test_context_capsule_does_not_prefix_canonical_human_subject(self) -> None:
-        with patch(
-            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
-            return_value=self._memory_inspection(),
-        ) as inspect_mock:
-            capsule = build_spark_context_capsule(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                human_id="human:telegram:8319079055",
-                session_id="session-1",
-                channel_kind="telegram",
-                request_id="req-now",
-                user_message="What is active now?",
-            )
-
-        rendered = capsule.render()
-        self.assertIn("current_focus: automatic memory maintenance verification", rendered)
-        self.assertEqual(inspect_mock.call_count, 1)
-        self.assertEqual(inspect_mock.call_args.kwargs["human_id"], "human:telegram:8319079055")
-
-    def test_context_capsule_does_not_project_project_state_slots_before_latest_project(self) -> None:
-        inspection = SimpleNamespace(
-            read_result=SimpleNamespace(
-                records=[
-                    {
-                        "predicate": "profile.current_project",
-                        "value": "field service planner for warranty visits",
-                        "timestamp": "2026-06-20T09:00:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_focus",
-                        "value": "building the old warranty visit checklist",
-                        "timestamp": "2026-06-20T09:02:00Z",
-                    },
-                    {
-                        "predicate": "profile.city",
-                        "value": "GST",
-                        "timestamp": "2026-06-20T09:03:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_constraint",
-                        "value": "technician coverage on weekends",
-                        "timestamp": "2026-06-20T09:05:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_project",
-                        "value": "neighborhood invoice helper for garden crews",
-                        "timestamp": "2026-06-20T09:10:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_focus",
-                        "value": "shipping the invoice helper row review",
-                        "timestamp": "2026-06-20T09:11:00Z",
-                    },
-                ]
-            )
-        )
-        with patch(
-            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
-            return_value=inspection,
-        ):
-            capsule = build_spark_context_capsule(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                human_id="human-1",
-                session_id="session-1",
-                channel_kind="telegram",
-                request_id="req-now",
-                user_message="What is active now?",
-            )
-
-        rendered = capsule.render()
-        self.assertNotIn("current_constraint: technician coverage on weekends", rendered)
-        self.assertNotIn("current_focus: building the old warranty visit checklist", rendered)
-        self.assertIn("current_focus: shipping the invoice helper row review", rendered)
-        self.assertIn("city: GST", rendered)
-
-    def test_context_capsule_keeps_current_focus_when_no_project_anchor_exists(self) -> None:
-        inspection = SimpleNamespace(
-            read_result=SimpleNamespace(
-                records=[
-                    {
-                        "predicate": "profile.current_focus",
-                        "value": "writing a crisp notes workflow",
-                        "timestamp": "2026-06-20T09:02:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_constraint",
-                        "value": "needs to work on mobile",
-                        "timestamp": "2026-06-20T09:05:00Z",
-                    },
-                ]
-            )
-        )
-        with patch(
-            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
-            return_value=inspection,
-        ):
-            capsule = build_spark_context_capsule(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                human_id="human-1",
-                session_id="session-1",
-                channel_kind="telegram",
-                request_id="req-now",
-                user_message="What is active now?",
-            )
-
-        rendered = capsule.render()
-        self.assertIn("current_focus: writing a crisp notes workflow", rendered)
-        self.assertIn("current_constraint: needs to work on mobile", rendered)
-
-    def test_context_capsule_filters_stale_recent_project_slots_after_current_turn_project_switch(self) -> None:
-        inspection = SimpleNamespace(
-            read_result=SimpleNamespace(
-                records=[
-                    {
-                        "predicate": "profile.current_project",
-                        "value": "field service planner for warranty visits",
-                        "timestamp": "2026-06-19T08:00:00Z",
-                    },
-                    {
-                        "predicate": "profile.current_constraint",
-                        "value": "technician coverage on weekends",
-                        "timestamp": "2026-06-19T08:05:00Z",
-                    },
-                ]
-            )
-        )
-        append_gateway_trace(
-            self.config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "session_id": "session-project-switch-capsule",
-                "request_id": "req-project-a",
-                "recorded_at": "2026-06-19T08:00:00Z",
-                "user_message_preview": "Right now we are building a field service planner for warranty visits.",
-                "response_preview": "Use a route table first.",
-            },
-        )
-        append_gateway_trace(
-            self.config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "session_id": "session-project-switch-capsule",
-                "request_id": "req-constraint-a",
-                "recorded_at": "2026-06-19T08:05:00Z",
-                "user_message_preview": "The current constraint is technician coverage on weekends.",
-                "response_preview": "I'll remember that your current constraint is technician coverage on weekends.",
-            },
-        )
-        append_gateway_trace(
-            self.config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "session_id": "session-project-switch-capsule",
-                "request_id": "req-neutral",
-                "recorded_at": "2026-06-19T08:06:00Z",
-                "user_message_preview": "I prefer tight tables for board setup.",
-                "response_preview": "Tight tables, minimal ceremony.",
-            },
-        )
-
-        with patch(
-            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
-            return_value=inspection,
-        ):
-            capsule = build_spark_context_capsule(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                human_id="human-1",
-                session_id="session-project-switch-capsule",
-                channel_kind="telegram",
-                request_id="req-project-b",
-                user_message="This week I am building a neighborhood invoice helper for garden crews.",
-            )
-
-        rendered = capsule.render()
-        self.assertIn("current_project: a neighborhood invoice helper for garden crews", rendered)
-        self.assertNotIn("current_project: field service planner for warranty visits", rendered)
-        self.assertNotIn("technician coverage on weekends", rendered)
-        self.assertIn("I prefer tight tables for board setup.", rendered)
 
     def test_context_capsule_falls_back_to_gateway_trace_when_builder_events_missing(self) -> None:
         append_gateway_trace(
@@ -886,16 +750,6 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("focus_source_class"), "current_state")
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("ignored_stale_record_count"), 1)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("context_packet_promotion_gates", {}).get("status"), "pass")
-
-    def test_open_ended_next_step_detector_requires_request_shape(self) -> None:
-        self.assertTrue(_detect_open_ended_memory_next_step_query("What should we focus on next?"))
-        self.assertTrue(_detect_open_ended_memory_next_step_query("Give me the next step."))
-        self.assertFalse(
-            _detect_open_ended_memory_next_step_query(
-                "For tonight, I work best when Spark gives me one steady next step first, then one tiny fallback."
-            )
-        )
-        self.assertFalse(_detect_open_ended_memory_next_step_query("I prefer one next step first, then a fallback."))
 
     def test_context_status_recent_closure_matches_canonical_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

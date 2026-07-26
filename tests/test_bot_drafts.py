@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from spark_intelligence.bot_drafts import (
+    BOT_DRAFT_OWNER_SYSTEM,
+    BOT_DRAFT_WRITE_TOOL,
     detect_generative_intent,
     detect_iteration_intent,
     find_draft_for_iteration,
@@ -10,8 +12,43 @@ from spark_intelligence.bot_drafts import (
     save_draft,
     update_draft_content,
 )
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
+from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 
 from tests.test_support import SparkTestCase
+
+
+def _draft_write_governor(case: SparkTestCase, *, user: str = "u1") -> dict:
+    payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=f"human:{user}",
+        request_id=f"bot-draft-write-{user}",
+        source_kind="bot_drafts_test_write",
+        tool_name=BOT_DRAFT_WRITE_TOOL,
+        owner_system=BOT_DRAFT_OWNER_SYSTEM,
+        mutation_class="writes_memory",
+        intent_summary="Fresh test turn authorizes bot draft capture.",
+        raw_turn_summary="Bot draft test turn remains offloaded.",
+        confidence=0.95,
+    )
+    case.assertIsNotNone(payload)
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": payload},
+        tool_name=BOT_DRAFT_WRITE_TOOL,
+        owner_system=BOT_DRAFT_OWNER_SYSTEM,
+        mutation_class="writes_memory",
+        state_db=case.state_db,
+        request_id=f"bot-draft-write-{user}",
+        channel_id="telegram",
+        session_id=f"session:{user}",
+        human_id=f"human:{user}",
+        agent_id="agent:test",
+        actor_id="test",
+        component="bot_drafts_test",
+    )
+    case.assertTrue(authority.allowed, authority.reason_codes)
+    case.assertIsInstance(authority.governor_decision, dict)
+    return authority.governor_decision
 
 
 class DetectGenerativeIntentTests(SparkTestCase):
@@ -133,6 +170,7 @@ class SaveDraftNoLengthGateTests(SparkTestCase):
             external_user_id="u1",
             channel_kind="telegram",
             content="Short tweet draft.",
+            governor_decision=_draft_write_governor(self),
         )
         self.assertIsNotNone(draft)
         assert draft is not None
@@ -153,12 +191,14 @@ class SaveDraftNoLengthGateTests(SparkTestCase):
             external_user_id="u1",
             channel_kind="telegram",
             content="first draft",
+            governor_decision=_draft_write_governor(self),
         )
         save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="second draft",
+            governor_decision=_draft_write_governor(self),
         )
         drafts = list_recent_drafts(
             self.state_db,
@@ -176,6 +216,7 @@ class IterationRoundTripTests(SparkTestCase):
             external_user_id="u1",
             channel_kind="telegram",
             content="Hook about Mars survival game mechanics.",
+            governor_decision=_draft_write_governor(self),
         )
         assert first is not None
         source = find_draft_for_iteration(
@@ -194,12 +235,14 @@ class IterationRoundTripTests(SparkTestCase):
             external_user_id="u1",
             channel_kind="telegram",
             content="v1 text",
+            governor_decision=_draft_write_governor(self),
         )
         assert draft is not None
         ok = update_draft_content(
             self.state_db,
             draft_id=draft.draft_id,
             content="v2 tighter text",
+            governor_decision=_draft_write_governor(self),
         )
         self.assertTrue(ok)
         drafts = list_recent_drafts(
@@ -212,11 +255,13 @@ class IterationRoundTripTests(SparkTestCase):
         self.assertEqual(drafts[0].draft_id, draft.draft_id)
 
     def test_update_preserves_created_at_and_sets_updated_at(self) -> None:
+        governor = _draft_write_governor(self)
         draft = save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="v1 text",
+            governor_decision=governor,
         )
         assert draft is not None
         original_created_at = "2026-03-01T10:00:00+00:00"
@@ -230,6 +275,7 @@ class IterationRoundTripTests(SparkTestCase):
             self.state_db,
             draft_id=draft.draft_id,
             content="v2 tighter text",
+            governor_decision=governor,
         )
         self.assertTrue(ok)
 
@@ -244,17 +290,20 @@ class IterationRoundTripTests(SparkTestCase):
         self.assertNotEqual(row["updated_at"], original_created_at)
 
     def test_recent_draft_order_uses_updated_at_without_rewriting_created_at(self) -> None:
+        governor = _draft_write_governor(self)
         first = save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="old draft now revised",
+            governor_decision=governor,
         )
         second = save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="newer draft untouched",
+            governor_decision=governor,
         )
         assert first is not None
         assert second is not None
@@ -275,6 +324,7 @@ class IterationRoundTripTests(SparkTestCase):
                 self.state_db,
                 draft_id=first.draft_id,
                 content="old draft now revised with sharper wording",
+                governor_decision=governor,
             )
         )
 
@@ -295,17 +345,20 @@ class IterationRoundTripTests(SparkTestCase):
         self.assertGreater(row["updated_at"], second_created_at)
 
     def test_prune_aged_drafts_deletes_only_rows_older_than_cutoff(self) -> None:
+        governor = _draft_write_governor(self)
         old = save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="old draft",
+            governor_decision=governor,
         )
         current = save_draft(
             self.state_db,
             external_user_id="u1",
             channel_kind="telegram",
             content="current draft",
+            governor_decision=governor,
         )
         assert old is not None
         assert current is not None

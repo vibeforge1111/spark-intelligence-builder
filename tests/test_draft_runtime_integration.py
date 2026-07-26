@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from spark_intelligence.adapters.telegram.runtime import (
+    _looks_like_memory_forget_request,
     _looks_like_prompt_injection_instruction,
     _maybe_capture_user_instruction,
     _maybe_save_reply_as_draft,
@@ -31,6 +32,13 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
     USER = "tg-test-001"
     CHANNEL = "telegram"
 
+    def test_memory_forget_detection_requires_complete_memory_terms(self) -> None:
+        self.assertTrue(_looks_like_memory_forget_request("Delete my saved memories."))
+        self.assertTrue(_looks_like_memory_forget_request("Remove that profile fact."))
+        self.assertTrue(_looks_like_memory_forget_request("Erase my active current profile."))
+        self.assertFalse(_looks_like_memory_forget_request("Delete the memoryless optimization notes."))
+        self.assertFalse(_looks_like_memory_forget_request("Remove the profile factuality example."))
+
     def _drafts(self) -> list:
         return list_recent_drafts(
             self.state_db,
@@ -46,8 +54,8 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
             actor_id_ref=f"user:{self.USER}",
             request_id=f"draft-{request_slug[:64]}",
             source_kind="draft_runtime_test",
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
+            tool_name="bot_draft.write",
+            owner_system="spark-intelligence-builder",
             mutation_class="writes_memory",
             intent_summary="Fresh Telegram turn authorizes draft-state capture.",
             raw_turn_summary="Draft runtime integration test turn remains offloaded.",

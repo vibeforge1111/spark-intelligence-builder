@@ -11,6 +11,9 @@ from spark_intelligence.intent_boundary import denies_intent, has_conversation_o
 from spark_intelligence.state.db import StateDB
 
 
+_INSTRUCTION_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
 USER_INSTRUCTION_WRITE_TOOL = "user_instruction.write"
 USER_INSTRUCTION_ARCHIVE_TOOL = "user_instruction.archive"
 USER_INSTRUCTION_OWNER_SYSTEM = "spark-intelligence-builder"
@@ -53,7 +56,11 @@ _REMEMBER_PREFIXES = (
 )
 
 _INLINE_DIRECTIVE = re.compile(
-    r"\b(?:please\s+)?(?P<directive>always|never|stop)\s+(?P<body>[^.\n]{4,200})",
+    r"(?:^|(?<=[.!?]\s))"
+    r"(?:(?:please\s+)|(?:(?:could|can|would|will)\s+you\s+)"
+    r"|(?:i\s+(?:want|need)\s+you\s+to\s+))?"
+    r"(?P<directive>always|never|stop)\s+"
+    r"(?P<body>[^\n.!?]{4,200}?)(?=[.!?](?:\s|$)|$)",
     re.IGNORECASE,
 )
 
@@ -220,12 +227,12 @@ def matching_instructions_to_archive(
         channel_kind=channel_kind,
         limit=200,
     )
-    needle_tokens = set(re.findall(r"[a-z0-9]+", needle_norm))
+    needle_tokens = set(_INSTRUCTION_TOKEN_PATTERN.findall(needle_norm))
     if not needle_tokens:
         return []
     scored: list[tuple[int, UserInstruction]] = []
     for inst in candidates:
-        text_tokens = set(re.findall(r"[a-z0-9]+", inst.instruction_text.lower()))
+        text_tokens = set(_INSTRUCTION_TOKEN_PATTERN.findall(inst.instruction_text.lower()))
         overlap = len(needle_tokens & text_tokens)
         if overlap == 0:
             continue

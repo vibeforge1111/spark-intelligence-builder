@@ -5,22 +5,57 @@ import hashlib
 import json
 import os
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, get_oauth_callback_state, issue_oauth_callback_state
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
+from spark_intelligence.auth.token_crypto import (
+    decrypt_token,
+    encrypt_token,
+    validate_oauth_token_store_for_write,
+)
 from spark_intelligence.config.loader import ConfigManager
-import logging
-
+from spark_intelligence.security.https_endpoint import (
+    post_https_bytes,
+    resolve_public_https_endpoint,
+)
 from spark_intelligence.state.db import StateDB
-
-logger = logging.getLogger(__name__)
 
 
 DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS = 600
+_OAUTH_REQUEST_TIMEOUT_SECONDS = 20
+_MAX_OAUTH_RESPONSE_BYTES = 1024 * 1024
+
+
+def _read_oauth_token_response(
+    token_url: str,
+    *,
+    body: bytes,
+    failure_label: str,
+) -> dict[str, object]:
+    try:
+        endpoint = resolve_public_https_endpoint(token_url)
+        raw_payload = post_https_bytes(
+            endpoint,
+            body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout_seconds=_OAUTH_REQUEST_TIMEOUT_SECONDS,
+            max_response_bytes=_MAX_OAUTH_RESPONSE_BYTES,
+        )
+    except (OSError, RuntimeError):
+        raise RuntimeError(
+            f"{failure_label} failed safely. "
+            "Check network connectivity and the provider OAuth configuration, then retry."
+        ) from None
+    try:
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise RuntimeError(f"{failure_label} returned an invalid response.") from None
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{failure_label} returned an invalid response.")
+    return payload
 
 
 @dataclass(frozen=True)
@@ -169,6 +204,8 @@ def connect_provider(
     if api_key:
         config_manager.upsert_env_secret(env_key, api_key)
 
+    env_map = config_manager.read_env_map()
+    profile_status = "active" if env_map.get(env_key) else "pending_secret"
     config.setdefault("providers", {}).setdefault("records", {})
     config["providers"]["records"][provider] = {
         "provider_kind": spec.provider_kind,
@@ -177,8 +214,6 @@ def connect_provider(
         "api_key_env": env_key,
         "default_auth_profile_id": profile_id,
     }
-    env_map = config_manager.read_env_map()
-    profile_status = "active" if env_map.get(env_key) else "pending_secret"
     if not config["providers"].get("default_provider") and profile_status == "active":
         config["providers"]["default_provider"] = provider
     config_manager.save(
@@ -302,7 +337,7 @@ def complete_oauth_login(
     if not spec.supports_oauth_login or not spec.oauth:
         raise ValueError(f"Provider '{provider}' does not support OAuth login.")
 
-    parsed = urllib.parse.urlparse(callback_url)
+    parsed = _parse_oauth_callback_url(callback_url)
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     state = _required_query_value(query, "state")
     callback_error = _oauth_callback_error(query)
@@ -373,7 +408,7 @@ def complete_oauth_login_from_callback_url(
     callback_url: str,
     expected_provider: str | None = None,
 ) -> OAuthLoginResult:
-    parsed = urllib.parse.urlparse(callback_url)
+    parsed = _parse_oauth_callback_url(callback_url)
     query = urllib.parse.parse_qs(parsed.query)
     state = _required_query_value(query, "state")
     oauth_state = get_oauth_callback_state(
@@ -414,8 +449,8 @@ def logout_provider(
             """
             UPDATE oauth_credentials
             SET
-                access_token = NULL,
-                refresh_token = NULL,
+                access_token_ciphertext = NULL,
+                refresh_token_ciphertext = NULL,
                 access_expires_at = NULL,
                 refresh_expires_at = NULL,
                 status = 'revoked',
@@ -476,14 +511,18 @@ def refresh_provider(
     with state_db.connect() as conn:
         row = conn.execute(
             """
-            SELECT refresh_token
+            SELECT refresh_token_ciphertext
             FROM oauth_credentials
             WHERE auth_profile_id = ?
             LIMIT 1
             """,
             (auth_profile_id,),
         ).fetchone()
-    refresh_token = str(row["refresh_token"]) if row and row["refresh_token"] else ""
+    refresh_token = (
+        decrypt_token(state_db.path.parent, str(row["refresh_token_ciphertext"]))
+        if row and row["refresh_token_ciphertext"]
+        else ""
+    )
     if not refresh_token:
         _mark_oauth_refresh_failure(
             state_db=state_db,
@@ -583,7 +622,7 @@ def run_oauth_refresh_maintenance(
                 ap.auth_profile_id,
                 oc.access_expires_at,
                 oc.refresh_expires_at,
-                oc.refresh_token
+                oc.refresh_token_ciphertext
             FROM auth_profiles ap
             JOIN oauth_credentials oc ON oc.auth_profile_id = ap.auth_profile_id
             WHERE ap.auth_method = 'oauth'
@@ -602,7 +641,7 @@ def run_oauth_refresh_maintenance(
             skipped.append(f"{provider_id}:not_due")
             continue
         due += 1
-        if not row["refresh_token"]:
+        if not row["refresh_token_ciphertext"]:
             skipped.append(f"{provider_id}:missing_refresh_token")
             continue
         if _timestamp_expired(row["refresh_expires_at"]):
@@ -657,14 +696,11 @@ def exchange_oauth_authorization_code(
             "code_verifier": code_verifier,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
+    payload = _read_oauth_token_response(
         spec.oauth.token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+        body=data,
+        failure_label=f"OAuth token exchange for '{provider}'",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
     return payload
@@ -685,14 +721,11 @@ def exchange_oauth_refresh_token(
             "client_id": spec.oauth.client_id,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
+    payload = _read_oauth_token_response(
         spec.oauth.token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+        body=data,
+        failure_label=f"OAuth refresh for '{provider}'",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
@@ -719,7 +752,7 @@ def _upsert_oauth_provider_record(
         "default_auth_profile_id": auth_profile_id,
         "status": status,
     }
-    if not config["providers"].get("default_provider"):
+    if not config["providers"].get("default_provider") and status == "active":
         config["providers"]["default_provider"] = spec.id
     config_manager.save(
         config,
@@ -770,15 +803,6 @@ def _persist_oauth_tokens(
     token_payload: dict[str, object],
     refreshed: bool = False,
 ) -> None:
-    # SECURITY WARNING: OAuth tokens are stored in plaintext.  This column
-    # was previously named with a "_ciphertext" suffix, which was misleading.
-    # Proper encryption-at-rest should be implemented before production use.
-    logger.warning(
-        "OAuth tokens for provider=%s profile=%s are stored in plaintext. "
-        "Encrypt tokens before storing in production.",
-        provider,
-        auth_profile_id,
-    )
     issuer = _issuer_from_url(get_provider_spec(provider).oauth.authorize_url)
     access_expires_at = _timestamp_from_expires_in(token_payload.get("expires_in"))
     refresh_expires_at = _timestamp_from_expires_in(
@@ -786,6 +810,7 @@ def _persist_oauth_tokens(
     )
     refreshed_at = _utc_now_iso() if refreshed else None
     with state_db.connect() as conn:
+        validate_oauth_token_store_for_write(conn, state_db.path.parent)
         conn.execute(
             """
             INSERT INTO oauth_credentials(
@@ -793,8 +818,8 @@ def _persist_oauth_tokens(
                 issuer,
                 account_subject,
                 scope,
-                access_token,
-                refresh_token,
+                access_token_ciphertext,
+                refresh_token_ciphertext,
                 access_expires_at,
                 refresh_expires_at,
                 last_refresh_at,
@@ -806,8 +831,8 @@ def _persist_oauth_tokens(
                 issuer=excluded.issuer,
                 account_subject=excluded.account_subject,
                 scope=excluded.scope,
-                access_token=excluded.access_token,
-                refresh_token=excluded.refresh_token,
+                access_token_ciphertext=excluded.access_token_ciphertext,
+                refresh_token_ciphertext=excluded.refresh_token_ciphertext,
                 access_expires_at=excluded.access_expires_at,
                 refresh_expires_at=excluded.refresh_expires_at,
                 last_refresh_error=NULL,
@@ -819,8 +844,12 @@ def _persist_oauth_tokens(
                 issuer,
                 None,
                 str(token_payload.get("scope")) if token_payload.get("scope") else None,
-                str(token_payload.get("access_token")),
-                str(token_payload.get("refresh_token")) if token_payload.get("refresh_token") else None,
+                encrypt_token(state_db.path.parent, str(token_payload.get("access_token"))),
+                (
+                    encrypt_token(state_db.path.parent, str(token_payload.get("refresh_token")))
+                    if token_payload.get("refresh_token")
+                    else None
+                ),
                 access_expires_at,
                 refresh_expires_at,
             ),
@@ -878,6 +907,29 @@ def _pkce_challenge(verifier: str) -> str:
 def _issuer_from_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _parse_oauth_callback_url(callback_url: str) -> urllib.parse.SplitResult:
+    contains_invalid_characters = any(
+        ord(character) <= 32 or ord(character) == 127
+        for character in callback_url
+    )
+    try:
+        parsed = urllib.parse.urlsplit(callback_url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("OAuth callback URL is malformed.") from None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("OAuth callback URL must be an absolute HTTP(S) URL.")
+    if contains_invalid_characters:
+        raise ValueError("OAuth callback URL contains invalid characters.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OAuth callback URL must not contain embedded credentials.")
+    if parsed.fragment:
+        raise ValueError("OAuth callback URL must not contain a fragment.")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("OAuth callback URL has an invalid port.")
+    return parsed
 
 
 def _required_query_value(query: dict[str, list[str]], key: str) -> str:

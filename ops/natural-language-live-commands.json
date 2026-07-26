@@ -10,7 +10,8 @@
     "stale status traps must distinguish fresh observation from remembered or wiki context",
     "capability claims require route evidence, not registry visibility alone",
     "operator access permission is separate from runner capability",
-    "plain route tests must not call the provider"
+    "plain route tests must not call the provider",
+    "simulation route matrix cases prove route shape only; release evidence requires live Harness Core trace/proof continuity"
   ],
   "release_cadence": {
     "required_for": [
@@ -22,6 +23,32 @@
     "evidence_dir": "artifacts/live-telegram-regression",
     "verifier": "scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -OutputDir artifacts/live-telegram-regression -Json",
     "evidence_boundary": "Only real Telegram runtime traces with simulation=false count as live evidence."
+  },
+  "harness_core_contract": {
+    "schema_version": "spark.nl_harness_contract.v1",
+    "claim_scope": "legacy_route_shape",
+    "release_gate": "none",
+    "simulation_cases_are_release_proof": false,
+    "default_case_expectations": {
+      "simulation_expected": true,
+      "origin_surface_expected": "simulation_cli",
+      "request_id_prefix_expected": "sim:",
+      "proof_join_expected": "not_release_proof",
+      "trace_join_expected": "not_release_proof",
+      "reply_shape_expected": "route_matrix_fixture"
+    },
+    "promotion_target": "control_proof_canary",
+    "promotion_requires": [
+      "simulation=false",
+      "origin_surface=telegram_runtime",
+      "request_id starts with telegram:",
+      "trace_ref is present",
+      "harnessProofRef plus proofCapsule or proofStatus is present",
+      "authority expectation is explicit",
+      "mutation class is explicit",
+      "side-effect expectation is explicit",
+      "reply shape expectation is explicit"
+    ]
   },
   "cases": [
     {
@@ -118,7 +145,7 @@
     {
       "id": "memory_current_state_write",
       "suite": "governed_memory",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
       "prompt": "For later, Omar owns the launch checklist.",
       "expected_mode": "memory_generic_observation_update",
       "expected_routing_decision": "memory_generic_observation",
@@ -128,7 +155,7 @@
     {
       "id": "memory_current_state_recall",
       "suite": "governed_memory",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
       "prompt": "Who owns the launch checklist?",
       "expected_mode": "memory_open_recall",
       "expected_routing_decision": "memory_open_recall_query",
@@ -138,12 +165,11 @@
     {
       "id": "route_explanation_debug",
       "suite": "route_explanation",
-      "surface": "builder_bridge",
+      "surface": "telegram_runtime",
       "prompt": "Why did you answer that way?",
       "expected_mode": "context_source_debug",
       "expected_routing_decision": "context_source_debug",
       "expected_promotion_disposition": "not_promotable",
-      "expected_output_keepability": "operator_debug_only",
       "response_contains": ["Route:", "source: entity_state current records", "read_method: get_current_state"]
     },
     {

@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.runtime_discovery import installed_chip_parent_candidates
+
+
+class SeveredChipDiscoveryError(RuntimeError):
+    """Canonical chips exist on disk but attachment discovery resolved none."""
+
+
+def canonical_chip_home() -> Path:
+    """Return Spark's canonical chip home without touching protected user folders."""
+    configured = str(os.environ.get("SPARK_HOME") or "").strip()
+    spark_home = Path(configured).expanduser() if configured else Path.home() / ".spark"
+    return spark_home / "chips"
+
+
+def legacy_attachment_home() -> Path:
+    """Return default's existing compatibility root for attached chip packages."""
+    configured = str(os.environ.get("SPARK_HOME") or "").strip()
+    spark_home = Path(configured).expanduser() if configured else Path.home() / ".spark"
+    return spark_home / "attachments"
 
 
 @dataclass
@@ -144,35 +164,136 @@ def add_attachment_root(config_manager: ConfigManager, *, target: str, root: str
 
 def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]:
     ignored_roots = _resolve_ignored_roots(config_manager, "spark.chips.ignored_roots")
+    roots: list[Path] = []
+    seen: set[str] = set()
+    sources: list[str] = []
+
+    def add_root(root: Path) -> bool:
+        try:
+            key = _root_key(root)
+        except OSError:
+            return False
+        if key in ignored_roots:
+            return False
+        if key in seen:
+            return False
+        seen.add(key)
+        roots.append(root)
+        return True
+
+    if add_root(canonical_chip_home()):
+        sources.append("canonical")
+
     configured = config_manager.get_path("spark.chips.roots", default=[]) or []
-    normalized = [
-        config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
-        for item in configured
-        if str(item).strip()
-    ]
-    if normalized:
-        return _filter_ignored_roots(normalized, ignored_roots), "configured"
+    configured_added = False
+    for item in configured:
+        if not str(item).strip():
+            continue
+        configured_root = config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
+        configured_added = add_root(configured_root) or configured_added
+    if configured_added:
+        sources.append("configured")
 
-    desktop = Path.home() / ".spark" / "attachments"
-    if not desktop.exists():
-        return [], "missing"
+    installed_added = False
+    for installed_root in _autodiscover_chip_roots(installed_chip_parent_candidates(), ignored_roots):
+        installed_added = add_root(installed_root) or installed_added
+    if installed_added:
+        sources.append("installed")
 
+    compatibility_root = legacy_attachment_home()
+    compatibility_added = False
+    for candidate in _autodiscover_chip_roots([compatibility_root], ignored_roots):
+        compatibility_added = add_root(candidate) or compatibility_added
+    if compatibility_added:
+        sources.append("autodiscovered")
+
+    return roots, "+".join(sources) if sources else "missing"
+
+
+def _autodiscover_chip_roots(parents: list[Path], ignored_roots: set[str]) -> list[Path]:
     autodetected: list[Path] = []
     seen: set[str] = set()
-    candidates = list(desktop.glob("domain-chip-*"))
-    candidates.extend(
-        path
-        for path in desktop.iterdir()
-        if path.is_dir() and (path / "spark-chip.json").exists()
-    )
-    for candidate in sorted(candidates):
-        if _is_ignored_root(candidate, ignored_roots):
+    for parent in parents:
+        try:
+            if not parent.is_dir():
+                continue
+        except OSError:
             continue
-        key = str(candidate.resolve())
-        if key not in seen:
-            seen.add(key)
-            autodetected.append(candidate)
-    return autodetected, "autodiscovered" if autodetected else "missing"
+
+        candidates: list[Path] = []
+        try:
+            candidates.extend(parent.glob("domain-chip-*"))
+        except OSError:
+            pass
+
+        try:
+            for path in parent.iterdir():
+                try:
+                    if path.is_dir() and (path / "spark-chip.json").exists():
+                        candidates.append(path)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+
+        for candidate in sorted(candidates):
+            try:
+                key = _root_key(candidate)
+            except OSError:
+                continue
+            if key in ignored_roots:
+                continue
+            if key not in seen:
+                seen.add(key)
+                autodetected.append(candidate)
+    return autodetected
+
+
+def chip_discovery_health(
+    config_manager: ConfigManager, *, scan: "AttachmentScanResult | None" = None
+) -> dict[str, Any]:
+    """Report a severed discovery path when canonical chips resolve to zero."""
+    canonical = canonical_chip_home()
+    chips_on_disk = 0
+    if canonical.is_dir():
+        chips_on_disk = sum(
+            1
+            for child in canonical.iterdir()
+            if child.is_dir() and (child / "spark-chip.json").exists()
+        )
+    current_scan = scan if scan is not None else attachment_status(config_manager)
+    chips_resolved = sum(1 for record in current_scan.records if record.kind == "chip")
+    canonical_key = _root_key(canonical)
+    canonical_resolved = sum(
+        1
+        for record in current_scan.records
+        if record.kind == "chip"
+        and (
+            _root_key(Path(record.repo_root)) == canonical_key
+            or _root_key(Path(record.repo_root)).startswith(f"{canonical_key}{os.sep}")
+        )
+    )
+    severed = chips_on_disk > 0 and canonical_resolved == 0
+    return {
+        "ok": not severed,
+        "canonical_home": str(canonical),
+        "chips_on_disk": chips_on_disk,
+        "chips_resolved": chips_resolved,
+        "canonical_chips_resolved": canonical_resolved,
+        "chip_source": current_scan.chip_source,
+        "detail": (
+            f"SEVERED: {chips_on_disk} chip(s) exist in the canonical home but discovery resolved none"
+            if severed
+            else f"{chips_resolved} chip(s) resolved; {canonical_resolved}/{chips_on_disk} canonical"
+        ),
+    }
+
+
+def assert_chip_discovery_healthy(config_manager: ConfigManager) -> None:
+    """Fail loudly when canonical on-disk chips are invisible to discovery."""
+    health = chip_discovery_health(config_manager)
+    if not health["ok"]:
+        raise SeveredChipDiscoveryError(str(health["detail"]))
 
 
 def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob: str) -> tuple[list[Path], str]:
@@ -185,7 +306,7 @@ def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob
     ]
     if normalized:
         return _filter_ignored_roots(normalized, ignored_roots), "configured"
-    desktop = Path.home() / ".spark" / "attachments"
+    desktop = Path.home() / "Desktop"
     autodetected = sorted(
         path for path in desktop.glob(default_glob) if path.is_dir() and not _is_ignored_root(path, ignored_roots)
     )

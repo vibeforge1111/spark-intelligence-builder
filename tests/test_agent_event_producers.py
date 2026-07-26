@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from spark_intelligence.observability.store import repair_missing_event_trace_refs
 from spark_intelligence.self_awareness.agent_events import build_agent_black_box_report
 from spark_intelligence.self_awareness.event_producers import (
     record_mission_state_agent_event,
@@ -113,6 +114,106 @@ class AgentEventProducerTests(SparkTestCase):
         self.assertEqual(entry["sources_used"][0]["source"], "current_diagnostics")
         self.assertEqual(entry["sources_used"][0]["freshness"], "live_probed")
         self.assertEqual(entry["changed"], ["source_ledger_updated"])
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE request_id = ?",
+                ("req-source-used",),
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(row["trace_ref"], "trace:source-ledger:req-source-used")
+        self.assertEqual(facts["trace_ref"], "trace:source-ledger:req-source-used")
+        self.assertEqual(facts["trace_ref_kind"], "source_ledger_request")
+
+    def test_source_used_event_preserves_explicit_trace_ref(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="trace_index",
+            role="trace_evidence",
+            freshness="live_probed",
+            source_ref="trace:existing-source",
+            summary="Trace source was inspected.",
+            request_id="req-source-trace",
+            trace_ref="trace:explicit-source",
+            actor_id="operator:test",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE request_id = ?",
+                ("req-source-trace",),
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertEqual(row["trace_ref"], "trace:explicit-source")
+        self.assertEqual(facts["trace_ref"], "trace:explicit-source")
+        self.assertEqual(facts["trace_ref_kind"], "explicit_or_source")
+
+    def test_source_used_event_without_request_gets_redacted_source_trace_ref(self) -> None:
+        record_source_used_agent_event(
+            self.state_db,
+            source="current_diagnostics",
+            role="health_truth",
+            freshness="live_probed",
+            source_ref="diagnostics:without-request",
+            summary="Builder healthy.",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE event_type = 'source_used'",
+            ).fetchone()
+        facts = json.loads(row["facts_json"])
+        self.assertTrue(row["trace_ref"].startswith("trace:source-ledger-source:"))
+        self.assertEqual(row["trace_ref"], facts["trace_ref"])
+        self.assertEqual(facts["trace_ref_kind"], "source_ledger_source")
+        self.assertNotIn("diagnostics:without-request", row["trace_ref"])
+
+    def test_repair_missing_event_trace_refs_backfills_legacy_source_used_rows(self) -> None:
+        event_id = record_source_used_agent_event(
+            self.state_db,
+            source="current_diagnostics",
+            role="health_truth",
+            freshness="live_probed",
+            source_ref="diagnostics:legacy-source",
+            summary="Builder health was inspected.",
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT facts_json FROM builder_events WHERE event_id = ?", (event_id,)).fetchone()
+            facts = json.loads(row["facts_json"])
+            facts.pop("trace_ref", None)
+            facts.pop("trace_ref_kind", None)
+            event_log_row = conn.execute("SELECT payload_json FROM event_log WHERE event_id = ?", (event_id,)).fetchone()
+            payload = json.loads(event_log_row["payload_json"])
+            payload["facts"] = facts
+            conn.execute(
+                "UPDATE builder_events SET trace_ref = NULL, facts_json = ? WHERE event_id = ?",
+                (json.dumps(facts, sort_keys=True), event_id),
+            )
+            conn.execute(
+                "UPDATE event_log SET trace_ref = NULL, payload_json = ? WHERE event_id = ?",
+                (json.dumps(payload, sort_keys=True), event_id),
+            )
+            conn.commit()
+
+        repaired = repair_missing_event_trace_refs(self.state_db)
+
+        self.assertEqual(repaired, 1)
+        with self.state_db.connect() as conn:
+            repaired_event = conn.execute(
+                "SELECT trace_ref, facts_json FROM builder_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            repaired_log = conn.execute(
+                "SELECT trace_ref, payload_json FROM event_log WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        repaired_facts = json.loads(repaired_event["facts_json"])
+        repaired_payload = json.loads(repaired_log["payload_json"])
+        self.assertTrue(repaired_event["trace_ref"].startswith("trace:source-ledger-source:"))
+        self.assertEqual(repaired_event["trace_ref"], repaired_log["trace_ref"])
+        self.assertEqual(repaired_event["trace_ref"], repaired_facts["trace_ref"])
+        self.assertEqual(repaired_payload["facts"]["trace_ref"], repaired_event["trace_ref"])
+        self.assertEqual(repaired_facts["trace_ref_kind"], "source_ledger_source")
+        self.assertNotIn("diagnostics:legacy-source", repaired_event["trace_ref"])
 
     def test_memory_preflight_source_used_event_feeds_memory_lane_without_payload(self) -> None:
         record_source_used_agent_event(

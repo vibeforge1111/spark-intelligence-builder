@@ -1,91 +1,91 @@
-# Spark Harness Contract
+# Spark Harness Core Contract
 
-Status: active runtime contract, updated 2026-06-08
+Status: Harness Core VNext/Governor consumer adoption active
 
 ## Role Of This Repo
 
-`spark-intelligence-builder` is a specialist runtime and advisory executor under the Spark Harness contract. It consumes Harness Core authority records and persists governed execution evidence; it does not define global authority by itself.
+`spark-intelligence-builder` owns Spark's runtime intelligence core: AOC,
+route-family judgment, memory orchestration, source ledgers, self-awareness,
+and metadata-only proof cards.
 
 Builder should:
 
-- consume `TurnIntentEnvelopeVNext`, `AuthorizationDecisionV1`, and `GovernorDecisionV1` records from `spark-harness-core`;
-- treat memory, retrieved context, pending state, and tool output as evidence, not authority;
-- obey no-action, local-only, no-publish, and mutation-boundary directives;
-- verify governed tool decisions before execution;
-- persist bound `tool_call_ledger` rows into `state.db`;
-- expose operator-readable ledger queries by `turn_id` and surface;
-- run self-evolution observation from canonical ledger evidence before any promotion path.
+- treat inbound text, memory, source ledgers, chip output, and tool output as evidence
+- consume `TurnIntentEnvelopeVNext`, `GovernorDecisionV1`,
+  `AuthorizationDecisionV1`, and `ToolCallLedgerV1` for action authority
+- verify the owner consumer boundary before mutation, provider use, mission
+  launch, memory write, browser/computer-use, publish, or self-evolution
+- obey chat-only, read-only, prepare, interrupt, deny, degrade, local-only, and
+  no-publish boundaries
+- keep RouteConfidenceGateV1 as route-family evidence and verdicting, not final
+  execution authority
+- emit allowlisted proof metadata and source-ledger references for other surfaces
 
 Builder should not:
 
-- override Telegram's fresh turn verdict;
-- re-authorize actions from raw text;
-- treat memory, skills, or pending state as command authority;
-- promote learning artifacts without benchmark and ledger evidence;
-- accept unbound tool-ledger rows missing the authority join fields.
+- override Telegram or Harness Core fresh-turn authority
+- re-authorize an action from raw text
+- treat memory, skills, route confidence, or pending state as command authority
+- promote learning artifacts without benchmark and provenance evidence
+- write durable memory without the memory owner's verified authority path
 
-## Current Implementation
+## Current Contract
 
-- `src/spark_intelligence/harness_contract.py` imports Harness Core and builds/validates Builder-facing envelopes.
-- `src/spark_intelligence/bridge_authority.py` mints governed Builder tool-call ledgers, packages Builder bridge Governor decisions with canonical issuer/provenance/runtime binding evidence, and persists ledgers through `persist_bound_ledger`.
-- `src/spark_intelligence/observability/store.py` owns the canonical `tool_call_ledger` table, retention pruning, and reader APIs.
-- `src/spark_intelligence/gateway/tool_ledger.py` provides the minimal adapter ingest contract for external surfaces that need to publish governed rows.
-- `src/spark_intelligence/cli_approval_ledgers.py` imports Spark CLI approval ledgers into the same canonical table.
-- `src/spark_intelligence/doctor/checks.py` reports coarse ledger adoption by surface. Live 2026-06-08 doctor now sees `builder=1`, `spark_cli=69`, `spawner=1`, and `telegram=47`; this proves first-row adoption, not full runtime completion coverage.
-- `src/spark_intelligence/harness_runtime/service.py` gates `builder.direct`, `browser.navigate`, `researcher.advisory`, `voice.status`, `voice.speak`, explicit-audio `voice.transcribe`, and `swarm.sync.dry_run` before execution and records canonical result ledgers; transcription redacts raw `audio_base64` from envelope/resume payloads, and other runners need explicit ledger evidence before they are claimed covered.
-- `src/spark_intelligence/researcher_bridge/advisory.py` accepts Builder-origin Governor decisions only when Harness Core verification passes and the decision carries Builder bridge canonical binding evidence. This is a local integrity check, not a replacement for HMAC verification across process boundaries.
-- `src/spark_intelligence/harness_evolution.py` builds observe-only self-evolution snapshots, change-manifest runner evidence, and Builder-surface runner ledgers from canonical ledgers.
+The current authority chain is:
 
-Operator commands:
-
-```powershell
-spark-intelligence gateway ingest-tool-ledger <ledger-row.json>
-spark-intelligence gateway serve-stdio
-spark-intelligence harness tool-ledgers --turn-id <turn-id> --json
-spark-intelligence harness trace-turn --turn-id <turn-id> --json
-spark-intelligence harness import-cli-ledgers --ledger-dir $env:USERPROFILE\.spark\state\approval-ledgers --json
-spark-intelligence harness self-evolution-snapshot --json
-spark-intelligence harness change-manifest-runner --manifest <change-manifest-v1.json> --run-tests --json
+```text
+fresh adapter input
+  -> schema-valid TurnIntentEnvelopeVNext
+  -> AuthorizationDecisionV1
+  -> pre-execution ToolCallLedgerV1
+  -> GovernorDecisionV1 where required
+  -> owner consumer verification
+  -> execution or refusal
+  -> finalized result evidence
 ```
 
-The 2026-06-08 supervised no-op drill is recorded in
-`docs/SPARK_SELF_EVOLUTION_NOOP_DRILL_2026-06-08.md`. It proves private,
-explicitly flagged no-op promotion through the guarded runner. Follow-up
-regression tests prove that `rollback_plan` is required and that protected
-components such as `authority_policy` require `human_approval_ref` evidence
-before a protected manifest can promote. It still does not prove autonomous
-mutation, dry-run patch application, rollback execution, or release-candidate
-promotion. The runner itself is persisted as a canonical `surface=builder` tool
-ledger.
+`spark.turn_intent.v1` remains supported as adapter compatibility input. Harness
+Core can parse it and derive the governed VNext authorization artifacts, but the
+legacy envelope is not sufficient execution authority by itself.
 
-## Ledger Row Contract
+The executable integration lives in:
 
-The canonical row must carry:
+- `src/spark_intelligence/harness_contract.py`
+- `src/spark_intelligence/bridge_authority.py`
+- the `spark_harness_core` installed distribution or a registered clean module source
 
-- `ledger_id`
-- `turn_id`
-- `action_id`
-- `capability_id`
-- `authorization_decision_id`
-- `surface`
-- `ledger_json`
+Do not hard-code a developer checkout as Harness truth. Runtime truth comes from
+the installed or registered source that the import resolver and Builder doctor
+can verify.
 
-`ledger_json` should be the validated `tool-call-ledger-v1` payload. The flat columns are the query and join surface; the embedded ledger is the provenance payload.
+## Builder-Specific Boundary
 
-Depth matters: a single `surface=spawner` row with `status=not_started` is
-ingestion proof, not evidence that mission execution completed under authority.
+Route confidence asks:
+
+> Is Spark justified in taking this route family right now?
+
+It does not answer:
+
+> May Builder execute this high-agency action?
+
+The owner consumer must verify the matching tool, owner, mutation class,
+freshness, authorization decision, ledger, and Governor boundary. Missing or
+mismatched proof fails closed.
 
 ## Shared Source Of Truth
 
-Spark-wide TurnIntent rules are documented locally in:
+The local adoption and release rules are:
 
 - `docs/TURNINTENT_HARNESS_RULESET.md`
 - `docs/TURNINTENT_AGENTS_ADOPTION.md`
+- `AGENTS.md`
 
-Harness Core is the schema/runtime source for the authority records. Builder must declare `spark-harness-core` in `spark.toml` and import it from the installed module path rather than vendoring local schema copies.
+These documents explain the boundary; the installed Harness schemas and
+executable consumer verification remain machine authority.
 
 ## Benchmark-Led Learning Rule
 
-Spark improvement is accepted only through named benchmark and ledger evidence.
-
-Memory writes, skill drafts, tool ledgers, and advisory output are candidates. They become durable behavior only after benchmark proof, before/after answer comparison, and a promotion gate.
+Memory writes, skill drafts, chip suggestions, and advisory output are
+candidates. They become durable behavior only after benchmark proof,
+before/after comparison, provenance, owner authorization, and a governed
+promotion gate.

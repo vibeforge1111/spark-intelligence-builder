@@ -26,7 +26,7 @@ class TestSwarmBridgeStderr:
 
     def test_generic_detail_present(self) -> None:
         msg = _render_swarm_bridge_failure("run", _FakeResult(stderr="anything"))
-        assert "see server logs" in msg
+        assert "diagnostic details" in msg
 
     def test_stdout_not_in_reply(self) -> None:
         msg = _render_swarm_bridge_failure("run", _FakeResult(stdout="internal trace info"))
@@ -36,9 +36,9 @@ class TestSwarmBridgeStderr:
         msg = _render_swarm_bridge_failure("deploy", _FakeResult())
         assert "Swarm deploy failed." in msg
 
-    def test_exit_code_in_reply(self) -> None:
+    def test_exit_code_stays_in_server_log_only(self) -> None:
         msg = _render_swarm_bridge_failure("run", _FakeResult(exit_code=2))
-        assert "Exit code: 2." in msg
+        assert "Exit code:" not in msg
 
     def test_raw_detail_logged_server_side(self, caplog) -> None:
         # The raw stderr must be retained server-side (debug log) even though it

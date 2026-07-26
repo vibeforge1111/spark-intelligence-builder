@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.bridge_authority import (
+    authorize_builder_bridge_action,
+    build_telegram_memory_turn_intent_payload_vnext,
+)
 from spark_intelligence.memory import write_telegram_event_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -11,6 +15,38 @@ from tests.test_support import SparkTestCase
 
 
 class TelegramEpisodicMemoryTests(SparkTestCase):
+    def _memory_write_governor_decision(
+        self,
+        *,
+        turn_id: str,
+        session_id: str,
+        evidence_text: str,
+    ) -> dict[str, object]:
+        payload = build_telegram_memory_turn_intent_payload_vnext(
+            request_id=turn_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id="human-1",
+            user_message=evidence_text,
+            source_kind="telegram_episodic_memory_test",
+        )
+        self.assertIsInstance(payload, dict)
+        verdict = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": payload},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=self.state_db,
+            request_id=turn_id,
+            session_id=session_id,
+            human_id="human-1",
+            actor_id="telegram_episodic_memory_test",
+            component="telegram_episodic_memory_test",
+        )
+        self.assertTrue(verdict.allowed, verdict.reason_codes)
+        self.assertIsInstance(verdict.governor_decision, dict)
+        return verdict.governor_decision
+
     def test_build_researcher_reply_persists_detected_telegram_event_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -130,6 +166,11 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
             session_id="session-event-query-write",
             turn_id="turn-event-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-event-query-write",
+                session_id="session-event-query-write",
+                evidence_text="My meeting with Omar is on May 3.",
+            ),
         )
 
         with patch(
@@ -169,6 +210,11 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
             session_id="session-flight-query-write",
             turn_id="turn-flight-query-write",
             channel_kind="telegram",
+            governor_decision=self._memory_write_governor_decision(
+                turn_id="turn-flight-query-write",
+                session_id="session-flight-query-write",
+                evidence_text="My flight to London is on May 6.",
+            ),
         )
 
         with patch(

@@ -409,9 +409,16 @@ def _run_regression_subprocess(
         raise TimeoutError(
             f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
         ) from exc
+    if bool(getattr(completed, "timed_out", False)):
+        raise TimeoutError(
+            f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
+        )
     payload: dict[str, Any] = {}
     if write_path.exists():
-        payload = json.loads(write_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(write_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid JSON (architecture_soak.py)") from exc
     elif (completed.stdout or "").strip():
         payload = json.loads(completed.stdout)
     if payload:

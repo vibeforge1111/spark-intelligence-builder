@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import URLError
 
@@ -17,8 +18,10 @@ class FakePollingClient:
         self.sent_messages: list[dict[str, str]] = []
         self.sent_voices: list[dict[str, object]] = []
         self.sent_documents: list[dict[str, object]] = []
+        self.requested_offsets: list[int | None] = []
 
     def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
+        self.requested_offsets.append(offset)
         if self.update_error is not None:
             raise self.update_error
         return self.updates
@@ -69,6 +72,28 @@ class FakePollingClient:
 
 
 class TelegramFailurePathTests(SparkTestCase):
+    def test_poll_recovers_from_corrupt_persisted_offset(self) -> None:
+        self.add_telegram_channel()
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_state(state_key, value)
+                VALUES ('telegram:last_update_offset', 'not-a-number')
+                ON CONFLICT(state_key) DO UPDATE SET value = excluded.value
+                """
+            )
+        client = FakePollingClient()
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        self.assertEqual(result.fetched_update_count, 0)
+        self.assertEqual(client.requested_offsets, [None])
+
     def test_gateway_start_persists_auth_failure(self) -> None:
         self.add_telegram_channel(bot_token="bad-token")
 
@@ -164,6 +189,51 @@ class TelegramFailurePathTests(SparkTestCase):
         self.assertEqual(result.ignored_count, 1)
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], 501)
+        self.assertEqual(traces[0]["request_id"], "telegram:501")
+        self.assertEqual(traces[0]["trace_ref"], "trace:telegram:501")
+        self.assertEqual(traces[0]["proofStatus"], "not_execution_proof")
+        self.assertEqual(traces[0]["proofStorage"], "not_applicable")
+
+    def test_poll_telegram_updates_once_ignored_non_dm_carries_trace_join(self) -> None:
+        self.add_telegram_channel()
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=551,
+                    user_id="111",
+                    username="alice",
+                    chat_type="group",
+                    chat_id="-100551",
+                    text="hello from a group",
+                )
+            ]
+        )
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                event="telegram_update_ignored",
+                as_json=True,
+            )
+        )
+
+        self.assertEqual(result.fetched_update_count, 1)
+        self.assertEqual(result.ignored_count, 1)
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "non_dm_surface")
+        self.assertEqual(traces[0]["update_id"], 551)
+        self.assertEqual(traces[0]["request_id"], "telegram:551")
+        self.assertEqual(traces[0]["trace_ref"], "trace:telegram:551")
+        self.assertEqual(traces[0]["proofStatus"], "not_execution_proof")
+        self.assertEqual(traces[0]["proofStorage"], "not_applicable")
 
     def test_poll_telegram_updates_once_rate_limits_repeated_sender(self) -> None:
         self.add_telegram_channel()
@@ -214,5 +284,119 @@ class TelegramFailurePathTests(SparkTestCase):
         self.assertEqual(result.blocked_count, 1)
         self.assertEqual(len(traces), 1)
         self.assertTrue(traces[0]["notice_sent"])
+        self.assertEqual(traces[0]["request_id"], "telegram:602")
+        self.assertEqual(traces[0]["trace_ref"], "trace:telegram:602")
+        self.assertRegex(traces[0]["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(traces[0]["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(traces[0]["proofCapsule"]["turnRef"], traces[0]["harnessProofRef"])
+        self.assertEqual(traces[0]["proofCapsule"]["authority"]["contract"], "spark.turn_intent.v1")
+        self.assertEqual(traces[0]["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(traces[0]["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertNotIn("proofStatus", traces[0])
+        self.assertNotIn("proofStorage", traces[0])
         self.assertEqual(len(outbound), 1)
         self.assertTrue(outbound[0]["delivery_ok"])
+        self.assertEqual(outbound[0]["request_id"], "telegram:602")
+        self.assertEqual(outbound[0]["trace_ref"], "trace:telegram:602")
+
+    def test_poll_runtime_command_gateway_trace_carries_trace_and_delivery_proof(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=701,
+                    user_id="111",
+                    username="alice",
+                    text="/memory doctor help",
+                )
+            ]
+        )
+
+        result = poll_telegram_updates_once(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=client,
+            timeout_seconds=0,
+        )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                as_json=True,
+            )
+        )
+        command_trace = next(row for row in traces if row.get("event") == "telegram_runtime_command_processed")
+        update_trace = next(row for row in traces if row.get("event") == "telegram_update_processed")
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(command_trace["request_id"], "telegram:701")
+        self.assertEqual(command_trace["trace_ref"], "trace:telegram:701")
+        self.assertEqual(update_trace["request_id"], "telegram:701")
+        self.assertEqual(update_trace["trace_ref"], "trace:telegram:701")
+        self.assertRegex(command_trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(update_trace["harnessProofRef"], command_trace["harnessProofRef"])
+        self.assertEqual(command_trace["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(command_trace["proofCapsule"]["authority"]["contract"], "spark.turn_intent.v1")
+        self.assertEqual(command_trace["proofCapsule"]["governor"]["verified"], True)
+        self.assertEqual(command_trace["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(command_trace["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertEqual(update_trace["proofCapsule"]["turnRef"], command_trace["harnessProofRef"])
+        self.assertNotIn("proofStatus", command_trace)
+        self.assertNotIn("proofStorage", command_trace)
+        self.assertNotIn("proofStatus", update_trace)
+        self.assertNotIn("proofStorage", update_trace)
+
+    def test_poll_agent_onboarding_gateway_trace_carries_trace_and_delivery_proof(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        client = FakePollingClient(
+            updates=[
+                make_telegram_update(
+                    update_id=702,
+                    user_id="111",
+                    username="alice",
+                    text="hello",
+                )
+            ]
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.maybe_handle_agent_persona_onboarding_turn",
+            return_value=SimpleNamespace(
+                human_id="human:telegram:111",
+                agent_id="agent:telegram:111",
+                step="awaiting_agent_name",
+                reply_text="Let's set up your agent.",
+                agent_name="",
+                persona_profile={},
+                completed=False,
+            ),
+        ):
+            result = poll_telegram_updates_once(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                client=client,
+                timeout_seconds=0,
+            )
+
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                as_json=True,
+            )
+        )
+        onboarding_trace = next(row for row in traces if row.get("event") == "telegram_agent_onboarding_processed")
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(onboarding_trace["request_id"], "telegram:702")
+        self.assertEqual(onboarding_trace["trace_ref"], "trace:telegram:702")
+        self.assertRegex(onboarding_trace["harnessProofRef"], r"^turn:sha256:[a-f0-9]{16}$")
+        self.assertEqual(onboarding_trace["proofCapsule"]["schema"], "spark.harness_proof.v1")
+        self.assertEqual(onboarding_trace["proofCapsule"]["turnRef"], onboarding_trace["harnessProofRef"])
+        self.assertEqual(onboarding_trace["proofCapsule"]["authority"]["contract"], "spark.turn_intent.v1")
+        self.assertEqual(onboarding_trace["proofCapsule"]["governor"]["verified"], True)
+        self.assertEqual(onboarding_trace["proofCapsule"]["joins"]["telegram"], "joined")
+        self.assertEqual(onboarding_trace["proofCapsule"]["joins"]["builder"], "joined")
+        self.assertNotIn("proofStatus", onboarding_trace)
+        self.assertNotIn("proofStorage", onboarding_trace)

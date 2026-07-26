@@ -293,7 +293,7 @@ def retrieve_domain_chip_cold_context(
         return direct_items[: max(1, int(limit or 1))]
     try:
         from domain_chip_memory.builder_read_adapter import BuilderMemoryReadRequest, execute_builder_memory_read
-    except Exception:
+    except ImportError:
         return []
 
     items: list[ColdContextItem] = []
@@ -607,19 +607,22 @@ def _build_source_ledger(
 def _cold_context_records_from_trace(trace: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("items", "records", "evidence", "events", "matches"):
         value = trace.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+        if not isinstance(value, list):
+            continue
+        records = [item for item in value if isinstance(item, dict)]
+        if records:
+            return records
     return []
 
 
 def _retrieve_domain_chip_direct(*, sdk: Any, subject: str, query: str, limit: int) -> list[ColdContextItem]:
     try:
         from domain_chip_memory.sdk import EventRetrievalRequest, EvidenceRetrievalRequest
-    except Exception:
+    except ImportError:
         return []
     try:
         from domain_chip_memory.sdk import TaskRecoveryRequest
-    except Exception:
+    except ImportError:
         TaskRecoveryRequest = None  # type: ignore[assignment]
 
     items: list[ColdContextItem] = []

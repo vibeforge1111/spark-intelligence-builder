@@ -47,6 +47,11 @@ from spark_intelligence.swarm_bridge import swarm_status
 WEBHOOK_ALERT_SUSTAINED_THRESHOLD = 3
 WEBHOOK_ALERT_RECENT_WINDOW = timedelta(minutes=15)
 WEBHOOK_ALERT_EVENT_SPECS = {
+    "discord_interaction_replay_rejected": {
+        "status": "replay_rejected",
+        "summary_prefix": "Discord interaction replay rejected",
+        "recommended_command": "spark-intelligence gateway traces --event discord_interaction_replay_rejected --limit 20",
+    },
     "discord_webhook_auth_failed": {
         "status": "auth_failed",
         "summary_prefix": "Discord webhook auth rejected",
@@ -550,9 +555,14 @@ def list_webhook_alert_events() -> tuple[str, ...]:
     return tuple(WEBHOOK_ALERT_EVENT_SPECS.keys())
 
 
+def _unsupported_webhook_alert_event_message(event_name: str) -> str:
+    known = ", ".join(sorted(WEBHOOK_ALERT_EVENT_SPECS))
+    return f"Unsupported webhook alert event: {event_name}. Known events: {known}."
+
+
 def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int, reason: str | None = None) -> str:
     if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
-        raise ValueError(f"Unsupported webhook alert event: {event_name}")
+        raise ValueError(_unsupported_webhook_alert_event_message(event_name))
     if minutes <= 0:
         raise ValueError("Webhook alert snooze minutes must be greater than zero.")
     snooze_until = _utc_now() + timedelta(minutes=minutes)
@@ -577,7 +587,7 @@ def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int, re
 
 def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> dict[str, Any] | None:
     if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
-        raise ValueError(f"Unsupported webhook alert event: {event_name}")
+        raise ValueError(_unsupported_webhook_alert_event_message(event_name))
     with state_db.connect() as conn:
         row = conn.execute(
             "SELECT state_key, value, updated_at FROM runtime_state WHERE state_key = ? LIMIT 1",

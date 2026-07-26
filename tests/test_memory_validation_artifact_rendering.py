@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _load_module(module_name: str, script_path: Path):
     spec = importlib.util.spec_from_file_location(module_name, script_path)
@@ -16,6 +18,43 @@ def _load_module(module_name: str, script_path: Path):
 
 def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_optional_validation_artifacts_tolerate_rotation_between_discovery_and_read(tmp_path: Path, monkeypatch) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_validation_delta.py"
+    module = _load_module("render_memory_validation_delta_rotation_test", script_path)
+    soak_dir = tmp_path / "soak"
+    regression_dir = tmp_path / "regression"
+    soak_dir.mkdir()
+    regression_dir.mkdir()
+    soak_path = soak_dir / "telegram-memory-architecture-soak.json"
+    regression_path = regression_dir / "telegram-memory-regression.json"
+    _write_json(soak_path, {"summary": {}})
+    _write_json(regression_path, {"summary": {}})
+    rotating_paths = {soak_path, regression_path}
+    original_load_json = module._load_json
+
+    def rotate_before_read(path: Path):
+        if path in rotating_paths:
+            path.unlink()
+            raise FileNotFoundError(path)
+        return original_load_json(path)
+
+    monkeypatch.setattr(module, "_load_json", rotate_before_read)
+
+    assert module._maybe_load_soak({"soak_output_dir": str(soak_dir)}) is None
+    assert module._maybe_load_regression({"regression_output_dir": str(regression_dir)}) is None
+
+
+def test_optional_validation_artifacts_do_not_hide_malformed_json(tmp_path: Path) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_validation_delta.py"
+    module = _load_module("render_memory_validation_delta_malformed_test", script_path)
+    soak_dir = tmp_path / "soak"
+    soak_dir.mkdir()
+    (soak_dir / "telegram-memory-architecture-soak.json").write_text("{bad", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        module._maybe_load_soak({"soak_output_dir": str(soak_dir)})
 
 
 def test_render_memory_validation_delta_reports_runtime_timings_and_mismatches(tmp_path: Path) -> None:

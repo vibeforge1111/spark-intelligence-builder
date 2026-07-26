@@ -113,3 +113,7 @@ class CapabilityRouterTests(SparkTestCase):
         self.assertTrue(looks_like_capability_router_query("Should you browse this?"))
         self.assertTrue(looks_like_capability_router_query("Can you add a capability for Spark to read my emails?"))
         self.assertFalse(looks_like_capability_router_query("Write a tighter landing page headline."))
+        self.assertFalse(looks_like_capability_router_query("Add the agent name to these files."))
+        self.assertFalse(looks_like_capability_router_query("Improve browser copy and permission labels."))
+        self.assertTrue(looks_like_capability_router_query("Add file access for the agent capability."))
+        self.assertTrue(looks_like_capability_router_query("Build a browser integration for Spark."))

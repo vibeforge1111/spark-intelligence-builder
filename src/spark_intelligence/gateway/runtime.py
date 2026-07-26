@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
+import secrets
 import time
 import json
 import urllib.error
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
+from secrets import compare_digest
 from time import sleep
 from typing import Any, TextIO
 
@@ -26,17 +29,18 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
-from spark_intelligence.gateway.tool_ledger import TOOL_LEDGER_INGEST_COMMANDS, ingest_tool_ledger_payload
-from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
+from spark_intelligence.gateway.tracing import (
+    append_gateway_trace,
+    outbound_log_path,
+    read_gateway_traces,
+    read_outbound_audit,
+    trace_identity_ref,
+    trace_log_path,
+)
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.observability.store import record_environment_snapshot
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
-from spark_intelligence.bridge_authority import (
-    record_scoped_bridge_tool_call_results,
-    reset_bridge_authority_ledger_context,
-    set_bridge_authority_ledger_context,
-)
 
 
 GATEWAY_BLOCKING_DOCTOR_CHECKS = {
@@ -56,6 +60,20 @@ GATEWAY_BLOCKING_DOCTOR_CHECKS = {
     "discord-runtime",
     "whatsapp-runtime",
 }
+
+
+def _load_gateway_json_object(path: Path, *, surface: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{surface} payload must contain valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{surface} payload must be a JSON object.")
+    return payload
+
+GATEWAY_STDIO_PROTOCOL = "spark.gateway.stdio.v2"
+GATEWAY_STDIO_MAX_REQUEST_BYTES = 1024 * 1024
+_GATEWAY_STDIO_REQUEST_ID = re.compile(r"^telegram:[A-Za-z0-9_.:-]{1,112}$")
 
 
 @dataclass
@@ -268,8 +286,11 @@ def gateway_start(
         lines.append("Provider execution readiness is degraded. Gateway did not start polling.")
         return GatewayStartReport(ok=False, text="\n".join(lines))
     if not telegram_record:
-        lines.append("No Telegram adapter configured. Gateway is idle.")
-        return GatewayStartReport(ok=True, text="\n".join(lines))
+        lines.append(
+            "No runnable foreground channel is configured. "
+            "Run spark-intelligence channel telegram-onboard to enable Telegram polling."
+        )
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     telegram_status = str(telegram_summary.status or "enabled")
     if telegram_status == "disabled":
@@ -363,7 +384,32 @@ def gateway_start(
                     break
                 sleep(max(backoff_seconds, 1))
                 continue
-            record_telegram_poll_success(state_db=state_db)
+            if poll_result.failed_send_count > 0 and poll_result.sent_count == 0:
+                # Polling reached Telegram but every outbound send failed; do not reset
+                # consecutive_failures by recording a clean success.
+                _record_telegram_poll_failure(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    failure_type="outbound_send_failed",
+                    message=(
+                        f"poll cycle reached Telegram and processed {poll_result.processed_count} updates "
+                        f"but all {poll_result.failed_send_count} outbound sends failed"
+                    ),
+                )
+                ok = False
+            else:
+                record_telegram_poll_success(state_db=state_db)
+                if poll_result.failed_send_count > 0:
+                    append_gateway_trace(
+                        config_manager,
+                        {
+                            "event": "telegram_poll_partial_send_failure",
+                            "channel_id": "telegram",
+                            "sent_count": poll_result.sent_count,
+                            "failed_send_count": poll_result.failed_send_count,
+                            "processed_count": poll_result.processed_count,
+                        },
+                    )
             lines.append(f"Cycle {cycle_index + 1}:")
             lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
             cycle_index += 1
@@ -439,29 +485,6 @@ def _provider_execution_repair_hint(provider_execution_detail: str) -> str:
     return "spark-intelligence operator security"
 
 
-def _simulate_telegram_update_scoped(**kwargs: Any) -> Any:
-    """Run a Telegram turn inside a bridge-authority ledger scope so governed
-    tool-call ledger rows get finalized (success/failure) instead of stranded as
-    not_started. Mirrors the runtime-command scope in adapters/telegram/runtime.py."""
-    token = set_bridge_authority_ledger_context(
-        state_db=kwargs.get("state_db"),
-        component="telegram_runtime",
-        channel_id="telegram",
-    )
-    try:
-        result = simulate_telegram_update(**kwargs)
-        try:
-            record_scoped_bridge_tool_call_results(
-                status="success" if getattr(result, "ok", False) else "failure",
-                summary="Telegram turn tool calls finalized.",
-            )
-        except Exception:
-            pass
-        return result
-    finally:
-        reset_bridge_authority_ledger_context(token)
-
-
 def gateway_simulate_telegram_update(
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -470,13 +493,8 @@ def gateway_simulate_telegram_update(
     as_json: bool = False,
     simulation: bool = True,
 ) -> str:
-    try:
-        payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read update file {update_path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid JSON in update file {update_path}: {exc}") from exc
-    result = _simulate_telegram_update_scoped(
+    payload = _load_gateway_json_object(update_path, surface="Telegram update")
+    result = simulate_telegram_update(
         config_manager=config_manager,
         state_db=state_db,
         update_payload=payload,
@@ -493,72 +511,134 @@ def gateway_serve_stdio(
     output_stream: TextIO,
     error_stream: TextIO | None = None,
     simulation: bool = True,
+    session_token: str,
+    session_id: str | None = None,
+    max_request_bytes: int = GATEWAY_STDIO_MAX_REQUEST_BYTES,
 ) -> int:
+    """Serve one parent-owned Telegram bridge session over bounded NDJSON.
+
+    The parent fixes the runtime origin when it starts this process. Per-message
+    input cannot promote simulation traffic to runtime traffic, and every data
+    or control request must prove possession of the inherited session token.
+    """
+    normalized_token = str(session_token or "")
+    if len(normalized_token) < 32:
+        raise ValueError("Gateway stdio needs a strong inherited session token.")
+    normalized_session_id = str(session_id or secrets.token_urlsafe(24)).strip()
+    if len(normalized_session_id) < 16 or len(normalized_session_id) > 128:
+        raise ValueError("Gateway stdio session id is invalid.")
+    if max_request_bytes < 1024:
+        raise ValueError("Gateway stdio request limit is too small.")
+
     def write_response(payload: dict[str, Any]) -> None:
-        output_stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        output_stream.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=True) + "\n")
         output_stream.flush()
 
-    write_response({"ok": True, "protocol": "spark.gateway.stdio.v1", "ready": True})
-    for raw_line in input_stream:
+    def write_error(code: str, *, request_id: str = "", retryable: bool = False) -> None:
+        write_response(
+            {
+                "ok": False,
+                "protocol": GATEWAY_STDIO_PROTOCOL,
+                "request_id": request_id,
+                "error": {"code": code, "retryable": retryable},
+            }
+        )
+
+    write_response(
+        {
+            "ok": True,
+            "protocol": GATEWAY_STDIO_PROTOCOL,
+            "ready": True,
+            "session_id": normalized_session_id,
+            "max_request_bytes": max_request_bytes,
+        }
+    )
+    while True:
+        raw_line = input_stream.readline(max_request_bytes + 2)
+        if not raw_line:
+            break
+        if len(raw_line.encode("utf-8")) > max_request_bytes:
+            while raw_line and not raw_line.endswith("\n"):
+                raw_line = input_stream.readline(max_request_bytes + 2)
+            write_error("request_too_large")
+            continue
         line = raw_line.strip()
         if not line:
             continue
+
         request_id = ""
         try:
             request = json.loads(line)
-            if not isinstance(request, dict):
-                raise ValueError("stdio request must be a JSON object")
-            request_id = str(request.get("request_id") or "").strip()
-            command = str(request.get("command") or "simulate_telegram_update").strip()
-            if command in {"shutdown", "stop"}:
-                write_response({"ok": True, "request_id": request_id, "status": "shutdown"})
-                break
-            if command in TOOL_LEDGER_INGEST_COMMANDS:
-                ingest_result = ingest_tool_ledger_payload(state_db, request)
-                response = {"ok": True, "request_id": request_id}
-                response.update(ingest_result.to_payload())
-                if response.get("status"):
-                    response["ledger_status"] = response["status"]
-                response["status"] = "ingested"
-                write_response(response)
-                continue
-            if command not in {"simulate_telegram_update", "telegram_update"}:
-                raise ValueError(f"unsupported stdio command: {command}")
-            update_payload = request.get("update_payload")
-            if not isinstance(update_payload, dict):
-                raise ValueError("stdio request missing update_payload object")
-            request_simulation = bool(request.get("simulation")) if "simulation" in request else simulation
+        except (json.JSONDecodeError, TypeError):
+            write_error("invalid_json")
+            continue
+        if not isinstance(request, dict):
+            write_error("invalid_request")
+            continue
+
+        candidate_request_id = str(request.get("request_id") or "").strip()
+        if _GATEWAY_STDIO_REQUEST_ID.fullmatch(candidate_request_id):
+            request_id = candidate_request_id
+        else:
+            write_error("invalid_request_id")
+            continue
+        if str(request.get("protocol") or "") != GATEWAY_STDIO_PROTOCOL:
+            write_error("unsupported_protocol", request_id=request_id)
+            continue
+        candidate_token = str(request.get("session_token") or "")
+        candidate_session_id = str(request.get("session_id") or "")
+        if not compare_digest(candidate_token, normalized_token) or not compare_digest(
+            candidate_session_id, normalized_session_id
+        ):
+            write_error("unauthorized", request_id=request_id)
+            continue
+
+        command = str(request.get("command") or "").strip()
+        if command == "shutdown":
+            write_response(
+                {
+                    "ok": True,
+                    "protocol": GATEWAY_STDIO_PROTOCOL,
+                    "request_id": request_id,
+                    "status": "shutdown",
+                }
+            )
+            break
+        if command != "telegram_update":
+            write_error("unsupported_command", request_id=request_id)
+            continue
+        update_payload = request.get("update_payload")
+        if not isinstance(update_payload, dict):
+            write_error("invalid_update_payload", request_id=request_id)
+            continue
+
+        try:
             if error_stream is None:
-                result = _simulate_telegram_update_scoped(
+                result = simulate_telegram_update(
                     config_manager=config_manager,
                     state_db=state_db,
                     update_payload=update_payload,
-                    simulation=request_simulation,
+                    simulation=simulation,
                 )
             else:
                 with redirect_stdout(error_stream):
-                    result = _simulate_telegram_update_scoped(
+                    result = simulate_telegram_update(
                         config_manager=config_manager,
                         state_db=state_db,
                         update_payload=update_payload,
-                        simulation=request_simulation,
+                        simulation=simulation,
                     )
             write_response(
                 {
-                    "ok": result.ok,
+                    "ok": bool(result.ok),
+                    "protocol": GATEWAY_STDIO_PROTOCOL,
                     "request_id": request_id,
                     "decision": result.decision,
                     "detail": result.detail,
                 }
             )
-        except Exception as exc:
-            write_response(
-                {
-                    "ok": False,
-                    "request_id": request_id,
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                }
-            )
+        except Exception:
+            write_error("turn_failed", request_id=request_id, retryable=True)
     return 0
 
 
@@ -602,7 +682,7 @@ def gateway_ask_telegram(
             "text": normalized_message,
         },
     }
-    result = _simulate_telegram_update_scoped(
+    result = simulate_telegram_update(
         config_manager=config_manager,
         state_db=state_db,
         update_payload=update_payload,
@@ -645,12 +725,7 @@ def gateway_simulate_discord_message(
     *,
     as_json: bool = False,
 ) -> str:
-    try:
-        payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read payload file {payload_path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid JSON in payload file {payload_path}: {exc}") from exc
+    payload = _load_gateway_json_object(payload_path, surface="Discord message")
     result = simulate_discord_message(
         config_manager=config_manager,
         state_db=state_db,
@@ -666,12 +741,7 @@ def gateway_simulate_whatsapp_message(
     *,
     as_json: bool = False,
 ) -> str:
-    try:
-        payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read payload file {payload_path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid JSON in payload file {payload_path}: {exc}") from exc
+    payload = _load_gateway_json_object(payload_path, surface="WhatsApp message")
     result = simulate_whatsapp_message(
         config_manager=config_manager,
         state_db=state_db,
@@ -774,7 +844,8 @@ def _filter_log_records(
     if event:
         filtered = [record for record in filtered if str(record.get("event") or "") == event]
     if user:
-        filtered = [record for record in filtered if _record_user_ref(record) == user]
+        user_refs = _user_filter_refs(user)
+        filtered = [record for record in filtered if _record_user_ref(record) in user_refs]
     if decision:
         filtered = [record for record in filtered if str(record.get("decision") or "") == decision]
     if delivery:
@@ -841,15 +912,15 @@ def _latest_gateway_telegram_user_id(config_manager: ConfigManager) -> str | Non
     for record in read_gateway_traces(config_manager, limit=20):
         if _record_channel_id(record) != "telegram":
             continue
-        user_ref = _record_user_ref(record)
-        if user_ref != "unknown":
-            return user_ref
+        user_id = _record_raw_user_id(record)
+        if user_id:
+            return user_id
     for record in read_outbound_audit(config_manager, limit=20):
         if _record_channel_id(record) != "telegram":
             continue
-        user_ref = _record_user_ref(record)
-        if user_ref != "unknown":
-            return user_ref
+        user_id = _record_raw_user_id(record)
+        if user_id:
+            return user_id
     return None
 
 
@@ -876,11 +947,47 @@ def _record_channel_id(record: dict[str, Any]) -> str:
 
 
 def _record_user_ref(record: dict[str, Any]) -> str:
-    for key in ("telegram_user_id", "external_user_id", "user_id", "chat_id"):
+    for key in (
+        "telegram_user_ref",
+        "external_user_ref",
+        "user_ref",
+        "chat_ref",
+        "from_ref",
+        "telegram_user_id",
+        "external_user_id",
+        "user_id",
+        "chat_id",
+    ):
         value = record.get(key)
         if value not in {None, ""}:
             return str(value)
     return "unknown"
+
+
+def _record_raw_user_id(record: dict[str, Any]) -> str | None:
+    for key in ("telegram_user_id", "external_user_id", "user_id", "chat_id"):
+        value = str(record.get(key) or "").strip()
+        if value and not _is_trace_identity_ref(value):
+            return value
+    return None
+
+
+def _user_filter_refs(user: str) -> set[str]:
+    normalized = str(user or "").strip()
+    if not normalized:
+        return set()
+    return {
+        normalized,
+        trace_identity_ref("telegram_user", normalized),
+        trace_identity_ref("external_user", normalized),
+        trace_identity_ref("user", normalized),
+        trace_identity_ref("chat", normalized),
+        trace_identity_ref("from", normalized),
+    }
+
+
+def _is_trace_identity_ref(value: str) -> bool:
+    return bool(re.match(r"^[a-z_]+:sha256:[a-f0-9]{16}$", value))
 
 
 def _classify_telegram_failure(exc: Exception) -> str:

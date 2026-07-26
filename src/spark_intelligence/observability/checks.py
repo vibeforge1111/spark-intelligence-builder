@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,9 @@ from spark_intelligence.observability.store import (
     resolve_contradiction,
 )
 from spark_intelligence.state.db import StateDB
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 ALLOWED_AUTOSTART_PLATFORMS = {
@@ -125,8 +130,11 @@ def evaluate_stop_ship_issues(
     if emit_contradictions:
         try:
             _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            _LOGGER.warning(
+                "stop_ship_contradiction_reconciliation_failed error_type=%s",
+                type(exc).__name__,
+            )
     return issues
 
 
@@ -1149,10 +1157,18 @@ def _find_source_pattern_paths(pattern: str, *, allowed_paths: set[str]) -> list
     return matches
 
 
-def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+@lru_cache(maxsize=512)
+def _parsed_source_tree(text: str) -> ast.AST | None:
     try:
-        tree = ast.parse(text)
+        return ast.parse(text)
     except SyntaxError:
+        return None
+
+
+@lru_cache(maxsize=1536)
+def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+    tree = _parsed_source_tree(text)
+    if tree is None:
         return False
     if pattern == "subprocess.run(":
         for node in ast.walk(tree):

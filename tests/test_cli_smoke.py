@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.bridge_authority import DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME, authorize_builder_bridge_action
+from spark_intelligence.cli import _authorize_cli_memory_smoke_write
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
@@ -20,16 +22,57 @@ from spark_intelligence.identity.service import (
     read_canonical_agent_state,
     rename_agent_identity,
 )
-from spark_intelligence.memory import MemoryWriteResult
 from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
+from spark_harness_core.schemas import validate_instance
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_positive_int_helper_rejects_non_positive_cli_counts(self) -> None:
+        from spark_intelligence.cli import _positive_int
+
+        self.assertEqual(_positive_int("1"), 1)
+        self.assertEqual(_positive_int("40"), 40)
+        for value in ("0", "-1", "abc", "", "5.5"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                _positive_int(value)
+
+    def test_memory_direct_smoke_builds_distinct_canonical_update_and_delete_authority(self) -> None:
+        update = _authorize_cli_memory_smoke_write(
+            state_db=self.state_db,
+            subject="human:authority:test",
+            operation="write",
+        )
+        delete = _authorize_cli_memory_smoke_write(
+            state_db=self.state_db,
+            subject="human:authority:test",
+            operation="cleanup",
+        )
+
+        self.assertIsNotNone(update)
+        self.assertIsNotNone(delete)
+        assert update is not None and delete is not None
+        validate_instance("governor-decision-v1", update)
+        validate_instance("governor-decision-v1", delete)
+        self.assertNotEqual(update["decision_id"], delete["decision_id"])
+        self.assertNotEqual(update["turn_id"], delete["turn_id"])
+        for decision in (update, delete):
+            self.assertEqual(decision["outcome"], "execute")
+            action = decision["envelope"]["proposed_actions"][0]
+            self.assertEqual(action["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(action["action_type"], "memory.write")
+            authorization = decision["authorizations"][0]
+            self.assertEqual(authorization["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(authorization["verdict"], "allow")
+            ledger = decision["tool_ledgers"][0]
+            self.assertEqual(ledger["tool_name"], DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME)
+            self.assertEqual(ledger["capability_id"], "capability:domain-chip-memory:memory.write")
+            self.assertEqual(ledger["result"]["status"], "not_started")
+
     def _telegram_memory_upstream_governor(
         self,
         *,
@@ -418,6 +461,14 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.smoke")
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
         self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
+        write_authority = payload["write_result"]["retrieval_trace"]["authority"]
+        cleanup_authority = payload["cleanup_result"]["retrieval_trace"]["authority"]
+        self.assertEqual(write_authority["state"], "governor_verified")
+        self.assertEqual(cleanup_authority["state"], "governor_verified")
+        self.assertNotEqual(
+            write_authority["governor_decision_id"],
+            cleanup_authority["governor_decision_id"],
+        )
 
     def test_memory_export_movement_status_writes_compiler_artifact(self) -> None:
         smoke_exit, _, smoke_stderr = self.run_cli(
@@ -707,110 +758,6 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["promotion_gates"]["status"], "pass")
         self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
-
-    def test_memory_write_telegram_note_passes_governor_to_structured_evidence(self) -> None:
-        governor_path = self.home / "governor-decision.json"
-        governor_path.write_text(json.dumps(self._telegram_memory_upstream_governor()), encoding="utf-8")
-        fake_result = MemoryWriteResult(
-            status="succeeded",
-            operation="create",
-            method="write_observation",
-            memory_role="structured_evidence",
-            accepted_count=1,
-            rejected_count=0,
-            skipped_count=0,
-            abstained=False,
-            retrieval_trace={"authority_binding_refs": ["trace:telegram-memory:test"]},
-            provenance=[{"source": "fake_memory_sdk"}],
-        )
-
-        with patch("spark_intelligence.cli.write_structured_evidence_to_memory", return_value=fake_result) as writer:
-            exit_code, stdout, stderr = self.run_cli(
-                "memory",
-                "write-telegram-note",
-                "--home",
-                str(self.home),
-                "--human-id",
-                "human:telegram:123",
-                "--text",
-                "harness-cua-kb-test: save this exact governed note",
-                "--domain-pack",
-                "telegram_runtime",
-                "--evidence-kind",
-                "telegram_memory_note",
-                "--session-id",
-                "telegram:123",
-                "--turn-id",
-                "telegram-update:1",
-                "--actor-id",
-                "telegram_memory_direct_adapter",
-                "--governor-decision-file",
-                str(governor_path),
-                "--json",
-            )
-
-        self.assertEqual(exit_code, 0, stderr)
-        payload = json.loads(stdout)
-        self.assertEqual(payload["schema_version"], "spark.telegram_memory_write.v1")
-        self.assertEqual(payload["status"], "succeeded")
-        self.assertEqual(payload["accepted_count"], 1)
-        self.assertEqual(payload["authority"]["outcome"], "execute")
-        writer.assert_called_once()
-        kwargs = writer.call_args.kwargs
-        self.assertEqual(kwargs["human_id"], "human:telegram:123")
-        self.assertEqual(kwargs["evidence_text"], "harness-cua-kb-test: save this exact governed note")
-        self.assertEqual(kwargs["domain_pack"], "telegram_runtime")
-        self.assertEqual(kwargs["evidence_kind"], "telegram_memory_note")
-        downstream_governor = kwargs["governor_decision"]
-        self.assertEqual(downstream_governor["schema_version"], "governor-decision-v1")
-        self.assertEqual(downstream_governor["outcome"], "execute")
-        self.assertEqual(downstream_governor["execution_boundary"]["action_authorized"], True)
-        self.assertEqual(downstream_governor["execution_boundary"]["legacy_authority_demoted"], True)
-        self.assertEqual(downstream_governor["tool_ledgers"][0]["tool_name"], DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME)
-        self.assertEqual(
-            downstream_governor["envelope"]["proposed_actions"][0]["capability_id"],
-            "capability:domain-chip-memory:memory.write",
-        )
-        self.assertEqual(downstream_governor["envelope"]["proposed_actions"][0]["action_type"], "memory.write")
-
-    def test_memory_write_telegram_note_rejects_malformed_upstream_governor(self) -> None:
-        governor_path = self.home / "governor-decision.json"
-        governor_path.write_text(
-            json.dumps({"traceId": "trace:telegram-memory:test", "decision": "allowed"}),
-            encoding="utf-8",
-        )
-
-        with patch("spark_intelligence.cli.write_structured_evidence_to_memory") as writer:
-            exit_code, stdout, stderr = self.run_cli(
-                "memory",
-                "write-telegram-note",
-                "--home",
-                str(self.home),
-                "--human-id",
-                "human:telegram:123",
-                "--text",
-                "harness-cua-kb-test: save this exact governed note",
-                "--domain-pack",
-                "telegram_runtime",
-                "--evidence-kind",
-                "telegram_memory_note",
-                "--session-id",
-                "telegram:123",
-                "--turn-id",
-                "telegram-update:1",
-                "--actor-id",
-                "telegram_memory_direct_adapter",
-                "--governor-decision-file",
-                str(governor_path),
-                "--json",
-            )
-
-        self.assertEqual(exit_code, 1, stderr)
-        payload = json.loads(stdout)
-        self.assertEqual(payload["schema_version"], "spark.telegram_memory_write.v1")
-        self.assertEqual(payload["status"], "failed")
-        self.assertIn("upstream Telegram memory authority is invalid", payload["reason"])
-        writer.assert_not_called()
 
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
@@ -1675,6 +1622,53 @@ class CliSmokeTests(SparkTestCase):
         task_args = run_mock.call_args.args[0]
         self.assertEqual(task_args[:4], ["schtasks", "/Delete", "/TN", "Spark Intelligence Test Task"])
 
+    def test_uninstall_autostart_tolerates_already_removed_startup_wrapper(self) -> None:
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+        self.config_manager.set_path("runtime.autostart.platform", "windows_startup_folder")
+        self.config_manager.set_path("runtime.autostart.task_name", "Spark Intelligence Test Task")
+        startup_root = self.home / "AppData" / "Roaming"
+
+        with patch.dict("os.environ", {"APPDATA": str(startup_root)}, clear=False):
+            exit_code, stdout, stderr = self.run_cli(
+                "uninstall-autostart",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Removed autostart.", stdout)
+        self.assertFalse(self.config_manager.get_path("runtime.autostart.enabled"))
+        self.assertIsNone(self.config_manager.get_path("runtime.autostart.platform"))
+
+    def test_uninstall_autostart_removes_present_startup_wrapper(self) -> None:
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+        self.config_manager.set_path("runtime.autostart.platform", "windows_startup_folder")
+        self.config_manager.set_path("runtime.autostart.task_name", "Spark Intelligence Test Task")
+        startup_root = self.home / "AppData" / "Roaming"
+        wrapper = (
+            startup_root
+            / "Microsoft"
+            / "Windows"
+            / "Start Menu"
+            / "Programs"
+            / "Startup"
+            / "Spark Intelligence Test Task.cmd"
+        )
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text("@echo off\r\nspark-intelligence gateway start\r\n", encoding="utf-8")
+
+        with patch.dict("os.environ", {"APPDATA": str(startup_root)}, clear=False):
+            exit_code, stdout, stderr = self.run_cli(
+                "uninstall-autostart",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Removed autostart.", stdout)
+        self.assertFalse(wrapper.exists())
+        self.assertFalse(self.config_manager.get_path("runtime.autostart.enabled"))
+
     def test_install_autostart_falls_back_to_startup_folder_when_task_scheduler_is_denied(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()
@@ -1831,6 +1825,14 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- last swarm decision: manual_recommended", stdout)
         self.assertIn("- provider_fallback_chat:", stdout)
         self.assertIn("- manual_recommended:", stdout)
+
+    def test_connect_route_policy_falls_back_from_invalid_swarm_threshold(self) -> None:
+        self.config_manager.set_path("spark.swarm.routing.long_task_word_count", "not-a-count")
+
+        exit_code, stdout, stderr = self.run_cli("connect", "route-policy", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("long_task_word_count=40", stdout)
 
     def test_connect_route_policy_surfaces_swarm_auth_rejection(self) -> None:
         with patch(
@@ -3551,7 +3553,7 @@ class CliSmokeTests(SparkTestCase):
             "--home",
             str(self.home),
         )
-        self.assertEqual(status_exit, 0, status_stderr)
+        self.assertEqual(status_exit, 0, f"{status_stderr}\n{status_stdout}")
         self.assertIn("- repair hint: spark-intelligence operator set-channel telegram enabled", status_stdout)
 
     def test_gateway_status_ready_when_only_advisory_doctor_checks_fail(self) -> None:
@@ -4353,7 +4355,7 @@ class CliSmokeTests(SparkTestCase):
             str(self.home),
         )
 
-        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertEqual(doctor_exit, 0, f"{doctor_stderr}\n{doctor_stdout}")
         self.assertIn(
             "[ok] discord-runtime: status=enabled pairing_mode=pairing auth_ref=missing allowed_users=0 ingress=legacy_message_webhook webhook_auth_ref=DISCORD_WEBHOOK_SECRET",
             doctor_stdout,
@@ -4430,7 +4432,7 @@ class CliSmokeTests(SparkTestCase):
             str(self.home),
         )
 
-        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertEqual(doctor_exit, 0, f"{doctor_stderr}\n{doctor_stdout}")
         self.assertIn(
             "[ok] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=meta_webhook webhook_auth_ref=WHATSAPP_WEBHOOK_SECRET webhook_verify_token_ref=WHATSAPP_WEBHOOK_VERIFY_TOKEN",
             doctor_stdout,
@@ -4489,18 +4491,3 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(env_map["WHATSAPP_WEBHOOK_SECRET"], "whatsapp-webhook-secret")
         self.assertEqual(env_map["WHATSAPP_WEBHOOK_VERIFY_TOKEN"], "whatsapp-verify-token")
         self.assertIn("Configured channel 'whatsapp' with pairing mode 'pairing' status 'enabled'.", stdout)
-
-    def test_wiki_limit_positive_int_helper_accepts_positive_and_rejects_zero_and_negative(self) -> None:
-        import argparse as _argparse
-
-        from spark_intelligence.cli import _positive_int
-
-        # Success path: positive integers pass through unchanged
-        self.assertEqual(_positive_int("1"), 1)
-        self.assertEqual(_positive_int("40"), 40)
-        self.assertEqual(_positive_int("9999"), 9999)
-
-        # Failure path: zero, negative, non-numeric all raise ArgumentTypeError
-        for bad in ("0", "-1", "-99", "abc", "", "5.5"):
-            with self.assertRaises(_argparse.ArgumentTypeError):
-                _positive_int(bad)

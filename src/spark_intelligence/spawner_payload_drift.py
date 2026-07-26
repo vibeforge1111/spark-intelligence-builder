@@ -12,7 +12,11 @@ from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
 
 
-_log = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
+
+_DRIVE_LETTER_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)([A-Z])")
+_REFERENCE_NON_SLUG_RE = re.compile(r"[^a-z0-9.-]+")
 
 
 _PAYLOAD_KEY_SIGNALS = (
@@ -204,7 +208,12 @@ def _parse_payload(value: Any) -> Any:
         return {"raw": text}
 
 
-def _extract_repo_references(payload: Any, *, prefix: str = "") -> list[tuple[str, str]]:
+_MAX_RECURSION_DEPTH = 50
+
+
+def _extract_repo_references(payload: Any, *, prefix: str = "", _depth: int = _MAX_RECURSION_DEPTH) -> list[tuple[str, str]]:
+    if _depth <= 0:
+        return []
     references: list[tuple[str, str]] = []
     if isinstance(payload, dict):
         for raw_key, value in payload.items():
@@ -212,15 +221,22 @@ def _extract_repo_references(payload: Any, *, prefix: str = "") -> list[tuple[st
             next_prefix = f"{prefix}.{key}" if prefix else key
             normalized_key = _normalize_key(key)
             if _is_repo_reference_key(normalized_key):
-                references.extend(_string_values(value, payload_key=next_prefix))
-            references.extend(_extract_repo_references(value, prefix=next_prefix))
+                references.extend(_string_values(value, payload_key=next_prefix, _depth=_depth - 1))
+            references.extend(_extract_repo_references(value, prefix=next_prefix, _depth=_depth - 1))
     elif isinstance(payload, list):
         for index, item in enumerate(payload):
-            references.extend(_extract_repo_references(item, prefix=f"{prefix}[{index}]"))
+            references.extend(_extract_repo_references(item, prefix=f"{prefix}[{index}]", _depth=_depth - 1))
     return references
 
 
-def _string_values(value: Any, *, payload_key: str) -> list[tuple[str, str]]:
+def _string_values(
+    value: Any,
+    *,
+    payload_key: str,
+    _depth: int = _MAX_RECURSION_DEPTH,
+) -> list[tuple[str, str]]:
+    if _depth <= 0:
+        return []
     if isinstance(value, str):
         return [(payload_key, value.strip())] if value.strip() else []
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -229,12 +245,24 @@ def _string_values(value: Any, *, payload_key: str) -> list[tuple[str, str]]:
         values: list[tuple[str, str]] = []
         for nested_key in ("key", "name", "repo", "repoKey", "repo_root", "path", "root"):
             if nested_key in value:
-                values.extend(_string_values(value[nested_key], payload_key=f"{payload_key}.{nested_key}"))
+                values.extend(
+                    _string_values(
+                        value[nested_key],
+                        payload_key=f"{payload_key}.{nested_key}",
+                        _depth=_depth - 1,
+                    )
+                )
         return values
     if isinstance(value, list):
         values = []
         for index, item in enumerate(value):
-            values.extend(_string_values(item, payload_key=f"{payload_key}[{index}]"))
+            values.extend(
+                _string_values(
+                    item,
+                    payload_key=f"{payload_key}[{index}]",
+                    _depth=_depth - 1,
+                )
+            )
         return values
     return []
 
@@ -266,8 +294,7 @@ def _match_project_reference(reference: str, project_records: list[Any]) -> dict
             try:
                 if reference_path == Path(record_path).expanduser().resolve():
                     return record
-            except Exception as exc:
-                _log.warning("Unexpected error: %s", exc)
+            except Exception:
                 continue
     return None
 
@@ -314,12 +341,13 @@ def _path_from_reference(reference: str) -> Path | None:
     text = str(reference or "").strip()
     if not text:
         return None
-    looks_pathy = "\\" in text or "/" in text or re.match(r"^[A-Za-z]:", text) is not None
+    looks_pathy = "\\" in text or "/" in text or _DRIVE_LETTER_PREFIX_RE.match(text) is not None
     if not looks_pathy:
         return None
     try:
         return Path(text).expanduser().resolve()
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("spawner_reference_resolution_failed error_type=%s", type(exc).__name__)
         return Path(text).expanduser()
 
 
@@ -331,7 +359,7 @@ def _preview_payload(payload: Any) -> str:
 
 
 def _normalize_key(value: str) -> str:
-    return re.sub(r"(?<!^)([A-Z])", r"_\1", str(value or "")).replace("-", "_").casefold()
+    return _CAMEL_BOUNDARY_RE.sub(r"_\1", str(value or "")).replace("-", "_").casefold()
 
 
 def _normalize_reference(value: str) -> str:
@@ -340,4 +368,4 @@ def _normalize_reference(value: str) -> str:
     if "/" in text:
         text = text.split("/")[-1]
     text = text.replace("_", "-").replace(" ", "-")
-    return re.sub(r"[^a-z0-9.-]+", "-", text).strip("-")
+    return _REFERENCE_NON_SLUG_RE.sub("-", text).strip("-")

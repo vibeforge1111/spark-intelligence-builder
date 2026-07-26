@@ -11,6 +11,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
 DEFAULT_VALIDATOR_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
@@ -64,8 +65,13 @@ def build_telegram_state_knowledge_base(
     timeout_seconds: float | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_builder_home = _stable_absolute_path(config_manager.paths.home)
-    resolved_output_dir = _stable_absolute_path(Path(output_dir) if output_dir else _default_output_dir(config_manager))
-    _prepare_output_dir(resolved_output_dir)
+    resolved_output_dir = _stable_absolute_path(
+        Path(output_dir) if output_dir else _default_output_dir(config_manager)
+    )
+    _prepare_output_dir(
+        resolved_output_dir,
+        artifacts_root=config_manager.paths.home / "artifacts",
+    )
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
@@ -99,7 +105,11 @@ def _run_domain_chip_memory_cli(
     validator_root: str | Path | None = None,
     timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "valid": False,
@@ -121,6 +131,13 @@ def _run_domain_chip_memory_cli(
             timeout_seconds=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
+        rendered_timeout = float(timeout_seconds) if timeout_seconds is not None else 0.0
+        return {
+            "valid": False,
+            "errors": [f"validator_timeout:{command_name}:{rendered_timeout:g}s"],
+            "warnings": [],
+        }
+    if bool(getattr(execution, "timed_out", False)):
         rendered_timeout = float(timeout_seconds) if timeout_seconds is not None else 0.0
         return {
             "valid": False,
@@ -167,10 +184,18 @@ def _stable_absolute_path(path: Path) -> Path:
     return Path.cwd() / expanded
 
 
-def _prepare_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+def _prepare_output_dir(output_dir: Path, *, artifacts_root: Path) -> None:
+    resolved_artifacts_root = _stable_absolute_path(artifacts_root).resolve(strict=False)
+    resolved_output_dir = output_dir.resolve(strict=False)
+    if resolved_output_dir == resolved_artifacts_root or not resolved_output_dir.is_relative_to(
+        resolved_artifacts_root
+    ):
+        raise ValueError(
+            "Knowledge-base output_dir must be a strict descendant of the Spark artifacts directory."
+        )
+    if resolved_output_dir.exists():
+        shutil.rmtree(resolved_output_dir)
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_repo_source_inputs(

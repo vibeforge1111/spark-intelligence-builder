@@ -14,12 +14,10 @@ from spark_intelligence.state.db import StateDB
 
 OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
 MEMORY_MAINTENANCE_JOB_ID = "memory:sdk-maintenance"
-OBSERVABILITY_RETENTION_JOB_ID = "observability:retention"
+OBSERVABILITY_RETENTION_JOB_ID = "observability:retention-preview"
 HARNESS_SELF_EVOLUTION_OBSERVE_JOB_ID = "harness:self-evolution-observe"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
 DEFAULT_OBSERVABILITY_RETENTION_DAYS = 90
-DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS = True
-DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -50,14 +48,23 @@ def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
     if not jobs:
         return "No scheduled jobs due. Scheduler harness is healthy."
     lines = [f"Ran {len(jobs)} scheduled job(s)."]
+    first_error: Exception | None = None
     for job in jobs:
-        result = _run_job(
-            config_manager=config_manager,
-            state_db=state_db,
-            job_id=str(job["job_id"]),
-            job_kind=str(job["job_kind"]),
-        )
+        try:
+            result = _run_job(
+                config_manager=config_manager,
+                state_db=state_db,
+                job_id=str(job["job_id"]),
+                job_kind=str(job["job_kind"]),
+            )
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            lines.append(f"- {job['job_id']} kind={job['job_kind']} result=job_exception")
+            continue
         lines.append(f"- {job['job_id']} kind={job['job_kind']} result={result}")
+    if first_error is not None:
+        raise first_error
     return "\n".join(lines)
 
 
@@ -209,27 +216,14 @@ def _run_job(
                 },
             )
             return result
-        if job_kind == "observability_retention":
+        if job_kind == "observability_retention_preview":
             retention_days = _observability_retention_days(config_manager)
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-            payload = prune_observability_store(
-                state_db,
-                older_than=cutoff,
-                vacuum=True,
-                include_builder_events=False,
-            )
-            gateway_log_payload = None
-            if _observability_retention_includes_gateway_logs(config_manager):
-                gateway_log_payload = prune_gateway_logs(config_manager, older_than=cutoff)
-            gateway_log_deleted = gateway_log_payload.total_deleted if gateway_log_payload is not None else 0
+            payload = prune_observability_store(state_db, older_than=cutoff)
+            eligible = payload.eligible_counts.get("event_log", 0)
             result = (
-                f"retention_days={retention_days} cutoff={payload.cutoff} "
-                f"deleted={payload.total_deleted} "
-                f"event_log={payload.deleted_counts.get('event_log', 0)} "
-                f"tool_call_ledger={payload.deleted_counts.get('tool_call_ledger', 0)} "
-                f"provider_runtime_events={payload.deleted_counts.get('provider_runtime_events', 0)} "
-                f"gateway_logs_deleted={gateway_log_deleted} "
-                f"vacuumed={payload.vacuumed}"
+                f"mode=preview retention_days={retention_days} cutoff={payload.cutoff} "
+                f"eligible_event_log={eligible} plan={payload.plan_sha256}"
             )
             _record_job_result(state_db=state_db, job_id=job_id, result=result)
             close_run(
@@ -237,29 +231,28 @@ def _run_job(
                 run_id=run.run_id,
                 status="closed",
                 close_reason="job_completed",
-                summary=f"Job {job_id} completed.",
+                summary=f"Job {job_id} completed without deleting data.",
                 facts={
                     "job_id": job_id,
                     "job_kind": job_kind,
                     "result": result,
+                    "mode": payload.mode,
                     "retention_days": retention_days,
                     "cutoff": payload.cutoff,
-                    "deleted_counts": payload.deleted_counts,
-                    "gateway_logs": gateway_log_payload.to_payload() if gateway_log_payload is not None else None,
-                    "vacuumed": payload.vacuumed,
+                    "eligible_counts": payload.eligible_counts,
+                    "protected_tables": list(payload.protected_tables),
+                    "plan_sha256": payload.plan_sha256,
                 },
             )
             return result
         if job_kind == "harness_self_evolution_observe":
             from spark_intelligence.harness_evolution import build_harness_self_evolution_snapshot
 
-            limit = _harness_self_evolution_limit(config_manager)
-            payload = build_harness_self_evolution_snapshot(state_db, limit=limit)
-            readiness = payload["readiness_score"]["overall"]
+            payload = build_harness_self_evolution_snapshot(state_db)
             result = (
                 f"mode=observe ledgers={payload['ledger_count']} "
-                f"readiness={readiness['status']} score={readiness['score']} "
-                f"event_id={payload.get('event_id') or 'none'}"
+                f"readiness={payload['readiness_score']['overall']['status']} "
+                f"evidence={payload['evidence_digest']} commands_executed=false"
             )
             _record_job_result(state_db=state_db, job_id=job_id, result=result)
             close_run(
@@ -267,17 +260,16 @@ def _run_job(
                 run_id=run.run_id,
                 status="closed",
                 close_reason="job_completed",
-                summary=f"Job {job_id} completed.",
+                summary=f"Job {job_id} recorded observe-only Harness evidence.",
                 facts={
                     "job_id": job_id,
                     "job_kind": job_kind,
                     "result": result,
-                    "limit": limit,
+                    "mode": "observe",
                     "ledger_count": payload["ledger_count"],
-                    "readiness_status": readiness["status"],
-                    "readiness_score": readiness["score"],
-                    "self_evolution_run_id": payload["self_evolution_run"]["evolution_id"],
-                    "self_evolution_event_id": payload.get("event_id"),
+                    "evidence_digest": payload["evidence_digest"],
+                    "commands_executed": False,
+                    "promotion_allowed": False,
                 },
             )
             return result
@@ -322,31 +314,15 @@ def _utc_now_iso() -> str:
 
 
 def _observability_retention_days(config_manager: ConfigManager) -> int:
-    raw = config_manager.get_path("observability.retention.days", default=DEFAULT_OBSERVABILITY_RETENTION_DAYS)
+    raw = config_manager.get_path(
+        "observability.retention.days",
+        default=DEFAULT_OBSERVABILITY_RETENTION_DAYS,
+    )
     try:
         value = int(str(raw))
     except (TypeError, ValueError):
         return DEFAULT_OBSERVABILITY_RETENTION_DAYS
-    return max(value, 1)
-
-
-def _observability_retention_includes_gateway_logs(config_manager: ConfigManager) -> bool:
-    raw = config_manager.get_path(
-        "observability.retention.include_gateway_logs",
-        default=DEFAULT_OBSERVABILITY_RETENTION_INCLUDE_GATEWAY_LOGS,
-    )
-    if isinstance(raw, str):
-        return raw.strip().lower() not in {"0", "false", "no", "off"}
-    return bool(raw)
-
-
-def _harness_self_evolution_limit(config_manager: ConfigManager) -> int:
-    raw = config_manager.get_path("harness.self_evolution.observe_limit", default=DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT)
-    try:
-        value = int(str(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_HARNESS_SELF_EVOLUTION_LIMIT
-    return max(1, min(value, 100))
+    return max(1, min(value, 3650))
 
 
 def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:

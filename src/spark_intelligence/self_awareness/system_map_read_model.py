@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 import json
+import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 SYSTEM_MAP_CONTEXT_SCHEMA_VERSION = "spark.aoc_system_map_context.v1"
+_FRESHNESS_FRESH_HORIZON = timedelta(hours=24)
+_FRESHNESS_STALE_HORIZON = timedelta(days=7)
+
+
+def _freshness_from_generated_at(generated_at: Any) -> str:
+    text = str(generated_at or "").strip()
+    if not text:
+        return "unknown"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return "unparseable_timestamp"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - parsed.astimezone(UTC)
+    if age < -timedelta(minutes=5):
+        return "future_timestamp"
+    if age < _FRESHNESS_FRESH_HORIZON:
+        return "fresh"
+    if age < _FRESHNESS_STALE_HORIZON:
+        return "aging"
+    return "stale"
 
 _RAW_READ_FLAGS = (
     "raw_secret_values_read",
@@ -100,7 +127,7 @@ def build_spark_system_map_context(config_manager: ConfigManager) -> dict[str, A
         "source_ref": "spark os compile",
         "output_dir": str(output_dir),
         "resolution": resolution,
-        "freshness": "fresh" if system_map.get("generated_at") else "unknown",
+        "freshness": _freshness_from_generated_at(system_map.get("generated_at")),
         "generated_at": system_map.get("generated_at"),
         "counts": counts,
         "memory_movement": memory_movement,
@@ -204,7 +231,8 @@ def _read_json_object(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("system_map_json_read_failed error_type=%s", type(exc).__name__)
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -283,6 +311,12 @@ def _trace_health_context(trace_index: dict[str, Any]) -> dict[str, Any]:
         "health_flags": _list(trace_health.get("health_flags")),
         "missing_trace_ref_count": _int(trace_health.get("missing_trace_ref_count")),
         "high_severity_open_count": _int(trace_health.get("high_severity_open_count")),
+        "unresolved_high_severity_open_count": _int(trace_health.get("unresolved_high_severity_open_count")),
+        "current_unresolved_high_severity_open_count": _int(
+            trace_health.get("current_unresolved_high_severity_open_count")
+        ),
+        "unresolved_high_severity_source_group_count": _unresolved_high_severity_source_group_count(trace_health),
+        "latest_unresolved_high_severity_event_created_at": _latest_unresolved_high_severity_created_at(trace_health),
         "orphan_parent_event_id_count": _int(trace_health.get("orphan_parent_event_id_count")),
         "trace_group_count": _int(trace_health.get("trace_group_count")),
         "missing_trace_ref_sources": _missing_trace_ref_sources(trace_health),
@@ -576,6 +610,37 @@ def _orphan_parent_event_sources(trace_health: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _unresolved_high_severity_source_group_count(trace_health: dict[str, Any]) -> int:
+    explicit = _int(trace_health.get("unresolved_high_severity_source_group_count"))
+    if explicit:
+        return explicit
+    sources = _dict(trace_health.get("high_severity_open_sources"))
+    rows = [_dict(row) for row in _list(sources.get("rows"))]
+    return sum(1 for row in rows if _is_unresolved_high_severity_source(row))
+
+
+def _latest_unresolved_high_severity_created_at(trace_health: dict[str, Any]) -> str:
+    explicit = str(trace_health.get("latest_unresolved_high_severity_event_created_at") or "").strip()
+    if explicit:
+        return explicit
+    sources = _dict(trace_health.get("high_severity_open_sources"))
+    candidates = [
+        str(row.get("latest_event_created_at") or "").strip()
+        for row in (_dict(raw_row) for raw_row in _list(sources.get("rows")))
+        if _is_unresolved_high_severity_source(row)
+    ]
+    return max((candidate for candidate in candidates if candidate), default="")
+
+
+def _is_unresolved_high_severity_source(row: dict[str, Any]) -> bool:
+    latest = str(row.get("latest_lifecycle_state") or row.get("lifecycle_temporal_state") or "").strip().lower()
+    if latest:
+        return latest == "latest_open_high_severity"
+    return str(row.get("status") or "").strip().lower() in {"open", "failed", "error", "blocked"} and str(
+        row.get("severity") or ""
+    ).strip().lower() in {"high", "critical"}
+
+
 def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for raw_row in _list(trace_health.get("recent_windows")):
@@ -587,6 +652,8 @@ def _trace_health_recent_windows(trace_health: dict[str, Any]) -> list[dict[str,
                 "row_count": _int(row.get("row_count")),
                 "missing_trace_ref_count": _int(row.get("missing_trace_ref_count")),
                 "missing_trace_ref_ratio": _float(row.get("missing_trace_ref_ratio")),
+                "high_severity_open_count": _int(row.get("high_severity_open_count")),
+                "high_severity_open_ratio": _float(row.get("high_severity_open_ratio")),
             }
         )
     return rows

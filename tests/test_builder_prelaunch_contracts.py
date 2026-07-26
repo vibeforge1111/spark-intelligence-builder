@@ -11,6 +11,7 @@ from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply, record_telegram_auth_result
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.identity.service import (
@@ -20,8 +21,12 @@ from spark_intelligence.identity.service import (
     resolve_canonical_agent_identity,
 )
 from spark_intelligence.ops.service import build_operator_security_report
-from spark_intelligence.observability.checks import evaluate_stop_ship_issues
+from spark_intelligence.observability.checks import (
+    _external_execution_governance_issue,
+    evaluate_stop_ship_issues,
+)
 from spark_intelligence.observability.store import (
+    _mirror_memory_lane_event,
     build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
@@ -29,11 +34,13 @@ from spark_intelligence.observability.store import (
     persist_bound_ledger,
     recent_contradictions,
     recent_memory_lane_records,
+    recent_observer_handoff_records,
     recent_runs,
     record_observer_handoff_record,
     recent_observer_packet_records,
     recent_policy_gate_records,
     record_environment_snapshot,
+    record_config_mutation,
     record_event,
     repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
@@ -227,7 +234,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             ).fetchone()
             requested_event = conn.execute(
                 """
-                SELECT request_id, trace_ref
+                SELECT event_id, parent_event_id, correlation_id, request_id, trace_ref
                 FROM builder_events
                 WHERE event_type = 'config_mutation_requested'
                     AND actor_id = 'local-operator'
@@ -238,7 +245,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             ).fetchone()
             applied_event = conn.execute(
                 """
-                SELECT request_id, trace_ref
+                SELECT event_id, parent_event_id, correlation_id, request_id, trace_ref
                 FROM builder_events
                 WHERE event_type = 'config_mutation_applied'
                     AND actor_id = 'local-operator'
@@ -260,7 +267,60 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(applied_event["request_id"], expected_request_id)
         self.assertEqual(requested_event["trace_ref"], f"trace:{expected_request_id}")
         self.assertEqual(applied_event["trace_ref"], f"trace:{expected_request_id}")
+        self.assertEqual(requested_event["correlation_id"], row["mutation_id"])
+        self.assertEqual(applied_event["correlation_id"], row["mutation_id"])
+        self.assertEqual(applied_event["parent_event_id"], requested_event["event_id"])
         self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
+
+    def test_config_set_rejects_invalid_yaml_without_mutating_config(self) -> None:
+        with self.assertRaisesRegex(SystemExit, r"Invalid YAML value for runtime\.test\.invalid"):
+            self.run_cli(
+                "config",
+                "set",
+                "runtime.test.invalid",
+                "[",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertIsNone(self.config_manager.get_path("runtime.test.invalid"))
+
+    def test_config_mutation_preserves_supplied_request_trace_lineage(self) -> None:
+        mutation_id = record_config_mutation(
+            self.state_db,
+            target_document="config.toml",
+            target_path="runtime.install.profile",
+            actor_id="operator:test",
+            actor_type="human",
+            reason_code="test_trace_lineage",
+            request_source="test",
+            before_payload="local",
+            after_payload="telegram-agent",
+            status="applied",
+            rollback_payload="local",
+            request_id="req-config-lineage",
+            trace_ref="trace:config-lineage",
+        )
+
+        with self.state_db.connect() as conn:
+            events = conn.execute(
+                """
+                SELECT event_id, event_type, parent_event_id, correlation_id, request_id, trace_ref
+                FROM builder_events
+                WHERE correlation_id = ?
+                ORDER BY created_at, event_id
+                """,
+                (mutation_id,),
+            ).fetchall()
+
+        events_by_type = {event["event_type"]: event for event in events}
+        self.assertEqual(set(events_by_type), {"config_mutation_requested", "config_mutation_applied"})
+        self.assertEqual(
+            events_by_type["config_mutation_applied"]["parent_event_id"],
+            events_by_type["config_mutation_requested"]["event_id"],
+        )
+        self.assertTrue(all(event["request_id"] == "req-config-lineage" for event in events))
+        self.assertTrue(all(event["trace_ref"] == "trace:config-lineage" for event in events))
 
     def test_env_secret_noop_upsert_is_rejected_without_rewrite(self) -> None:
         self.config_manager.upsert_env_secret("TEST_SECRET", "abc123")
@@ -477,6 +537,24 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("redact_sensitive_text", guarded["actions"])
         self.assertNotIn("sk-proj-", guarded["text"])
         self.assertIn("<redacted api key>", guarded["text"])
+
+    def test_outbound_redacts_once_after_content_normalization(self) -> None:
+        api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
+        with patch(
+            "spark_intelligence.gateway.guardrails.redact_text",
+            wraps=redact_text,
+        ) as redact:
+            guarded = prepare_outbound_text(
+                text=f"Use this key — {api_key_fixture}",
+                bridge_mode=None,
+                max_reply_chars=4000,
+                redact_secret_like_replies=False,
+            )
+
+        redact.assert_called_once()
+        self.assertNotIn("—", redact.call_args.args[0])
+        self.assertNotIn(api_key_fixture, guarded["text"])
+        self.assertEqual(guarded["actions"].count("redact_sensitive_text"), 1)
 
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
@@ -793,6 +871,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         )
         fake_prune = SimpleNamespace(
             cutoff="2026-01-01T00:00:00Z",
+            mode="preview",
+            eligible_counts={"event_log": 0},
+            protected_tables=("builder_events", "tool_call_ledger"),
+            plan_sha256="preview-plan",
             total_deleted=0,
             deleted_counts={"event_log": 0, "tool_call_ledger": 0, "provider_runtime_events": 0},
             vacuumed=False,
@@ -1077,6 +1159,49 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(lane_records[0]["artifact_lane"], "working_scratchpad")
         self.assertIsNone(lane_records[0]["promotion_target_lane"])
         self.assertEqual(lane_records[0]["status"], "blocked")
+
+    def test_duplicate_memory_lane_mirror_preserves_first_historical_record(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="first classified result",
+            request_id="req-memory-lane-history",
+            trace_ref="trace:req-memory-lane-history",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+            provenance={"source_kind": "first_source", "source_ref": "first_ref"},
+        )
+        original = recent_memory_lane_records(self.state_db, limit=1)[0]
+
+        with self.state_db.connect() as conn:
+            _mirror_memory_lane_event(
+                conn,
+                event_id=event_id,
+                event_type="memory_write_succeeded",
+                recorded_at="2099-01-01T00:00:00Z",
+                component="memory_orchestrator",
+                run_id="run:replacement",
+                request_id="req-replacement",
+                trace_ref="trace:replacement",
+                reason_code="replacement_attempt",
+                facts={
+                    "keepability": "durable_user_memory",
+                    "promotion_disposition": "promote_current_state",
+                },
+                provenance={"source_kind": "replacement_source", "source_ref": "replacement_ref"},
+            )
+
+        preserved = recent_memory_lane_records(self.state_db, limit=1)[0]
+
+        self.assertEqual(preserved, original)
+        self.assertEqual(preserved["component"], "researcher_bridge")
+        self.assertEqual(preserved["source_kind"], "first_source")
+        self.assertEqual(preserved["artifact_lane"], "working_scratchpad")
+        self.assertEqual(preserved["status"], "blocked")
 
     def test_memory_lane_records_export_trace_contract_for_memory_decisions(self) -> None:
         record_event(
@@ -2205,6 +2330,12 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(issues["stop_ship_external_execution_governance"].ok)
         self.assertIn("future_tooling/raw_exec.py", issues["stop_ship_external_execution_governance"].detail)
 
+    def test_chip_create_external_cli_uses_governed_execution_surface(self) -> None:
+        issue = _external_execution_governance_issue()
+
+        self.assertTrue(issue.ok, issue.detail)
+        self.assertNotIn("src/spark_intelligence/chip_create/pipeline.py", issue.detail)
+
     def test_stop_ship_flags_promotable_ephemeral_bridge_output(self) -> None:
         record_event(
             self.state_db,
@@ -2687,6 +2818,57 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["counts"]["observer_handoff_failures"], 1)
         self.assertTrue(any("observer handoff" in item["summary"].lower() for item in report.payload["items"]))
 
+    def test_duplicate_observer_handoff_preserves_first_historical_record(self) -> None:
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-history",
+            chip_key="startup-yc",
+            hook="packets",
+            run_id="run:first",
+            request_id="req:first",
+            bundle_path="/first/bundle.json",
+            result_path=None,
+            packet_count=2,
+            packet_kind_filter="incident",
+            active_only=True,
+            status="failed",
+            summary="The original observer handoff failed.",
+            exit_code=1,
+            error_text="original_failure",
+            payload={"attempt": "first"},
+            created_at="2026-06-02T21:14:00Z",
+        )
+        original = recent_observer_handoff_records(self.state_db, limit=1)[0]
+
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-history",
+            chip_key="replacement-chip",
+            hook="packets",
+            run_id="run:replacement",
+            request_id="req:replacement",
+            bundle_path="/replacement/bundle.json",
+            result_path="/replacement/result.json",
+            packet_count=9,
+            packet_kind_filter=None,
+            active_only=False,
+            status="completed",
+            summary="A duplicate attempted to replace the historical failure.",
+            exit_code=0,
+            payload={"attempt": "replacement"},
+            output={"ok": True},
+            created_at="2099-01-01T00:00:00Z",
+            completed_at="2099-01-01T00:00:01Z",
+        )
+
+        preserved = recent_observer_handoff_records(self.state_db, limit=1)[0]
+
+        self.assertEqual(preserved, original)
+        self.assertEqual(preserved["status"], "failed")
+        self.assertEqual(preserved["error_text"], "original_failure")
+        self.assertEqual(preserved["run_id"], "run:first")
+        self.assertEqual(preserved["payload_json"], {"attempt": "first"})
+
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
             self.state_db,
@@ -2833,14 +3015,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
         self._write_builder_install_fixture(
             release,
             commit="b" * 40,
-            license_name="MIT",
+            license_name="AGPL-3.0-only",
             needs_modules=[],
             dependencies=["PyNaCl>=1.6.2", "PyYAML>=6.0"],
         )
@@ -2852,7 +3034,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("builder-source-truth", checks)
         self.assertFalse(checks["builder-source-truth"].ok)
         self.assertIn("commit_drift", checks["builder-source-truth"].detail)
-        self.assertIn("license_mismatch=spark-intelligence-builder-release:MIT", checks["builder-source-truth"].detail)
+        self.assertIn("license_mismatch=spark-intelligence-builder-release:AGPL-3.0-only", checks["builder-source-truth"].detail)
         self.assertIn("missing_harness_dep=spark-intelligence-builder-release", checks["builder-source-truth"].detail)
         self.assertIn("missing_python_deps=spark-intelligence-builder-release:jsonschema+referencing", checks["builder-source-truth"].detail)
 
@@ -2863,14 +3045,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
         self._write_builder_install_fixture(
             release,
             commit="b" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=[],
             dependencies=[],
             source_truth_canonical=False,
@@ -2898,7 +3080,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -2923,7 +3105,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -2943,7 +3125,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -2974,7 +3156,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -3015,7 +3197,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self._write_builder_install_fixture(
             live,
             commit="a" * 40,
-            license_name="AGPL-3.0-only",
+            license_name="MIT",
             needs_modules=["spark-harness-core"],
             dependencies=["jsonschema>=4.22.0", "PyNaCl>=1.6.2", "PyYAML>=6.0", "referencing>=0.35.0"],
         )
@@ -3049,6 +3231,11 @@ class BuilderPrelaunchContractTests(SparkTestCase):
     ) -> None:
         source_root = Path(root)
         source_root.mkdir(parents=True, exist_ok=True)
+        if "spark-harness-core" in needs_modules and not any(
+            dependency.startswith("spark-harness-core")
+            for dependency in dependencies
+        ):
+            dependencies = [*dependencies, "spark-harness-core @ test-fixture"]
         needs_modules_text = ", ".join(f'"{module}"' for module in needs_modules)
         dependencies_text = "\n".join(f'  "{dependency}",' for dependency in dependencies)
         manifest_lines = [

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from unittest.mock import patch
 
 from spark_intelligence.execution.governed import (
+    DEFAULT_GOVERNED_COMMAND_TIMEOUT_SECONDS,
     record_governed_tool_result,
     run_governed_command,
     screen_governed_tool_text,
@@ -38,6 +40,79 @@ class GovernedExecutionTests(SparkTestCase):
 
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 12.5)
 
+    def test_run_governed_command_uses_finite_default_timeout(self) -> None:
+        with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
+            run_mock.return_value.returncode = 0
+            run_mock.return_value.stdout = ""
+            run_mock.return_value.stderr = ""
+
+            execution = run_governed_command(
+                command=[sys.executable, "-c", "print('governed-ok')"],
+                cwd=self.home,
+            )
+
+        self.assertEqual(
+            run_mock.call_args.kwargs["timeout"],
+            DEFAULT_GOVERNED_COMMAND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(execution.timeout_seconds, DEFAULT_GOVERNED_COMMAND_TIMEOUT_SECONDS)
+        self.assertFalse(execution.timed_out)
+
+    def test_run_governed_command_returns_safe_typed_timeout(self) -> None:
+        raw_command = [sys.executable, "-c", "print('secret-token')"]
+        with patch(
+            "spark_intelligence.execution.governed.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=raw_command,
+                timeout=7.5,
+                output="partial-sensitive-output",
+                stderr="partial-sensitive-error",
+            ),
+        ):
+            execution = run_governed_command(
+                command=raw_command,
+                cwd=self.home,
+                timeout_seconds=7.5,
+            )
+
+        self.assertFalse(execution.ok)
+        self.assertTrue(execution.timed_out)
+        self.assertEqual(execution.exit_code, 124)
+        self.assertEqual(execution.timeout_seconds, 7.5)
+        self.assertEqual(execution.stdout, "")
+        self.assertNotIn("secret-token", " ".join(execution.command))
+        self.assertNotIn("partial-sensitive", execution.stderr)
+        self.assertNotIn("secret-token", execution.stderr)
+        self.assertEqual(execution.stderr, "Governed command timed out after 7.5 seconds.")
+
+    def test_run_governed_command_returns_safe_missing_command_result(self) -> None:
+        raw_command = ["missing-secret-bearing-command"]
+        with patch(
+            "spark_intelligence.execution.governed.subprocess.run",
+            side_effect=FileNotFoundError("secret launch path"),
+        ):
+            execution = run_governed_command(command=raw_command, cwd=self.home)
+
+        self.assertEqual(execution.exit_code, 127)
+        self.assertEqual(execution.command, ["<redacted:launch_failed>"])
+        self.assertEqual(execution.stderr, "Governed command was not found.")
+        self.assertNotIn("secret", execution.stderr)
+
+    def test_run_governed_command_returns_safe_os_error_result(self) -> None:
+        with patch(
+            "spark_intelligence.execution.governed.subprocess.run",
+            side_effect=OSError("secret executable detail"),
+        ):
+            execution = run_governed_command(
+                command=["private-command"],
+                cwd=self.home,
+            )
+
+        self.assertEqual(execution.exit_code, 126)
+        self.assertEqual(execution.command, ["<redacted:launch_failed>"])
+        self.assertEqual(execution.stderr, "Governed command could not be started.")
+        self.assertNotIn("secret", execution.stderr)
+
     def test_run_governed_command_forwards_encoding_and_errors(self) -> None:
         with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
             run_mock.return_value.returncode = 0
@@ -53,6 +128,20 @@ class GovernedExecutionTests(SparkTestCase):
 
         self.assertEqual(run_mock.call_args.kwargs["encoding"], "utf-8")
         self.assertEqual(run_mock.call_args.kwargs["errors"], "replace")
+
+    def test_run_governed_command_forwards_stdin_input_text(self) -> None:
+        with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
+            run_mock.return_value.returncode = 0
+            run_mock.return_value.stdout = ""
+            run_mock.return_value.stderr = ""
+
+            run_governed_command(
+                command=[sys.executable, "-c", "print(input())"],
+                cwd=self.home,
+                input_text="brief prompt",
+            )
+
+        self.assertEqual(run_mock.call_args.kwargs["input"], "brief prompt")
 
     def test_record_governed_tool_result_emits_typed_result_event(self) -> None:
         execution = run_governed_command(

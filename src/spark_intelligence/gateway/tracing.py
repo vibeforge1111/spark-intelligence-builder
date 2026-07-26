@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.security.redaction import redact_text
 
 SENSITIVE_TEXT_PATTERNS = [
     re.compile(r"\b(?:bot)?\d{7,12}:[A-Za-z0-9_-]{30,}\b"),
@@ -16,8 +18,32 @@ SENSITIVE_TEXT_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._\-]{16,})"),
 ]
 SENSITIVE_KEY_PATTERN = re.compile(r"(?i)(api[_-]?key|bot[_-]?token|token|secret|password|authorization)")
-GATEWAY_JSONL_MAX_BYTES = 25 * 1024 * 1024
-GATEWAY_JSONL_BACKUPS = 3
+RAW_ID_KEY_REPLACEMENTS = {
+    "chat_id": "chat_ref",
+    "chatId": "chat_ref",
+    "external_user_id": "external_user_ref",
+    "externalUserId": "external_user_ref",
+    "user_id": "user_ref",
+    "userId": "user_ref",
+    "from_id": "from_ref",
+    "fromId": "from_ref",
+    "telegram_user_id": "telegram_user_ref",
+    "telegramUserId": "telegram_user_ref",
+}
+PATH_LIKE_PATTERNS = [
+    re.compile(r"/Users/\S+"),
+    re.compile(r"/var/folders/\S+"),
+    re.compile(r"file://\S+"),
+    re.compile(r"[A-Za-z]:\\\S+"),
+]
+POLICY_REASON_PATTERN = re.compile(
+    r"\b(?:tool_not_allowed_by_policy|owner_mismatch|route_not_selected_by_turn_envelope|"
+    r"governor_outcome_deny|harness_core:[A-Za-z0-9_-]+)\b",
+    re.IGNORECASE,
+)
+TELEGRAM_SESSION_ID_PATTERN = re.compile(r"^(session:telegram:[^:]+:)(.+)$")
+HARNESS_PROOF_CAPSULE_SCHEMA = "spark.harness_proof.v1"
+HARNESS_PROOF_REF_PATTERN = re.compile(r"^turn:sha256:[a-f0-9]{16}$")
 
 
 @dataclass(frozen=True)
@@ -50,8 +76,7 @@ def outbound_log_path(config_manager: ConfigManager) -> Path:
 def append_gateway_trace(config_manager: ConfigManager, record: dict[str, Any]) -> None:
     path = trace_log_path(config_manager)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _rotate_jsonl_if_oversized(path, max_bytes=GATEWAY_JSONL_MAX_BYTES, backups=GATEWAY_JSONL_BACKUPS)
-    payload = redact_trace_payload({"recorded_at": _utc_now_iso(), **record})
+    payload = ensure_gateway_trace_proof_continuity(redact_trace_payload({"recorded_at": _utc_now_iso(), **record}))
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
@@ -59,7 +84,6 @@ def append_gateway_trace(config_manager: ConfigManager, record: dict[str, Any]) 
 def append_outbound_audit(config_manager: ConfigManager, record: dict[str, Any]) -> None:
     path = outbound_log_path(config_manager)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _rotate_jsonl_if_oversized(path, max_bytes=GATEWAY_JSONL_MAX_BYTES, backups=GATEWAY_JSONL_BACKUPS)
     payload = redact_trace_payload({"recorded_at": _utc_now_iso(), **record})
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
@@ -74,7 +98,7 @@ def read_gateway_traces(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            traces.append(json.loads(line))
+            traces.append(redact_trace_payload(_decode_trace_record(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return traces
@@ -89,21 +113,25 @@ def read_outbound_audit(config_manager: ConfigManager, *, limit: int = 20) -> li
         if not line.strip():
             continue
         try:
-            records.append(json.loads(line))
+            records.append(redact_trace_payload(_decode_trace_record(line)))
         except (json.JSONDecodeError, ValueError):
             continue
     return records
 
 
-def prune_gateway_logs(config_manager: ConfigManager, *, older_than: str | datetime) -> GatewayLogPruneResult:
-    cutoff = _normalize_cutoff_datetime(older_than)
+def prune_gateway_logs(
+    config_manager: ConfigManager,
+    *,
+    older_than: str | datetime,
+) -> GatewayLogPruneResult:
+    cutoff = _normalize_gateway_cutoff(older_than)
     deleted_counts: dict[str, int] = {}
     kept_counts: dict[str, int] = {}
     for label, path in (
         ("gateway_trace", trace_log_path(config_manager)),
         ("gateway_outbound", outbound_log_path(config_manager)),
     ):
-        deleted, kept = _prune_jsonl_path(path, cutoff)
+        deleted, kept = _prune_gateway_jsonl(path, cutoff)
         deleted_counts[label] = deleted
         kept_counts[label] = kept
     return GatewayLogPruneResult(
@@ -113,35 +141,191 @@ def prune_gateway_logs(config_manager: ConfigManager, *, older_than: str | datet
     )
 
 
-def gateway_log_report(config_manager: ConfigManager, *, older_than: str | datetime | None = None) -> dict[str, Any]:
-    cutoff = _normalize_cutoff_datetime(older_than) if older_than is not None else None
-    logs = {
-        label: _jsonl_path_report(path, cutoff)
-        for label, path in (
-            ("gateway_trace", trace_log_path(config_manager)),
-            ("gateway_outbound", outbound_log_path(config_manager)),
-        )
-    }
-    return {
-        "cutoff": cutoff.isoformat(timespec="seconds") if cutoff is not None else None,
-        "logs": logs,
-        "total_bytes": sum(int(item["bytes"]) for item in logs.values()),
-        "total_records": sum(int(item["records"]) for item in logs.values()),
-        "total_old_records": sum(int(item["old_records"]) for item in logs.values()),
-        "total_invalid_records": sum(int(item["invalid_records"]) for item in logs.values()),
-    }
+def _normalize_gateway_cutoff(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        cutoff = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("older_than is required")
+        cutoff = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    return cutoff.astimezone(timezone.utc)
 
 
-def rotate_gateway_logs_if_oversized(
+def _prune_gateway_jsonl(path: Path, cutoff: datetime) -> tuple[int, int]:
+    if not path.exists():
+        return 0, 0
+    temporary = path.with_name(f"{path.name}.tmp")
+    deleted = 0
+    kept = 0
+    with path.open("r", encoding="utf-8", errors="replace") as source, temporary.open(
+        "w",
+        encoding="utf-8",
+    ) as target:
+        for line in source:
+            keep = True
+            try:
+                payload = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                raw = str(payload.get("recorded_at") or "").strip()
+                try:
+                    recorded_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    recorded_at = None
+                if recorded_at is not None:
+                    if recorded_at.tzinfo is None:
+                        recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+                    if recorded_at.astimezone(timezone.utc) < cutoff:
+                        keep = False
+            if keep:
+                target.write(line)
+                kept += 1
+            else:
+                deleted += 1
+    if deleted:
+        temporary.replace(path)
+    else:
+        temporary.unlink(missing_ok=True)
+    return deleted, kept
+
+
+def redact_gateway_trace_log(
     config_manager: ConfigManager,
     *,
-    max_bytes: int = GATEWAY_JSONL_MAX_BYTES,
-    backups: int = GATEWAY_JSONL_BACKUPS,
-) -> dict[str, bool]:
-    return {
-        "gateway_trace": _rotate_jsonl_if_oversized(trace_log_path(config_manager), max_bytes=max_bytes, backups=backups),
-        "gateway_outbound": _rotate_jsonl_if_oversized(outbound_log_path(config_manager), max_bytes=max_bytes, backups=backups),
+    backup: bool = True,
+) -> dict[str, Any]:
+    path = trace_log_path(config_manager)
+    result: dict[str, Any] = {
+        "ok": True,
+        "path": str(path),
+        "backup_path": None,
+        "rows_read": 0,
+        "rows_written": 0,
+        "parse_errors": 0,
     }
+    if not path.exists():
+        result["ok"] = False
+        result["error"] = "trace_log_missing"
+        return result
+
+    original = path.read_text(encoding="utf-8")
+    redacted_lines: list[str] = []
+    for line in original.splitlines():
+        if not line.strip():
+            continue
+        result["rows_read"] = int(result["rows_read"]) + 1
+        try:
+            payload = redact_trace_payload(_decode_trace_record(line))
+        except (json.JSONDecodeError, ValueError):
+            result["parse_errors"] = int(result["parse_errors"]) + 1
+            continue
+        redacted_lines.append(json.dumps(payload, ensure_ascii=True))
+
+    if backup:
+        backup_path = path.with_name(f"{path.name}.raw-backup")
+        backup_path.write_text(original, encoding="utf-8")
+        result["backup_path"] = str(backup_path)
+
+    path.write_text(("\n".join(redacted_lines) + "\n") if redacted_lines else "", encoding="utf-8")
+    result["rows_written"] = len(redacted_lines)
+    result["ok"] = int(result["parse_errors"]) == 0
+    return result
+
+
+def repair_gateway_trace_proof_continuity(
+    config_manager: ConfigManager,
+    *,
+    backup: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    path = trace_log_path(config_manager)
+    result: dict[str, Any] = {
+        "ok": True,
+        "path": str(path),
+        "backup_path": None,
+        "dry_run": dry_run,
+        "rows_read": 0,
+        "rows_written": 0,
+        "parse_errors": 0,
+        "gap_capsules_added": 0,
+        "not_execution_marked": 0,
+        "already_had_proof": 0,
+        "changed_rows": 0,
+    }
+    if not path.exists():
+        result["ok"] = False
+        result["error"] = "trace_log_missing"
+        return result
+
+    original = path.read_text(encoding="utf-8")
+    repaired_lines: list[str] = []
+    for line in original.splitlines():
+        if not line.strip():
+            continue
+        result["rows_read"] = int(result["rows_read"]) + 1
+        try:
+            before_payload = redact_trace_payload(_decode_trace_record(line))
+        except (json.JSONDecodeError, ValueError):
+            result["parse_errors"] = int(result["parse_errors"]) + 1
+            repaired_lines.append(line)
+            continue
+        before = _stable_json(before_payload)
+        already_had_proof = _has_harness_proof(before_payload)
+        after_payload = ensure_gateway_trace_proof_continuity(
+            before_payload,
+            storage="legacy_gap_capsule",
+            join_source="builder_gateway_trace_legacy_repair",
+        )
+        if already_had_proof:
+            result["already_had_proof"] = int(result["already_had_proof"]) + 1
+        elif _has_harness_proof(after_payload):
+            result["gap_capsules_added"] = int(result["gap_capsules_added"]) + 1
+        elif _is_proof_not_applicable(after_payload):
+            result["not_execution_marked"] = int(result["not_execution_marked"]) + 1
+        if _stable_json(after_payload) != before:
+            result["changed_rows"] = int(result["changed_rows"]) + 1
+        repaired_lines.append(json.dumps(after_payload, ensure_ascii=True))
+
+    if not dry_run:
+        if backup:
+            backup_path = _next_backup_path(path, ".proof-backup")
+            backup_path.write_text(original, encoding="utf-8")
+            result["backup_path"] = str(backup_path)
+        path.write_text(("\n".join(repaired_lines) + "\n") if repaired_lines else "", encoding="utf-8")
+    result["rows_written"] = len(repaired_lines)
+    result["ok"] = int(result["parse_errors"]) == 0
+    return result
+
+
+def ensure_gateway_trace_proof_continuity(
+    payload: Any,
+    *,
+    storage: str = "source_gap_capsule",
+    join_source: str = "builder_gateway_trace_writer",
+) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    result = dict(payload)
+    if _has_harness_proof(result):
+        return result
+    result.pop("harnessProofRef", None)
+    result.pop("harness_proof_ref", None)
+    if _gateway_trace_requires_proof_gap(result):
+        proof_capsule = _build_gateway_trace_missing_authority_capsule(result)
+        result["harnessProofRef"] = proof_capsule["turnRef"]
+        result["proofCapsule"] = proof_capsule
+        result["proofStatus"] = "missing_harness_authority"
+        result["proofStorage"] = storage
+        result["proofJoinSource"] = join_source
+        return result
+    result.setdefault("proofStatus", "not_execution_proof")
+    result.setdefault("proofStorage", "not_applicable")
+    result.setdefault("proofJoinSource", join_source)
+    return result
 
 
 def _tail_lines(path: Path, n: int) -> list[str]:
@@ -170,116 +354,11 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _normalize_cutoff_datetime(value: str | datetime) -> datetime:
-    if isinstance(value, datetime):
-        cutoff = value
-    else:
-        text = str(value or "").strip()
-        if not text:
-            raise ValueError("older_than is required")
-        cutoff = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=timezone.utc)
-    return cutoff.astimezone(timezone.utc)
-
-
-def _parse_recorded_at(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _jsonl_path_report(path: Path, cutoff: datetime | None) -> dict[str, Any]:
-    exists = path.exists()
-    size_bytes = 0
-    records = 0
-    old_records = 0
-    invalid_records = 0
-    if exists:
-        try:
-            size_bytes = int(path.stat().st_size)
-        except OSError:
-            size_bytes = 0
-        with path.open("r", encoding="utf-8", errors="replace") as source:
-            for line in source:
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    invalid_records += 1
-                    continue
-                if not isinstance(payload, dict):
-                    invalid_records += 1
-                    continue
-                records += 1
-                recorded_at = _parse_recorded_at(payload.get("recorded_at"))
-                if cutoff is not None and recorded_at is not None and recorded_at < cutoff:
-                    old_records += 1
-    return {
-        "path": str(path),
-        "exists": exists,
-        "bytes": size_bytes,
-        "records": records,
-        "old_records": old_records,
-        "invalid_records": invalid_records,
-    }
-
-
-def _prune_jsonl_path(path: Path, cutoff: datetime) -> tuple[int, int]:
-    if not path.exists():
-        return 0, 0
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    deleted = 0
-    kept = 0
-    with path.open("r", encoding="utf-8", errors="replace") as source, tmp_path.open("w", encoding="utf-8") as target:
-        for line in source:
-            keep_line = True
-            try:
-                payload = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                payload = None
-            if isinstance(payload, dict):
-                recorded_at = _parse_recorded_at(payload.get("recorded_at"))
-                if recorded_at is not None and recorded_at < cutoff:
-                    keep_line = False
-            if keep_line:
-                target.write(line)
-                kept += 1
-            else:
-                deleted += 1
-    if deleted:
-        tmp_path.replace(path)
-    else:
-        tmp_path.unlink(missing_ok=True)
-    return deleted, kept
-
-
-def _rotate_jsonl_if_oversized(path: Path, *, max_bytes: int, backups: int) -> bool:
-    if max_bytes <= 0 or backups <= 0 or not path.exists():
-        return False
-    try:
-        if path.stat().st_size <= max_bytes:
-            return False
-    except OSError:
-        return False
-    for index in range(backups, 0, -1):
-        current = path.with_name(f"{path.name}.{index}")
-        if index == backups:
-            current.unlink(missing_ok=True)
-            continue
-        next_path = path.with_name(f"{path.name}.{index + 1}")
-        if current.exists():
-            current.replace(next_path)
-    path.replace(path.with_name(f"{path.name}.1"))
-    return True
+def _decode_trace_record(line: str) -> dict[str, Any]:
+    payload = json.loads(line)
+    if not isinstance(payload, dict):
+        raise ValueError("Gateway trace row must be a JSON object.")
+    return payload
 
 
 def redact_trace_payload(value: Any) -> Any:
@@ -287,6 +366,14 @@ def redact_trace_payload(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
+            replacement_key = RAW_ID_KEY_REPLACEMENTS.get(key_text)
+            if replacement_key is not None:
+                if item not in (None, "", [], {}):
+                    result[replacement_key] = trace_identity_ref(replacement_key.replace("_ref", ""), item)
+                continue
+            if key_text == "session_id" and isinstance(item, str):
+                result[key_text] = redact_session_id(item)
+                continue
             if SENSITIVE_KEY_PATTERN.search(key_text) and item not in (None, "", [], {}):
                 result[key_text] = "[REDACTED]"
             else:
@@ -295,7 +382,11 @@ def redact_trace_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [redact_trace_payload(item) for item in value]
     if isinstance(value, str):
-        redacted = value
+        redacted = redact_text(value)
+        # Gateway traces have an older, intentionally terse public contract for
+        # local paths.  Preserve it after the shared redactor has removed the
+        # underlying value.
+        redacted = redacted.replace("<redacted local path>", "<path>")
         for pattern in SENSITIVE_TEXT_PATTERNS:
             if pattern.pattern.startswith("(?i)(api"):
                 redacted = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", redacted)
@@ -303,5 +394,147 @@ def redact_trace_payload(value: Any) -> Any:
                 redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
+        redacted = redacted.replace("<redacted>", "[REDACTED]")
+        for pattern in PATH_LIKE_PATTERNS:
+            redacted = pattern.sub("<path>", redacted)
+        redacted = POLICY_REASON_PATTERN.sub("internal policy reason", redacted)
         return redacted
     return value
+
+
+def _gateway_trace_requires_proof_gap(record: dict[str, Any]) -> bool:
+    has_request = any(key in record for key in ("request_id", "requestId", "request_ref", "requestRef"))
+    has_trace = any(key in record for key in ("trace_ref", "traceRef", "trace_id", "traceId"))
+    if not has_request or not has_trace:
+        return False
+    event = str(record.get("event") or "").strip()
+    if event == "telegram_update_processed":
+        return True
+    if event.endswith("_processed") and record.get("routing_decision"):
+        return True
+    return bool(record.get("routing_decision") and record.get("delivery_ok") is True)
+
+
+def _build_gateway_trace_missing_authority_capsule(record: dict[str, Any]) -> dict[str, Any]:
+    event = str(record.get("event") or "gateway_trace").strip() or "gateway_trace"
+    route = _safe_token(str(record.get("routing_decision") or record.get("bridge_mode") or event), "gateway_trace")
+    seed = ":".join(
+        str(value)
+        for value in (
+            record.get("trace_ref") or record.get("traceRef"),
+            record.get("request_id") or record.get("requestId") or record.get("request_ref") or record.get("requestRef"),
+            record.get("update_id"),
+            record.get("recorded_at"),
+            event,
+        )
+        if value not in (None, "")
+    ) or _stable_json(record)
+    delivered = bool(record.get("delivery_ok"))
+    return {
+        "schema": HARNESS_PROOF_CAPSULE_SCHEMA,
+        "turnRef": _stable_trace_ref("turn", seed),
+        "route": route,
+        "owner": "spark-intelligence-builder",
+        "intent": {
+            "kind": route,
+            "confidence": "medium",
+            "noExecution": False,
+        },
+        "authority": {
+            "decision": "downgraded",
+            "contract": "none",
+            "riskTier": "read",
+            "reasonSummary": (
+                "Builder gateway trace row has request and trace continuity, but no fresh Harness proof metadata. "
+                "Treat this as an inspectable proof gap, not authorization."
+            ),
+        },
+        "governor": {
+            "decision": "not_applicable",
+            "verified": False,
+        },
+        "execution": {
+            "status": "completed" if delivered else "failed",
+            "tool": "builder.gateway_trace",
+            "mutationClass": "read_only",
+        },
+        "reply": {
+            "delivered": delivered,
+            "shape": "natural" if int(record.get("response_length") or 0) > 0 else "none",
+            "rawReasonsHidden": True,
+        },
+        "joins": {
+            "telegram": "joined" if str(record.get("channel_id") or "") == "telegram" else "not_applicable",
+            "builder": "joined",
+            "spawner": "not_applicable",
+            "provider": "not_applicable",
+            "memory": "not_applicable",
+            "voice": "not_applicable",
+        },
+    }
+
+
+def _has_harness_proof(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    return (
+        _valid_harness_proof_ref(record.get("harnessProofRef"))
+        or _valid_harness_proof_ref(record.get("harness_proof_ref"))
+        or _proof_capsule_like(record.get("proofCapsule"))
+        or _proof_capsule_like(record.get("proof_capsule"))
+    )
+
+
+def _valid_harness_proof_ref(value: Any) -> bool:
+    return isinstance(value, str) and HARNESS_PROOF_REF_PATTERN.match(value.strip()) is not None
+
+
+def _proof_capsule_like(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("schema") == HARNESS_PROOF_CAPSULE_SCHEMA
+
+
+def _is_proof_not_applicable(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    values = " ".join(
+        str(record.get(key) or "").lower()
+        for key in ("proofStatus", "proof_status", "proofStorage", "proof_storage")
+    )
+    return "not_execution_proof" in values or "not_applicable" in values
+
+
+def redact_session_id(value: str) -> str:
+    match = TELEGRAM_SESSION_ID_PATTERN.match(str(value or ""))
+    if not match:
+        return value
+    return f"{match.group(1)}{trace_identity_ref('telegram_session', match.group(2))}"
+
+
+def _stable_trace_ref(label: str, value: Any) -> str:
+    digest = sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
+    return f"{label}:sha256:{digest}"
+
+
+def trace_identity_ref(label: str, value: Any) -> str:
+    return _stable_trace_ref(label, value)
+
+
+def _safe_token(value: str, fallback: str) -> str:
+    token = str(value or "").strip()
+    if not token:
+        return fallback
+    normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", token)[:120]
+    return normalized or fallback
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=True)
+
+
+def _next_backup_path(path: Path, suffix: str) -> Path:
+    backup_path = path.with_name(f"{path.name}{suffix}")
+    if not backup_path.exists():
+        return backup_path
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(":", "-")
+    digest = sha256(f"{path}:{stamp}".encode("utf-8")).hexdigest()[:8]
+    return path.with_name(f"{path.name}{suffix}-{stamp}-{digest}")

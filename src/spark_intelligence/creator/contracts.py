@@ -224,12 +224,23 @@ def validate_creator_mission_status(payload: Mapping[str, Any] | Any) -> list[Va
             issues,
             source_key="evidence_tier",
         )
-        automation = _require_mapping(canonical, "canonical.automation", issues, source_key="automation")
-        if automation is not None:
-            _require_bool(automation, "canonical.automation.blocked", issues, source_key="blocked")
+        # Domain Chip Labs emits these fields directly under ``canonical``;
+        # retain the older nested shape for existing Builder packets.
+        if "automation" in canonical:
+            automation = _require_mapping(canonical, "canonical.automation", issues, source_key="automation")
+            if automation is not None:
+                _require_bool(automation, "canonical.automation.blocked", issues, source_key="blocked")
+                _require_non_empty_string(
+                    automation,
+                    "canonical.automation.recommended_next_command",
+                    issues,
+                    source_key="recommended_next_command",
+                )
+        else:
+            _require_bool(canonical, "canonical.automation_blocked", issues, source_key="automation_blocked")
             _require_non_empty_string(
-                automation,
-                "canonical.automation.recommended_next_command",
+                canonical,
+                "canonical.recommended_next_command",
                 issues,
                 source_key="recommended_next_command",
             )
@@ -277,15 +288,20 @@ def summarize_creator_mission_status(payload: Mapping[str, Any] | Any) -> Creato
     if data is None:
         raise ValueError("invalid creator mission status packet")
     canonical = data["canonical"]
-    automation = canonical["automation"]
     publication = data["publication"]
     adapters = data["surface_adapters"]
+    if "automation" in canonical:
+        blocked = bool(canonical["automation"]["blocked"])
+        recommended_next_command = str(canonical["automation"]["recommended_next_command"])
+    else:
+        blocked = bool(canonical["automation_blocked"])
+        recommended_next_command = str(canonical["recommended_next_command"])
     return CreatorMissionStatusSummary(
         mission_id=str(data["mission_id"]),
         canonical_verdict=str(canonical["verdict"]),
         evidence_tier=str(canonical["evidence_tier"]),
-        blocked=bool(automation["blocked"]),
-        recommended_next_command=str(automation["recommended_next_command"]),
+        blocked=blocked,
+        recommended_next_command=recommended_next_command,
         publish_mode=str(publication["publish_mode"]),
         swarm_shared_allowed=bool(publication["swarm_shared_allowed"]),
         network_absorbable=bool(publication["network_absorbable"]),

@@ -1,15 +1,265 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from unittest.mock import patch
 
-from spark_intelligence.auth.runtime import build_auth_status_report, resolve_runtime_provider
+from spark_intelligence.auth.service import (
+    complete_oauth_login,
+    exchange_oauth_authorization_code,
+    exchange_oauth_refresh_token,
+)
+from spark_intelligence.auth.runtime import (
+    build_auth_status_report,
+    resolve_runtime_provider,
+    runtime_provider_health,
+)
+from spark_intelligence.auth.token_crypto import decrypt_token
 from spark_intelligence.gateway.oauth_callback import GatewayOAuthCallbackResult, OAuthCallbackCapture
 
 from tests.test_support import SparkTestCase
 
 
 class AuthProfileTests(SparkTestCase):
+    def test_auth_login_rejects_non_url_callback_without_traceback(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--callback-url",
+            "not a url",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(
+            stderr.strip(),
+            "OAuth callback URL must be an absolute HTTP(S) URL.",
+        )
+        self.assertNotIn("Traceback", stderr)
+
+    def test_auth_login_rejects_ambiguous_callback_forms_before_state_lookup(self) -> None:
+        rejected = (
+            "ftp://127.0.0.1/callback?state=secret-state&code=secret-code",
+            "http://user:password@127.0.0.1/callback?state=secret-state&code=secret-code",
+            "http://127.0.0.1:99999/callback?state=secret-state&code=secret-code",
+            "http://127.0.0.1/callback?state=secret-state&code=secret-code#fragment",
+            "http://127.0.0.1/callback?state=secret-state&code=secret-code\n",
+        )
+
+        for callback_url in rejected:
+            with self.subTest(callback_url=callback_url), self.assertRaisesRegex(
+                ValueError,
+                r"^OAuth callback URL ",
+            ) as raised:
+                complete_oauth_login(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    provider="openai-codex",
+                    callback_url=callback_url,
+                )
+
+            rendered = str(raised.exception)
+            self.assertNotIn("secret-state", rendered)
+            self.assertNotIn("secret-code", rendered)
+            self.assertNotIn("password", rendered)
+
+    def test_oauth_authorization_exchange_normalizes_transport_error_without_details(self) -> None:
+        failures = (
+            urllib.error.URLError("https://private.example/token?client_secret=do-not-leak"),
+            urllib.error.HTTPError(
+                "https://private.example/token?client_secret=do-not-leak",
+                500,
+                "secret-bearing-provider-error",
+                {},
+                None,
+            ),
+            TimeoutError("authorization-code-do-not-leak"),
+        )
+        for failure in failures:
+            with self.subTest(failure_type=type(failure).__name__), patch(
+                "spark_intelligence.auth.service.resolve_public_https_endpoint",
+                return_value=object(),
+            ), patch(
+                "spark_intelligence.auth.service.post_https_bytes",
+                side_effect=failure,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    (
+                        r"^OAuth token exchange for 'openai-codex' failed safely\. "
+                        r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                    ),
+                ) as raised:
+                    exchange_oauth_authorization_code(
+                        provider="openai-codex",
+                        code="sensitive-authorization-code",
+                        redirect_uri="http://127.0.0.1:1455/auth/callback",
+                        code_verifier="sensitive-code-verifier",
+                    )
+
+                rendered = str(raised.exception)
+                self.assertNotIn("private.example", rendered)
+                self.assertNotIn("client_secret", rendered)
+                self.assertNotIn("authorization-code", rendered)
+                self.assertNotIn("code-verifier", rendered)
+
+    def test_oauth_transport_failure_includes_safe_operator_guidance(self) -> None:
+        with patch(
+            "spark_intelligence.auth.service.resolve_public_https_endpoint",
+            return_value=object(),
+        ), patch(
+            "spark_intelligence.auth.service.post_https_bytes",
+            side_effect=TimeoutError("secret-bearing-network-detail"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                (
+                    r"^OAuth refresh for 'openai-codex' failed safely\. "
+                    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                ),
+            ) as raised:
+                exchange_oauth_refresh_token(
+                    provider="openai-codex",
+                    refresh_token="sensitive-refresh-token",
+                )
+
+        rendered = str(raised.exception)
+        self.assertNotIn("secret-bearing-network-detail", rendered)
+        self.assertNotIn("sensitive-refresh-token", rendered)
+
+    def test_oauth_authorization_exchange_normalizes_malformed_response_without_body(self) -> None:
+        invalid_bodies = (
+            b"<html>secret-token-body</html>",
+            b"\xffsecret-token-body",
+            b"[]",
+        )
+        for body in invalid_bodies:
+            with self.subTest(body=body[:1]), patch(
+                "spark_intelligence.auth.service.resolve_public_https_endpoint",
+                return_value=object(),
+            ), patch(
+                "spark_intelligence.auth.service.post_https_bytes",
+                return_value=body,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"^OAuth token exchange for 'openai-codex' returned an invalid response\.$",
+                ) as raised:
+                    exchange_oauth_authorization_code(
+                        provider="openai-codex",
+                        code="authorization-code",
+                        redirect_uri="http://127.0.0.1:1455/auth/callback",
+                        code_verifier="code-verifier",
+                    )
+
+                self.assertNotIn("secret-token-body", str(raised.exception))
+
+    def test_oauth_refresh_exchange_normalizes_transport_error_without_details(self) -> None:
+        with patch(
+            "spark_intelligence.auth.service.resolve_public_https_endpoint",
+            return_value=object(),
+        ), patch(
+            "spark_intelligence.auth.service.post_https_bytes",
+            side_effect=TimeoutError("refresh-token-do-not-leak"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                (
+                    r"^OAuth refresh for 'openai-codex' failed safely\. "
+                    r"Check network connectivity and the provider OAuth configuration, then retry\.$"
+                ),
+            ) as raised:
+                exchange_oauth_refresh_token(
+                    provider="openai-codex",
+                    refresh_token="sensitive-refresh-token",
+                )
+
+        self.assertNotIn("refresh-token", str(raised.exception))
+
+    def test_resolve_runtime_provider_uses_builder_codex_service_role_env_when_records_empty(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            resolution = resolve_runtime_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertEqual(resolution.provider_id, "openai-codex")
+        self.assertEqual(resolution.provider_kind, "openai-codex")
+        self.assertEqual(resolution.auth_method, "oauth")
+        self.assertEqual(resolution.api_mode, "codex_responses")
+        self.assertEqual(resolution.execution_transport, "external_cli_wrapper")
+        self.assertEqual(resolution.default_model, "gpt-5.5")
+        self.assertEqual(resolution.secret_value, "")
+        self.assertEqual(resolution.source, "service_role_env")
+
+    def test_resolve_runtime_provider_does_not_infer_non_codex_service_role_provider(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "openai",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "api_key",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "No providers are configured"):
+                resolve_runtime_provider(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+
+    def test_runtime_provider_health_reports_builder_codex_service_role_env(self) -> None:
+        codex_home = self.home / "codex-home"
+        codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}", encoding="utf-8")
+        env = {
+            "CODEX_HOME": str(codex_home),
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("spark_intelligence.auth.runtime.shutil.which", return_value="/usr/local/bin/codex"),
+        ):
+            ok, detail = runtime_provider_health(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            detail,
+            "openai-codex:service-role:builder:codex:external_cli_wrapper:service_role_env",
+        )
+
+    def test_runtime_provider_health_rejects_builder_codex_service_role_without_cli(self) -> None:
+        env = {
+            "SPARK_BUILDER_LLM_PROVIDER": "codex",
+            "SPARK_BUILDER_LLM_AUTH_MODE": "codex_oauth",
+            "SPARK_BUILDER_LLM_MODEL": "gpt-5.5",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("spark_intelligence.auth.runtime.shutil.which", return_value=None),
+        ):
+            ok, detail = runtime_provider_health(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+        self.assertFalse(ok)
+        self.assertTrue(detail.endswith(":codex_cli_missing"))
+
     def test_auth_connect_creates_default_auth_profile_and_static_env_ref(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "auth",
@@ -92,7 +342,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(status_exit, 1, status_stderr)
         payload = json.loads(status_stdout)
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload["default_provider"], "openrouter")
+        self.assertIsNone(payload["default_provider"])
         self.assertEqual(payload["providers"][0]["provider_id"], "openrouter")
         self.assertEqual(payload["providers"][0]["auth_profile_id"], "openrouter:default")
         self.assertEqual(payload["providers"][0]["secret_ref"]["source"], "env")
@@ -309,7 +559,7 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT issuer, scope, access_token, refresh_token, status, access_expires_at, refresh_expires_at
+                SELECT issuer, scope, access_token_ciphertext, refresh_token_ciphertext, status, access_expires_at, refresh_expires_at
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
@@ -327,8 +577,8 @@ class AuthProfileTests(SparkTestCase):
 
         self.assertEqual(oauth_row["issuer"], "https://auth.openai.com")
         self.assertEqual(oauth_row["scope"], "openid profile")
-        self.assertEqual(oauth_row["access_token"], "oauth-access-token")
-        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token")
         self.assertEqual(oauth_row["status"], "active")
         self.assertTrue(oauth_row["access_expires_at"])
         self.assertTrue(oauth_row["refresh_expires_at"])
@@ -575,15 +825,15 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT access_token, refresh_token, last_refresh_at, last_refresh_error
+                SELECT access_token_ciphertext, refresh_token_ciphertext, last_refresh_at, last_refresh_error
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token-rotated")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token-refreshed")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token-rotated")
         self.assertTrue(oauth_row["last_refresh_at"])
         self.assertEqual(oauth_row["last_refresh_error"], None)
 
@@ -949,7 +1199,7 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT access_token, refresh_token
+                SELECT access_token_ciphertext, refresh_token_ciphertext
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
@@ -973,8 +1223,8 @@ class AuthProfileTests(SparkTestCase):
                 """
             ).fetchone()
 
-        self.assertEqual(oauth_row["access_token"], "oauth-access-token-refreshed")
-        self.assertEqual(oauth_row["refresh_token"], "oauth-refresh-token-rotated")
+        self.assertEqual(decrypt_token(self.home, oauth_row["access_token_ciphertext"]), "oauth-access-token-refreshed")
+        self.assertEqual(decrypt_token(self.home, oauth_row["refresh_token_ciphertext"]), "oauth-refresh-token-rotated")
         self.assertEqual(event_row["event_kind"], "oauth_refresh_completed")
         self.assertIn('"trigger": "job"', event_row["detail"])
         self.assertTrue(job_row["last_run_at"])

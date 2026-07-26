@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from datetime import UTC, datetime, timedelta
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from spark_intelligence.auth.providers import get_provider_spec
+from spark_intelligence.auth.token_crypto import decrypt_token
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 
@@ -169,7 +173,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
             ).fetchone()
             oauth_row = conn.execute(
                 """
-                SELECT access_token, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
+                SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
                 FROM oauth_credentials
                 WHERE auth_profile_id = ?
                 LIMIT 1
@@ -188,6 +192,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                 secret_ref=secret_ref,
                 oauth_row=oauth_row,
                 env_map=env_map,
+                state_dir=state_db.path.parent,
             )
             token_expired = _oauth_token_expired(oauth_row)
             token_expiring_soon = _oauth_token_expiring_soon(oauth_row)
@@ -223,6 +228,9 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
 def runtime_provider_health(*, config_manager: ConfigManager, state_db: StateDB) -> tuple[bool, str]:
     provider_records = config_manager.load().get("providers", {}).get("records", {}) or {}
     if not provider_records:
+        resolution = _resolve_builder_codex_service_role_provider()
+        if resolution is not None:
+            return _builder_codex_service_role_health(resolution)
         return True, "no providers configured yet"
     try:
         resolution = resolve_runtime_provider(
@@ -243,6 +251,12 @@ def resolve_runtime_provider(
 ) -> RuntimeProviderResolution:
     config = config_manager.load()
     provider_records = config.get("providers", {}).get("records", {}) or {}
+    if not provider_records and requested_profile is None:
+        service_role_resolution = _resolve_builder_codex_service_role_provider(
+            requested_provider=requested_provider,
+        )
+        if service_role_resolution is not None:
+            return service_role_resolution
     provider_id = _select_provider_id(provider_records=provider_records, default_provider=config.get("providers", {}).get("default_provider"), requested_provider=requested_provider)
     record = provider_records.get(provider_id)
     if not isinstance(record, dict):
@@ -262,7 +276,7 @@ def resolve_runtime_provider(
         ).fetchone()
         oauth_row = conn.execute(
             """
-            SELECT access_token, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
+            SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
             FROM oauth_credentials
             WHERE auth_profile_id = ?
             LIMIT 1
@@ -291,6 +305,7 @@ def resolve_runtime_provider(
         secret_ref=secret_ref,
         oauth_row=oauth_row,
         env_map=env_map,
+        state_dir=state_db.path.parent,
     )
     spec = get_provider_spec(provider_id)
     return RuntimeProviderResolution(
@@ -365,6 +380,51 @@ def _select_provider_id(
     raise RuntimeError("No default provider is configured.")
 
 
+def _resolve_builder_codex_service_role_provider(
+    *,
+    requested_provider: str | None = None,
+) -> RuntimeProviderResolution | None:
+    provider_name = os.environ.get("SPARK_BUILDER_LLM_PROVIDER", "").strip().lower()
+    if provider_name not in {"codex", "openai-codex"}:
+        return None
+    if requested_provider and requested_provider.strip().lower() not in {"codex", "openai-codex"}:
+        return None
+    auth_mode = os.environ.get("SPARK_BUILDER_LLM_AUTH_MODE", "").strip().lower()
+    if auth_mode != "codex_oauth":
+        return None
+
+    provider_id = "openai-codex"
+    spec = get_provider_spec(provider_id)
+    return RuntimeProviderResolution(
+        provider_id=provider_id,
+        provider_kind=spec.provider_kind,
+        auth_profile_id="service-role:builder:codex",
+        auth_method="oauth",
+        api_mode=spec.api_mode,
+        execution_transport=spec.execution_transport,
+        base_url=spec.default_base_url,
+        default_model=_optional_string(os.environ.get("SPARK_BUILDER_LLM_MODEL")) or spec.default_model,
+        secret_ref=StaticSecretRef(source="codex_cli_auth", provider="codex", ref_id="CODEX_HOME"),
+        secret_value="",
+        source="service_role_env",
+    )
+
+
+def _builder_codex_service_role_health(
+    resolution: RuntimeProviderResolution,
+) -> tuple[bool, str]:
+    detail = (
+        f"{resolution.provider_id}:{resolution.auth_profile_id}:"
+        f"{resolution.execution_transport}:{resolution.source}"
+    )
+    if not shutil.which("codex"):
+        return False, f"{detail}:codex_cli_missing"
+    codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+    if not (Path(codex_home) / "auth.json").exists():
+        return False, f"{detail}:codex_cli_auth_missing"
+    return True, detail
+
+
 def _derive_profile_status(*, profile_row: object, secret_present: bool, oauth_row: object) -> str:
     if oauth_row and _oauth_token_expired(oauth_row):
         return "expired"
@@ -392,14 +452,25 @@ def _has_resolved_secret(
     secret_ref: StaticSecretRef | None,
     oauth_row: object,
     env_map: dict[str, str],
+    state_dir: Path,
 ) -> bool:
     if auth_method == "oauth":
-        return bool(
+        if not (
             oauth_row
-            and oauth_row["access_token"]
+            and oauth_row["access_token_ciphertext"]
             and str(oauth_row["status"]) == "active"
             and not _oauth_token_expired(oauth_row)
-        )
+        ):
+            return False
+        try:
+            return bool(
+                decrypt_token(
+                    state_dir,
+                    str(oauth_row["access_token_ciphertext"]),
+                )
+            )
+        except RuntimeError:
+            return False
     if secret_ref and secret_ref.source == "env":
         return secret_ref.ref_id in env_map and bool(env_map[secret_ref.ref_id])
     return False
@@ -412,13 +483,14 @@ def _resolve_secret_value(
     secret_ref: StaticSecretRef | None,
     oauth_row: object,
     env_map: dict[str, str],
+    state_dir: Path,
 ) -> str:
     if auth_method == "oauth":
-        if not oauth_row or not oauth_row["access_token"] or str(oauth_row["status"]) != "active":
+        if not oauth_row or not oauth_row["access_token_ciphertext"] or str(oauth_row["status"]) != "active":
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
         if _oauth_token_expired(oauth_row):
             raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
-        return str(oauth_row["access_token"])
+        return decrypt_token(state_dir, str(oauth_row["access_token_ciphertext"]))
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
     if secret_ref.source != "env":

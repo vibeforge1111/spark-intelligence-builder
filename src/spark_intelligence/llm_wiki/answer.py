@@ -8,7 +8,6 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.query import build_llm_wiki_query
-from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
 WIKI_SOURCE_METADATA_FIELDS: tuple[str, ...] = (
@@ -21,6 +20,12 @@ WIKI_SOURCE_METADATA_FIELDS: tuple[str, ...] = (
     "generated_at",
     "last_verified_at",
 )
+
+
+def _build_self_awareness_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
+
+    return build_self_awareness_capsule(*args, **kwargs)
 
 CURRENT_FACT_MARKERS: tuple[str, ...] = (
     "current",
@@ -266,7 +271,7 @@ def _build_live_self_context(
     request_id: str | None,
     user_message: str,
 ) -> dict[str, Any]:
-    capsule = build_self_awareness_capsule(
+    capsule = _build_self_awareness_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,

@@ -3,6 +3,12 @@
 
 set -uo pipefail
 
+if ! command -v powershell.exe >/dev/null 2>&1; then
+  echo "kill-spark.sh requires Windows + Git Bash; powershell.exe is not on PATH on this host." >&2
+  echo "On macOS/Linux, use 'spark stop' so shutdown stays scoped to Spark-managed services." >&2
+  exit 1
+fi
+
 echo "=== Tearing down Spark stack ==="
 
 # spawner-ui (vite)

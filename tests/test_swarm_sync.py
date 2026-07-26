@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -11,11 +13,13 @@ from urllib.error import HTTPError
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
+    _sanitize_response_body,
     _normalize_collective_payload,
     _normalize_runtime_source,
     _read_local_swarm_env_map,
     _record_swarm_sync_state,
     _record_swarm_failure_state,
+    _temporary_env,
     evaluate_swarm_escalation,
     swarm_doctor,
     swarm_status,
@@ -26,6 +30,55 @@ from tests.test_support import SparkTestCase
 
 
 class SwarmSyncTests(SparkTestCase):
+    def test_temporary_env_serializes_threads_and_restores_original_value(self) -> None:
+        key = "SPARK_TEST_TEMPORARY_ENV_LOCK"
+        os.environ[key] = "original"
+        self.addCleanup(os.environ.pop, key, None)
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_attempted = threading.Event()
+        second_entered = threading.Event()
+        observed: list[str] = []
+
+        def hold_first_value() -> None:
+            with _temporary_env(key, "first"):
+                first_entered.set()
+                release_first.wait(timeout=2)
+
+        def observe_second_value() -> None:
+            first_entered.wait(timeout=2)
+            second_attempted.set()
+            with _temporary_env(key, "second"):
+                observed.append(os.environ[key])
+                second_entered.set()
+
+        first = threading.Thread(target=hold_first_value)
+        second = threading.Thread(target=observe_second_value)
+        first.start()
+        second.start()
+        self.assertTrue(first_entered.wait(timeout=2))
+        self.assertTrue(second_attempted.wait(timeout=2))
+        self.assertFalse(second_entered.wait(timeout=0.05))
+        self.assertEqual(os.environ[key], "first")
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(observed, ["second"])
+        self.assertEqual(os.environ[key], "original")
+
+    def test_temporary_env_supports_nested_same_thread_use(self) -> None:
+        key = "SPARK_TEST_NESTED_TEMPORARY_ENV"
+        os.environ.pop(key, None)
+        with _temporary_env(key, "outer"):
+            self.assertEqual(os.environ[key], "outer")
+            with _temporary_env(key, "inner"):
+                self.assertEqual(os.environ[key], "inner")
+            self.assertEqual(os.environ[key], "outer")
+        self.assertNotIn(key, os.environ)
+
     def _make_jwt(self, *, expires_in_seconds: int) -> str:
         header = {"alg": "none", "typ": "JWT"}
         payload = {
@@ -111,7 +164,7 @@ class SwarmSyncTests(SparkTestCase):
             + "\n",
             encoding="utf-8",
         )
-        self.config_manager.upsert_env_secret("SPARK_SWARM_RUNTIME_ROOT", str(runtime_root))
+        self.config_manager.set_path("spark.swarm.runtime_root", str(runtime_root))
 
         self.assertEqual(
             _read_local_swarm_env_map(self.config_manager),
@@ -123,13 +176,6 @@ class SwarmSyncTests(SparkTestCase):
                 "INNER_QUOTES": 'prefix"inner"suffix',
             },
         )
-
-    @patch.dict("os.environ", {"SPARK_SWARM_RUNTIME_ROOT": ""})
-    def test_swarm_status_requires_runtime_root_env_for_local_bridge(self) -> None:
-        status = swarm_status(self.config_manager, self.state_db)
-
-        self.assertFalse(status.configured)
-        self.assertIsNone(status.runtime_root)
 
     def test_normalize_runtime_source_preserves_existing_values(self) -> None:
         payload = {
@@ -241,13 +287,30 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
 
+    def test_evaluate_swarm_escalation_falls_back_from_invalid_long_task_threshold(self) -> None:
+        attachment_context = self._ready_swarm_attachment_context()
+        for value in ("forty", 0, -1):
+            with self.subTest(value=value):
+                self.config_manager.set_path("spark.swarm.routing.long_task_word_count", value)
+                with patch(
+                    "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+                    return_value=attachment_context,
+                ):
+                    result = evaluate_swarm_escalation(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        task="one two three",
+                    )
+
+                self.assertTrue(result.ok)
+                self.assertNotIn("long_task", result.triggers)
+
     def test_evaluate_swarm_escalation_holds_local_when_payload_not_ready(self) -> None:
-        with patch("spark_intelligence.swarm_bridge.sync.discover_researcher_runtime_root", return_value=(None, "missing")):
-            result = evaluate_swarm_escalation(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                task="Please delegate this as parallel multi-agent work and research deeply.",
-            )
+        result = evaluate_swarm_escalation(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Please delegate this as parallel multi-agent work and research deeply.",
+        )
 
         self.assertTrue(result.ok)
         self.assertFalse(result.escalate)
@@ -313,6 +376,7 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(result.mode, "hold_local")
 
     def test_record_swarm_failure_state_persists_http_error_response_body(self) -> None:
+        secret = "sk-proj-" + "A" * 30
         _record_swarm_failure_state(
             self.state_db,
             kind="sync",
@@ -324,7 +388,12 @@ class SwarmSyncTests(SparkTestCase):
                 api_url="https://sparkswarm.ai",
                 workspace_id="ws_123",
                 accepted=False,
-                response_body={"error": "authentication_required"},
+                response_body={
+                    "error": "authentication_required",
+                    "message": f"provider rejected {secret}",
+                    "internal_token": "private-response-token",
+                    "debug_payload": {"request": "sensitive"},
+                },
             ),
         )
 
@@ -337,6 +406,39 @@ class SwarmSyncTests(SparkTestCase):
         payload = json.loads(str(row["value"]))
         self.assertEqual(payload["mode"], "http_error")
         self.assertEqual(payload["response_body"]["error"], "authentication_required")
+        self.assertIn("<redacted api key>", payload["response_body"]["message"])
+        self.assertNotIn("internal_token", payload["response_body"])
+        self.assertNotIn("debug_payload", payload["response_body"])
+        self.assertNotIn(secret, str(payload))
+        self.assertNotIn("private-response-token", str(payload))
+
+    def test_swarm_sync_result_redacts_response_body_without_mutating_source(self) -> None:
+        source = {
+            "error": "rate_limit",
+            "code": 429,
+            "status": "error",
+            "message": "Authorization: Bearer " + "A" * 24,
+            "user_emails": ["operator@example.com"],
+        }
+
+        sanitized = _sanitize_response_body(source)
+        payload = json.loads(
+            SwarmSyncResult(
+                ok=False,
+                mode="http_error",
+                message="Swarm rejected the request.",
+                payload_path=None,
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                accepted=False,
+                response_body=source,
+            ).to_json()
+        )
+
+        self.assertEqual(set(sanitized or {}), {"error", "message", "code", "status"})
+        self.assertIn("<redacted>", str((sanitized or {})["message"]))
+        self.assertNotIn("user_emails", payload["response_body"])
+        self.assertIn("user_emails", source)
 
     def test_record_swarm_sync_state_clears_last_failure_on_success(self) -> None:
         _record_swarm_failure_state(

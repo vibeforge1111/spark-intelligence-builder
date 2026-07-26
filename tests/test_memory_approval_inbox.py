@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from spark_intelligence.memory.approval_inbox import (
+    REVIEW_ACTIONS,
+    _normalize_decision,
     build_memory_approval_inbox,
     record_memory_approval_decision,
 )
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import record_event, repair_missing_event_trace_refs
 from spark_intelligence.self_awareness.agent_events import (
     AgentEvent,
     AgentSourceRef,
@@ -16,6 +18,14 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryApprovalInboxTests(SparkTestCase):
+    def test_unsupported_decision_names_only_the_fixed_review_actions(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_decision("aprove")
+
+        message = str(ctx.exception)
+        self.assertIn("unsupported_memory_approval_decision:aprove", message)
+        self.assertIn(f"known: {', '.join(REVIEW_ACTIONS)}", message)
+
     def test_inbox_lists_agent_memory_candidate_until_decided(self) -> None:
         candidate_event_id = record_agent_event(
             self.state_db,
@@ -78,7 +88,7 @@ class MemoryApprovalInboxTests(SparkTestCase):
         )
 
     def test_inbox_accepts_existing_assessed_candidates_but_not_drops(self) -> None:
-        record_event(
+        assessed_event_id = record_event(
             self.state_db,
             event_type="memory_candidate_assessed",
             component="researcher_bridge",
@@ -96,7 +106,7 @@ class MemoryApprovalInboxTests(SparkTestCase):
                 ]
             },
         )
-        record_event(
+        dropped_event_id = record_event(
             self.state_db,
             event_type="memory_candidate_assessed",
             component="researcher_bridge",
@@ -116,6 +126,215 @@ class MemoryApprovalInboxTests(SparkTestCase):
         self.assertEqual(inbox.items[0].target_scope, "spark_doctrine")
         self.assertEqual(inbox.items[0].recommended_action, "save_as_spark_doctrine")
         self.assertIn("shared read-model", inbox.items[0].proposed_text)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, trace_ref
+                FROM builder_events
+                WHERE event_id IN (?, ?)
+                ORDER BY event_id
+                """,
+                (assessed_event_id, dropped_event_id),
+            ).fetchall()
+        trace_refs = {row["event_id"]: row["trace_ref"] for row in rows}
+        self.assertEqual(trace_refs[assessed_event_id], "trace:req-assessed")
+        self.assertEqual(trace_refs[dropped_event_id], "trace:req-dropped")
+
+    def test_policy_gate_block_with_request_gets_trace_ref(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="policy_gate_blocked",
+            component="researcher_bridge",
+            summary="Policy blocked a memory candidate.",
+            request_id="req-policy-block",
+            status="blocked",
+            severity="low",
+            reason_code="memory_candidate_blocked",
+            facts={
+                "policy_domain": "researcher_bridge",
+                "gate_name": "memory_candidate_gate",
+                "source_kind": "memory_candidate",
+                "action": "save_memory_candidate",
+            },
+        )
+
+        with self.state_db.connect() as conn:
+            builder_row = conn.execute(
+                "SELECT trace_ref FROM builder_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            event_log_row = conn.execute(
+                "SELECT trace_ref FROM event_log WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+
+        self.assertEqual(builder_row["trace_ref"], "trace:req-policy-block")
+        self.assertEqual(event_log_row["trace_ref"], "trace:req-policy-block")
+
+    def test_follow_on_promotion_block_uses_derived_trace_ref(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="memory_candidate_assessed",
+            component="researcher_bridge",
+            summary="Ephemeral memory candidate assessed.",
+            request_id="req-promotion-block",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "promote_personal_preference",
+                "memory_role": "preference",
+                "message_text": "Temporary phrasing from the current turn.",
+            },
+            provenance={"source_kind": "recent_chat", "source_ref": "turn-promotion-block"},
+        )
+
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_type, trace_ref
+                FROM builder_events
+                WHERE event_id = ?
+                   OR facts_json LIKE ?
+                ORDER BY event_type
+                """,
+                (event_id, f'%"source_event_id": "{event_id}"%'),
+            ).fetchall()
+
+        trace_refs = {row["event_type"]: row["trace_ref"] for row in rows}
+        self.assertEqual(trace_refs["memory_candidate_assessed"], "trace:req-promotion-block")
+        self.assertEqual(trace_refs["policy_gate_blocked"], "trace:req-promotion-block")
+
+    def test_repair_missing_event_trace_refs_backfills_request_scoped_rows(self) -> None:
+        event_id = record_event(
+            self.state_db,
+            event_type="memory_candidate_assessed",
+            component="researcher_bridge",
+            summary="Memory candidate assessed before trace derivation repair.",
+            request_id="req-repair-trace",
+            facts={
+                "outcome": "belief_candidate",
+                "memory_role": "belief",
+                "belief_text": "Trace repairs should stay source-owned.",
+                "keepability": "supporting_memory",
+                "promotion_disposition": "promote_spark_doctrine",
+            },
+        )
+        with self.state_db.connect() as conn:
+            conn.execute("UPDATE builder_events SET trace_ref = NULL WHERE event_id = ?", (event_id,))
+            conn.execute("UPDATE event_log SET trace_ref = NULL WHERE event_id = ?", (event_id,))
+            conn.execute("UPDATE memory_lane_records SET trace_ref = NULL WHERE event_id = ?", (event_id,))
+            conn.commit()
+
+        repaired = repair_missing_event_trace_refs(self.state_db)
+
+        self.assertEqual(repaired, 1)
+        with self.state_db.connect() as conn:
+            builder_row = conn.execute("SELECT trace_ref FROM builder_events WHERE event_id = ?", (event_id,)).fetchone()
+            event_log_row = conn.execute("SELECT trace_ref FROM event_log WHERE event_id = ?", (event_id,)).fetchone()
+            lane_row = conn.execute("SELECT trace_ref FROM memory_lane_records WHERE event_id = ?", (event_id,)).fetchone()
+
+        self.assertEqual(builder_row["trace_ref"], "trace:req-repair-trace")
+        self.assertEqual(event_log_row["trace_ref"], "trace:req-repair-trace")
+        self.assertEqual(lane_row["trace_ref"], "trace:req-repair-trace")
+
+    def test_repair_missing_event_trace_refs_backfills_typed_legacy_rows(self) -> None:
+        config_event_id = record_event(
+            self.state_db,
+            event_type="config_mutation_requested",
+            component="config_manager",
+            summary="Legacy config mutation requested.",
+            facts={
+                "target_document": "config.yaml",
+                "target_path": "telegram.enabled",
+                "rollback_ref": "rollback:cfg-legacy",
+                "validation_verdict": "requested",
+            },
+        )
+        env_event_id = record_event(
+            self.state_db,
+            event_type="runtime_environment_snapshot",
+            component="doctor_cli",
+            summary="Legacy environment snapshot recorded.",
+            facts={"surface": "doctor_cli", "config_hash": "abcdef1234567890"},
+        )
+        smoke_event_id = record_event(
+            self.state_db,
+            event_type="memory_smoke_succeeded",
+            component="memory_orchestrator",
+            summary="Legacy memory smoke completed.",
+            actor_id="operator:test",
+            facts={
+                "sdk_module": "domain_memory_sdk",
+                "subject": "spark",
+                "predicate": "memory_smoke",
+                "shadow_only_eval": False,
+            },
+        )
+        contradiction_event_id = record_event(
+            self.state_db,
+            event_type="contradiction_recorded",
+            component="stop_ship_checks",
+            summary="Legacy stop-ship contradiction recorded.",
+            severity="high",
+            status="open",
+            facts={
+                "contradiction_id": "ctr-legacy",
+                "contradiction_key": "stop_ship:legacy_trace_context",
+                "occurrence_count": 1,
+            },
+        )
+        attachment_event_id = record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="attachment_snapshot",
+            summary="Legacy attachment snapshot recorded.",
+            actor_id="attachment_snapshot",
+            facts={
+                "active_chip_keys": ["spark-voice-comms", "domain-chip-memory"],
+                "keepability": "active",
+                "promotion_disposition": "available",
+            },
+            provenance={
+                "source_kind": "attachment_snapshot",
+                "source_ref": "/tmp/attachments.snapshot.json",
+            },
+        )
+
+        repaired = repair_missing_event_trace_refs(self.state_db)
+
+        self.assertEqual(repaired, 5)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT be.event_id, be.request_id, be.trace_ref, el.request_id AS log_request_id, el.trace_ref AS log_trace_ref
+                FROM builder_events AS be
+                JOIN event_log AS el ON el.event_id = be.event_id
+                WHERE be.event_id IN (?, ?, ?, ?, ?)
+                """,
+                (
+                    config_event_id,
+                    env_event_id,
+                    smoke_event_id,
+                    contradiction_event_id,
+                    attachment_event_id,
+                ),
+            ).fetchall()
+
+        by_event = {row["event_id"]: row for row in rows}
+        self.assertEqual(by_event[config_event_id]["request_id"], "config_mutation:cfg-legacy")
+        self.assertEqual(by_event[config_event_id]["trace_ref"], "trace:config_mutation:cfg-legacy")
+        self.assertEqual(by_event[env_event_id]["request_id"], "doctor_cli:environment_snapshot:abcdef123456")
+        self.assertEqual(by_event[env_event_id]["trace_ref"], "trace:doctor_cli:environment_snapshot:abcdef123456")
+        self.assertTrue(str(by_event[smoke_event_id]["request_id"]).startswith("memory_smoke:"))
+        self.assertEqual(by_event[contradiction_event_id]["request_id"], "stop_ship:legacy_trace_context")
+        self.assertEqual(by_event[contradiction_event_id]["trace_ref"], "trace:stop_ship:legacy_trace_context")
+        self.assertTrue(str(by_event[attachment_event_id]["request_id"]).startswith("attachment_snapshot:legacy:"))
+        self.assertEqual(
+            by_event[attachment_event_id]["trace_ref"],
+            f"trace:{by_event[attachment_event_id]['request_id']}",
+        )
+        for row in by_event.values():
+            self.assertEqual(row["log_request_id"], row["request_id"])
+            self.assertEqual(row["log_trace_ref"], row["trace_ref"])
 
     def test_inbox_keeps_plain_memory_write_logs_out_unless_approval_gated(self) -> None:
         record_event(

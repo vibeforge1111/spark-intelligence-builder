@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal
+from uuid import uuid4
 
+from spark_intelligence.bridge_authority import authorize_builder_bridge_action
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.harness_contract import build_vnext_action_intent_envelope
 from spark_intelligence.observability.store import record_event, utc_now_iso
 from spark_intelligence.self_awareness.event_producers import record_capability_probe_agent_event
 from spark_intelligence.state.db import StateDB
@@ -13,6 +16,46 @@ from spark_intelligence.browser.service import collect_browser_use_probe_contrac
 
 
 ProbeStatus = Literal["success", "failure"]
+
+
+def _authorize_memory_probe_write(
+    *,
+    state_db: StateDB,
+    subject: str,
+    operation: str,
+) -> dict[str, Any] | None:
+    request_id = f"route-probe:memory:{operation}:{uuid4().hex}"
+    envelope = build_vnext_action_intent_envelope(
+        surface="cli",
+        actor_id_ref=subject,
+        request_id=request_id,
+        source_kind="self_route_probe_memory_smoke",
+        intent_summary=f"Run the local memory route-probe {operation} step.",
+        raw_turn_summary="Local operator explicitly invoked the built-in memory route probe.",
+        actions=[
+            {
+                "tool_name": "memory.write",
+                "owner_system": "domain-chip-memory",
+                "mutation_class": "writes_memory",
+                "args_path": f"builder://self-route-probe/memory/{operation}",
+            }
+        ],
+    )
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": envelope},
+        tool_name="memory.write",
+        owner_system="domain-chip-memory",
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=request_id,
+        channel_id="cli",
+        human_id=subject,
+        actor_id="route_probe",
+        component="self_route_probe_memory_smoke",
+    )
+    if authority.allowed and isinstance(authority.governor_decision, dict):
+        return authority.governor_decision
+    return None
 
 
 @dataclass(frozen=True)
@@ -84,7 +127,7 @@ def run_route_probe_and_record(
             route_latency_ms=_elapsed_ms(started),
             eval_ref="self.route-probe.run",
             source_ref=f"route_probe_run:{normalized_key}",
-            failure_reason=f"{type(exc).__name__}: {str(exc)[:180]}",
+            failure_reason=f"route_probe_exception:{type(exc).__name__}",
             actor_id=actor_id,
             request_id=request_id,
             session_id=session_id,
@@ -214,12 +257,19 @@ def _run_builder_status_probe(config_manager: ConfigManager, state_db: StateDB) 
 
     status = gateway_status(config_manager, state_db)
     ok = bool(status.doctor_blocking_ok)
+    warnings: list[str] = []
+    if not status.ready:
+        warnings.append("gateway not ready; run `spark doctor`")
+    if not status.configured_providers:
+        warnings.append("no providers configured; run `spark providers status`")
+    warning_summary = f" warnings=[{' | '.join(warnings)}]" if warnings else ""
     return {
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else _first_nonempty(status.doctor_blocking_failures) or status.provider_runtime_detail,
         "summary": (
             f"gateway ready={status.ready} doctor_blocking_ok={status.doctor_blocking_ok} "
             f"providers={len(status.configured_providers)} channels={len(status.configured_channels)}"
+            f"{warning_summary}"
         ),
     }
 
@@ -248,7 +298,11 @@ def _run_spawner_status_probe(config_manager: ConfigManager, state_db: StateDB) 
         spawner_surface_degraded=spawner_surface_degraded,
         mission_execution_blocked=mission_execution_blocked,
     )
-    degraded_hint = f" degraded_surfaces={len(degraded_surfaces)}" if degraded_surfaces else ""
+    degraded_hint = ""
+    if degraded_surfaces:
+        preview = ", ".join(degraded_surfaces[:3])
+        suffix = ", ..." if len(degraded_surfaces) > 3 else ""
+        degraded_hint = f" degraded_surfaces={len(degraded_surfaces)} [{preview}{suffix}]"
     return {
         "status": "success" if ok else "failure",
         "failure_reason": "" if ok else failure_reason,
@@ -281,14 +335,25 @@ def _spawner_probe_failure_reason(
 def _run_memory_smoke_probe(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
     from spark_intelligence.memory import run_memory_sdk_smoke_test
 
+    subject = "human:route-probe:aoc"
     result = run_memory_sdk_smoke_test(
         config_manager=config_manager,
         state_db=state_db,
-        subject="human:route-probe:aoc",
+        subject=subject,
         predicate="system.route_probe.spark_memory",
         value="ok",
         cleanup=True,
         actor_id="route_probe",
+        governor_decision=_authorize_memory_probe_write(
+            state_db=state_db,
+            subject=subject,
+            operation="write",
+        ),
+        cleanup_governor_decision=_authorize_memory_probe_write(
+            state_db=state_db,
+            subject=subject,
+            operation="cleanup",
+        ),
     )
     cleanup_ok = result.cleanup_result is None or result.cleanup_result.accepted_count > 0
     ok = result.write_result.accepted_count > 0 and not result.read_result.abstained and bool(result.read_result.records) and cleanup_ok
@@ -321,7 +386,14 @@ def _run_swarm_status_probe(config_manager: ConfigManager, state_db: StateDB) ->
     ok = bool(status.payload_ready)
     return {
         "status": "success" if ok else "failure",
-        "failure_reason": "" if ok else (status.last_failure or {}).get("message") or "swarm_payload_not_ready",
+        "failure_reason": (
+            ""
+            if ok
+            else (
+                "Spark Swarm's local payload is not ready. Connect or activate a "
+                "specialization path, then run the probe again."
+            )
+        ),
         "summary": f"swarm payload_ready={status.payload_ready} api_ready={status.api_ready} auth_state={status.auth_state}",
     }
 

@@ -232,7 +232,7 @@ class MemoryDoctorBrainTests(SparkTestCase):
 
         cross_scope = report.context_capsule["gateway_trace"]["cross_scope_lineage"]
         self.assertEqual(cross_scope["status"], "checked")
-        self.assertEqual(cross_scope["identity_key"], "telegram_user_id")
+        self.assertEqual(cross_scope["identity_key"], "telegram_user_ref")
         self.assertEqual(cross_scope["session_count"], 2)
         self.assertEqual(cross_scope["channel_count"], 1)
         self.assertTrue(cross_scope["cross_session_visible"])

@@ -1,6 +1,11 @@
 # Spark TurnIntent Harness Ruleset
 
-Date: 2026-05-31
+Date: 2026-06-26
+
+Current execution authority upgrades compatible `spark.turn_intent.v1` adapter
+input into a schema-valid Harness Core VNext authorization/ledger chain and
+verifies Governor authority where the action owner requires it. A legacy
+envelope is compatibility input, not sufficient execution authority by itself.
 
 ## Purpose
 
@@ -11,6 +16,8 @@ Spark may keep deterministic systems underneath for speed, routing evidence, hea
 The core rule is:
 
 > Raw words may propose candidates. Fresh user intent authorizes action.
+
+The current work priority is proof-first: reduce control-proof gaps and trace-join gaps before expanding UI, media support, or new feature surface. New surface work is justified only when it directly closes a measured control-proof gap.
 
 ## Non-Negotiables
 
@@ -172,6 +179,31 @@ Before any PR claims Spark action/routing safety:
 9. Open or update PRs only after local proof passes.
 10. Do not merge locally from the working machine.
 
+## Live Telegram Proof Contract
+
+Route-matrix simulations are useful guardrails, but they are not live release proof. A Telegram-facing release claim needs current evidence from the real runtime path:
+
+- `simulation=false`
+- `origin_surface=telegram_runtime`
+- `request_id` starts with `telegram:`
+- `trace_ref` is present
+- Harness proof is present through `harnessProofRef` plus `proofCapsule` or `proofStatus`
+- the observed bridge mode and routing decision match the matrix expectation
+
+Rows that fail this contract should be counted as proof or trace-join gaps, not quietly treated as passing release evidence. Backed legacy gap capsules can explain history, but they do not authorize new readiness claims.
+
+The older `ops/natural-language-live-commands.json` matrix is a Harness promotion source, not a release gate. Its `harness_core_contract` must keep `claim_scope: legacy_route_shape`, `release_gate: none`, and `simulation_cases_are_release_proof: false`. Promote representative prompts into the control-proof canary pack only after adding explicit authority, mutation class, side-effect, proof-join, trace-join, and reply-shape expectations.
+
+## Memory Availability Contract
+
+Durable memory writes and recalls require owner proof and a usable memory SDK. Builder resolves the default `domain_chip_memory` module through normal import first, then local development fallbacks:
+
+- `~/Desktop/domain-chip-memory/src`
+- `~/.spark/modules/domain-chip-memory/source/src`
+- `~/.spark/modules/domain-chip-memory/src`
+
+If the SDK cannot be resolved or a governed write abstains, Builder must surface a truthful unavailable route such as `memory_generic_observation_unavailable`. It must not fall through to a provider answer that implies the memory was saved. Fresh runtime state still outranks remembered state for access, live health, routing, and capability claims.
+
 ## Repo-Specific Rules
 
 ### spark-telegram-bot
@@ -189,6 +221,7 @@ Rules:
 
 Required proof:
 
+- route firewall tests
 - Harness Core action authority tests
 - Telegram action authority tests
 - 350-message matrix

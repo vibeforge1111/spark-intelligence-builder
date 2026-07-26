@@ -81,6 +81,8 @@ Owns durable product configuration.
 
 Owns env-backed secret references and operator-provided secret values where needed in v1.
 
+Builder owns this as an application secret file, not as a shell script. Secret names use the portable env-key grammar and may not shadow process-control variables. Values use one JSON string literal after `=`, so quotes, slashes, whitespace, Unicode, and line breaks round-trip without creating extra keys. Reads reject symlinks and non-regular files. Writes use a same-directory atomic replacement whose temporary file is owner-only from creation; post-write permission hardening remains a backstop.
+
 ### 3.3 `state.db`
 
 Owns canonical runtime state.
@@ -170,6 +172,7 @@ Recommended core tables:
 - `session_bindings`
 - `pairing_records`
 - `allowlist_entries`
+- `gateway_webhook_request_claims`
 - `provider_records`
 - `job_records`
 - `job_runs`
@@ -203,12 +206,17 @@ Recommended core tables:
 - audit history
 - pairing approvals
 - execution proof and delivery proof
+- bounded webhook replay claims, keyed by source-owned external request id
 - provenance for chip, plugin, personality, and swarm influence
 - attachment snapshot truth and active attachment selection state
 - personality preference deltas, interaction observations, and evolution history
 - quarantine outcomes for blocked material
 
-### 6.3 What Does Not Belong In Either
+### 6.3 Builder Event Trace Contract
+
+`builder_events` rows are observability evidence and should be trace-joinable whenever a request scope exists. Producers should call `spark_intelligence.observability.store.record_event` instead of writing `builder_events` directly; the recorder preserves explicit `trace_ref` values and derives `trace:<request_id>` when a row has `request_id` but no explicit trace. Source-ledger `source_used` rows without request scope derive redacted `trace:source-ledger-source:<digest>` refs from source metadata instead of exposing raw source refs. Context-free events may leave `trace_ref` empty, but request-scoped, source-ledger, contradiction, attachment snapshot, and typed operational rows with deterministic ids should not add new missing-trace debt. Doctor repair runs also backfill the same derived trace refs into existing `builder_events`, `event_log`, and `memory_lane_records` rows when those rows carry enough request, source-ledger, config mutation, environment snapshot, memory-smoke, contradiction, or attachment snapshot metadata. Attachment snapshot rows that predate the current producer request contract are labeled with `attachment_snapshot:legacy:<digest>` request ids so historical evidence can join without pretending to match a newer live request scope.
+
+### 6.4 What Does Not Belong In Either
 
 - duplicated secret copies
 - adapter-owned shadow allowlists

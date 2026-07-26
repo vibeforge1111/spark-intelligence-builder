@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -42,7 +44,7 @@ from spark_intelligence.build_quality_review import (
     looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.context.recent_conversation import load_recent_conversation_turns
 from spark_intelligence.bridge_authority import (
     authorize_builder_bridge_action,
@@ -57,7 +59,6 @@ from spark_intelligence.harness_contract import (
     authorize_tool_call,
     authorize_vnext_tool_call,
     build_vnext_action_intent_envelope,
-    build_vnext_tool_intent_envelope,
     parse_turn_intent_envelope,
     verify_governor_tool_authority,
 )
@@ -91,6 +92,7 @@ from spark_intelligence.memory.episodic_events import (
     telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.generic_observations import (
+    TelegramGenericObservation,
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
     build_telegram_generic_deletions_answer,
@@ -151,7 +153,6 @@ from spark_intelligence.personality.loader import (
     build_telegram_persona_reply_contract,
 )
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
-from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 from spark_intelligence.system_registry import (
@@ -163,10 +164,25 @@ from spark_intelligence.system_registry import (
 from spark_intelligence.user_instructions import list_active_instructions
 from spark_intelligence.bot_drafts import find_draft_for_iteration
 
+_LOGGER = logging.getLogger(__name__)
+
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
+
+
+def _build_spark_context_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.context.capsule import build_spark_context_capsule
+
+    return build_spark_context_capsule(*args, **kwargs)
+
+
+def _build_self_awareness_capsule(*args: Any, **kwargs: Any) -> Any:
+    from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
+
+    return build_self_awareness_capsule(*args, **kwargs)
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
 _ATTACHMENT_PROMPT_CHIP_LIMIT = 12
+_RESEARCHER_IMPORT_LOCK = threading.RLock()
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
@@ -231,14 +247,16 @@ def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
 
 def _profile_fact_record_value(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    return str(
-        record.get("value")
-        or record.get("normalized_value")
-        or metadata.get("value")
-        or metadata.get("normalized_value")
-        or record.get("answer")
-        or ""
-    ).strip()
+    for candidate in (
+        record.get("value"),
+        record.get("normalized_value"),
+        metadata.get("value"),
+        metadata.get("normalized_value"),
+        record.get("answer"),
+    ):
+        if candidate is not None:
+            return str(candidate).strip()
+    return ""
 
 
 def _select_profile_fact_query_value(
@@ -1755,8 +1773,13 @@ def _record_is_suppressed_by_state_deletion(
             continue
         if deleted_entity_key and entity_key != deleted_entity_key:
             continue
-        if deleted_time and record_time and record_time > deleted_time:
-            continue
+        if deleted_time and record_time:
+            parsed_record_time = _parse_memory_timestamp(record_time)
+            parsed_deleted_time = _parse_memory_timestamp(deleted_time)
+            if parsed_record_time is None or parsed_deleted_time is None:
+                continue
+            if parsed_record_time > parsed_deleted_time:
+                continue
         return True
     return False
 
@@ -2873,7 +2896,7 @@ def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
     snippet = str(episode_text or "").strip()
     if not snippet:
         return "Noted."
-    return f"Noted: \"{snippet}\""
+    return "Got it — I'll keep that in mind."
 
 
 @dataclass
@@ -2999,6 +3022,10 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
         path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
         return (path, "configured")
 
+    installed = resolve_installed_module_source("spark-researcher", config_manager=config_manager)
+    if installed is not None:
+        return installed, "installed_module"
+
     autodetect = Path.home() / ".spark" / "spark-researcher"
     if autodetect.exists():
         return autodetect, "autodiscovered"
@@ -3014,32 +3041,51 @@ def resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: 
 
 
 def _import_build_advisory(runtime_root: Path):
-    module = _import_researcher_module(runtime_root, "spark_researcher.bridge")
+    module = _import_researcher_module(runtime_root, "spark_researcher.advisory")
     return getattr(module, "build_advisory")
 
 
 def _import_execute_with_research(runtime_root: Path):
-    module = _import_researcher_module(runtime_root, "spark_researcher.bridge")
+    module = _import_researcher_module(runtime_root, "spark_researcher.research")
     return getattr(module, "execute_with_research")
 
 
 def _import_researcher_module(runtime_root: Path, module_name: str):
-    src_root = runtime_root / "src"
-    src_root_resolved = src_root.resolve(strict=False)
-    _evict_researcher_modules_from_other_roots(src_root_resolved)
-    if str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
-    importlib.invalidate_caches()
-    return importlib.import_module(module_name)
+    src_root = (runtime_root / "src").resolve(strict=False)
+    with _RESEARCHER_IMPORT_LOCK:
+        _evict_researcher_modules_from_other_roots(src_root)
+        _promote_researcher_source_root(src_root)
+        importlib.invalidate_caches()
+        return importlib.import_module(module_name)
 
 
 def _evict_researcher_modules_from_other_roots(src_root: Path) -> None:
-    package = sys.modules.get("spark_researcher")
-    if package is None or _module_loaded_from_root(package, src_root):
+    cached = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "spark_researcher" or name.startswith("spark_researcher.")
+    }
+    if not cached or all(
+        module is not None and _module_loaded_from_root(module, src_root)
+        for module in cached.values()
+    ):
         return
-    for name in tuple(sys.modules):
-        if name == "spark_researcher" or name.startswith("spark_researcher."):
-            sys.modules.pop(name, None)
+    for name in cached:
+        sys.modules.pop(name, None)
+
+
+def _promote_researcher_source_root(src_root: Path) -> None:
+    desired_key = os.path.normcase(str(src_root))
+    retained: list[str] = []
+    for raw_path in sys.path:
+        try:
+            candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            retained.append(raw_path)
+            continue
+        if os.path.normcase(str(candidate)) != desired_key:
+            retained.append(raw_path)
+    sys.path[:] = [str(src_root), *retained]
 
 
 def _module_loaded_from_root(module: Any, src_root: Path) -> bool:
@@ -3057,18 +3103,6 @@ def _module_loaded_from_root(module: Any, src_root: Path) -> bool:
         if loaded_path == src_root or src_root in loaded_path.parents:
             return True
     return False
-
-
-def _canonical_bridge_trace_ref(
-    *,
-    agent_id: str | None,
-    human_id: str | None,
-    request_id: str | None,
-) -> str:
-    agent = str(agent_id or "agent:unknown").strip() or "agent:unknown"
-    human = str(human_id or "human:unknown").strip() or "human:unknown"
-    request = str(request_id or "unknown").strip() or "unknown"
-    return f"trace:{agent}:{human}:{request}"
 
 
 def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
@@ -3377,12 +3411,12 @@ def _is_fast_greeting(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", user_message.strip().lower()).rstrip("!.?")
     if not lowered or len(lowered) > 60:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     return lowered in _FAST_GREETING_PHRASES
 
 
-def _synthesize_skipped_advisory(user_message: str, trace_ref: str) -> dict[str, Any]:
+def _synthesize_skipped_advisory(user_message: str, request_id: str) -> dict[str, Any]:
     """Fake advisory that triggers the conversational fallback path."""
     return {
         "guidance": [],
@@ -3394,7 +3428,7 @@ def _synthesize_skipped_advisory(user_message: str, trace_ref: str) -> dict[str,
             "clarity": "skipped_for_greeting",
             "recommended_actions": [],
         },
-        "trace_id": trace_ref,
+        "trace_id": f"fast-greeting-{request_id}",
         "trace_path": "",
         "intent": {"query": user_message},
         "original_user_message": user_message,
@@ -3415,7 +3449,7 @@ def _is_conversational_fallback_candidate(
         return False
     if len(lowered) > fallback_max_chars:
         return False
-    if any(char.isdigit() for char in lowered):
+    if lowered.isdigit():
         return False
     blocked_terms = (
         "http://",
@@ -3652,9 +3686,12 @@ def _resolve_active_personality_chip_id() -> str:
             return _ACTIVE_PERSONALITY_CACHE
     except Exception:
         pass
-    # 4. Fallback
-    _ACTIVE_PERSONALITY_CACHE = "founder-operator"
-    return _ACTIVE_PERSONALITY_CACHE
+    # 4. Fallback. Do NOT cache: if chip lab is installed or activated
+    # after the gateway boots, a cached fallback would stick for the rest of
+    # the process lifetime even though a real chip id is now available.
+    # Returning without writing the cache lets the next call retry the chip
+    # lab path so the next request reflects the real active personality.
+    return "founder-operator"
 
 
 def _read_sib_active_personality_id() -> str | None:
@@ -3670,7 +3707,9 @@ def _read_sib_active_personality_id() -> str | None:
         db = Path(home) / "state.db"
         if not db.exists():
             return None
-        con = sqlite3.connect(str(db))
+        # StateDB owns the persistent journal mode. This read-only resolver only
+        # needs the same bounded lock wait as canonical StateDB connections.
+        con = sqlite3.connect(str(db), timeout=10)
         try:
             cur = con.cursor()
             cur.execute(
@@ -3847,7 +3886,7 @@ def _render_direct_provider_chat_fallback(
         human_id=human_id,
         channel_kind=channel_kind,
     )
-    context_capsule_obj = build_spark_context_capsule(
+    context_capsule_obj = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -3972,6 +4011,9 @@ def _render_direct_provider_chat_fallback(
             mission_control_context=mission_control_context,
             capability_router_context=capability_router_context,
             harness_context=harness_context,
+            provider_id=provider.provider_id,
+            provider_model=provider.default_model,
+            provider_execution_transport=provider.execution_transport,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -4415,10 +4457,6 @@ def _governor_authorizes_researcher_tool_call(
     reason_codes = tuple(str(reason) for reason in verification.get("reason_codes") or [])
     source_kind = str(verification.get("source_kind") or "governor_decision")
     if verification.get("allowed") is True:
-        from spark_intelligence.bridge_authority import bridge_governor_decision_has_canonical_binding
-
-        if not bridge_governor_decision_has_canonical_binding(governor_decision):
-            return ("blocked", ("canonical_governor_binding_missing",), source_kind, decision_id)
         return ("allowed", (), source_kind, decision_id)
     if reason_codes:
         return ("blocked", reason_codes, source_kind, decision_id)
@@ -4439,8 +4477,10 @@ def _vnext_proposes_builder_chip_evaluate(payload: dict[str, Any] | None) -> boo
     return False
 
 
-def _build_researcher_advisory_execution_governor_decision(
+def _build_researcher_memory_write_governor_decision(
     *,
+    governor_decision: dict[str, Any] | None,
+    turn_intent_envelope_vnext: dict[str, Any] | None,
     state_db: StateDB,
     request_id: str,
     run_id: str | None,
@@ -4448,71 +4488,38 @@ def _build_researcher_advisory_execution_governor_decision(
     session_id: str,
     human_id: str,
     agent_id: str,
+    user_message: str,
+    allow_adapter_envelope: bool,
 ) -> dict[str, Any] | None:
-    try:
-        envelope_vnext = build_vnext_tool_intent_envelope(
-            surface=channel_kind or "builder",
-            actor_id_ref=human_id,
+    if isinstance(governor_decision, dict):
+        return governor_decision
+    if not isinstance(turn_intent_envelope_vnext, dict) and allow_adapter_envelope:
+        turn_intent_envelope_vnext = build_telegram_memory_turn_intent_payload_vnext(
             request_id=request_id,
-            source_kind="researcher_bridge_advisory_execute",
-            tool_name="researcher.advisory.execute",
-            owner_system="spark-researcher",
-            mutation_class="external_network",
-            intent_summary="SIB researcher bridge selected governed spark-researcher advisory execution.",
-            raw_turn_summary=(
-                f"Researcher bridge request {request_id} selected governed advisory execution. "
-                "Raw Telegram text omitted from authority packet."
-            ),
-            confidence=0.95,
-            external_network=True,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            user_message=user_message,
+            source_kind="researcher_bridge_memory_adapter",
         )
-    except Exception:
-        envelope_vnext = None
-    if not isinstance(envelope_vnext, dict):
-        return None
-    authority = authorize_builder_bridge_action(
-        {"turn_intent_envelope_vnext": envelope_vnext},
-        tool_name="researcher.advisory.execute",
-        owner_system="spark-researcher",
-        mutation_class="external_network",
-        external_network=True,
-        state_db=state_db,
-        request_id=request_id,
-        run_id=run_id,
-        channel_id=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id="researcher_bridge",
-        component="researcher_bridge",
-    )
-    if authority.allowed and isinstance(authority.governor_decision, dict):
-        return authority.governor_decision
-    try:
-        record_policy_gate_block(
-            state_db,
-            component="researcher_bridge",
-            policy_domain="governor_authority",
-            gate_name="researcher_bridge.advisory_execute",
-            source_kind="governor_decision",
-            source_ref=request_id,
-            summary="Researcher bridge blocked advisory execution without matching Governor authority.",
-            action="blocked",
-            reason_code="researcher_advisory_authority_blocked",
-            blocked_stage="researcher_advisory_execute",
-            input_ref=request_id,
-            severity="high",
-            run_id=run_id,
+    if isinstance(turn_intent_envelope_vnext, dict):
+        authority = authorize_builder_bridge_action(
+            {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
+            tool_name="memory.write",
+            owner_system="domain-chip-memory",
+            mutation_class="writes_memory",
+            state_db=state_db,
             request_id=request_id,
-            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            run_id=run_id,
             channel_id=channel_kind,
             session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
             actor_id="researcher_bridge",
-            provenance={"owner_system": "spark-researcher", "human_id": human_id, "agent_id": agent_id},
-            facts={"reason_codes": list(authority.reason_codes or ())},
+            component="researcher_bridge",
         )
-    except Exception:
-        pass
+        if isinstance(authority.governor_decision, dict):
+            return authority.governor_decision
     return None
 
 
@@ -4614,7 +4621,6 @@ def _authorize_researcher_active_chip_evaluate(
     state_db: StateDB,
     turn_intent_envelope: TurnIntentEnvelope | None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
-    governor_decision: dict[str, Any] | None = None,
     selected_chip_keys: list[str],
     run_id: str | None,
     request_id: str,
@@ -4623,20 +4629,9 @@ def _authorize_researcher_active_chip_evaluate(
     human_id: str,
     agent_id: str,
 ) -> dict[str, Any] | None:
-    candidate_governor_decision = governor_decision if isinstance(governor_decision, dict) else None
+    governor_decision = None
     authority_source_kind = "missing_governor_decision"
     authority_source_ref = None
-    if isinstance(candidate_governor_decision, dict):
-        authority_source_kind = "governor_decision"
-        authority_source_ref = str(candidate_governor_decision.get("decision_id") or "") or None
-    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
-        governor_decision=candidate_governor_decision,
-        tool_name="chip.evaluate",
-        owner_system="spark-intelligence-builder",
-        mutation_class="writes_files",
-    )
-    if verdict == "allowed":
-        return candidate_governor_decision
     if isinstance(turn_intent_envelope_vnext, dict):
         authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": turn_intent_envelope_vnext},
@@ -4653,21 +4648,21 @@ def _authorize_researcher_active_chip_evaluate(
             actor_id="researcher_bridge",
             component="researcher_bridge",
         )
-        candidate_governor_decision = authority.governor_decision
+        governor_decision = authority.governor_decision
         authority_source_kind = "governor_decision"
         authority_source_ref = (
-            str(candidate_governor_decision.get("decision_id") or "")
-            if isinstance(candidate_governor_decision, dict)
+            str(governor_decision.get("decision_id") or "")
+            if isinstance(governor_decision, dict)
             else str(turn_intent_envelope_vnext.get("turn_id") or "")
         ) or None
-        verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
-            governor_decision=candidate_governor_decision,
-            tool_name="chip.evaluate",
-            owner_system="spark-intelligence-builder",
-            mutation_class="writes_files",
-        )
+    verdict, reasons, governor_source_kind, governor_source_ref = _governor_authorizes_researcher_tool_call(
+        governor_decision=governor_decision,
+        tool_name="chip.evaluate",
+        owner_system="spark-intelligence-builder",
+        mutation_class="writes_files",
+    )
     if verdict == "allowed":
-        return candidate_governor_decision if isinstance(candidate_governor_decision, dict) else None
+        return governor_decision if isinstance(governor_decision, dict) else None
     if governor_source_kind != "missing_governor_decision":
         authority_source_kind = governor_source_kind
     if governor_source_ref is not None:
@@ -4703,7 +4698,7 @@ def _authorize_researcher_active_chip_evaluate(
                 "reason_codes": list(reasons),
                 "authority_state": (
                     "governor_decision"
-                    if isinstance(candidate_governor_decision, dict)
+                    if isinstance(governor_decision, dict)
                     else (
                         "vnext_present_without_governor"
                         if isinstance(turn_intent_envelope_vnext, dict)
@@ -4765,16 +4760,6 @@ def _build_researcher_memory_read_turn_intent_envelope(
         return parse_turn_intent_envelope(payload)
     except ValueError:
         return None
-
-
-def _source_kind_allows_researcher_local_memory_authority(source_kind: str) -> bool:
-    return source_kind in {
-        "current_focus_transition",
-        "current_plan_transition",
-        "explicit_decision",
-        "profile_fact_observation",
-        "telegram_event_observation",
-    }
 
 
 def _authorize_researcher_memory_read(
@@ -4858,11 +4843,6 @@ def _authorize_researcher_memory_read(
             },
             facts={
                 "tool_name": "memory.read",
-                "turn_id": _researcher_authority_turn_id(
-                    governor_decision=None,
-                    turn_intent_envelope_vnext=authority_vnext,
-                    turn_intent_envelope=authority_envelope,
-                ),
                 "read_kind": read_kind,
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
@@ -4928,28 +4908,6 @@ def _authorize_researcher_memory_write(
         )
         adapter_envelope_used = authority_envelope is not None
     effective_governor_decision = governor_decision
-    if (
-        effective_governor_decision is None
-        and authority_vnext is not None
-        and _source_kind_allows_researcher_local_memory_authority(source_kind)
-    ):
-        authority = authorize_builder_bridge_action(
-            {"turn_intent_envelope_vnext": authority_vnext},
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
-            mutation_class="writes_memory",
-            state_db=state_db,
-            request_id=request_id,
-            run_id=run_id,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            component="researcher_bridge",
-        )
-        if authority.allowed and isinstance(authority.governor_decision, dict):
-            effective_governor_decision = authority.governor_decision
     verdict, reasons, authority_source_kind, authority_source_ref = _governor_authorizes_researcher_tool_call(
         governor_decision=effective_governor_decision,
         tool_name="memory.write",
@@ -4990,11 +4948,6 @@ def _authorize_researcher_memory_write(
             },
             facts={
                 "tool_name": "memory.write",
-                "turn_id": _researcher_authority_turn_id(
-                    governor_decision=effective_governor_decision,
-                    turn_intent_envelope_vnext=authority_vnext,
-                    turn_intent_envelope=authority_envelope,
-                ),
                 "operation": operation,
                 "source_kind": source_kind,
                 "reason_codes": reason_codes,
@@ -5020,27 +4973,6 @@ def _authorize_researcher_memory_write(
     except Exception:
         pass
     return False
-
-
-def _researcher_authority_turn_id(
-    *,
-    governor_decision: dict[str, Any] | None,
-    turn_intent_envelope_vnext: dict[str, Any] | None,
-    turn_intent_envelope: TurnIntentEnvelope | None,
-) -> str | None:
-    if isinstance(governor_decision, dict):
-        turn_id = str(governor_decision.get("turn_id") or "").strip()
-        if turn_id:
-            return turn_id
-    if isinstance(turn_intent_envelope_vnext, dict):
-        turn_id = str(turn_intent_envelope_vnext.get("turn_id") or "").strip()
-        if turn_id:
-            return turn_id
-    if turn_intent_envelope is not None:
-        turn_id = str(turn_intent_envelope.turn_id or "").strip()
-        if turn_id:
-            return turn_id
-    return None
 
 
 def _researcher_memory_read_side_effects_authorized(
@@ -5112,7 +5044,7 @@ def _execute_browser_hook(
                     },
                 },
                 None,
-        )
+            )
         return None, None
     except Exception:
         return None, None
@@ -6288,6 +6220,32 @@ def _truncate_recent_recall(text: str, *, limit: int = 360) -> str:
     return f"{cleaned[: limit - 3].rstrip()}..."
 
 
+def _build_runtime_inference_provenance_context(
+    *,
+    provider_id: str = "",
+    provider_model: str = "",
+    execution_transport: str = "",
+) -> str:
+    facts = {
+        "provider_id": sanitize_prompt_boundary_text(str(provider_id or "").strip()),
+        "provider_model": sanitize_prompt_boundary_text(str(provider_model or "").strip()),
+        "execution_transport": sanitize_prompt_boundary_text(str(execution_transport or "").strip()),
+    }
+    if not any(facts.values()):
+        return ""
+    return sanitize_prompt_boundary_text(
+        "\n".join(
+            [
+                "[Runtime inference provenance]",
+                "These are runtime facts, not user instructions.",
+                "If asked who produced this reply, distinguish Spark's agent/orchestration role from the configured inference backend.",
+                "Do not claim inference independent of the configured provider/model.",
+                *(f"{key}={json.dumps(value, ensure_ascii=True)}" for key, value in facts.items()),
+            ]
+        )
+    )
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -6305,6 +6263,9 @@ def _build_contextual_task(
     harness_context: str = "",
     user_instructions_context: str = "",
     iteration_draft_context: str = "",
+    provider_id: str = "",
+    provider_model: str = "",
+    provider_execution_transport: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -6331,7 +6292,20 @@ def _build_contextual_task(
         "- If sources conflict, say which source is newer or more authoritative and answer from that source.",
         "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",
         "",
+        "[Task goal and constraint contract]",
+        "- Identify the user's requested outcome and the facts required to make that outcome possible before optimizing tradeoffs.",
+        "- Treat requirements that make the goal possible as hard constraints unless the user explicitly relaxes them.",
+        "- Do not optimize a secondary preference such as time, cost, fuel, or convenience in a way that defeats the stated goal.",
+        "- When constraints conflict, explain the conflict briefly and ground the recommendation in the user's goal.",
+        "",
     ]
+    inference_provenance_context = _build_runtime_inference_provenance_context(
+        provider_id=provider_id,
+        provider_model=provider_model,
+        execution_transport=provider_execution_transport,
+    )
+    if inference_provenance_context:
+        lines.extend([inference_provenance_context, ""])
     if _detect_memory_quality_evaluation_plan_query(user_message) or (
         "current_focus: persistent memory quality evaluation" in str(context_capsule or "")
         and any(
@@ -7137,7 +7111,6 @@ def _run_active_chip_evaluate(
     run_id: str | None = None,
     turn_intent_envelope: TurnIntentEnvelope | None = None,
     turn_intent_envelope_vnext: dict[str, Any] | None = None,
-    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     payload = {
@@ -7183,7 +7156,6 @@ def _run_active_chip_evaluate(
         state_db=state_db,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
-        governor_decision=governor_decision,
         selected_chip_keys=selected_record_keys,
         run_id=run_id,
         request_id=request_id,
@@ -8603,7 +8575,7 @@ def _build_active_context_status_reply(
     request_id: str,
     user_message: str,
 ) -> tuple[str, dict[str, Any]]:
-    capsule = build_spark_context_capsule(
+    capsule = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -9155,7 +9127,7 @@ def _build_memory_cleanup_closure_reply(
     request_id: str,
     user_message: str,
 ) -> tuple[str, dict[str, Any]]:
-    capsule = build_spark_context_capsule(
+    capsule = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -9564,7 +9536,7 @@ def build_researcher_reply(
     governor_decision: dict[str, Any] | None = None,
     allow_memory_adapter_envelope: bool | None = None,
 ) -> ResearcherBridgeResult:
-    trace_ref = _canonical_bridge_trace_ref(agent_id=agent_id, human_id=human_id, request_id=request_id)
+    trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
     turn_intent_envelope = turn_intent_envelope or _parse_optional_turn_intent_payload(turn_intent_payload)
     turn_intent_envelope_vnext = turn_intent_envelope_vnext or _parse_optional_turn_intent_payload_vnext(
         turn_intent_payload_vnext
@@ -9577,7 +9549,19 @@ def build_researcher_reply(
             )
         )
     attachment_context = build_attachment_context(config_manager)
-    memory_write_governor_decision = governor_decision if isinstance(governor_decision, dict) else None
+    memory_write_governor_decision = _build_researcher_memory_write_governor_decision(
+        governor_decision=governor_decision,
+        turn_intent_envelope_vnext=turn_intent_envelope_vnext,
+        state_db=state_db,
+        request_id=request_id,
+        run_id=run_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        user_message=user_message,
+        allow_adapter_envelope=allow_memory_adapter_envelope and turn_intent_envelope is None,
+    )
     explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
     preference_detection_message = (
         _explicit_style_preference_canonical_message(memory_user_message)
@@ -9609,6 +9593,8 @@ def build_researcher_reply(
     detected_generic_memory_deletion = None
     detected_generic_memory_deletions = []
     detected_generic_memory_observation = None
+    generic_memory_delete_blocked_without_governor = False
+    generic_memory_write_failure: dict[str, str] | None = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -9616,8 +9602,33 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        try:
+            record_event(
+                state_db,
+                event_type="researcher_personality_load_failed",
+                component="researcher_bridge",
+                summary="Researcher personality loading failed; the turn continued with the safe base behavior.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="personality_load_failed",
+                severity="medium",
+                facts={
+                    "exception_type": type(exc).__name__[:80],
+                    "recovery": "continue_without_personality_profile",
+                },
+            )
+        except Exception as event_exc:
+            _LOGGER.warning(
+                "researcher_personality_failure_event_record_failed error_type=%s",
+                type(event_exc).__name__,
+            )
 
     # Check for personality queries (status, reset) before NL detection
     try:
@@ -10975,7 +10986,7 @@ def build_researcher_reply(
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
         if self_awareness_query:
-            capsule = build_self_awareness_capsule(
+            capsule = _build_self_awareness_capsule(
                 config_manager=config_manager,
                 state_db=state_db,
                 human_id=human_id,
@@ -11173,8 +11184,27 @@ def build_researcher_reply(
                 detected_entity_state_summary_query = None
                 detected_open_memory_recall_query = None
                 detected_belief_recall_query = None
-        except Exception:
-            pass
+        except Exception as exc:
+            record_event(
+                state_db,
+                event_type="researcher_memory_query_detection_failed",
+                component="researcher_bridge",
+                summary="Researcher memory-query detection failed; the turn continued without that optional route.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="memory_query_detection_failed",
+                severity="medium",
+                facts={
+                    "exception_type": type(exc).__name__[:80],
+                    "recovery": "continue_without_memory_query_detection",
+                },
+            )
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
@@ -11277,9 +11307,12 @@ def build_researcher_reply(
                     detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
+                            explicit_delete_governor_decision = (
+                                governor_decision if isinstance(governor_decision, dict) else None
+                            )
                             if _authorize_researcher_memory_write(
                                 state_db=state_db,
-                                governor_decision=memory_write_governor_decision,
+                                governor_decision=explicit_delete_governor_decision,
                                 turn_intent_envelope=turn_intent_envelope,
                                 turn_intent_envelope_vnext=turn_intent_envelope_vnext,
                                 run_id=run_id,
@@ -11313,7 +11346,7 @@ def build_researcher_reply(
                                         turn_id=deletion_turn_id,
                                         channel_kind=channel_kind,
                                         actor_id="telegram_generic_observation_loader",
-                                        governor_decision=memory_write_governor_decision,
+                                        governor_decision=explicit_delete_governor_decision,
                                     )
                                     if generic_delete_result.accepted_count > 0:
                                         accepted_generic_memory_deletions.append(generic_memory_deletion)
@@ -11329,6 +11362,7 @@ def build_researcher_reply(
                                 detected_generic_memory_candidate = None
                                 detected_generic_memory_deletions = []
                                 detected_generic_memory_deletion = None
+                                generic_memory_delete_blocked_without_governor = True
                         else:
                             detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
@@ -11365,12 +11399,24 @@ def build_researcher_reply(
                                 else:
                                     generic_write_result = None
                                 if generic_write_result is None or generic_write_result.accepted_count <= 0:
+                                    generic_memory_write_failure = {
+                                        "predicate": detected_generic_memory_observation.predicate,
+                                        "value": detected_generic_memory_observation.value,
+                                        "fact_name": detected_generic_memory_observation.fact_name,
+                                        "label": detected_generic_memory_observation.label,
+                                        "reason": (
+                                            str(getattr(generic_write_result, "reason", "") or "").strip()
+                                            if generic_write_result is not None
+                                            else "write_result_missing"
+                                        ),
+                                    }
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_observation = None
                     if (
                         detected_generic_memory_candidate is None
                         and detected_memory_event is None
                         and detected_profile_fact is None
+                        and not generic_memory_delete_blocked_without_governor
                     ):
                         assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
@@ -11383,6 +11429,7 @@ def build_researcher_reply(
                                 ),
                                 run_id=run_id,
                                 request_id=request_id,
+                                trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                                 channel_id=channel_kind,
                                 session_id=session_id,
                                 human_id=human_id,
@@ -11423,6 +11470,7 @@ def build_researcher_reply(
                                 severity="low",
                                 run_id=run_id,
                                 request_id=request_id,
+                                trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                                 channel_id=channel_kind,
                                 session_id=session_id,
                                 actor_id="researcher_bridge",
@@ -11460,6 +11508,44 @@ def build_researcher_reply(
         )
         if not memory_candidate_authorized:
             assessed_generic_memory_candidate = None
+        elif assessed_generic_memory_candidate.outcome == "current_state":
+            try:
+                current_state_result = write_profile_fact_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    predicate=assessed_generic_memory_candidate.predicate,
+                    value=assessed_generic_memory_candidate.value,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    fact_name=assessed_generic_memory_candidate.fact_name,
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_generic_observation_loader",
+                )
+            except Exception:
+                current_state_result = None
+            if current_state_result is not None and current_state_result.accepted_count > 0:
+                detected_generic_memory_observation = TelegramGenericObservation(
+                    predicate=assessed_generic_memory_candidate.predicate,
+                    value=assessed_generic_memory_candidate.value,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    fact_name=assessed_generic_memory_candidate.fact_name,
+                    label=assessed_generic_memory_candidate.label,
+                )
+            else:
+                generic_memory_write_failure = {
+                    "predicate": assessed_generic_memory_candidate.predicate,
+                    "value": assessed_generic_memory_candidate.value,
+                    "fact_name": assessed_generic_memory_candidate.fact_name,
+                    "label": assessed_generic_memory_candidate.label,
+                    "reason": (
+                        str(getattr(current_state_result, "reason", "") or "").strip()
+                        if current_state_result is not None
+                        else "write_result_missing"
+                    ),
+                }
+                assessed_generic_memory_candidate = None
         elif assessed_generic_memory_candidate.outcome == "structured_evidence":
             try:
                 write_structured_evidence_to_memory(
@@ -11521,6 +11607,7 @@ def build_researcher_reply(
                 summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
                 run_id=run_id,
                 request_id=request_id,
+                trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                 channel_id=channel_kind,
                 session_id=session_id,
                 human_id=human_id,
@@ -12064,6 +12151,78 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_generic_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if generic_memory_write_failure is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_generic_observation_unavailable",
+            routing_decision="memory_generic_observation_unavailable",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        label = str(
+            generic_memory_write_failure.get("label")
+            or generic_memory_write_failure.get("fact_name")
+            or "that memory"
+        ).strip()
+        reason = str(generic_memory_write_failure.get("reason") or "memory_write_unavailable").strip()
+        reply_text = (
+            f"I caught that as {label}, but I could not save it to memory this turn.\n\n"
+            f"Reason: {reason}."
+        )
+        evidence_summary = (
+            "status=memory_generic_observation_unavailable "
+            f"predicate={generic_memory_write_failure.get('predicate') or 'unknown'} "
+            f"reason={reason}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge detected a generic memory observation but memory write was unavailable.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_generic_observation_unavailable",
+            facts=_bridge_event_facts(
+                routing_decision="memory_generic_observation_unavailable",
+                bridge_mode="memory_generic_observation_unavailable",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": generic_memory_write_failure.get("fact_name"),
+                    "predicate": generic_memory_write_failure.get("predicate"),
+                    "value": generic_memory_write_failure.get("value"),
+                    "label": generic_memory_write_failure.get("label"),
+                    "operation": "update",
+                    "write_reason": reason,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint="memory_write_unavailable",
+            trace_ref=trace_ref,
+            mode="memory_generic_observation_unavailable",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_generic_observation_unavailable",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
@@ -14540,7 +14699,6 @@ def build_researcher_reply(
         run_id=run_id,
         turn_intent_envelope=turn_intent_envelope,
         turn_intent_envelope_vnext=turn_intent_envelope_vnext,
-        governor_decision=memory_write_governor_decision,
     )
     if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
         record_event(
@@ -14624,7 +14782,7 @@ def build_researcher_reply(
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
     raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
-    context_capsule_obj = build_spark_context_capsule(
+    context_capsule_obj = _build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -15484,7 +15642,7 @@ def build_researcher_reply(
                     # renders the reply without spawning the advisory
                     # subprocess. Personality, memory, and chip context
                     # are still assembled later in the function.
-                    advisory = _synthesize_skipped_advisory(user_message, trace_ref)
+                    advisory = _synthesize_skipped_advisory(user_message, request_id)
                     advisory["epistemic_status"]["clarity"] = f"tier_{tier}"
                     execute_with_research = None  # type: ignore[assignment]
                 else:
@@ -15536,7 +15694,7 @@ def build_researcher_reply(
                         recent_conversation_context=recent_conversation_context,
                         run_id=run_id,
                         request_id=request_id,
-                        trace_ref=trace_ref,
+                        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                         session_id=session_id,
                         human_id=human_id,
                     )
@@ -15557,12 +15715,12 @@ def build_researcher_reply(
                             reason_code="operational_residue_removed",
                             summary="Operational residue was stripped from a direct-provider fallback reply before delivery.",
                             payload_preview="\n".join(removed_residue)[:160],
-                            provenance={"channel_kind": channel_kind, "trace_ref": trace_ref},
+                            provenance={"channel_kind": channel_kind, "trace_ref": f"trace:{agent_id}:{human_id}:{request_id}"},
                         )
                     if cleaned_reply != raw_reply_text and not reply_mutation_actions:
                         reply_mutation_actions.append("rewrite_reply")
                     reply_text = cleaned_reply
-                    trace_ref = _canonical_bridge_trace_ref(agent_id=agent_id, human_id=human_id, request_id=request_id)
+                    trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
                     reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
                         config_manager=config_manager,
@@ -15652,21 +15810,12 @@ def build_researcher_reply(
                         promotion_disposition=promotion_disposition,
                     )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
-                    advisory_execution_governor_decision = _build_researcher_advisory_execution_governor_decision(
-                        state_db=state_db,
-                        request_id=request_id,
-                        run_id=run_id,
-                        channel_kind=channel_kind,
-                        session_id=session_id,
-                        human_id=human_id,
-                        agent_id=agent_id,
-                    )
                     with _temporary_provider_env(
                         provider_selection.provider,
                         state_db=state_db,
                         run_id=run_id,
                         request_id=request_id,
-                        trace_ref=trace_ref,
+                        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                     ):
                         execution = execute_with_research(
                             runtime_root,
@@ -15674,13 +15823,10 @@ def build_researcher_reply(
                             model=provider_selection.model_family,
                             command_override=_command_override_for_provider(provider_selection),
                             dry_run=False,
-                            governor_decision=advisory_execution_governor_decision,
-                            memory_governor_decision=memory_write_governor_decision,
                         )
-                    reply_text, evidence_summary, _researcher_trace_ref = _render_reply_from_execution(execution, advisory)
+                    reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
                 else:
-                    reply_text, evidence_summary, _researcher_trace_ref = _render_reply_from_advisory(advisory)
-                trace_ref = _canonical_bridge_trace_ref(agent_id=agent_id, human_id=human_id, request_id=request_id)
+                    reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
                 raw_reply_text = reply_text
                 reply_text, removed_residue = _clean_messaging_reply_with_metadata(reply_text, channel_kind=channel_kind)
                 reply_mutation_actions: list[str] = []
@@ -16021,9 +16167,6 @@ def _temporary_provider_env(
         "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": provider.base_url or "",
         "SPARK_INTELLIGENCE_PROVIDER_SECRET": provider.secret_value,
     }
-    if provider.execution_transport == "direct_http":
-        values["SPARK_RESEARCHER_ENABLE_GENERIC_ADAPTER"] = "1"
-        values["SPARK_RESEARCHER_ADAPTER_ALLOWED_EXECUTABLES"] = Path(sys.executable).name
     if state_db is not None:
         values["SPARK_INTELLIGENCE_STATE_DB_PATH"] = str(state_db.path)
     if run_id:

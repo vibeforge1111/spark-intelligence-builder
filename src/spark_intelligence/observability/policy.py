@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
+from spark_intelligence.security.redaction import contains_secret_shape
 from spark_intelligence.state.db import StateDB
 
 
@@ -56,6 +57,8 @@ _ASSIGNMENT_PATTERN = re.compile(
 def looks_secret_like(text: str) -> bool:
     if not text:
         return False
+    if contains_secret_shape(text):
+        return True
     if any(re.search(pattern, text) for pattern in _DIRECT_SECRET_PATTERNS):
         return True
     if _contains_secret_assignment(text):

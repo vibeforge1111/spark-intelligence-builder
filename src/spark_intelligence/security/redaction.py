@@ -20,6 +20,17 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpypi-[A-Za-z0-9_-]{20,}\b"), "<redacted pypi token>"),
     (re.compile(r"\bdop_v1_[A-Za-z0-9_-]{20,}\b"), "<redacted doppler token>"),
     (re.compile(r"\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis)://[^\s'\"<>]+", re.I), "<redacted connection string>"),
+    (
+        re.compile(r"(?P<scheme>\bhttps?://)[^/\s:@]*:[^/\s@]+@", re.I),
+        r"\g<scheme><redacted url credentials>@",
+    ),
+    (
+        re.compile(
+            r"(?P<prefix>\bAuthorization\s*[:=]\s*[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s+)(?P<value>[^,\r\n]+)",
+            re.I,
+        ),
+        "authorization_header",
+    ),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.I), "Bearer <redacted>"),
     (
         re.compile(
@@ -38,13 +49,37 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?!\d)"), "<redacted phone>"),
 )
 
+REDACTION_ONLY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\s'\"<>]+|/(?:Users|home)/[^\s'\"<>]+)", re.I),
+        "<redacted local path>",
+    ),
+)
+
+
+def contains_secret_shape(text: str | None, *, include_personal_data: bool = False) -> bool:
+    """Return whether text matches a fixed canonical credential or PII shape.
+
+    Assignment and JSON-field patterns remain under the observability policy's
+    structural/entropy checks so ordinary low-entropy configuration prose does
+    not become a secret-boundary false positive.
+    """
+
+    if text is None:
+        return False
+    value = str(text)
+    for pattern, replacement in SECRET_PATTERNS:
+        if replacement in {"assignment", "json_field"}:
+            continue
+        if replacement == "<redacted phone>" and not include_personal_data:
+            continue
+        if pattern.search(value):
+            return True
+    return False
+
 
 def mask_secret(value: str) -> str:
-    # Fully redact regardless of length. The previous partial reveal
-    # (value[:6]...value[-4:]) leaked prefix/suffix bytes of real keys — many
-    # tokens carry meaningful, guessable structure in exactly those positions —
-    # so emit a constant marker instead of any source bytes.
-    return "***REDACTED***"
+    return "***"
 
 
 def redact_text(text: str | None) -> str:
@@ -54,6 +89,8 @@ def redact_text(text: str | None) -> str:
     for pattern, replacement in SECRET_PATTERNS:
         if replacement == "assignment":
             redacted = pattern.sub(lambda match: f"{match.group('key')}{mask_secret(match.group('value'))}", redacted)
+        elif replacement == "authorization_header":
+            redacted = pattern.sub(lambda match: f"{match.group('prefix')}<redacted>", redacted)
         elif replacement == "json_field":
             redacted = pattern.sub(
                 lambda match: f"{match.group('prefix')}{mask_secret(match.group('value'))}{match.group('suffix')}",
@@ -61,4 +98,6 @@ def redact_text(text: str | None) -> str:
             )
         else:
             redacted = pattern.sub(replacement, redacted)
+    for pattern, replacement in REDACTION_ONLY_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
     return redacted

@@ -87,7 +87,7 @@ def inspect_telegram_bot_token(
     result = payload.get("result")
     if not isinstance(result, dict):
         raise RuntimeError("Telegram auth succeeded but returned no bot profile.")
-    if not result.get("is_bot", True):
+    if result.get("is_bot") is not True:
         raise RuntimeError("Telegram token resolved to a non-bot account.")
     bot_id = result.get("id")
     if bot_id is None:
@@ -221,7 +221,9 @@ def set_channel_status(
     records = config.setdefault("channels", {}).setdefault("records", {})
     record = records.get(channel_id)
     if not isinstance(record, dict):
-        raise ValueError(f"Unknown channel '{channel_id}'.")
+        known_channels = sorted(str(key) for key, value in records.items() if isinstance(value, dict))
+        known = ", ".join(known_channels) if known_channels else "none configured"
+        raise ValueError(f"Unknown channel '{channel_id}'. Known channels: {known}.")
     record["status"] = status
     config_manager.save(
         config,

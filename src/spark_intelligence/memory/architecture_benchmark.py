@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import inspect_memory_sdk_runtime
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 
 
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / ".spark" / "memory" / "domain-chip-memory"
@@ -83,7 +85,12 @@ def benchmark_memory_architectures(
     resolved_summary_path = resolved_output_dir / "memory-architecture-benchmark.md"
 
     runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
-    validator_path = Path(validator_root) if validator_root else DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
+    validator_path = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory", config_manager=config_manager)
+        or DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
+    )
     errors: list[str] = []
     try:
         resolved_baseline_names = resolve_memory_architecture_baselines(baseline_names)
@@ -148,15 +155,15 @@ def benchmark_memory_architectures(
             "summary_markdown": str(resolved_summary_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_summary_path.write_text(
+    atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
+    atomic_write_text(
+        resolved_summary_path,
         _build_summary_markdown(
             summary=summary,
             runtime=runtime,
             benchmark_rows=benchmark_rows,
             errors=errors,
         ),
-        encoding="utf-8",
     )
     return MemoryArchitectureBenchmarkResult(output_dir=resolved_output_dir, payload=payload)
 
@@ -184,7 +191,10 @@ def resolve_memory_architecture_baselines(
         return tuple(default_baselines)
     invalid = [name for name in normalized if name not in allowed]
     if invalid:
-        raise ValueError(f"unsupported_baselines:{','.join(invalid)}")
+        known = ",".join(sorted(allowed))
+        raise ValueError(
+            f"unsupported_baselines:{','.join(invalid)};allowed_baselines:{known}"
+        )
     return tuple(normalized)
 
 

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
 from spark_intelligence.memory.profile_facts import (
@@ -17,6 +18,7 @@ from spark_intelligence.memory.profile_facts import (
     build_profile_fact_query_answer,
 )
 from spark_intelligence.memory_contracts import memory_contract_reason, normalize_memory_role
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 
 
@@ -150,7 +152,7 @@ def export_shadow_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    atomic_write_text(output_path, json.dumps(payload, indent=2, ensure_ascii=True))
     validation = None
     if validate:
         validation = validate_shadow_replay(
@@ -208,7 +210,7 @@ def export_shadow_replay_batch(
             "writable_roles": payload.get("writable_roles") or list(DEFAULT_WRITABLE_ROLES),
             "conversations": chunk,
         }
-        file_path.write_text(json.dumps(file_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        atomic_write_text(file_path, json.dumps(file_payload, indent=2, ensure_ascii=True))
         files.append(
             ShadowReplayExportResult(
                 path=file_path,
@@ -396,7 +398,11 @@ def _run_domain_chip_memory_cli(
     *command_args: str,
     validator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "valid": False,

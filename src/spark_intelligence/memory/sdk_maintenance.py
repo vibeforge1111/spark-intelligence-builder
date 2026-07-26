@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.atomic_io import atomic_write_text
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 
 logger = logging.getLogger(__name__)
@@ -94,7 +96,7 @@ def export_sdk_maintenance_replay(
     )
     output_path = Path(write_path) if write_path else _default_output_path(config_manager)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    atomic_write_text(output_path, json.dumps(payload, indent=2, ensure_ascii=True))
     report = None
     resolved_report_path = Path(report_write_path) if report_write_path else None
     if run_report:
@@ -152,7 +154,11 @@ def _run_domain_chip_memory_cli(
     *command_args: str,
     validator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    root = Path(validator_root) if validator_root else DEFAULT_MAINTENANCE_VALIDATOR_ROOT
+    root = (
+        Path(validator_root)
+        if validator_root
+        else resolve_installed_module_source("domain-chip-memory") or DEFAULT_MAINTENANCE_VALIDATOR_ROOT
+    )
     if not root.exists():
         return {
             "errors": [f"validator_root_missing:{root}"],
@@ -171,30 +177,35 @@ def _run_domain_chip_memory_cli(
         cwd=str(root),
         env=command_env,
     )
-    stdout = execution.stdout.strip()
     stderr = execution.stderr.strip()
     if stderr and execution.exit_code != 0:
-        # Keep raw subprocess stderr server-side for diagnosis but never
-        # surface it in the returned dict (it can contain filesystem paths
-        # and other internal detail).
         logger.debug(
             "domain_chip_memory.cli %s exited with code %s; stderr: %s",
             command_name,
             execution.exit_code,
             stderr,
         )
+    if execution.exit_code != 0:
+        return {
+            "valid": False,
+            "errors": ["sdk_maintenance_report_failed"],
+            "warnings": [],
+        }
+
+    stdout = execution.stdout.strip()
     if stdout:
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
+            payload.pop("stderr", None)
+            payload.pop("stdout", None)
             return payload
     return {
-        "valid": execution.exit_code == 0,
-        "errors": [] if execution.exit_code == 0 else ["sdk_maintenance_report_failed"],
+        "valid": True,
+        "errors": [],
         "warnings": [],
-        "stdout": stdout,
     }
 
 

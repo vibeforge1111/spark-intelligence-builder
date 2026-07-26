@@ -1,18 +1,36 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-import urllib.parse
-import urllib.request
-import urllib.error
 from datetime import datetime, timezone
 from typing import Any
 
 from spark_intelligence.intent_boundary import denies_intent, has_conversation_only_boundary
+from spark_intelligence.security.spawner_endpoint import (
+    classify_local_spawner_failure,
+    request_local_spawner_json,
+    resolve_local_spawner_endpoint,
+)
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
+
+
+# Module-scope compiled patterns for hot paths in humanize_cron and
+# _extract_delete_hints. Pre-compiling avoids re-parsing on every call.
+_CRON_STEP_RE = re.compile(r"^\*/(\d+)$")
+_CRON_SINGLE_DIGIT_RE = re.compile(r"^\d$")
+_SCHEDULE_ID_RE = re.compile(r"\b(sched-[a-z0-9]+)\b", re.IGNORECASE)
+_TIME_AMPM_RE = re.compile(r"\b(\d{1,2})\s*(am|pm)\b", re.IGNORECASE)
+_TIME_OF_DAY_RES = {
+    tod: re.compile(rf"\b{tod}\b", re.IGNORECASE)
+    for tod in ("nightly", "daily", "weekly", "morning", "evening")
+}
 
 # Scope note: scheduler-related vocabulary the bot should route here.
 # We match on any message that (a) asks about the scheduler surface or
@@ -78,6 +96,8 @@ _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "N
 
 
 def _format_12(h: int, m: int) -> str:
+    if not _valid_clock_time(h, m):
+        return f"{h:02d}:{m:02d}"
     hh = ((h + 11) % 12) + 1
     suffix = "AM" if h < 12 else "PM"
     return f"{hh} {suffix}" if m == 0 else f"{hh}:{m:02d} {suffix}"
@@ -91,30 +111,41 @@ def humanize_cron(cron: str) -> str:
     if hour == "*" and dom == "*" and month == "*" and dow == "*":
         if minute == "*":
             return "Every minute"
-        m = re.match(r"^\*/(\d+)$", minute)
+        m = _CRON_STEP_RE.match(minute)
         if m:
-            n = m.group(1)
-            return f"Every {n} minute" + ("" if n == "1" else "s")
+            n = int(m.group(1))
+            if not 1 <= n <= 59:
+                return f"Custom: {cron}"
+            return f"Every {n} minute" + ("" if n == 1 else "s")
         if minute.isdigit():
-            return f"At {minute} min past every hour"
+            minute_value = int(minute)
+            if 0 <= minute_value <= 59:
+                return f"At {minute_value} min past every hour"
     if dom == "*" and month == "*" and dow == "*":
-        h = re.match(r"^\*/(\d+)$", hour)
+        h = _CRON_STEP_RE.match(hour)
         if h and minute.isdigit():
-            n = h.group(1)
-            return f"Every {n} hour" + ("" if n == "1" else "s") + f" at :{int(minute):02d}"
-        if hour.isdigit() and minute.isdigit():
+            n = int(h.group(1))
+            minute_value = int(minute)
+            if 1 <= n <= 23 and 0 <= minute_value <= 59:
+                return f"Every {n} hour" + ("" if n == 1 else "s") + f" at :{minute_value:02d}"
+        if hour.isdigit() and minute.isdigit() and _valid_clock_time(int(hour), int(minute)):
             return f"Daily at {_format_12(int(hour), int(minute))}"
-    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and re.match(r"^\d$", dow):
+    if minute.isdigit() and hour.isdigit() and dom == "*" and month == "*" and _CRON_SINGLE_DIGIT_RE.match(dow):
         dow_int = int(dow)
-        if dow_int < len(_DOW):
+        if dow_int < len(_DOW) and _valid_clock_time(int(hour), int(minute)):
             return f"Every {_DOW[dow_int]} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month == "*" and dow == "*":
-        return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
+        if _valid_clock_time(int(hour), int(minute)):
+            return f"Monthly on day {dom} at {_format_12(int(hour), int(minute))}"
     if minute.isdigit() and hour.isdigit() and dom.isdigit() and month.isdigit() and dow == "*":
         month_int = int(month)
-        if 1 <= month_int <= 12:
+        if 1 <= month_int <= 12 and _valid_clock_time(int(hour), int(minute)):
             return f"Yearly on {_MON[month_int - 1]} {dom} at {_format_12(int(hour), int(minute))}"
     return f"Custom: {cron}"
+
+
+def _valid_clock_time(hour: int, minute: int) -> bool:
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def _format_next_fire(iso: str | None) -> str:
@@ -148,7 +179,10 @@ def _human_summary(rec: dict[str, Any]) -> str:
         goal = str(payload.get("goal") or "(no goal)")
         return f'Run mission "{goal}"'
     chip = payload.get("chipKey") or "?"
-    rounds = int(payload.get("rounds") or 1)
+    try:
+        rounds = int(payload.get("rounds") or 1)
+    except (TypeError, ValueError):
+        rounds = 1
     plural = "" if rounds == 1 else "s"
     return f"Run {rounds} loop round{plural} on {chip}"
 
@@ -193,21 +227,51 @@ def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
 
 
 def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> list[dict[str, Any]]:
-    base = (spawner_url or _SPAWNER_URL).rstrip("/")
-    req = urllib.request.Request(f"{base}/api/scheduled", method="GET")
+    schedules, _ = _fetch_schedules_with_error(spawner_url, timeout=timeout)
+    return schedules
+
+
+def _fetch_schedules_with_error(
+    spawner_url: str | None = None,
+    *,
+    timeout: float = 5.0,
+) -> tuple[list[dict[str, Any]], str | None]:
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return []
+        endpoint = resolve_local_spawner_endpoint(
+            configured_url=_SPAWNER_URL,
+            requested_url=spawner_url,
+            route_path="/api/scheduled",
+        )
+        data = request_local_spawner_json(
+            endpoint,
+            method="GET",
+            timeout_seconds=timeout,
+            max_response_bytes=1024 * 1024,
+        )
+    except RuntimeError as exc:
+        return [], classify_local_spawner_failure(exc)
     if not isinstance(data, dict):
-        return []
+        return [], "invalid_response"
     records = data.get("schedules")
-    return records if isinstance(records, list) else []
+    if not isinstance(records, list):
+        return [], "invalid_response"
+    return records, None
 
 
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
-    schedules = fetch_schedules(spawner_url)
+    schedules, error = _fetch_schedules_with_error(spawner_url)
+    if error == "endpoint_policy_blocked":
+        return (
+            "I couldn't read schedules because the local endpoint policy blocked the request. "
+            "Check the configured Spawner endpoint, then try /schedules again."
+        )
+    if error in {"redirect_blocked", "response_too_large", "invalid_response"}:
+        return (
+            "The local Spawner returned schedule data Spark couldn't safely use. "
+            "Check Spawner health, then try /schedules again."
+        )
+    if error == "unavailable":
+        return "The local Spawner is unavailable right now. Try /schedules again once it's back."
     return format_schedule_list(schedules)
 
 
@@ -248,14 +312,14 @@ def detect_delete_intent(message: str) -> dict | None:
     if not matched:
         return None
     hints: dict[str, Any] = {"raw": text}
-    id_match = re.search(r"\b(sched-[a-z0-9]+)\b", text, re.IGNORECASE)
+    id_match = _SCHEDULE_ID_RE.search(text)
     if id_match:
         hints["schedule_id"] = id_match.group(1)
-    for tod in ("nightly", "daily", "weekly", "morning", "evening"):
-        if re.search(rf"\b{tod}\b", text, re.IGNORECASE):
+    for tod, tod_re in _TIME_OF_DAY_RES.items():
+        if tod_re.search(text):
             hints["time_of_day"] = tod
             break
-    time_match = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
+    time_match = _TIME_AMPM_RE.search(text)
     if time_match:
         h = int(time_match.group(1))
         ampm = time_match.group(2).lower()
@@ -300,7 +364,9 @@ _PENDING_TTL_SECONDS = 300
 
 
 def _pending_store_path() -> _Path:
-    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
+    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME", "").strip() or os.environ.get(
+        "SPARK_BUILDER_HOME", ""
+    ).strip()
     base = _Path(home_env) if home_env else _Path.home() / ".spark-intelligence"
     base.mkdir(parents=True, exist_ok=True)
     return base / "pending_confirmations.json"
@@ -312,7 +378,8 @@ def _load_pending() -> dict[str, Any]:
         return {}
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("schedule_pending_store_load_failed error_type=%s", type(exc).__name__)
         return {}
 
 
@@ -322,8 +389,15 @@ def _save_pending(store: dict[str, Any]) -> None:
     tmp = p.with_suffix(".json.tmp")
     now = _time.time()
     pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
-    tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    try:
+        tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
@@ -412,16 +486,21 @@ def format_delete_not_found(hints: dict) -> str:
 
 
 def delete_schedule_via_spawner(schedule_id: str, spawner_url: str | None = None, *, timeout: float = 5.0) -> bool:
-    base = (spawner_url or _SPAWNER_URL).rstrip("/")
-    req = urllib.request.Request(
-        f"{base}/api/scheduled?id={urllib.parse.quote(schedule_id)}",
-        method="DELETE",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return bool(data.get("ok"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        endpoint = resolve_local_spawner_endpoint(
+            configured_url=_SPAWNER_URL,
+            requested_url=spawner_url,
+            route_path="/api/scheduled",
+        )
+        data = request_local_spawner_json(
+            endpoint,
+            method="DELETE",
+            query={"id": schedule_id},
+            timeout_seconds=timeout,
+            max_response_bytes=1024 * 1024,
+        )
+        return bool(data.get("ok")) if isinstance(data, dict) else False
+    except RuntimeError:
         return False
 
 

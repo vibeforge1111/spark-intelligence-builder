@@ -556,10 +556,10 @@ def _default_access_automation_actions() -> list[dict[str, Any]]:
         {
             "id": "workspace_setup",
             "command": "spark access setup",
-            "run_policy": "auto_safe",
-            "confirmation": None,
-            "user_message": "Spark can create or repair the safe workspace automatically.",
-            "rollback": "No rollback needed; this only creates Spark-owned workspace folders.",
+            "run_policy": "confirm_once",
+            "confirmation": "Set up safe workspace",
+            "user_message": "Spark can set up or repair the safe workspace after you confirm the access change.",
+            "rollback": "Restore the prior Spark access configuration; Spark-owned workspace folders may then be removed separately with approval.",
         },
         {
             "id": "docker_doctor",

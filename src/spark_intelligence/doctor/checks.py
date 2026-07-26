@@ -3,12 +3,13 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sqlite3
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from spark_intelligence.attachments import attachment_status
+from spark_intelligence.attachments import attachment_status, chip_discovery_health
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
@@ -22,31 +23,57 @@ from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     record_environment_snapshot,
-    tool_call_ledger_surface_counts,
     repair_foreground_browser_hook_failures,
     repair_memory_lane_artifact_lanes,
+    repair_missing_event_trace_refs,
     repair_missing_memory_lane_records,
     repair_non_promotable_chip_hook_dispositions,
+    tool_call_ledger_surface_counts,
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
 
-EXPECTED_TOOL_CALL_LEDGER_SURFACES = ("builder", "spark_cli", "telegram", "spawner")
+EXPECTED_BUILDER_LICENSE = "MIT"
+REQUIRED_BUILDER_DEPENDENCIES = ("jsonschema", "referencing")
 BUILDER_SOURCE_TRUTH_MARKER = ".spark-source-truth.toml"
+_DOCTOR_LOCAL_PATH_PATTERN = re.compile(
+    r"(?i)(?<![\w.])(?:[A-Z]:[\\/]|/(?:Users|home|usr|var|etc|opt|tmp|root|private|Volumes|workspace|mnt)/)[^\s,;\"']+"
+)
+
+
+def _safe_doctor_error_detail(exc: Exception) -> str:
+    detail = redact_text(str(exc)).strip()
+    detail = detail.replace("<redacted local path>", "<local-path>")
+    detail = _DOCTOR_LOCAL_PATH_PATTERN.sub("<local-path>", detail)
+    if len(detail) > 200:
+        return f"{detail[:200]}... [truncated]"
+    return detail or type(exc).__name__
 
 
 def harness_core_runtime_status() -> dict[str, object]:
     from spark_intelligence import harness_contract
 
-    if harness_contract.HARNESS_CORE_AVAILABLE:
-        return {"ok": True, "detail": "spark_harness_core importable", "repair_hint": ""}
-    detail = harness_contract.HARNESS_CORE_IMPORT_ERROR or "spark_harness_core unavailable"
+    if not harness_contract.HARNESS_CORE_AVAILABLE:
+        return {
+            "ok": False,
+            "detail": harness_contract.HARNESS_CORE_IMPORT_ERROR or "spark_harness_core unavailable",
+            "repair_hint": (
+                "declare spark-harness-core in needs.modules, install its pinned dependency, "
+                "or repair its registered module source"
+            ),
+        }
+    try:
+        module = importlib.import_module("spark_harness_core")
+        module_file = str(getattr(module, "__file__", "") or "")
+    except Exception as exc:  # pragma: no cover - defensive mismatch with the contract flag.
+        return {"ok": False, "detail": str(exc), "repair_hint": "repair the Harness Core import"}
     return {
-        "ok": False,
-        "detail": detail,
-        "repair_hint": "declare spark-harness-core in needs.modules and ensure its source path is importable",
+        "ok": True,
+        "detail": f"spark_harness_core importable source={module_file or 'unknown'}",
+        "repair_hint": "",
     }
 
 
@@ -110,6 +137,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     )
     repair_non_promotable_chip_hook_dispositions(state_db)
     repair_foreground_browser_hook_failures(state_db)
+    repair_missing_event_trace_refs(state_db)
     repair_missing_memory_lane_records(state_db)
     repair_memory_lane_artifact_lanes(state_db)
 
@@ -124,14 +152,14 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         config = config_manager.load()
         checks.append(DoctorCheck("config-load", True, f"loaded workspace {config.get('workspace', {}).get('id', 'unknown')}"))
     except Exception as exc:  # pragma: no cover - defensive
-        checks.append(DoctorCheck("config-load", False, str(exc)))
+        checks.append(DoctorCheck("config-load", False, _safe_doctor_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
             conn.execute("SELECT 1 FROM schema_info LIMIT 1").fetchone()
         checks.append(DoctorCheck("state-schema", True, "schema initialized"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("state-schema", False, str(exc)))
+        checks.append(DoctorCheck("state-schema", False, _safe_doctor_error_detail(exc)))
 
     try:
         with state_db.connect() as conn:
@@ -140,50 +168,17 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             ).fetchone()
         checks.append(DoctorCheck("operator-authority", bool(row), "local operator present"))
     except sqlite3.Error as exc:
-        checks.append(DoctorCheck("operator-authority", False, str(exc)))
+        checks.append(DoctorCheck("operator-authority", False, _safe_doctor_error_detail(exc)))
 
     harness_core = harness_core_runtime_status()
-    harness_core_detail = str(harness_core.get("detail") or "unknown")
-    harness_core_repair = str(harness_core.get("repair_hint") or "").strip()
-    if harness_core_repair:
-        harness_core_detail = f"{harness_core_detail}; repair={harness_core_repair}"
-    checks.append(DoctorCheck("harness-core", bool(harness_core.get("ok")), harness_core_detail))
+    harness_detail = str(harness_core.get("detail") or "unknown")
+    harness_repair = str(harness_core.get("repair_hint") or "").strip()
+    if harness_repair:
+        harness_detail = f"{harness_detail}; repair={harness_repair}"
+    checks.append(DoctorCheck("harness-core", bool(harness_core.get("ok")), harness_detail))
     checks.append(_builder_source_truth_check(config_manager))
     checks.append(_python_import_source_check(config_manager))
-
-    try:
-        ledger_surface_counts = tool_call_ledger_surface_counts(state_db)
-        ledger_total = sum(ledger_surface_counts.values())
-        surface_detail = ", ".join(
-            f"{surface}={count}" for surface, count in ledger_surface_counts.items()
-        ) or "none"
-        if ledger_total <= 0:
-            checks.append(
-                DoctorCheck(
-                    "tool-call-ledger-adoption",
-                    True,
-                    "total=0 surfaces=none; no canonical governed tool-call ledgers persisted yet",
-                )
-            )
-        else:
-            missing_surfaces = [
-                surface for surface in EXPECTED_TOOL_CALL_LEDGER_SURFACES
-                if ledger_surface_counts.get(surface, 0) <= 0
-            ]
-            missing_detail = (
-                f"; missing_expected_surfaces={', '.join(missing_surfaces)}"
-                if missing_surfaces
-                else "; all_expected_surfaces_present"
-            )
-            checks.append(
-                DoctorCheck(
-                    "tool-call-ledger-adoption",
-                    True,
-                    f"total={ledger_total} surfaces={surface_detail}{missing_detail}",
-                )
-            )
-    except sqlite3.Error as exc:
-        checks.append(DoctorCheck("tool-call-ledger-adoption", False, str(exc)))
+    checks.append(_tool_call_ledger_adoption_check(state_db))
 
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     if auth_report.providers:
@@ -316,6 +311,9 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             )
         )
 
+    discovery = chip_discovery_health(config_manager, scan=attachments)
+    checks.append(DoctorCheck("chip-discovery", bool(discovery["ok"]), str(discovery["detail"])))
+
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
@@ -334,222 +332,250 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     return DoctorReport(checks=checks)
 
 
+def _tool_call_ledger_adoption_check(state_db: StateDB) -> DoctorCheck:
+    try:
+        counts = tool_call_ledger_surface_counts(state_db)
+    except sqlite3.Error as exc:
+        return DoctorCheck("tool-call-ledger-adoption", False, str(exc))
+
+    total = sum(counts.values())
+    if total == 0:
+        return DoctorCheck(
+            "tool-call-ledger-adoption",
+            True,
+            "total=0 surfaces=none; no canonical governed tool-call ledgers persisted yet",
+        )
+    detail = ", ".join(f"{surface}={counts[surface]}" for surface in sorted(counts))
+    expected = ("builder", "spark_cli", "telegram", "spawner")
+    missing = [surface for surface in expected if counts.get(surface, 0) <= 0]
+    suffix = (
+        f"; missing_expected_surfaces={', '.join(missing)}"
+        if missing
+        else "; all_expected_surfaces_present"
+    )
+    return DoctorCheck("tool-call-ledger-adoption", True, f"total={total} surfaces={detail}{suffix}")
+
+
 def _builder_source_truth_check(config_manager: ConfigManager) -> DoctorCheck:
-    roots = _module_registry_roots(config_manager)
+    roots = _doctor_module_roots(config_manager)
     if not roots:
         return DoctorCheck("builder-source-truth", True, "module registry not configured")
-
     records = _builder_install_records(roots)
     backlog_records = _builder_desktop_backlog_records(config_manager, records)
     backlog_summary = _builder_desktop_backlog_summary(backlog_records, records)
     if not records:
-        root_detail = ", ".join(str(root) for root in roots)
-        detail = f"no Builder installs under {root_detail}"
+        detail = "no Builder installs in registered module roots"
         if backlog_summary:
             detail = f"{detail}; {backlog_summary}"
         return DoctorCheck("builder-source-truth", True, detail)
 
-    install_records = [record for record in records if record.get("canonical") is not False]
-    mirror_records = [record for record in records if record.get("canonical") is False]
-    if not install_records:
-        mirror_summary = _builder_install_summary(mirror_records)
-        detail = "no canonical Builder installs"
-        if mirror_summary:
-            detail = f"{detail}; mirrors={mirror_summary}"
-        return DoctorCheck("builder-source-truth", False, detail)
+    canonical = [record for record in records if record["canonical"]]
+    mirrors = [record for record in records if not record["canonical"]]
+    if not canonical:
+        return DoctorCheck(
+            "builder-source-truth",
+            False,
+            f"no canonical Builder install; mirrors={_builder_install_summary(mirrors) or 'none'}",
+        )
 
     issues: list[str] = []
-    commits = {record["commit"] for record in install_records if record["commit"] != "unknown"}
+    commits = {str(record["commit"]) for record in canonical if record["commit"] != "unknown"}
     if len(commits) > 1:
         issues.append("commit_drift=" + ",".join(sorted(commits)))
-
-    bad_license = [
+    bad_licenses = [
         f"{record['name']}:{record['license'] or 'missing'}"
         for record in records
-        if record["license"] != "AGPL-3.0-only"
+        if record["license"] != EXPECTED_BUILDER_LICENSE
     ]
-    if bad_license:
-        issues.append("license_mismatch=" + ",".join(bad_license))
-
-    missing_harness_dep = [
+    if bad_licenses:
+        issues.append("license_mismatch=" + ",".join(bad_licenses))
+    missing_harness_modules = [
         str(record["name"])
-        for record in install_records
+        for record in canonical
         if "spark-harness-core" not in record["needs_modules"]
     ]
-    if missing_harness_dep:
-        issues.append("missing_harness_dep=" + ",".join(missing_harness_dep))
-
-    missing_core_deps: list[str] = []
-    required_deps = ("jsonschema", "referencing")
-    for record in install_records:
-        deps = record["dependencies"]
-        missing = [dep for dep in required_deps if not any(str(item).startswith(dep) for item in deps)]
+    if missing_harness_modules:
+        issues.append("missing_harness_module=" + ",".join(missing_harness_modules))
+        issues.append("missing_harness_dep=" + ",".join(missing_harness_modules))
+    missing_harness_dependencies: list[str] = []
+    missing_python_dependencies: list[str] = []
+    for record in canonical:
+        dependencies = tuple(str(item) for item in record["dependencies"])
+        if not any(item.startswith("spark-harness-core") for item in dependencies):
+            missing_harness_dependencies.append(str(record["name"]))
+        missing = [
+            required
+            for required in REQUIRED_BUILDER_DEPENDENCIES
+            if not any(item.startswith(required) for item in dependencies)
+        ]
         if missing:
-            missing_core_deps.append(f"{record['name']}:{'+'.join(missing)}")
-    if missing_core_deps:
-        issues.append("missing_python_deps=" + ",".join(missing_core_deps))
+            missing_python_dependencies.append(f"{record['name']}:{'+'.join(missing)}")
+    if missing_harness_dependencies:
+        issues.append("missing_harness_dependency=" + ",".join(missing_harness_dependencies))
+    if missing_python_dependencies:
+        issues.append("missing_python_deps=" + ",".join(missing_python_dependencies))
 
-    summary = _builder_install_summary(install_records)
-    mirror_summary = _builder_install_summary(mirror_records)
-    detail_suffix = f"installs={summary}"
+    canonical_summary = _builder_install_summary(canonical)
+    detail = f"installs={canonical_summary}"
+    mirror_summary = _builder_install_summary(mirrors)
     if mirror_summary:
-        detail_suffix = f"{detail_suffix}; mirrors={mirror_summary}"
+        detail = f"{detail}; mirrors={mirror_summary}"
     if backlog_summary:
-        detail_suffix = f"{detail_suffix}; {backlog_summary}"
+        detail = f"{detail}; {backlog_summary}"
     if issues:
-        return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; {detail_suffix}")
-    return DoctorCheck("builder-source-truth", True, detail_suffix)
+        return DoctorCheck("builder-source-truth", False, f"{'; '.join(issues)}; {detail}")
+    return DoctorCheck("builder-source-truth", True, detail)
 
 
 def _python_import_source_check(config_manager: ConfigManager) -> DoctorCheck:
-    expected = _expected_python_import_src_roots(config_manager)
     imported = _imported_package_src_roots()
+    module_roots = _doctor_module_roots(config_manager)
+    records = _builder_install_records(module_roots)
+    current_builder_src = Path(__file__).resolve().parents[2]
+    expected_builder = [
+        current_builder_src,
+        *[
+            Path(record["path"]) / "src"
+            for record in records
+            if record["canonical"]
+        ],
+    ]
+    expected_harness = [
+        root / "spark-harness-core" / "source" / "src"
+        for root in module_roots
+        if (root / "spark-harness-core" / "source" / "src").is_dir()
+    ]
+    configured_harness = str(os.environ.get("SPARK_HARNESS_CORE_SOURCE") or "").strip()
+    if configured_harness:
+        configured_path = Path(configured_harness).expanduser()
+        expected_harness.append(configured_path / "src" if configured_path.name != "src" else configured_path)
+    sibling_harness = Path(__file__).resolve().parents[4] / "spark-harness-core" / "src"
+    if sibling_harness.is_dir():
+        expected_harness.append(sibling_harness)
+
     issues: list[str] = []
     details: list[str] = []
     for package_name, imported_root in imported.items():
-        candidates = expected.get(package_name, [])
-        details.append(f"{package_name}={imported_root}")
-        if candidates and not _path_matches_any(imported_root, candidates):
-            expected_text = "|".join(str(path) for path in candidates)
-            issues.append(f"{package_name}={imported_root} expected={expected_text}")
+        candidates = expected_builder if package_name == "spark_intelligence" else expected_harness
+        if _is_installed_distribution_root(imported_root):
+            details.append(f"{package_name}=installed_distribution:{imported_root}")
+        elif _path_matches_any(imported_root, candidates):
+            details.append(f"{package_name}=registered_source:{imported_root}")
+        else:
+            expected = "|".join(str(path) for path in candidates) or "registered source or installed distribution"
+            issues.append(f"stale_editable:{package_name}={imported_root} expected={expected}")
     if issues:
-        return DoctorCheck("python-import-source", False, "; ".join(issues))
-    return DoctorCheck("python-import-source", True, "; ".join(details))
-
-
-def _expected_python_import_src_roots(config_manager: ConfigManager) -> dict[str, list[Path]]:
-    roots = _module_registry_roots(config_manager)
-    current_builder_src = Path(__file__).resolve().parents[2]
-    return {
-        "spark_intelligence": _dedupe_paths(
-            [
-                current_builder_src,
-                *[root / "spark-intelligence-builder" / "source" / "src" for root in roots],
-            ]
-        ),
-        "spark_harness_core": _dedupe_paths(
-            [root / "spark-harness-core" / "source" / "src" for root in roots]
-        ),
-    }
+        return DoctorCheck("python-import-source", False, "; ".join([*issues, *details]))
+    return DoctorCheck("python-import-source", True, "; ".join(details) or "no import sources resolved")
 
 
 def _imported_package_src_roots() -> dict[str, Path]:
     roots: dict[str, Path] = {}
     for package_name in ("spark_intelligence", "spark_harness_core"):
-        module = importlib.import_module(package_name)
-        module_file = getattr(module, "__file__", None)
+        try:
+            module = importlib.import_module(package_name)
+        except Exception:
+            continue
+        module_file = str(getattr(module, "__file__", "") or "")
         if module_file:
-            roots[package_name] = Path(str(module_file)).resolve().parents[1]
+            roots[package_name] = Path(module_file).resolve().parents[1]
     return roots
+
+
+def _is_installed_distribution_root(path: Path) -> bool:
+    return path.name in {"site-packages", "dist-packages"}
 
 
 def _path_matches_any(path: Path, candidates: list[Path]) -> bool:
     try:
-        resolved = path.resolve()
+        resolved = path.resolve(strict=False)
     except OSError:
         return False
     for candidate in candidates:
         try:
-            if resolved == candidate.resolve():
+            if resolved == candidate.resolve(strict=False):
                 return True
         except OSError:
             continue
     return False
 
 
-def _dedupe_paths(paths: list[Path]) -> list[Path]:
-    seen: set[str] = set()
-    deduped: list[Path] = []
-    for path in paths:
-        try:
-            key = str(path.resolve())
-        except OSError:
-            key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(path)
-    return deduped
-
-
-def _module_registry_roots(config_manager: ConfigManager) -> list[Path]:
-    roots: list[Path] = []
-    configured = config_manager.get_path("spark.diagnostics.module_search_roots", default=[])
-    if isinstance(configured, str):
-        configured = [configured]
-    if isinstance(configured, list):
-        for raw in configured:
-            _append_existing_root(roots, Path(str(raw)).expanduser())
-
-    home = config_manager.paths.home
-    _append_existing_root(roots, home / "modules")
-    _append_existing_root(roots, home.parent / "modules")
-    _append_existing_root(roots, home.parent / ".spark" / "modules")
-    for parent in home.parents:
-        if parent.name == ".spark":
-            _append_existing_root(roots, parent / "modules")
-            break
-
-    spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
-    if spark_home:
-        _append_existing_root(roots, Path(spark_home).expanduser() / "modules")
-    return roots
-
-
-def _append_existing_root(roots: list[Path], path: Path) -> None:
-    try:
-        resolved = path.resolve()
-    except OSError:
-        return
-    if not resolved.exists() or not resolved.is_dir():
-        return
-    if resolved not in roots:
-        roots.append(resolved)
-
-
 def _builder_install_records(roots: list[Path]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
+    seen: set[str] = set()
     for root in roots:
         for manifest in sorted(root.glob("spark-intelligence-builder*/source/spark.toml")):
-            records.append(_builder_source_record(manifest.parent, name=manifest.parent.parent.name))
+            source = manifest.parent
+            key = str(source.resolve(strict=False))
+            if key in seen:
+                continue
+            seen.add(key)
+            spark_manifest = _read_toml(manifest)
+            module = spark_manifest.get("module") if isinstance(spark_manifest.get("module"), dict) else {}
+            needs = spark_manifest.get("needs") if isinstance(spark_manifest.get("needs"), dict) else {}
+            source_truth = (
+                spark_manifest.get("source_truth") if isinstance(spark_manifest.get("source_truth"), dict) else {}
+            )
+            source_truth_marker = "spark.toml" if "canonical" in source_truth else ""
+            if "canonical" not in source_truth:
+                marker_payload = _read_toml(source / BUILDER_SOURCE_TRUTH_MARKER)
+                marker_source_truth = (
+                    marker_payload.get("source_truth")
+                    if isinstance(marker_payload.get("source_truth"), dict)
+                    else {}
+                )
+                if "canonical" in marker_source_truth:
+                    source_truth = marker_source_truth
+                    source_truth_marker = BUILDER_SOURCE_TRUTH_MARKER
+            pyproject = _read_toml(source / "pyproject.toml")
+            project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
+            records.append(
+                {
+                    "name": source.parent.name,
+                    "path": source,
+                    "commit": _git_head_short(source),
+                    "license": str(module.get("license") or ""),
+                    "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
+                    "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
+                    "canonical": source_truth.get("canonical") is not False,
+                    "source_truth_marked": "canonical" in source_truth,
+                    "source_truth_marker": source_truth_marker,
+                }
+            )
     return records
 
 
-def _builder_source_record(source_root: Path, *, name: str) -> dict[str, object]:
-    manifest_payload = _read_toml(source_root / "spark.toml")
-    module = manifest_payload.get("module") if isinstance(manifest_payload.get("module"), dict) else {}
-    needs = manifest_payload.get("needs") if isinstance(manifest_payload.get("needs"), dict) else {}
-    source_truth = manifest_payload.get("source_truth") if isinstance(manifest_payload.get("source_truth"), dict) else {}
-    source_truth_marker = "spark.toml" if "canonical" in source_truth else ""
-    if "canonical" not in source_truth:
-        marker_payload = _read_toml(source_root / BUILDER_SOURCE_TRUTH_MARKER)
-        marker_source_truth = (
-            marker_payload.get("source_truth") if isinstance(marker_payload.get("source_truth"), dict) else {}
-        )
-        if "canonical" in marker_source_truth:
-            source_truth = marker_source_truth
-            source_truth_marker = BUILDER_SOURCE_TRUTH_MARKER
-    pyproject = _read_toml(source_root / "pyproject.toml")
-    project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
-    return {
-        "name": name,
-        "path": source_root,
-        "commit": _git_head_short(source_root),
-        "license": str(module.get("license") or ""),
-        "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
-        "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
-        "canonical": source_truth.get("canonical") is not False,
-        "source_truth_marked": "canonical" in source_truth,
-        "source_truth_marker": source_truth_marker,
-        "mirror_of": str(source_truth.get("mirror_of") or ""),
-    }
+def _doctor_module_roots(config_manager: ConfigManager) -> list[Path]:
+    candidates: list[Path] = []
+    for config_key in ("spark.local_projects.module_roots", "spark.diagnostics.module_search_roots"):
+        configured = config_manager.get_path(config_key, default=[]) or []
+        if isinstance(configured, (str, Path)):
+            configured = [configured]
+        if isinstance(configured, list):
+            candidates.extend(Path(str(item)).expanduser() for item in configured if str(item).strip())
+    home = config_manager.paths.home
+    candidates.extend((home / "modules", home.parent / "modules", home.parent / ".spark" / "modules"))
+    for parent in home.parents:
+        if parent.name == ".spark":
+            candidates.append(parent / "modules")
+            break
+    spark_home = str(os.environ.get("SPARK_HOME") or "").strip()
+    if spark_home:
+        candidates.append(Path(spark_home).expanduser() / "modules")
 
-
-def _builder_install_summary(records: list[dict[str, object]]) -> str:
-    return "; ".join(
-        f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
-        for record in records
-    )
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        key = str(resolved).casefold()
+        if key in seen or not resolved.is_dir():
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return roots
 
 
 def _builder_desktop_backlog_records(
@@ -570,18 +596,54 @@ def _builder_desktop_backlog_records(
     for source_root in candidates:
         if _path_matches_any(source_root, install_paths):
             continue
-        backlog_records.append(_builder_source_record(source_root, name=source_root.name))
+        backlog_records.extend(_builder_install_records_from_sources([source_root]))
     return backlog_records
+
+
+def _builder_install_records_from_sources(sources: list[Path]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for source in sources:
+        spark_manifest = _read_toml(source / "spark.toml")
+        module = spark_manifest.get("module") if isinstance(spark_manifest.get("module"), dict) else {}
+        needs = spark_manifest.get("needs") if isinstance(spark_manifest.get("needs"), dict) else {}
+        source_truth = (
+            spark_manifest.get("source_truth") if isinstance(spark_manifest.get("source_truth"), dict) else {}
+        )
+        source_truth_marker = "spark.toml" if "canonical" in source_truth else ""
+        if "canonical" not in source_truth:
+            marker_payload = _read_toml(source / BUILDER_SOURCE_TRUTH_MARKER)
+            marker_source_truth = (
+                marker_payload.get("source_truth")
+                if isinstance(marker_payload.get("source_truth"), dict)
+                else {}
+            )
+            if "canonical" in marker_source_truth:
+                source_truth = marker_source_truth
+                source_truth_marker = BUILDER_SOURCE_TRUTH_MARKER
+        pyproject = _read_toml(source / "pyproject.toml")
+        project = pyproject.get("project") if isinstance(pyproject.get("project"), dict) else {}
+        records.append(
+            {
+                "name": source.name,
+                "path": source,
+                "commit": _git_head_short(source),
+                "license": str(module.get("license") or ""),
+                "needs_modules": tuple(str(item) for item in (needs.get("modules") or []) if item),
+                "dependencies": tuple(str(item) for item in (project.get("dependencies") or []) if item),
+                "canonical": source_truth.get("canonical") is not False,
+                "source_truth_marked": "canonical" in source_truth,
+                "source_truth_marker": source_truth_marker,
+            }
+        )
+    return records
 
 
 def _append_existing_builder_source(candidates: list[Path], path: Path) -> None:
     try:
-        resolved = path.resolve()
+        resolved = path.resolve(strict=False)
     except OSError:
         return
-    if not resolved.is_dir() or not (resolved / "spark.toml").exists():
-        return
-    if resolved not in candidates:
+    if resolved.is_dir() and (resolved / "spark.toml").exists() and resolved not in candidates:
         candidates.append(resolved)
 
 
@@ -589,32 +651,41 @@ def _builder_desktop_backlog_summary(
     backlog_records: list[dict[str, object]],
     install_records: list[dict[str, object]],
 ) -> str:
-    if not backlog_records:
-        return ""
-    install_commits = {str(record.get("commit") or "") for record in install_records if record.get("commit") != "unknown"}
+    install_commits = {
+        str(record.get("commit") or "")
+        for record in install_records
+        if record.get("commit") != "unknown"
+    }
     parts: list[str] = []
     for record in backlog_records:
         flags: list[str] = []
         commit = str(record.get("commit") or "unknown")
         if install_commits and commit not in install_commits:
             flags.append("commit_drift")
-        if record.get("license") != "AGPL-3.0-only":
+        if record.get("license") != EXPECTED_BUILDER_LICENSE:
             flags.append(f"license={record.get('license') or 'missing'}")
         if "spark-harness-core" not in record.get("needs_modules", ()):
             flags.append("missing_harness_dep")
-        marked_backlog = record.get("source_truth_marked") and record.get("canonical") is False
-        label = "desktop_backlog" if marked_backlog else "desktop_backlog_unmarked"
+        marked = record.get("source_truth_marked") and record.get("canonical") is False
+        label = "desktop_backlog" if marked else "desktop_backlog_unmarked"
         marker = str(record.get("source_truth_marker") or "")
-        if marked_backlog and marker and marker != "spark.toml":
+        if marked and marker and marker != "spark.toml":
             flags.append(f"marker={marker}")
-        suffix = " ".join(flags) if flags else "backlog_only"
-        parts.append(f"{label}={record['name']} commit={commit} {suffix}")
+        parts.append(
+            f"{label}={record['name']} commit={commit} "
+            f"{' '.join(flags) if flags else 'backlog_only'}"
+        )
     return ", ".join(parts)
 
 
+def _builder_install_summary(records: list[dict[str, object]]) -> str:
+    return "; ".join(
+        f"{record['name']} commit={record['commit']} license={record['license'] or 'missing'}"
+        for record in records
+    )
+
+
 def _read_toml(path: Path) -> dict[str, object]:
-    if not path.exists():
-        return {}
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
@@ -625,24 +696,34 @@ def _git_head_short(repo_root: Path) -> str:
     git_path = repo_root / ".git"
     if git_path.is_file():
         try:
-            content = git_path.read_text(encoding="utf-8").strip()
+            marker = git_path.read_text(encoding="utf-8").strip()
         except OSError:
             return "unknown"
-        if content.startswith("gitdir:"):
-            raw_git_dir = content.removeprefix("gitdir:").strip()
-            git_path = (repo_root / raw_git_dir).resolve()
-    head_path = git_path / "HEAD"
+        if marker.startswith("gitdir:"):
+            git_path = (repo_root / marker.removeprefix("gitdir:").strip()).resolve(strict=False)
     try:
-        head = head_path.read_text(encoding="utf-8").strip()
+        head = (git_path / "HEAD").read_text(encoding="utf-8").strip()
     except OSError:
         return "unknown"
-    if head.startswith("ref:"):
-        ref_path = git_path / head.removeprefix("ref:").strip()
-        try:
-            head = ref_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return "unknown"
-    return head[:7] if head else "unknown"
+    if not head.startswith("ref:"):
+        return head[:7] if head else "unknown"
+    ref_name = head.removeprefix("ref:").strip()
+    try:
+        ref_value = (git_path / ref_name).read_text(encoding="utf-8").strip()
+        return ref_value[:7] if ref_value else "unknown"
+    except OSError:
+        pass
+    try:
+        packed_lines = (git_path / "packed-refs").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return "unknown"
+    for line in packed_lines:
+        if line.startswith(("#", "^")):
+            continue
+        value, _, packed_ref = line.partition(" ")
+        if packed_ref == ref_name:
+            return value[:7]
+    return "unknown"
 
 
 def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:

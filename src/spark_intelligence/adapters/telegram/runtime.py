@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import hashlib
 import json
 import logging
@@ -19,6 +20,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+
+_LOGGER = logging.getLogger(__name__)
+
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
 from spark_intelligence.attachments import (
@@ -31,7 +35,6 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.bridge_authority import (
-    DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
     authorize_builder_bridge_action,
     authorize_pending_confirmation,
     build_telegram_memory_diagnostic_turn_intent_payload,
@@ -44,6 +47,7 @@ from spark_intelligence.bridge_authority import (
     detect_telegram_memory_read_authority_source_kind,
     extract_turn_intent_envelope,
     extract_turn_intent_envelope_vnext,
+    memory_write_boundary_blocks_adapter_authority,
     record_bridge_tool_call_result_ledger,
     record_scoped_bridge_tool_call_results,
     reset_bridge_authority_ledger_context,
@@ -58,7 +62,7 @@ from spark_intelligence.gateway.guardrails import (
     prepare_outbound_text,
     set_runtime_state_value,
 )
-from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit, redact_trace_payload, trace_identity_ref
 from spark_intelligence.identity.service import (
     consume_pairing_welcome,
     pairing_welcome_pending,
@@ -66,7 +70,9 @@ from spark_intelligence.identity.service import (
     record_pairing_context,
     resolve_inbound_dm,
 )
+from spark_intelligence.intent_boundary import has_conversation_only_boundary
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
+from spark_intelligence.security.prompt_boundaries import INVISIBLE_UNICODE_CHARS
 from spark_intelligence.llm_wiki import (
     build_llm_wiki_candidate_inbox,
     build_llm_wiki_candidate_scan,
@@ -76,10 +82,7 @@ from spark_intelligence.llm_wiki import (
 from spark_intelligence.memory import run_memory_doctor
 from spark_intelligence.memory.episodic_events import detect_telegram_memory_event_observation
 from spark_intelligence.memory.flags import memory_enabled, memory_shadow_mode
-from spark_intelligence.memory.generic_observations import (
-    classify_telegram_generic_memory_candidate,
-    detect_telegram_generic_deletion,
-)
+from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
 from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
@@ -97,7 +100,6 @@ from spark_intelligence.personality import (
 )
 from spark_intelligence.harness_contract import build_vnext_tool_intent_envelope
 from spark_intelligence.researcher_bridge.advisory import (
-    _canonical_bridge_trace_ref,
     _detect_current_focus_transition_command,
     _detect_current_plan_transition_command,
     _detect_explicit_decision_statement,
@@ -113,6 +115,7 @@ from spark_intelligence.self_awareness import (
 )
 from spark_intelligence.self_awareness.operating_strip import build_agent_operating_strip
 from spark_intelligence.self_awareness.turn_recorder import record_agent_turn_trace
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -142,6 +145,7 @@ from spark_intelligence.swarm_bridge import (
     swarm_status,
     sync_swarm_collective,
 )
+from spark_intelligence.user_instructions import detect_instruction_intent
 
 
 TELEGRAM_PARROT_EFFECT_VERSION = "parrot-balanced-v1"
@@ -285,6 +289,8 @@ _PROMPT_INJECTION_INTENT_PATTERN = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 
+_HARNESS_PROOF_REF_PATTERN = re.compile(r"^turn:sha256:[a-f0-9]{16}$")
+
 
 def _looks_like_score_request(message: str) -> bool:
     if not message:
@@ -299,6 +305,140 @@ def _looks_like_prompt_injection_instruction(message: str) -> bool:
     return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
+def _extract_harness_proof_ref(update_payload: dict[str, Any]) -> str | None:
+    if not isinstance(update_payload, dict):
+        return None
+
+    def valid_ref(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()
+        return candidate if _HARNESS_PROOF_REF_PATTERN.fullmatch(candidate) else None
+
+    containers: list[dict[str, Any]] = [update_payload]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        containers.append(message)
+
+    direct_keys = ("harnessProofRef", "harness_proof_ref")
+    nested_keys = ("spark_harness", "sparkProof", "spark_proof", "harnessProof")
+    nested_ref_keys = ("harnessProofRef", "harness_proof_ref", "proofRef", "proof_ref")
+
+    for container in containers:
+        for key in direct_keys:
+            candidate = valid_ref(container.get(key))
+            if candidate is not None:
+                return candidate
+        for nested_key in nested_keys:
+            nested = container.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in nested_ref_keys:
+                candidate = valid_ref(nested.get(key))
+                if candidate is not None:
+                    return candidate
+    return None
+
+
+def _extract_harness_proof_capsule(update_payload: dict[str, Any], proof_ref: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(update_payload, dict):
+        return None
+
+    containers: list[dict[str, Any]] = [update_payload]
+    message = update_payload.get("message")
+    if isinstance(message, dict):
+        containers.append(message)
+
+    for container in containers:
+        for key in ("harnessProofCapsule", "proofCapsule", "proof_capsule"):
+            candidate = _normalize_harness_proof_capsule(container.get(key), proof_ref)
+            if candidate is not None:
+                return candidate
+        for nested_key in ("spark_harness", "sparkProof", "spark_proof", "harnessProof"):
+            nested = container.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in ("harnessProofCapsule", "proofCapsule", "proof_capsule"):
+                candidate = _normalize_harness_proof_capsule(nested.get(key), proof_ref)
+                if candidate is not None:
+                    return candidate
+    return None
+
+
+def _normalize_harness_proof_capsule(value: Any, proof_ref: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or value.get("schema") != "spark.harness_proof.v1":
+        return None
+    turn_ref = value.get("turnRef")
+    if not isinstance(turn_ref, str) or _HARNESS_PROOF_REF_PATTERN.fullmatch(turn_ref.strip()) is None:
+        return None
+    turn_ref = turn_ref.strip()
+    if proof_ref is not None and proof_ref != turn_ref:
+        return None
+    for key in ("route", "owner", "intent", "authority", "governor", "execution", "reply", "joins"):
+        if key not in value:
+            return None
+    redacted = redact_trace_payload(value)
+    if not isinstance(redacted, dict) or redacted.get("turnRef") != turn_ref:
+        return None
+    return redacted
+
+
+def _stable_harness_proof_ref(*parts: Any) -> str:
+    seed = ":".join(str(part) for part in parts if part not in (None, ""))
+    digest = hashlib.sha256((seed or "telegram-runtime-command").encode("utf-8")).hexdigest()[:16]
+    return f"turn:sha256:{digest}"
+
+
+def _build_runtime_command_delivery_proof_capsule(
+    *,
+    request_id: str | None,
+    trace_ref: str | None,
+    command: str,
+    delivered: bool,
+    reply_text: str,
+) -> dict[str, Any]:
+    command_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(command or "runtime_command")).strip("_") or "runtime_command"
+    proof_ref = _stable_harness_proof_ref(trace_ref, request_id, command_key)
+    return {
+        "schema": "spark.harness_proof.v1",
+        "turnRef": proof_ref,
+        "route": "telegram.runtime_command",
+        "owner": "spark-intelligence-builder",
+        "intent": {
+            "kind": command_key,
+            "confidence": "explicit",
+            "noExecution": False,
+        },
+        "authority": {
+            "decision": "allowed",
+            "contract": "spark.turn_intent.v1",
+            "riskTier": "read",
+            "reasonSummary": "Telegram runtime command reply was delivered through the Builder gateway with request and trace continuity.",
+        },
+        "governor": {
+            "decision": "read_only",
+            "verified": True,
+        },
+        "execution": {
+            "status": "completed" if delivered else "failed",
+            "tool": "telegram.runtime_command.reply",
+            "mutationClass": "read_only",
+        },
+        "reply": {
+            "delivered": delivered,
+            "shape": "card" if "\n" in str(reply_text or "") else "natural",
+            "rawReasonsHidden": True,
+        },
+        "joins": {
+            "telegram": "joined",
+            "builder": "joined",
+            "spawner": "not_applicable",
+            "provider": "not_applicable",
+            "memory": "not_applicable",
+            "voice": "not_applicable",
+        },
+    }
+
 def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | None:
     text = str(user_message or "").strip()
     if not text:
@@ -307,34 +447,34 @@ def _detect_telegram_memory_authority_source_kind(user_message: str) -> str | No
         if _detect_current_plan_transition_command(text) is not None:
             return "telegram_runtime_current_plan_transition"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook _detect_current_plan_transition_command failed", exc_info=True)
     try:
         if _detect_current_focus_transition_command(text) is not None:
             return "telegram_runtime_current_focus_transition"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook _detect_current_focus_transition_command failed", exc_info=True)
     try:
         if _detect_explicit_decision_statement(text) is not None:
             return "telegram_runtime_explicit_decision"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook _detect_explicit_decision_statement failed", exc_info=True)
     try:
         if detect_profile_fact_observation(text) is not None:
             return "telegram_runtime_profile_fact_observation"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook detect_profile_fact_observation failed", exc_info=True)
     try:
         if detect_telegram_memory_event_observation(text) is not None:
             return "telegram_runtime_event_observation"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook detect_telegram_memory_event_observation failed", exc_info=True)
     try:
         candidate = classify_telegram_generic_memory_candidate(text)
         if candidate is not None:
             operation = str(getattr(candidate, "operation", "") or "candidate")
             return f"telegram_runtime_generic_memory_{operation}"
     except Exception:
-        pass
+        _LOGGER.warning("intelligence hook classify_telegram_generic_memory_candidate failed", exc_info=True)
     return None
 
 
@@ -462,43 +602,8 @@ def _telegram_researcher_memory_write_governor_decision(
     session_id: str,
     human_id: str,
     agent_id: str,
-    allow_runtime_memory_authority: bool = False,
 ) -> dict[str, Any] | None:
-    inbound_governor = _inbound_governor_decision(update_payload)
-    if isinstance(inbound_governor, dict):
-        return inbound_governor
-    if not allow_runtime_memory_authority:
-        return None
-    message_text = ""
-    if isinstance(update_payload, dict):
-        message = update_payload.get("message")
-        if isinstance(message, dict):
-            message_text = str(message.get("text") or message.get("caption") or "")
-    if _looks_like_memory_forget_request(message_text):
-        return None
-    try:
-        if detect_telegram_generic_deletion(message_text) is not None:
-            return None
-    except Exception:
-        pass
-    if extract_turn_intent_envelope_vnext(update_payload) is None:
-        return None
-    authority = authorize_builder_bridge_action(
-        update_payload,
-        tool_name=DOMAIN_CHIP_MEMORY_WRITE_TOOL_NAME,
-        owner_system="domain-chip-memory",
-        mutation_class="writes_memory",
-        state_db=state_db,
-        request_id=request_id,
-        run_id=run_id,
-        channel_id="telegram",
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id="telegram_runtime",
-        component="telegram_runtime",
-    )
-    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+    return _inbound_governor_decision(update_payload)
 
 
 def _inbound_governor_decision(update_payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -674,12 +779,92 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
+def _telegram_bot_draft_governor_decision(
+    *,
+    state_db,
+    update_payload: dict[str, Any] | None,
+    external_user_id: str,
+    session_id: str | None,
+    request_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    user_message: str,
+    source_kind: str,
+    tool_name: str,
+    owner_system: str,
+) -> dict[str, Any] | None:
+    existing_vnext = extract_turn_intent_envelope_vnext(update_payload)
+    existing_legacy = extract_turn_intent_envelope(update_payload)
+    if existing_vnext is not None or existing_legacy is not None:
+        authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name=tool_name,
+            owner_system=owner_system,
+            mutation_class="writes_memory",
+            state_db=state_db,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="telegram_runtime",
+            component="telegram_runtime.bot_draft",
+        )
+        return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+    if not isinstance(update_payload, dict):
+        return None
+    update_id = str(update_payload.get("update_id") or "").strip()
+    message = update_payload.get("message")
+    if not update_id or not isinstance(message, dict):
+        return None
+    inbound_text = " ".join(str(message.get("text") or message.get("caption") or "").split())
+    clean_user_message = " ".join(str(user_message or "").split())
+    if not inbound_text or inbound_text != clean_user_message:
+        return None
+
+    actor_ref = str(human_id or "").strip() or f"human:telegram:{external_user_id}"
+    resolved_request_id = str(request_id or "").strip() or f"telegram:{update_id}"
+    vnext_payload = build_vnext_tool_intent_envelope(
+        surface="telegram",
+        actor_id_ref=actor_ref,
+        request_id=resolved_request_id,
+        source_kind=source_kind,
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class="writes_memory",
+        intent_summary="Fresh Telegram turn explicitly requested draft generation or iteration.",
+        raw_turn_summary="Telegram draft request remains offloaded from the authority envelope.",
+        confidence=0.95,
+    )
+    if not isinstance(vnext_payload, dict):
+        return None
+    authority = authorize_builder_bridge_action(
+        {"turn_intent_envelope_vnext": vnext_payload},
+        tool_name=tool_name,
+        owner_system=owner_system,
+        mutation_class="writes_memory",
+        state_db=state_db,
+        request_id=resolved_request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime.bot_draft",
+    )
+    return authority.governor_decision if authority.allowed and isinstance(authority.governor_decision, dict) else None
+
+
 def _maybe_save_reply_as_draft(
     *,
     state_db,
     update_payload: dict[str, Any] | None = None,
     external_user_id: str,
     session_id: str | None,
+    request_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
     chip_used: str | None,
     reply_text: str,
     user_message: str = "",
@@ -688,6 +873,8 @@ def _maybe_save_reply_as_draft(
         return reply_text
     try:
         from spark_intelligence.bot_drafts import (
+            BOT_DRAFT_OWNER_SYSTEM,
+            BOT_DRAFT_WRITE_TOOL,
             detect_generative_intent,
             detect_iteration_intent,
             find_draft_for_iteration,
@@ -705,18 +892,26 @@ def _maybe_save_reply_as_draft(
 
     is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
     is_generative = bool(user_message) and detect_generative_intent(user_message)
+    governor_decision: dict[str, Any] | None = None
     if is_iteration or is_generative:
-        authority = authorize_builder_bridge_action(
-            update_payload,
-            tool_name="memory.write",
-            owner_system="domain-chip-memory",
-            mutation_class="writes_memory",
+        governor_decision = _telegram_bot_draft_governor_decision(
             state_db=state_db,
-            channel_id="telegram",
+            update_payload=update_payload,
+            external_user_id=user,
             session_id=session_id,
-            component="telegram_bridge",
+            request_id=request_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            user_message=user_message,
+            source_kind=(
+                "telegram_runtime_bot_draft_iteration"
+                if is_iteration
+                else "telegram_runtime_bot_draft_generation"
+            ),
+            tool_name=BOT_DRAFT_WRITE_TOOL,
+            owner_system=BOT_DRAFT_OWNER_SYSTEM,
         )
-        if not authority.allowed:
+        if not isinstance(governor_decision, dict):
             return reply_text
 
     if is_iteration:
@@ -729,12 +924,14 @@ def _maybe_save_reply_as_draft(
                 user_message=user_message,
             )
         except Exception:
+            _LOGGER.warning("Telegram draft lookup failed; reply delivery continues.")
             source_draft = None
         if source_draft is not None:
             on_topic = True
             try:
                 on_topic = reply_resembles_draft(source_draft.content, reply)
             except Exception:
+                _LOGGER.warning("Telegram draft similarity check failed; preserving the existing draft.")
                 on_topic = True
             if on_topic:
                 try:
@@ -743,9 +940,10 @@ def _maybe_save_reply_as_draft(
                         draft_id=source_draft.draft_id,
                         content=reply,
                         chip_used=chip_used,
+                        governor_decision=governor_decision,
                     )
                 except Exception:
-                    pass
+                    _LOGGER.warning("Telegram draft update failed; reply delivery continues.")
                 return reply_text
             # iteration intent fired but reply drifted off-topic —
             # preserve the original draft and capture the divergent
@@ -758,9 +956,10 @@ def _maybe_save_reply_as_draft(
                     content=reply,
                     session_id=session_id,
                     chip_used=chip_used,
+                    governor_decision=governor_decision,
                 )
             except Exception:
-                pass
+                _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
             return reply_text
         try:
             save_draft(
@@ -770,9 +969,10 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
-            pass
+            _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
         return reply_text
 
     if is_generative:
@@ -784,9 +984,10 @@ def _maybe_save_reply_as_draft(
                 content=reply,
                 session_id=session_id,
                 chip_used=chip_used,
+                governor_decision=governor_decision,
             )
         except Exception:
-            pass
+            _LOGGER.warning("Telegram draft save failed; reply delivery continues.")
         return reply_text
 
     return reply_text
@@ -877,7 +1078,7 @@ def _looks_like_memory_forget_request(user_message: str) -> bool:
     if not re.search(r"\b(?:forget|delete|remove|erase|purge|stop remembering)\b", text):
         return False
     return bool(
-        re.search(r"\b(?:saved\s+)?memor(?:y|ies)|\bprofile\s+(?:fact|memory)|\bactive\s+current\s+profile\b", text)
+        re.search(r"\b(?:(?:saved\s+)?memor(?:y|ies)|profile\s+(?:fact|memory)|active\s+current\s+profile)\b", text)
         or re.search(r"\b(?:my\s+name|preferred\s+name|written\s+name|pronounced|pronunciation)\b", text)
     )
 
@@ -1279,16 +1480,17 @@ def _decode_embedded_telegram_audio(normalized: Any) -> tuple[bytes, str] | None
     return audio_bytes, filename
 
 
-def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...]) -> dict[str, Any]:
+def _voice_transcription_authority_blocked_input(reason_codes: tuple[str, ...], *, message_kind: str = "voice") -> dict[str, Any]:
     reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    media_label = "audio file" if message_kind == "audio" else "voice message"
     return {
         "effective_text": None,
         "transcript_text": None,
         "routing_decision": "voice_transcription_authority_blocked",
         "reply_text": (
-            "I can transcribe that voice message, but this turn is missing Spark authority for voice transcription.\n"
+            f"I can transcribe that {media_label}, but this turn is missing Spark authority for transcription.\n"
             f"Reason: {reason_text}.\n"
-            "Send the voice note as a fresh authorized Spark media turn and I will process it."
+            f"Send the {media_label} as a fresh authorized Spark media turn and I will process it."
         ),
         "error": reason_text,
     }
@@ -1402,10 +1604,12 @@ def _prepare_telegram_media_input(
             "transcript_text": None,
             "routing_decision": None,
         }
+    message_kind = str(normalized.message_kind or "voice")
+    media_tool_name = "media.audio.transcribe" if message_kind == "audio" else "media.voice.transcribe"
     authority = authorize_builder_bridge_action(
         update_payload,
-        tool_name="voice.transcribe",
-        owner_system="spark-voice-comms",
+        tool_name=media_tool_name,
+        owner_system="spark-intelligence-builder",
         mutation_class="external_network",
         external_network=True,
         state_db=state_db,
@@ -1414,7 +1618,20 @@ def _prepare_telegram_media_input(
         component="telegram_runtime",
     )
     if not authority.allowed:
-        return _voice_transcription_authority_blocked_input(authority.reason_codes)
+        legacy_authority = authorize_builder_bridge_action(
+            update_payload,
+            tool_name="voice.transcribe",
+            owner_system="spark-voice-comms",
+            mutation_class="external_network",
+            external_network=True,
+            state_db=state_db,
+            request_id=f"telegram:{normalized.update_id}",
+            channel_id="telegram",
+            component="telegram_runtime",
+        )
+        if not legacy_authority.allowed:
+            return _voice_transcription_authority_blocked_input(authority.reason_codes, message_kind=message_kind)
+        authority = legacy_authority
     governor_decision = authority.governor_decision
     try:
         embedded_audio = _decode_embedded_telegram_audio(normalized)
@@ -1430,12 +1647,13 @@ def _prepare_telegram_media_input(
                 governor_decision=governor_decision,
             )
     except Exception as exc:
+        safe_error = _safe_voice_error_message(exc)
         return {
             "effective_text": None,
             "transcript_text": None,
             "routing_decision": "voice_transcription_unavailable",
-            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
-            "error": str(exc),
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=safe_error),
+            "error": safe_error,
         }
     media_client = client or _resolve_telegram_client(config_manager)
     if media_client is None:
@@ -1472,12 +1690,13 @@ def _prepare_telegram_media_input(
             governor_decision=governor_decision,
         )
     except Exception as exc:
+        safe_error = _safe_voice_error_message(exc)
         return {
             "effective_text": None,
             "transcript_text": None,
             "routing_decision": "voice_transcription_unavailable",
-            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=str(exc)),
-            "error": str(exc),
+            "reply_text": _render_telegram_voice_transcription_unavailable_reply(reason=safe_error),
+            "error": safe_error,
         }
 
 
@@ -1503,6 +1722,37 @@ def _build_voice_trace_fields(
     }
 
 
+def _is_low_information_media_reply(text: str | None) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return True
+    compact = normalized.lower().strip(" .!`")
+    return compact in {
+        "working memory",
+        "ok",
+        "okay",
+        "done",
+        "got it",
+        "received",
+    }
+
+
+def _maybe_use_media_transcript_fallback(
+    *,
+    normalized: Any,
+    transcript_text: str | None,
+    reply_text: str | None,
+) -> str | None:
+    transcript = re.sub(r"\s+", " ", str(transcript_text or "")).strip()
+    if normalized.message_kind not in {"voice", "audio"} or not transcript:
+        return reply_text
+    if not _is_low_information_media_reply(reply_text):
+        return reply_text
+    media_label = "audio file" if normalized.message_kind == "audio" else "voice message"
+    bounded_transcript = _preview_text(transcript, limit=700)
+    return f"I transcribed the {media_label}. I heard: \"{bounded_transcript}\""
+
+
 def simulate_telegram_update(
     *,
     config_manager: ConfigManager,
@@ -1514,9 +1764,13 @@ def simulate_telegram_update(
     normalized = normalize_telegram_update(update_payload, channel_id="telegram")
     request_prefix = "sim" if simulation else "telegram"
     incoming_vnext = extract_turn_intent_envelope_vnext(update_payload)
-    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if isinstance(incoming_vnext, dict) else ""
+    incoming_turn_id = str(incoming_vnext.get("turn_id") or "").strip() if incoming_vnext is not None else ""
     request_id = incoming_turn_id or f"{request_prefix}:{normalized.update_id}"
     origin_surface = "simulation_cli" if simulation else "telegram_runtime"
+    harness_proof_ref = _extract_harness_proof_ref(update_payload)
+    harness_proof_capsule = _extract_harness_proof_capsule(update_payload, harness_proof_ref)
+    if harness_proof_ref is None and harness_proof_capsule is not None:
+        harness_proof_ref = str(harness_proof_capsule.get("turnRef") or "")
     if not normalized.is_dm:
         return TelegramSimulationResult(
             ok=False,
@@ -1558,6 +1812,7 @@ def simulate_telegram_update(
     transcript_text = None
     bridge_voice_media: dict[str, Any] | None = None
     bridge_voice_error: str | None = None
+    runtime_command_metadata: dict[str, Any] | None = None
     respect_voice_reply_state_for_bridge = True
     voice_answer_requested_for_bridge = False
     runtime_command_metadata: dict[str, Any] | None = None
@@ -1635,8 +1890,11 @@ def simulate_telegram_update(
         if media_input.get("reply_text"):
             pass
         elif command_result is not None:
-            metadata = command_result.get("runtime_command_metadata")
-            runtime_command_metadata = metadata if isinstance(metadata, dict) else None
+            runtime_command_metadata = (
+                dict(command_result.get("runtime_command_metadata"))
+                if isinstance(command_result.get("runtime_command_metadata"), dict)
+                else None
+            )
             outbound_text = _apply_saved_telegram_surface_style(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -1658,7 +1916,7 @@ def simulate_telegram_update(
                 spoken_source = str(command_result.get("voice_text") or outbound_text)
                 spoken_text = _prepare_voice_reply_text(spoken_source)
                 try:
-                    voice_authority = _telegram_voice_speak_authority(
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
                         update_payload=researcher_update_payload,
                         existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
                         state_db=state_db,
@@ -1678,18 +1936,14 @@ def simulate_telegram_update(
                         text=spoken_text,
                         tts=command_result.get("voice_tts") if isinstance(command_result.get("voice_tts"), dict) else None,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
-                        turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
-                        governor_decision=voice_authority.governor_decision if voice_authority else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
-                        "I answered in text because the voice audio step is not ready yet.\n\n"
-                        f"Reason: {_safe_voice_error_message(exc)}"
-                    )
-                    outbound_text = (
-                        "I tried to make that voice reply, but the audio step failed.\n\n"
+                        "The voice step failed, so I couldn't send audio. "
+                        f"{bridge_voice_error}\n\n"
                         "Run `/voice onboard local`, then try `/voice speak ...` again."
                     )
         else:
@@ -2149,7 +2403,6 @@ def simulate_telegram_update(
                         session_id=resolution.session_id,
                         human_id=resolution.human_id,
                         agent_id=resolution.agent_id,
-                        allow_runtime_memory_authority=not simulation,
                     )
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
@@ -2229,11 +2482,19 @@ def simulate_telegram_update(
                             user_message=effective_text,
                         ),
                     )
+                    outbound_text = _maybe_use_media_transcript_fallback(
+                        normalized=normalized,
+                        transcript_text=transcript_text,
+                        reply_text=outbound_text,
+                    )
                     outbound_text = _maybe_save_reply_as_draft(
                         state_db=state_db,
                         update_payload=researcher_update_payload,
                         external_user_id=normalized.telegram_user_id,
                         session_id=resolution.session_id,
+                        request_id=request_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
                         chip_used=bridge_result.active_chip_key,
                         reply_text=outbound_text,
                         user_message=effective_text,
@@ -2268,7 +2529,7 @@ def simulate_telegram_update(
             spoken_text = _prepare_voice_reply_text(outbound_text)
             if spoken_text:
                 try:
-                    voice_authority = _telegram_voice_speak_authority(
+                    voice_turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
                         update_payload=researcher_update_payload,
                         existing_turn_intent_payload=extract_turn_intent_envelope_vnext(researcher_update_payload),
                         state_db=state_db,
@@ -2287,15 +2548,15 @@ def simulate_telegram_update(
                         external_user_id=normalized.telegram_user_id,
                         text=spoken_text,
                         voice_input_runtime_state=media_input.get("runtime_state") if isinstance(media_input.get("runtime_state"), dict) else None,
-                        turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
-                        governor_decision=voice_authority.governor_decision if voice_authority else None,
+                        turn_intent_payload=voice_turn_intent_payload,
                     )
                     bridge_voice_media = _bridge_voice_media_from_payload(voice_payload)
                 except Exception as exc:  # pragma: no cover - exercised by live adapter failures
                     bridge_voice_error = _safe_voice_error_message(exc)
                     outbound_text = (
-                        "I answered in text because the voice audio step is not ready yet.\n\n"
-                        f"Reason: {_safe_voice_error_message(exc)}"
+                        "The voice step failed, so I couldn't send audio. "
+                        f"{bridge_voice_error}\n\n"
+                        "Run `/voice onboard local`, then try `/voice speak ...` again."
                     )
     else:
         trace_ref = None
@@ -2344,6 +2605,12 @@ def simulate_telegram_update(
         "attachment_context": attachment_context,
         "guardrail_actions": _outbound_actions,
     }
+    if normalized.media_turn is not None:
+        detail["media_turn"] = normalized.media_turn
+    if harness_proof_ref is not None:
+        detail["harnessProofRef"] = harness_proof_ref
+    if harness_proof_capsule is not None:
+        detail["proofCapsule"] = harness_proof_capsule
     if runtime_command_metadata is not None:
         detail["runtime_command_metadata"] = runtime_command_metadata
     voice_timing = (
@@ -2360,38 +2627,45 @@ def simulate_telegram_update(
         detail["voice_error"] = bridge_voice_error
     if voice_timing:
         detail["voice_timing"] = voice_timing
+    if runtime_command_metadata is not None:
+        detail["runtime_command_metadata"] = runtime_command_metadata
     if resolution.allowed:
-        append_gateway_trace(
-            config_manager,
-            {
-                "event": "telegram_update_processed",
-                "channel_id": "telegram",
-                "update_id": normalized.update_id,
-                "telegram_user_id": normalized.telegram_user_id,
-                "chat_id": normalized.chat_id,
-                "session_id": resolution.session_id,
-                "trace_ref": trace_ref,
-                "bridge_mode": bridge_mode,
-                "routing_decision": routing_decision,
-                **delivery_primary_route,
-                "evidence_summary": evidence_summary,
-                "attachment_context": attachment_context,
-                "active_chip_key": active_chip_key,
-                "active_chip_task_type": active_chip_task_type,
-                "active_chip_evaluate_used": active_chip_evaluate_used,
-                "response_preview": _preview_text(sanitized_outbound_text),
-                "response_length": len(sanitized_outbound_text),
-                "user_message_preview": _preview_text(effective_text) if effective_text else None,
-                "user_message_length": len(effective_text) if effective_text else None,
-                **({"runtime_command_metadata": runtime_command_metadata} if runtime_command_metadata is not None else {}),
-                "delivery_ok": True,
-                "delivery_error": None,
-                "guardrail_actions": _outbound_actions,
-                "simulation": simulation,
-                "origin_surface": origin_surface,
-                "request_id": request_id,
-            },
-        )
+        trace_payload = {
+            "event": "telegram_update_processed",
+            "channel_id": "telegram",
+            "update_id": normalized.update_id,
+            "telegram_user_id": normalized.telegram_user_id,
+            "chat_id": normalized.chat_id,
+            "session_id": resolution.session_id,
+            "trace_ref": trace_ref,
+            "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            **delivery_primary_route,
+            "evidence_summary": evidence_summary,
+            "attachment_context": attachment_context,
+            "active_chip_key": active_chip_key,
+            "active_chip_task_type": active_chip_task_type,
+            "active_chip_evaluate_used": active_chip_evaluate_used,
+            "response_preview": _preview_text(sanitized_outbound_text),
+            "response_length": len(sanitized_outbound_text),
+            "user_message_preview": _preview_text(effective_text) if effective_text else None,
+            "user_message_length": len(effective_text) if effective_text else None,
+            "delivery_ok": True,
+            "delivery_error": None,
+            "guardrail_actions": _outbound_actions,
+            "simulation": simulation,
+            "origin_surface": origin_surface,
+            "request_id": request_id,
+        }
+        if normalized.media_turn is not None:
+            trace_payload["media_turn"] = normalized.media_turn
+        if harness_proof_ref is not None:
+            trace_payload["harnessProofRef"] = harness_proof_ref
+        if harness_proof_capsule is not None:
+            trace_payload["proofCapsule"] = harness_proof_capsule
+        if runtime_command_metadata is not None:
+            trace_payload["runtime_command_metadata"] = runtime_command_metadata
+        append_gateway_trace(config_manager, trace_payload)
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
 
@@ -2407,7 +2681,10 @@ def poll_telegram_updates_once(
         row = conn.execute(
             "SELECT value FROM runtime_state WHERE state_key = 'telegram:last_update_offset' LIMIT 1"
         ).fetchone()
-        offset = int(row["value"]) if row and row["value"] is not None else None
+        try:
+            offset = int(row["value"]) if row and row["value"] is not None else None
+        except (TypeError, ValueError):
+            offset = None
 
     updates = client.get_updates(offset=offset, timeout_seconds=timeout_seconds)
     processed_count = 0
@@ -2423,6 +2700,8 @@ def poll_telegram_updates_once(
     for update in updates:
         normalized = normalize_telegram_update(update, channel_id="telegram")
         next_offset = normalized.update_id + 1
+        update_request_id = f"telegram:{normalized.update_id}"
+        update_trace_ref = f"trace:telegram:{normalized.update_id}"
         if is_duplicate_event(
             state_db=state_db,
             channel_id="telegram",
@@ -2435,6 +2714,8 @@ def poll_telegram_updates_once(
                 {
                     "event": "telegram_update_duplicate",
                     "channel_id": "telegram",
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_type": normalized.chat_type,
@@ -2448,6 +2729,8 @@ def poll_telegram_updates_once(
                 {
                     "event": "telegram_update_ignored",
                     "channel_id": "telegram",
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "reason": "non_dm_surface",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
@@ -2479,7 +2762,8 @@ def poll_telegram_updates_once(
                     session_id=None,
                     decision="rate_limited",
                     bridge_mode=None,
-                    trace_ref=None,
+                    request_id=update_request_id,
+                    trace_ref=update_trace_ref,
                 )
                 delivery_ok = send_result["ok"]
                 delivery_error = send_result["error"]
@@ -2487,6 +2771,13 @@ def poll_telegram_updates_once(
                     sent_count += 1
                 else:
                     failed_send_count += 1
+            rate_limit_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=update_request_id,
+                trace_ref=update_trace_ref,
+                command="rate_limited",
+                delivered=bool(delivery_ok),
+                reply_text=f"Rate limit reached. Try again in about {rate_limit['retry_after_seconds']} seconds.",
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -2495,10 +2786,14 @@ def poll_telegram_updates_once(
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
+                    "request_id": update_request_id,
+                    "trace_ref": update_trace_ref,
                     "retry_after_seconds": rate_limit["retry_after_seconds"],
                     "notice_sent": rate_limit["notice_allowed"],
                     "delivery_ok": delivery_ok,
                     "delivery_error": delivery_error,
+                    "harnessProofRef": rate_limit_proof_capsule["turnRef"],
+                    "proofCapsule": rate_limit_proof_capsule,
                 },
             )
             continue
@@ -2514,7 +2809,8 @@ def poll_telegram_updates_once(
             run_kind="telegram_update",
             origin_surface="telegram_runtime",
             summary=f"Telegram update {normalized.update_id} opened for user {normalized.telegram_user_id}.",
-            request_id=f"telegram:{normalized.update_id}",
+            request_id=update_request_id,
+            trace_ref=update_trace_ref,
             channel_id="telegram",
             session_id=resolution.session_id,
             human_id=resolution.human_id,
@@ -2562,7 +2858,7 @@ def poll_telegram_updates_once(
                 bridge_mode=None,
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 user_message=normalized.text,
             )
             if send_result["ok"]:
@@ -2586,6 +2882,8 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "response_preview": _preview_text(
                         _resolution_reply_text(
                             decision=resolution.decision,
@@ -2620,7 +2918,7 @@ def poll_telegram_updates_once(
                 bridge_mode=None,
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 user_message=normalized.text,
             )
             if resolution.decision == "held":
@@ -2647,6 +2945,8 @@ def poll_telegram_updates_once(
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "decision": resolution.decision,
                     "response_preview": _preview_text(denied_text),
                     "delivery_ok": send_result["ok"],
@@ -2693,7 +2993,7 @@ def poll_telegram_updates_once(
                 routing_decision=str(media_input.get("routing_decision") or "voice_transcription_unavailable"),
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 respect_voice_reply_state=False,
@@ -2716,6 +3016,14 @@ def poll_telegram_updates_once(
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
                 },
             )
+            media_command = f"/{normalized.message_kind}"
+            media_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command=media_command,
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -2725,11 +3033,15 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
-                    "command": f"/{normalized.message_kind}",
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
+                    "command": media_command,
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    "harnessProofRef": media_proof_capsule["turnRef"],
+                    "proofCapsule": media_proof_capsule,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
                 },
             )
@@ -2782,8 +3094,18 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
         )
         if command_result is not None:
-            command_metadata = command_result.get("runtime_command_metadata")
-            runtime_command_metadata = command_metadata if isinstance(command_metadata, dict) else None
+            runtime_command_metadata = (
+                dict(command_result.get("runtime_command_metadata"))
+                if isinstance(command_result.get("runtime_command_metadata"), dict)
+                else None
+            )
+            runtime_command_facts: dict[str, Any] = {
+                "command": command_result["command"],
+                "update_id": normalized.update_id,
+                "message_text": normalized.text,
+            }
+            if runtime_command_metadata is not None:
+                runtime_command_facts["runtime_command_metadata"] = runtime_command_metadata
             record_event(
                 state_db,
                 event_type="intent_committed",
@@ -2797,11 +3119,7 @@ def poll_telegram_updates_once(
                 agent_id=resolution.agent_id,
                 actor_id="telegram_runtime",
                 reason_code="runtime_command",
-                facts={
-                    "command": command_result["command"],
-                    "update_id": normalized.update_id,
-                    "message_text": normalized.text,
-                },
+                facts=runtime_command_facts,
             )
             outbound_text = _apply_think_visibility(
                 state_db=state_db,
@@ -2829,7 +3147,7 @@ def poll_telegram_updates_once(
                 bridge_mode="runtime_command",
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply or voice_answer_requested_for_bridge,
@@ -2862,24 +3180,58 @@ def poll_telegram_updates_once(
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
-            append_gateway_trace(
-                config_manager,
-                {
-                    "event": "telegram_runtime_command_processed",
-                    "channel_id": "telegram",
-                    "update_id": normalized.update_id,
-                    "telegram_user_id": normalized.telegram_user_id,
-                    "chat_id": normalized.chat_id,
-                    "session_id": resolution.session_id,
-                    "command": command_result["command"],
-                    "delivery_ok": send_result["ok"],
-                    "delivery_error": send_result["error"],
-                    "guardrail_actions": send_result["guardrail_actions"],
-                    "response_preview": _preview_text(outbound_text),
-                    **({"runtime_command_metadata": runtime_command_metadata} if runtime_command_metadata is not None else {}),
-                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
-                },
+            command_trace = {
+                "event": "telegram_runtime_command_processed",
+                "channel_id": "telegram",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "request_id": run.request_id,
+                "trace_ref": update_trace_ref,
+                "command": command_result["command"],
+                "delivery_ok": send_result["ok"],
+                "delivery_error": send_result["error"],
+                "guardrail_actions": send_result["guardrail_actions"],
+                "response_preview": _preview_text(outbound_text),
+                **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
+            }
+            runtime_command_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command=str(command_result["command"]),
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
             )
+            command_trace["harnessProofRef"] = runtime_command_proof_capsule["turnRef"]
+            command_trace["proofCapsule"] = runtime_command_proof_capsule
+            if runtime_command_metadata is not None:
+                command_trace["runtime_command_metadata"] = runtime_command_metadata
+            append_gateway_trace(config_manager, command_trace)
+            update_trace = {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "bridge_mode": "runtime_command",
+                "routing_decision": "runtime_command",
+                "request_id": run.request_id,
+                "trace_ref": update_trace_ref,
+                "response_preview": _preview_text(outbound_text),
+                "response_length": len(outbound_text),
+                "user_message_preview": _preview_text(effective_text) if effective_text else None,
+                "user_message_length": len(effective_text) if effective_text else None,
+                "delivery_ok": send_result["ok"],
+                "delivery_error": send_result["error"],
+                "guardrail_actions": send_result["guardrail_actions"],
+                "harnessProofRef": runtime_command_proof_capsule["turnRef"],
+                "proofCapsule": runtime_command_proof_capsule,
+            }
+            if runtime_command_metadata is not None:
+                update_trace["runtime_command_metadata"] = runtime_command_metadata
+            append_gateway_trace(config_manager, update_trace)
             continue
 
         # P2-13: enter the v2 onboarding state machine whenever the
@@ -2957,7 +3309,7 @@ def poll_telegram_updates_once(
                 routing_decision="agent_onboarding",
                 run_id=run.run_id,
                 request_id=run.request_id,
-                trace_ref=None,
+                trace_ref=update_trace_ref,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 force_voice=voice_origin_reply,
@@ -2985,6 +3337,13 @@ def poll_telegram_updates_once(
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
+            onboarding_proof_capsule = _build_runtime_command_delivery_proof_capsule(
+                request_id=run.request_id,
+                trace_ref=update_trace_ref,
+                command="agent_onboarding",
+                delivered=bool(send_result["ok"]),
+                reply_text=outbound_text,
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -2994,12 +3353,16 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
+                    "request_id": run.request_id,
+                    "trace_ref": update_trace_ref,
                     "step": onboarding_result.step,
                     "completed": onboarding_result.completed,
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    "harnessProofRef": onboarding_proof_capsule["turnRef"],
+                    "proofCapsule": onboarding_proof_capsule,
                     **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
@@ -3035,7 +3398,6 @@ def poll_telegram_updates_once(
                 session_id=resolution.session_id,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
-                allow_runtime_memory_authority=True,
             ),
             config_manager=config_manager,
             state_db=state_db,
@@ -3106,11 +3468,19 @@ def poll_telegram_updates_once(
                 user_message=effective_text,
             ),
         )
+        outbound_text = _maybe_use_media_transcript_fallback(
+            normalized=normalized,
+            transcript_text=transcript_text,
+            reply_text=outbound_text,
+        )
         outbound_text = _maybe_save_reply_as_draft(
             state_db=state_db,
             update_payload=researcher_update_payload,
             external_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
+            request_id=run.request_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
             chip_used=bridge_result.active_chip_key,
             reply_text=outbound_text,
             user_message=effective_text,
@@ -3243,13 +3613,7 @@ def _describe_telegram_delivery_exception(exc: Exception) -> str:
     return str(exc)
 
 
-@dataclass(frozen=True)
-class _TelegramVoiceSpeakAuthority:
-    turn_intent_payload: dict[str, Any]
-    governor_decision: dict[str, Any] | None
-
-
-def _telegram_voice_speak_authority(
+def _telegram_voice_speak_turn_intent_payload(
     *,
     update_payload: dict[str, Any] | None,
     existing_turn_intent_payload: dict[str, Any] | None = None,
@@ -3260,7 +3624,7 @@ def _telegram_voice_speak_authority(
     agent_id: str | None = None,
     user_message: str | None = None,
     source_kind: str = "telegram_voice_delivery",
-) -> _TelegramVoiceSpeakAuthority | None:
+) -> dict[str, Any] | None:
     if isinstance(existing_turn_intent_payload, dict):
         existing_authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": existing_turn_intent_payload},
@@ -3268,20 +3632,9 @@ def _telegram_voice_speak_authority(
             owner_system="spark-voice-comms",
             mutation_class="external_network",
             external_network=True,
-            state_db=state_db,
-            request_id=request_id,
-            channel_id="telegram" if state_db is not None else None,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="telegram_runtime" if state_db is not None else None,
-            component="telegram_runtime" if state_db is not None else "bridge_authority",
         )
         if existing_authority.allowed:
-            return _TelegramVoiceSpeakAuthority(
-                turn_intent_payload=existing_authority.harness_core_envelope or existing_turn_intent_payload,
-                governor_decision=existing_authority.governor_decision if isinstance(existing_authority.governor_decision, dict) else None,
-            )
+            return existing_authority.harness_core_envelope or existing_turn_intent_payload
     legacy_authority = authorize_builder_bridge_action(
         update_payload,
         tool_name="voice.speak",
@@ -3298,12 +3651,7 @@ def _telegram_voice_speak_authority(
         component="telegram_runtime" if state_db is not None else "bridge_authority",
     )
     if legacy_authority.allowed:
-        if not isinstance(legacy_authority.harness_core_envelope, dict):
-            return None
-        return _TelegramVoiceSpeakAuthority(
-            turn_intent_payload=legacy_authority.harness_core_envelope,
-            governor_decision=legacy_authority.governor_decision if isinstance(legacy_authority.governor_decision, dict) else None,
-        )
+        return legacy_authority.harness_core_envelope
     clean_message = " ".join(str(user_message or "").split())
     if not human_id or not session_id or not clean_message:
         return None
@@ -3334,10 +3682,7 @@ def _telegram_voice_speak_authority(
     )
     if not vnext_authority.allowed:
         return None
-    return _TelegramVoiceSpeakAuthority(
-        turn_intent_payload=vnext_authority.harness_core_envelope or vnext_payload,
-        governor_decision=vnext_authority.governor_decision if isinstance(vnext_authority.governor_decision, dict) else None,
-    )
+    return vnext_authority.harness_core_envelope or vnext_payload
 
 
 def _synthesize_telegram_voice_reply(
@@ -3353,9 +3698,9 @@ def _synthesize_telegram_voice_reply(
     coherence_mode: str | None = None,
     voice_input_runtime_state: dict[str, Any] | None = None,
     turn_intent_payload: dict[str, Any] | None = None,
-    governor_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if governor_decision is None and isinstance(turn_intent_payload, dict):
+    governor_decision: dict[str, Any] | None = None
+    if isinstance(turn_intent_payload, dict):
         voice_authority = authorize_builder_bridge_action(
             {"turn_intent_envelope_vnext": turn_intent_payload},
             tool_name="voice.speak",
@@ -3424,7 +3769,7 @@ def _synthesize_telegram_voice_reply(
         raise RuntimeError("The voice chip returned no audio payload.")
     mime_type = str((result or {}).get("mime_type") or "audio/mpeg").strip() or "audio/mpeg"
     payload = {
-        "audio_bytes": base64.b64decode(audio_base64),
+        "audio_bytes": base64.b64decode(audio_base64, validate=True),
         "mime_type": mime_type,
         "filename": str((result or {}).get("filename") or "").strip()
         or (
@@ -3720,12 +4065,10 @@ def _safe_voice_error_message(error: Exception) -> str:
         return "ElevenLabs could not synthesize because the account quota or billing status needs attention."
     if "elevenlabs" in lowered and ("voice_id" in lowered or "voice id" in lowered or "not_found" in lowered):
         return "ElevenLabs could not find the configured voice. Pick another voice or update the saved voice ID in local config."
-    message = re.sub(
-        r"(?i)\b(api[_-]?key|token|secret|authorization)\b\s*[:=]\s*[^,\n ]+",
-        r"\1=***",
-        message,
-    )
+    message = redact_text(message)
+    message = re.sub(r"(?i)\b(api[_-]?key|token|secret)\b\s*[:=]\s*[^,\n ]+", r"\1=***", message)
     message = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", message)
+    message = re.sub(r"https?://[^\s]+", "[URL]", message, flags=re.IGNORECASE)
     return message[:220]
 
 
@@ -4062,9 +4405,8 @@ def _send_telegram_reply(
         respect_voice_reply_state
         and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
     )
-    voice_authority: _TelegramVoiceSpeakAuthority | None = None
     if voice_requested:
-        voice_authority = _telegram_voice_speak_authority(
+        turn_intent_payload = _telegram_voice_speak_turn_intent_payload(
             update_payload=turn_intent_update_payload,
             existing_turn_intent_payload=turn_intent_payload,
             state_db=state_db,
@@ -4075,7 +4417,7 @@ def _send_telegram_reply(
             user_message=user_message or text,
             source_kind="telegram_reply_voice_delivery",
         )
-        if voice_authority is None:
+        if not isinstance(turn_intent_payload, dict):
             voice_requested = False
     if voice_requested:
         filtered_text = _repair_voice_delivery_denial(filtered_text, voice_available=True)
@@ -4123,8 +4465,7 @@ def _send_telegram_reply(
                     caption_text=voice_caption_text,
                     coherence_mode="caption_preview" if voice_text is not None else "exact",
                     voice_input_runtime_state=voice_input_runtime_state,
-                    turn_intent_payload=voice_authority.turn_intent_payload if voice_authority else None,
-                    governor_decision=voice_authority.governor_decision if voice_authority else None,
+                    turn_intent_payload=turn_intent_payload,
                 )
                 delivery_medium = "audio"
             except Exception as exc:
@@ -4132,8 +4473,9 @@ def _send_telegram_reply(
                 guarded["actions"] = ["voice_reply_fallback_to_text", *list(guarded["actions"])]
                 if force_voice:
                     fallback_text = (
-                        "I answered in text because the voice audio step is not ready yet.\n\n"
-                        f"Reason: {_safe_voice_error_message(exc)}"
+                        "The voice step failed, so I couldn't send audio. "
+                        f"{voice_error}\n\n"
+                        "Run `/voice onboard local`, then try `/voice speak ...` again."
                     )
                     guarded["text"] = fallback_text
                     guarded["chunks"] = [fallback_text]
@@ -4291,6 +4633,7 @@ def _send_telegram_reply(
             "routing_decision": routing_decision,
             "active_chip_key": active_chip_key,
             "active_chip_task_type": active_chip_task_type,
+            "request_id": request_id,
             "trace_ref": trace_ref,
             "output_keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
@@ -4615,6 +4958,16 @@ def _render_telegram_route_probe_help(*, route_name: str) -> str:
 def _render_telegram_route_probe_reply(probe: Any) -> str:
     status = str(getattr(probe, "status", "") or "unknown")
     capability_key = str(getattr(probe, "capability_key", "") or "unknown")
+    if capability_key == "spark_swarm":
+        if status == "success":
+            return (
+                "✨ Swarm's local payload route is ready. "
+                "That proves local shaping, not a hosted sync."
+            )
+        return (
+            "⚠️ Swarm's local payload isn't ready yet. "
+            "Connect a specialization path, then run `/probe swarm` again."
+        )
     lines = [
         f"Route probe: {capability_key}",
         f"Status: {status}",
@@ -4666,7 +5019,13 @@ def _render_telegram_capability_ledger_review(*, config_manager: ConfigManager, 
         for entry in entries.values()
         if isinstance(entry, dict) and str(entry.get("status") or "") in _TELEGRAM_LEDGER_REVIEW_STATES
     ]
-    review_entries.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    review_entries.sort(
+        key=lambda item: (
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("capability_ledger_key") or ""),
+        ),
+        reverse=True,
+    )
     command_args = str(requested_command or "").strip().split(maxsplit=1)
     read_only_note = ""
     if len(command_args) > 1:
@@ -4850,6 +5209,7 @@ def _handle_runtime_command_impl(
     style_command = explicit_style_command or natural_style_command
     natural_voice_command = _match_natural_voice_command(normalized)
     natural_think_command = _match_natural_think_command(normalized)
+    explicit_think_command = lowered if lowered in {"/think", "/think on", "/think off"} else None
     if _is_memory_doctor_help_request(normalized):
         return {
             "command": "/memory doctor help",
@@ -4869,20 +5229,6 @@ def _handle_runtime_command_impl(
     elif natural_memory_doctor_command is not None:
         memory_doctor_command = dict(natural_memory_doctor_command)
     if memory_doctor_command is not None:
-        authority = authorize_builder_bridge_action(
-            update_payload,
-            tool_name="memory.diagnose",
-            owner_system="spark-intelligence-builder",
-            mutation_class="read_only",
-        )
-        if not authority.allowed:
-            return {
-                "command": "/memory doctor",
-                "reply_text": _render_memory_doctor_authority_blocked_reply(
-                    reason_codes=authority.reason_codes,
-                ),
-                "respect_voice_reply_state": True,
-            }
         return _handle_memory_doctor_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -4890,9 +5236,12 @@ def _handle_runtime_command_impl(
             session_id=session_id or "",
             current_request_id=request_id or "",
             human_id=human_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            inbound_text=normalized,
+            update_payload=update_payload,
             command=memory_doctor_command,
         )
-    explicit_think_command = lowered if lowered in {"/think", "/think on", "/think off"} else None
     if style_command is not None:
         return _handle_style_command(
             config_manager=config_manager,
@@ -6852,15 +7201,6 @@ def _render_memory_doctor_help_reply() -> str:
     )
 
 
-def _render_memory_doctor_authority_blocked_reply(*, reason_codes: tuple[str, ...]) -> str:
-    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
-    return (
-        "I can run Memory Doctor, but this turn is missing Spark authority for memory diagnostics.\n"
-        f"Reason: {reason_text}.\n"
-        "Send it as a fresh authorized memory diagnostic and I will inspect the trace."
-    )
-
-
 def _handle_memory_doctor_runtime_command(
     *,
     config_manager: ConfigManager,
@@ -6869,10 +7209,99 @@ def _handle_memory_doctor_runtime_command(
     session_id: str,
     current_request_id: str,
     human_id: str | None,
+    agent_id: str | None,
+    run_id: str | None,
+    inbound_text: str,
+    update_payload: dict[str, Any] | None,
     command: dict[str, object],
 ) -> dict[str, Any]:
-    request_selector = str(command.get("request_selector") or "").strip() or None
-    request_id = str(command.get("request_id") or "").strip() or None
+    target = dict(command)
+    if bool(target.get("help_requested")):
+        return {
+            "command": "/memory doctor",
+            "reply_text": _render_memory_doctor_help(),
+            "respect_voice_reply_state": True,
+        }
+    if (
+        str(target.get("request_selector") or "").strip() == "previous_gateway_turn"
+        and "contextual_trigger_signals" not in target
+    ):
+        target.update(
+            _memory_doctor_contextual_metadata_for_previous_turn(
+                inbound_text=inbound_text,
+                config_manager=config_manager,
+                external_user_id=external_user_id,
+                session_id=session_id,
+                current_request_id=current_request_id,
+            )
+        )
+
+    resolved_request_id = current_request_id or f"telegram-memory-doctor:{uuid4().hex}"
+    resolved_human_id = human_id or f"human:telegram:{external_user_id}"
+    authority_payload = update_payload
+    if not isinstance(authority_payload, dict) or (
+        extract_turn_intent_envelope(authority_payload) is None
+        and extract_turn_intent_envelope_vnext(authority_payload) is None
+    ):
+        source_kind = _detect_telegram_memory_diagnostic_authority_source_kind(
+            config_manager=config_manager,
+            external_user_id=external_user_id,
+            session_id=session_id,
+            request_id=resolved_request_id,
+            user_message=inbound_text,
+        ) or "telegram_runtime_memory_doctor_direct"
+        legacy_payload = build_telegram_memory_diagnostic_turn_intent_payload(
+            request_id=resolved_request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=resolved_human_id,
+            source_kind=source_kind,
+        )
+        vnext_payload = build_telegram_memory_diagnostic_turn_intent_payload_vnext(
+            request_id=resolved_request_id,
+            channel_kind="telegram",
+            session_id=session_id,
+            human_id=resolved_human_id,
+            source_kind=source_kind,
+        )
+        if legacy_payload is not None:
+            base_payload: dict[str, Any] = dict(authority_payload) if isinstance(authority_payload, dict) else {}
+            if not isinstance(base_payload.get("message"), dict):
+                base_payload["message"] = {"text": inbound_text}
+            authority_payload = _attach_telegram_turn_intent_payloads(
+                base_payload,
+                legacy_payload=legacy_payload,
+                vnext_payload=vnext_payload,
+            )
+
+    authority = authorize_builder_bridge_action(
+        authority_payload,
+        tool_name="memory.diagnose",
+        owner_system="spark-intelligence-builder",
+        mutation_class="read_only",
+        state_db=state_db,
+        request_id=resolved_request_id,
+        run_id=run_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=resolved_human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        component="telegram_runtime",
+    )
+    if not authority.allowed:
+        return {
+            "command": "/memory doctor",
+            "reply_text": _render_memory_doctor_authority_blocked_reply(
+                reason_codes=authority.reason_codes,
+            ),
+            "respect_voice_reply_state": True,
+            "tool_result_status": "failure",
+            "tool_result_summary": "Memory Doctor was blocked by Spark authority.",
+        }
+
+    request_selector = str(target.get("request_selector") or "").strip() or None
+    request_id = str(target.get("request_id") or "").strip() or None
     previous_record: dict[str, object] | None = None
     if request_selector == "previous_gateway_turn" and not request_id:
         previous_record = _memory_doctor_previous_gateway_record(
@@ -6882,17 +7311,17 @@ def _handle_memory_doctor_runtime_command(
             current_request_id=current_request_id,
         )
         request_id = str(previous_record.get("request_id") or "").strip() if previous_record else None
-    topic = str(command.get("topic") or "").strip() or None
+    topic = str(target.get("topic") or "").strip() or None
     report = run_memory_doctor(
         state_db,
         config_manager=config_manager,
-        human_id=human_id,
+        human_id=resolved_human_id,
         topic=topic,
         request_id=request_id,
-        repair_requested=bool(command.get("repair_requested", False)),
+        repair_requested=bool(target.get("repair_requested", False)),
     )
     metadata = _memory_doctor_runtime_metadata(
-        command=command,
+        command=target,
         report_ok=report.ok,
         diagnosed_request_id=request_id,
         previous_record=previous_record,
@@ -6909,11 +7338,7 @@ def _handle_memory_doctor_runtime_command(
         "respect_voice_reply_state": True,
         "runtime_command_metadata": metadata,
         "tool_result_status": "success" if report.ok else "failure",
-        "tool_result_summary": (
-            "Memory Doctor completed with a healthy result."
-            if report.ok
-            else "Memory Doctor completed with findings."
-        ),
+        "tool_result_summary": "Memory Doctor completed with a healthy result." if report.ok else "Memory Doctor completed with findings.",
     }
 
 
@@ -6970,6 +7395,21 @@ def _match_natural_memory_doctor_command(inbound_text: str) -> dict[str, object]
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+    if simplified in {
+        "memory doctor help",
+        "help memory doctor",
+        "how do i use memory doctor",
+        "how to use memory doctor",
+        "what is memory doctor",
+    }:
+        return {
+            "command": "/memory doctor",
+            "topic": None,
+            "request_id": None,
+            "request_selector": None,
+            "repair_requested": False,
+            "help_requested": True,
+        }
     if simplified in {
         "memory doctor",
         "show memory doctor",
@@ -7064,6 +7504,10 @@ def _match_contextual_memory_doctor_command(
     session_id: str,
     current_request_id: str,
 ) -> dict[str, object] | None:
+    if _contextual_memory_doctor_boundary_blocks(inbound_text):
+        return None
+    if _memory_mutation_request_preempts_contextual_doctor(inbound_text):
+        return None
     simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
     previous_record = _memory_doctor_previous_gateway_record(
         config_manager=config_manager,
@@ -7074,15 +7518,23 @@ def _match_contextual_memory_doctor_command(
     )
     if previous_record is None:
         return None
-    distress_signals = _memory_doctor_distress_signals(simplified)
+    current_signals = _memory_doctor_distress_signals(simplified)
+    signal_names = [str(signal["name"]) for signal in current_signals]
+    score = sum(int(signal["weight"]) for signal in current_signals)
     previous_failure_signals = _memory_doctor_previous_failure_signals(previous_record)
-    score = sum(int(signal["weight"]) for signal in distress_signals)
-    threshold = 4
-    contextual_signal_names = [str(signal["name"]) for signal in distress_signals]
-    if previous_failure_signals:
+    previous_failure_signal = bool(previous_failure_signals)
+    identity_signal = _memory_doctor_identity_correction_signal(
+        simplified_text=simplified,
+        previous_record=previous_record,
+    )
+    if identity_signal and identity_signal not in signal_names:
+        signal_names.append(identity_signal)
+        score += 4
+    if previous_failure_signal:
         score += 2
-        threshold = 3
-        contextual_signal_names.append("previous_turn_memory_failure_signal")
+        if "previous_turn_memory_failure_signal" not in signal_names:
+            signal_names.append("previous_turn_memory_failure_signal")
+    threshold = 3 if previous_failure_signal else 4
     if score < threshold:
         return None
     previous_metadata = previous_record.get("runtime_command_metadata") if isinstance(previous_record, dict) else None
@@ -7097,13 +7549,124 @@ def _match_contextual_memory_doctor_command(
         "repair_requested": False,
         "contextual_trigger_score": score,
         "contextual_trigger_threshold": threshold,
-        "contextual_trigger_signals": contextual_signal_names,
+        "contextual_trigger_signals": signal_names,
+        "previous_failure_signal": previous_failure_signal,
         "previous_failure_signals": previous_failure_signals,
     }
 
 
+def _memory_doctor_contextual_metadata_for_previous_turn(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    external_user_id: str,
+    session_id: str,
+    current_request_id: str,
+) -> dict[str, object]:
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", str(inbound_text or "").lower()).split())
+    current_signals = _memory_doctor_distress_signals(simplified)
+    signal_names = [str(signal["name"]) for signal in current_signals]
+    score = sum(int(signal["weight"]) for signal in current_signals)
+    previous_record = _memory_doctor_previous_gateway_record(
+        config_manager=config_manager,
+        external_user_id=external_user_id,
+        session_id=session_id,
+        current_request_id=current_request_id,
+    )
+    previous_failure_signals = (
+        _memory_doctor_previous_failure_signals(previous_record)
+        if previous_record is not None
+        else []
+    )
+    previous_failure_signal = bool(previous_failure_signals)
+    if previous_record is not None:
+        identity_signal = _memory_doctor_identity_correction_signal(
+            simplified_text=simplified,
+            previous_record=previous_record,
+        )
+        if identity_signal and identity_signal not in signal_names:
+            signal_names.append(identity_signal)
+            score += 4
+    if previous_failure_signal:
+        score += 2
+        if "previous_turn_memory_failure_signal" not in signal_names:
+            signal_names.append("previous_turn_memory_failure_signal")
+    threshold = 3 if previous_failure_signal else 4
+    if not signal_names and not previous_failure_signal:
+        return {}
+    if _memory_doctor_previous_turn_request_is_operational(simplified) and (
+        not signal_names or set(signal_names).issubset({"memory_context_reference", "previous_turn_memory_failure_signal"})
+    ):
+        return {}
+    if score < threshold:
+        return {}
+    return {
+        "contextual_trigger_score": score,
+        "contextual_trigger_threshold": threshold,
+        "contextual_trigger_signals": signal_names,
+        "previous_failure_signal": previous_failure_signal,
+        "previous_failure_signals": previous_failure_signals,
+    }
+
+
+def _memory_doctor_previous_turn_request_is_operational(simplified_text: str) -> bool:
+    text = str(simplified_text or "").strip().lower()
+    if not text:
+        return False
+    if text.startswith("/memory doctor"):
+        return True
+    return bool(
+        re.match(
+            (
+                r"^(?:run|show|check|diagnose|audit)\s+"
+                r"(?:(?:memory\s+doctor|memory)\s+(?:for\s+)?)?"
+                r"(?:last|latest|previous)\s+(?:request|turn|message|telegram\s+turn)$"
+            ),
+            text,
+        )
+        or re.match(
+            r"^memory\s+doctor\s+(?:for\s+)?(?:last|latest|previous)\s+(?:request|turn|message|telegram\s+turn)$",
+            text,
+        )
+    )
+
+
 def _memory_doctor_distress_score(simplified_text: str) -> int:
     return sum(int(signal["weight"]) for signal in _memory_doctor_distress_signals(simplified_text))
+
+
+def _contextual_memory_doctor_boundary_blocks(inbound_text: str) -> bool:
+    text = str(inbound_text or "").strip()
+    if not text:
+        return True
+    if has_conversation_only_boundary(text):
+        return True
+    lowered = text.casefold()
+    return bool(
+        re.search(
+            r"\b(?:for\s+example|just\s+(?:an?\s+)?example|example\s+only|quoted\s+example|"
+            r"bug\s+report|hypothetical|not\s+a\s+(?:command|request|instruction))\b",
+            lowered,
+        )
+        and re.search(r"\b(?:memory|remember|recall|context|doctor|diagnos|previous|last)\b", lowered)
+    )
+
+
+def _memory_mutation_request_preempts_contextual_doctor(inbound_text: str) -> bool:
+    text = str(inbound_text or "").strip()
+    if not text or memory_write_boundary_blocks_adapter_authority(text):
+        return False
+    if detect_instruction_intent(text) is not None:
+        return True
+    if _detect_telegram_memory_authority_source_kind(text) is not None:
+        return True
+    return bool(
+        re.match(
+            r"^(?:please\s+)?(?:remember\s+(?:this|that)|save\s+(?:this|that)|memory\s+update)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, object]]:
@@ -7148,7 +7711,10 @@ def _memory_doctor_distress_signals(simplified_text: str) -> list[dict[str, obje
     if re.search(r"\b(?:why|what|where|how come|did you|do you|can you)\b", text):
         signals.append({"name": "diagnostic_question", "weight": 1})
     if re.search(
-        r"\b(?:not\s+[a-z][a-z0-9_-]*|wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+)\b",
+        (
+            r"\b(?:wrong\s+name|that(?:s|'s)?\s+not\s+my\s+name|you\s+called\s+me\s+\w+|"
+            r"(?:i(?:'m|\s+am)\s+)?not\s+(?:called|named)\s+\w+|my\s+name\s+is\s+not\s+\w+)\b"
+        ),
         text,
     ):
         signals.append({"name": "identity_correction_after_wrong_name", "weight": 2})
@@ -7174,6 +7740,8 @@ def _memory_doctor_previous_failure_signals(record: dict[str, object] | None) ->
     response_preview = str(record.get("response_preview") or "").lower()
     route_text = f"{record.get('bridge_mode') or ''} {record.get('routing_decision') or ''}".lower()
     signals: list[str] = []
+    if bool(record.get("_memory_doctor_prior_diagnostic_failed")):
+        signals.append("previous_memory_doctor_needs_attention")
     close_turn_markers = (
         "what did i just",
         "what phrase did i",
@@ -7207,13 +7775,120 @@ def _memory_doctor_previous_failure_signals(record: dict[str, object] | None) ->
         signals.append("previous_user_close_turn_probe")
     if any(marker in response_preview for marker in blank_response_markers):
         signals.append("previous_response_context_gap")
-    if any(marker in response_preview for marker in identity_conflict_markers) or (
-        "maya" in response_preview and ("name is" in user_preview or "not maya" in user_preview)
+    if (
+        "researcher_advisory" in route_text
+        and "previous" in user_preview
+        and "previous_response_context_gap" not in signals
     ):
-        signals.append("previous_response_identity_conflict")
+        signals.append("previous_response_context_gap")
     if "researcher_advisory" in route_text and "previous" in user_preview:
         signals.append("previous_researcher_previous_turn_route")
+    response_has_wrong_name = "maya" in response_preview and (
+        "not maya" in user_preview
+        or " cem" in user_preview
+        or "written name" in user_preview
+        or "pronounced" in user_preview
+        or "name is" in user_preview
+    )
+    response_repeated_identity_question = "what should i call you" in response_preview and user_preview.startswith("not ")
+    if (
+        response_has_wrong_name
+        or response_repeated_identity_question
+        or any(marker in response_preview for marker in identity_conflict_markers)
+    ):
+        signals.append("previous_response_identity_conflict")
+        if response_repeated_identity_question and "previous_response_context_gap" not in signals:
+            signals.append("previous_response_context_gap")
     return list(dict.fromkeys(signals))
+
+
+def _memory_doctor_identity_correction_signal(
+    *,
+    simplified_text: str,
+    previous_record: dict[str, object],
+) -> str | None:
+    previous_signals = _memory_doctor_previous_failure_signals(previous_record)
+    if "previous_response_identity_conflict" not in previous_signals:
+        return None
+    text = str(simplified_text or "").strip().lower()
+    if re.match(r"^not\s+[a-z][a-z0-9_-]{1,40}$", text):
+        return "identity_correction_after_wrong_name"
+    if "wrong name" in text or "not my name" in text:
+        return "identity_correction_after_wrong_name"
+    return None
+
+
+def _render_memory_doctor_help() -> str:
+    return "\n".join(
+        [
+            "Memory Doctor helps when memory or close context feels wrong.",
+            "Try: run memory doctor for last request",
+            "Try: you lost the thread",
+            "Try: run memory doctor for <topic>",
+        ]
+    )
+
+
+def _build_memory_doctor_runtime_metadata(
+    *,
+    target: dict[str, object],
+    diagnosed_request_id: str | None,
+    report_ok: bool,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "command": "/memory doctor",
+        "topic": str(target.get("topic") or "").strip() or None,
+        "diagnosed_request_id": diagnosed_request_id,
+        "request_selector": str(target.get("request_selector") or "").strip() or None,
+        "repair_requested": bool(target.get("repair_requested")),
+        "memory_doctor_ok": bool(report_ok),
+    }
+    for key in (
+        "contextual_trigger_score",
+        "contextual_trigger_threshold",
+        "contextual_trigger_signals",
+        "previous_failure_signal",
+        "previous_failure_signals",
+    ):
+        if key in target:
+            metadata[key] = target[key]
+    return metadata
+
+
+def _render_memory_doctor_runtime_reply(*, report_text: str, metadata: dict[str, object]) -> str:
+    trigger_line = _memory_doctor_trigger_line(metadata)
+    if not trigger_line:
+        return report_text
+    lines = str(report_text or "").splitlines()
+    if not lines:
+        return trigger_line
+    return "\n".join([lines[0], trigger_line, *lines[1:]])
+
+
+def _render_memory_doctor_authority_blocked_reply(*, reason_codes: tuple[str, ...]) -> str:
+    reason_text = ", ".join(reason_codes) if reason_codes else "turn_not_authorized"
+    return (
+        "I can run Memory Doctor, but this turn is missing Spark authority for memory diagnostics.\n"
+        f"Reason: {reason_text}.\n"
+        "Send it as a fresh authorized memory diagnostic and I will inspect the trace."
+    )
+
+
+def _memory_doctor_trigger_line(metadata: dict[str, object]) -> str | None:
+    signals = [str(item) for item in (metadata.get("contextual_trigger_signals") or [])]
+    previous_failure = bool(metadata.get("previous_failure_signal"))
+    if "identity_correction_after_wrong_name" in signals:
+        return "Trigger: identity correction complaint; previous turn looked like memory failure."
+    if "close_turn_repeat_frustration" in signals:
+        suffix = "; previous turn looked like memory failure" if previous_failure else ""
+        return f"Trigger: close-turn repeat complaint{suffix}."
+    if "memory_context_reference" in signals or "memory_distress_verb" in signals:
+        suffix = "; previous turn looked like memory failure" if previous_failure else ""
+        return f"Trigger: memory/context loss complaint{suffix}."
+    if "operator_frustration" in signals and previous_failure:
+        return "Trigger: operator frustration; previous turn looked like memory failure."
+    return None
+
 
 def _memory_doctor_target_from_slash_command(inbound_text: str) -> dict[str, str | None]:
     suffix = str(inbound_text or "")[len("/memory doctor") :].strip()
@@ -7280,18 +7955,19 @@ def _memory_doctor_previous_gateway_record(
         traces = read_gateway_traces(config_manager, limit=80)
     except Exception:
         return None
-    normalized_user_id = str(external_user_id or "").strip()
-    normalized_session_id = str(session_id or "").strip()
+    normalized_user_refs = _gateway_trace_user_filter_refs(external_user_id)
+    normalized_session_refs = _gateway_trace_session_filter_refs(session_id)
     normalized_current_request_id = str(current_request_id or "").strip()
+    failed_diagnostic_request_ids: set[str] = set()
     for record in reversed(traces):
         if str(record.get("event") or "") != "telegram_update_processed":
             continue
         request_id = str(record.get("request_id") or "").strip()
         if not request_id or request_id == normalized_current_request_id:
             continue
-        if normalized_user_id and str(record.get("telegram_user_id") or "").strip() != normalized_user_id:
+        if normalized_user_refs and not normalized_user_refs.intersection(_gateway_trace_record_user_refs(record)):
             continue
-        if normalized_session_id and str(record.get("session_id") or "").strip() != normalized_session_id:
+        if normalized_session_refs and str(record.get("session_id") or "").strip() not in normalized_session_refs:
             continue
         metadata = record.get("runtime_command_metadata")
         is_memory_doctor_record = isinstance(metadata, dict) and str(metadata.get("command") or "") == "/memory doctor"
@@ -7299,6 +7975,11 @@ def _memory_doctor_previous_gateway_record(
             continue
         preview = str(record.get("user_message_preview") or "").strip()
         preview_lower = preview.lower()
+        metadata = record.get("runtime_command_metadata") if isinstance(record.get("runtime_command_metadata"), dict) else {}
+        diagnosed_request_id = str(metadata.get("diagnosed_request_id") or "").strip()
+        if str(metadata.get("command") or "") == "/memory doctor" and diagnosed_request_id:
+            if metadata.get("memory_doctor_ok") is False:
+                failed_diagnostic_request_ids.add(diagnosed_request_id)
         if not include_memory_doctor and (
             preview_lower.startswith("/memory doctor") or _match_natural_memory_doctor_command(preview)
         ):
@@ -7306,8 +7987,70 @@ def _memory_doctor_previous_gateway_record(
         response_preview = str(record.get("response_preview") or "").strip().lower()
         if response_preview.startswith("memory doctor:") and not include_memory_doctor:
             continue
+        if (
+            preview_lower.startswith("/memory doctor")
+            or _match_natural_memory_doctor_command(preview)
+            or str(record.get("bridge_mode") or "") == "runtime_command"
+            or str(record.get("routing_decision") or "") == "runtime_command"
+            or str(record.get("command") or "") == "/memory doctor"
+        ):
+            continue
+        if request_id in failed_diagnostic_request_ids:
+            enriched = dict(record)
+            enriched["_memory_doctor_prior_diagnostic_failed"] = True
+            return enriched
         return record
     return None
+
+
+def _gateway_trace_user_filter_refs(value: str) -> set[str]:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return set()
+    return {
+        normalized,
+        trace_identity_ref("telegram_user", normalized),
+        trace_identity_ref("external_user", normalized),
+        trace_identity_ref("user", normalized),
+        trace_identity_ref("chat", normalized),
+    }
+
+
+def _gateway_trace_session_filter_refs(value: str) -> set[str]:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return set()
+    refs = {normalized}
+    try:
+        from spark_intelligence.gateway.tracing import redact_session_id
+
+        once = redact_session_id(normalized)
+        twice = redact_session_id(once)
+        refs.update(ref for ref in (once, twice) if ref)
+    except Exception:
+        pass
+    return refs
+
+
+def _gateway_trace_record_user_refs(record: dict[str, object]) -> set[str]:
+    refs: set[str] = set()
+    for key, label in (
+        ("telegram_user_ref", "telegram_user"),
+        ("telegram_user_id", "telegram_user"),
+        ("external_user_ref", "external_user"),
+        ("external_user_id", "external_user"),
+        ("user_ref", "user"),
+        ("user_id", "user"),
+        ("chat_ref", "chat"),
+        ("chat_id", "chat"),
+    ):
+        value = str(record.get(key) or "").strip()
+        if not value:
+            continue
+        refs.add(value)
+        if ":sha256:" not in value:
+            refs.add(trace_identity_ref(label, value))
+    return refs
 
 
 def _clean_memory_doctor_request_id(value: str) -> str:
@@ -8039,6 +8782,29 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
     return "\n".join(lines)
 
 
+def _humanize_created_at_for_operator(raw: str | None, *, now: datetime | None = None) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return text
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    reference = now or datetime.now(timezone.utc)
+    seconds = max(0, int((reference - parsed.astimezone(timezone.utc)).total_seconds()))
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes} minute ago" if minutes == 1 else f"{minutes} minutes ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hour ago" if hours == 1 else f"{hours} hours ago"
+    if seconds < 172800:
+        return f"yesterday at {parsed.astimezone(timezone.utc).strftime('%H:%M UTC')}"
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d at %H:%M UTC")
+
+
 def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
     if not rows:
         return (
@@ -8052,7 +8818,7 @@ def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
         created_at = str(row.get("created_at") or "").strip()
         detail = name
         if created_at:
-            detail += f" at {created_at}"
+            detail += f" at {_humanize_created_at_for_operator(created_at)} ({created_at})"
         if summary:
             detail += f": {summary}"
         lines.append(f"{index}. {detail}")
@@ -10446,13 +11212,10 @@ def _normalize_telegram_voice_provider_id(value: str) -> str | None:
 
 
 def _render_telegram_voice_transcription_unavailable_reply(*, reason: str) -> str:
-    cleaned_reason = " ".join(str(reason or "").strip().split())
-    lines = [
-        "Voice transcription is unavailable right now.",
-        f"Reason: {cleaned_reason or 'the runtime could not transcribe this Telegram audio message.'}",
-        "Next: send the instruction as text for now, or finish the `spark-voice-comms` setup.",
-    ]
-    return "\n".join(lines)
+    return (
+        "I received the voice note, but I could not transcribe it from this Spark runtime yet. "
+        "Please send the instruction as text for this turn, or run `/voice doctor` when you want to check the voice setup."
+    )
 
 
 def _render_telegram_voice_not_ready_reply(*, message_kind: str) -> str:
@@ -10613,7 +11376,7 @@ def _handle_telegram_chip_command(
         blocked_stage="telegram_reply",
         run_id=run_id,
         request_id=request_id,
-        trace_ref=_canonical_bridge_trace_ref(agent_id=agent_id, human_id=human_id, request_id=request_id),
+        trace_ref=f"trace:telegram:{request_id}",
     )
     if not screened["allowed"]:
         return _with_tool_result_metadata(
@@ -10811,10 +11574,9 @@ def _render_direct_chip_execution_reply(
     payload_mode: str,
 ) -> str:
     if not getattr(execution, "ok", False):
-        return (
-            f"Chip `{execution.chip_key}` `{hook}` failed.\n"
-            f"Reason: {_with_terminal_period(_extract_chip_execution_error(execution))}"
-        )
+        reason = _with_terminal_period(_extract_chip_execution_error(execution))
+        reason = reason[:1].upper() + reason[1:]
+        return f"⚠️ {execution.chip_key} couldn’t finish `{hook}`. {reason}"
     output = execution.output if isinstance(getattr(execution, "output", None), dict) else {}
     result = output.get("result") if isinstance(output.get("result"), dict) else {}
     reply_text = str(result.get("reply_text") or output.get("reply_text") or "").strip()
@@ -10832,12 +11594,31 @@ def _render_direct_chip_execution_reply(
             output=output,
             payload_mode=payload_mode,
         )
-    visible_output = json.dumps(output, indent=2, sort_keys=True)[:1500] if output else "No result payload."
-    return (
-        f"Chip `{execution.chip_key}` `{hook}` completed.\n"
-        f"Input mode: {payload_mode}.\n"
-        f"Output:\n{visible_output}"
+    if not output:
+        return f"✨ {execution.chip_key} finished `{hook}`. It didn’t return a result payload."
+    visible_output = _render_direct_chip_output_preview(output)
+    return f"✨ {execution.chip_key} finished `{hook}`. Here’s what it returned:\n\n{visible_output}"
+
+
+def _render_direct_chip_output_preview(output: dict[str, Any], *, limit: int = 1500) -> str:
+    encoded = _mark_unsafe_chip_preview_unicode(
+        json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False)
     )
+    if len(encoded) <= limit:
+        return encoded
+    return encoded[: max(limit - 1, 0)] + "…"
+
+
+def _mark_unsafe_chip_preview_unicode(text: str) -> str:
+    rendered = text
+    for character, name in INVISIBLE_UNICODE_CHARS.items():
+        if character in {"\u200c", "\u200d"}:
+            continue
+        rendered = rendered.replace(
+            character,
+            f"[blocked invisible unicode U+{ord(character):04X} {name}]",
+        )
+    return rendered
 
 
 def _render_direct_chip_evaluate_reply(
@@ -11125,7 +11906,14 @@ def _render_swarm_insights_reply(payload: list[dict[str, Any]]) -> str:
     ]
     if not actionable:
         return "Swarm insights:\nNo absorbable insights are waiting right now."
-    ranked = sorted(actionable, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:5]
+    ranked = sorted(
+        actionable,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )[:5]
     lines = [f"Swarm insights:\n{len(actionable)} absorbable insight(s)."]
     for item in ranked:
         lines.append(
@@ -11145,7 +11933,10 @@ def _render_swarm_scoped_insights_reply(payload: dict[str, Any]) -> str:
         return f"Swarm insights for {label}:\nNo absorbable insights are waiting right now."
     ranked = sorted(
         [item for item in actionable if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm insights for {label}:\n{len(actionable)} absorbable insight(s)."]
@@ -11165,7 +11956,10 @@ def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
         return "Swarm masteries:\nNo mastery records are available right now."
     ranked = sorted(
         [item for item in masteries if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm masteries:\n{len(masteries)} mastery record(s)."]
@@ -11187,7 +11981,10 @@ def _render_swarm_scoped_masteries_reply(payload: dict[str, Any]) -> str:
         return f"Swarm masteries for {label}:\nNo mastery records are available right now."
     ranked = sorted(
         [item for item in records if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm masteries for {label}:\n{len(records)} mastery record(s)."]
@@ -11224,7 +12021,14 @@ def _render_swarm_upgrades_reply(payload: list[dict[str, Any]]) -> str:
     pending = [item for item in upgrades if isinstance(item, dict) and str(item.get("status") or "") in pending_statuses]
     if not pending:
         return "Swarm upgrades:\nNo pending upgrades are waiting right now."
-    recent = sorted(pending, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:3]
+    recent = sorted(
+        pending,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )[:3]
     lines = [f"Swarm upgrades:\n{len(pending)} pending upgrade(s)."]
     for item in recent:
         lines.append(
@@ -11243,7 +12047,10 @@ def _render_swarm_scoped_upgrades_reply(payload: dict[str, Any]) -> str:
         return f"Swarm upgrades for {label}:\nNo pending upgrades are waiting right now."
     recent = sorted(
         [item for item in pending if isinstance(item, dict)],
-        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
         reverse=True,
     )[:5]
     lines = [f"Swarm upgrades for {label}:\n{len(pending)} pending upgrade(s)."]
@@ -11342,8 +12149,8 @@ def _render_swarm_bridge_run_reply(result: Any) -> str:
         return _render_swarm_bridge_failure("run", result)
     path_key = str(getattr(result, "path_key", "") or "unknown")
     path_label = _humanize_swarm_path_key(path_key)
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         f"{path_label} run completed.\n"
         f"Artifacts: {artifacts_path}. Collective payload: {payload_path}.\n"
@@ -11569,7 +12376,7 @@ def _render_swarm_latest_round_detail_lines(
         )
     )
     if latest_round_summary_path:
-        lines.append(f"Round artifact: {latest_round_summary_path}.")
+        lines.append("Round artifact: written locally.")
     return lines
 
 
@@ -11693,8 +12500,8 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
     if not getattr(result, "ok", False):
         return _render_swarm_bridge_failure("rerun request", result)
     path_key = str(getattr(result, "path_key", "") or "latest open path")
-    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
-    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    artifacts_path = _describe_swarm_local_artifact(getattr(result, "artifacts_path", None), fallback="unknown")
+    payload_path = _describe_swarm_local_artifact(getattr(result, "payload_path", None), fallback="not written")
     return (
         "Swarm rerun request executed.\n"
         f"Path: {path_key}.\n"
@@ -11704,26 +12511,32 @@ def _render_swarm_bridge_rerun_reply(result: Any) -> str:
 
 
 def _render_swarm_bridge_failure(action: str, result: Any) -> str:
+    exit_code = int(getattr(result, "exit_code", 1) or 1)
     stdout = str(getattr(result, "stdout", "") or "").strip()
     stderr = str(getattr(result, "stderr", "") or "").strip()
-    detail = "Command failed — see server logs for details."
     raw_detail = stderr or stdout
     if raw_detail:
-        # Retain the raw subprocess output server-side for diagnosis; it is
-        # deliberately not forwarded to the Telegram reply (can leak paths,
-        # tokens and other internal detail).
         logging.getLogger(__name__).debug(
             "swarm bridge %s failed (exit_code=%s): %s",
             action,
-            int(getattr(result, "exit_code", 1) or 1),
+            exit_code,
             raw_detail,
         )
-    lines = [
-        f"Swarm {action} failed.",
-        f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
-        detail[:800],
-    ]
-    return "\n".join(lines)
+    return "\n".join(
+        (
+            f"Swarm {action} failed. It returned exit code {exit_code}.",
+            "I kept the diagnostic details out of this chat.",
+        )
+    )
+
+
+def _describe_swarm_local_artifact(value: Any, *, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if text.lower() in {"unknown", "not written"}:
+        return text
+    return "written locally"
 
 
 def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:
@@ -12550,7 +13363,14 @@ def _resolve_natural_swarm_absorb_target(
                 f"No absorbable insights matched {label}. Use `/swarm insights` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     reason = str(match.group("reason") or "").strip()
     if not reason:
         reason = f"Recorded from Telegram natural-language request: {normalized}"
@@ -12598,7 +13418,14 @@ def _resolve_natural_swarm_review_target(
                 f"No mastery records matched {label}. Use `/swarm masteries` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     reason = str(match.group("reason") or "").strip()
     if not reason:
         reason = f"Recorded from Telegram natural-language request: {normalized}"
@@ -12690,7 +13517,14 @@ def _resolve_latest_swarm_upgrade_target(
                 f"No pending upgrades matched {label}. Use `/swarm upgrades` to pick an exact ID."
             ),
         }
-    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("updatedAt") or item.get("createdAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
     return {
         "upgrade_id": str(ranked[0].get("id") or ""),
     }

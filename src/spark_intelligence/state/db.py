@@ -67,8 +67,8 @@ SCHEMA_STATEMENTS = [
         issuer TEXT,
         account_subject TEXT,
         scope TEXT,
-        access_token TEXT,
-        refresh_token TEXT,
+        access_token_ciphertext TEXT,
+        refresh_token_ciphertext TEXT,
         access_expires_at TEXT,
         refresh_expires_at TEXT,
         last_refresh_at TEXT,
@@ -236,6 +236,17 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS gateway_webhook_request_claims (
+        surface TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        signed_at_epoch INTEGER NOT NULL,
+        expires_at_epoch INTEGER NOT NULL,
+        claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (surface, request_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS builder_runs (
         run_id TEXT PRIMARY KEY,
         run_kind TEXT NOT NULL,
@@ -266,7 +277,6 @@ SCHEMA_STATEMENTS = [
         parent_event_id TEXT,
         correlation_id TEXT,
         request_id TEXT,
-        turn_id TEXT,
         trace_ref TEXT,
         channel_id TEXT,
         session_id TEXT,
@@ -291,7 +301,6 @@ SCHEMA_STATEMENTS = [
         workspace_id TEXT,
         trace_ref TEXT,
         request_id TEXT,
-        turn_id TEXT,
         run_id TEXT,
         session_id TEXT,
         surface_kind TEXT,
@@ -804,7 +813,6 @@ SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_builder_events_run_id ON builder_events(run_id, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_builder_events_turn_id ON builder_events(turn_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_events_type ON builder_events(event_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_type_recorded_at ON event_log(event_type, recorded_at)",
@@ -812,6 +820,7 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_event_log_turn_id ON event_log(turn_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_builder_events_turn_id ON builder_events(turn_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_updated_at ON tool_call_ledger(updated_at DESC, created_at DESC, ledger_id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_turn_id ON tool_call_ledger(turn_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_tool_call_ledger_surface ON tool_call_ledger(surface, updated_at)",
@@ -899,14 +908,6 @@ class ClosingConnection(sqlite3.Connection):
         return False
 
 
-def _rename_column_if_exists(conn: sqlite3.Connection, table: str, old_name: str, new_name: str) -> None:
-    """Rename a column if it exists. Idempotent for repeat initialization."""
-    quoted_table = _quote_sqlite_identifier(table)
-    columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({quoted_table})").fetchall()}
-    if old_name in columns and new_name not in columns:
-        conn.execute(f"ALTER TABLE {quoted_table} RENAME COLUMN {_quote_sqlite_identifier(old_name)} TO {_quote_sqlite_identifier(new_name)}")
-
-
 class StateDB:
     def __init__(self, path: Path):
         self.path = path
@@ -928,9 +929,6 @@ class StateDB:
             self._ensure_column(conn, "tool_call_ledger", "created_at", "TEXT")
             self._ensure_column(conn, "bot_drafts", "updated_at", "TEXT")
             conn.execute("UPDATE bot_drafts SET updated_at = created_at WHERE updated_at IS NULL")
-            # Migration: rename misleading ciphertext columns (tokens stored plaintext)
-            _rename_column_if_exists(conn, "oauth_credentials", "access_token_ciphertext", "access_token")
-            _rename_column_if_exists(conn, "oauth_credentials", "refresh_token_ciphertext", "refresh_token")
             for statement in SCHEMA_STATEMENTS:
                 if _is_index_statement(statement):
                     conn.execute(statement)
@@ -974,7 +972,12 @@ class StateDB:
             conn.execute(
                 """
                 INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
-                VALUES ('observability:retention', 'observability_retention', 'scheduled', 'builtin:observability_retention')
+                VALUES (
+                    'observability:retention-preview',
+                    'observability_retention_preview',
+                    'scheduled',
+                    'builtin:observability_retention_preview'
+                )
                 ON CONFLICT(job_id) DO UPDATE SET
                     job_kind=excluded.job_kind,
                     status=excluded.status,
@@ -985,7 +988,12 @@ class StateDB:
             conn.execute(
                 """
                 INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
-                VALUES ('harness:self-evolution-observe', 'harness_self_evolution_observe', 'scheduled', 'builtin:harness_self_evolution_observe')
+                VALUES (
+                    'harness:self-evolution-observe',
+                    'harness_self_evolution_observe',
+                    'scheduled',
+                    'builtin:harness_self_evolution_observe'
+                )
                 ON CONFLICT(job_id) DO UPDATE SET
                     job_kind=excluded.job_kind,
                     status=excluded.status,
@@ -993,14 +1001,21 @@ class StateDB:
                     updated_at=CURRENT_TIMESTAMP
                 """
             )
+            from spark_intelligence.auth.token_crypto import (
+                migrate_and_validate_oauth_tokens,
+            )
+
+            migrate_and_validate_oauth_tokens(conn, self.path.parent)
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10, factory=ClosingConnection)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.DatabaseError:
+            conn.close()
+            raise
         return conn
 
     @staticmethod

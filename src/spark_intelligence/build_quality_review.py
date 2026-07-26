@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.runtime_discovery import resolve_installed_module_source
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
+
+
+_ROUTE_TOKEN_PATTERN = re.compile(r"/[A-Za-z0-9][A-Za-z0-9_/-]*")
 
 
 _QUALITY_QUERY_SIGNALS = (
@@ -204,8 +208,11 @@ def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
         path = Path(str(root)).expanduser()
         if path.name == "spark-memory-quality-dashboard":
             return str(path)
-    desktop_path = Path.home() / ".spark" / "memory" / "spark-memory-quality-dashboard"
-    return str(desktop_path) if desktop_path.exists() else None
+    installed = resolve_installed_module_source("spark-memory-quality-dashboard", config_manager=config_manager)
+    if installed is not None:
+        return str(installed)
+    fallback_path = Path.home() / ".spark" / "memory" / "spark-memory-quality-dashboard"
+    return str(fallback_path) if fallback_path.exists() else None
 
 
 def _run_git(repo: Path, args: list[str]) -> str | None:
@@ -246,7 +253,7 @@ def _collect_route_evidence(repo: Path, *, user_message: str) -> dict[str, Any]:
 
 def _extract_routes(user_message: str) -> list[str]:
     routes: list[str] = []
-    for match in re.findall(r"/[A-Za-z0-9][A-Za-z0-9_/-]*", str(user_message or "")):
+    for match in _ROUTE_TOKEN_PATTERN.findall(str(user_message or "")):
         normalized = "/" + "/".join(part for part in match.split("/") if part)
         if normalized not in routes:
             routes.append(normalized)

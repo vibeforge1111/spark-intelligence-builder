@@ -13,7 +13,6 @@ from spark_intelligence.bridge_authority import (
 )
 from spark_intelligence.identity.service import resolve_inbound_dm
 from spark_intelligence.observability.store import record_event
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 
 
@@ -22,6 +21,20 @@ class SimulatedDmBridgeResult:
     ok: bool
     decision: str
     detail: dict[str, Any]
+
+
+def build_researcher_reply(**kwargs: Any) -> Any:
+    from spark_intelligence.researcher_bridge.advisory import build_researcher_reply as _build_researcher_reply
+
+    return _build_researcher_reply(**kwargs)
+
+
+def record_researcher_bridge_result(**kwargs: Any) -> None:
+    from spark_intelligence.researcher_bridge.advisory import (
+        record_researcher_bridge_result as _record_researcher_bridge_result,
+    )
+
+    _record_researcher_bridge_result(**kwargs)
 
 
 def resolve_simulated_dm(

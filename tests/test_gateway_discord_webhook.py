@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from nacl.signing import SigningKey
 
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.gateway.runtime import gateway_trace_view
-from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
+from spark_intelligence.gateway.discord_webhook import (
+    DISCORD_WEBHOOK_PATH,
+    _claim_discord_interaction_request,
+    handle_discord_webhook,
+)
 from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.ops.service import _build_webhook_alerts
 
 from tests.test_support import SparkTestCase
 
@@ -39,7 +46,8 @@ class DiscordWebhookIngressTests(SparkTestCase):
         )
 
     @staticmethod
-    def _signed_headers(signing_key: SigningKey, body: bytes, *, timestamp: str = "1700000000") -> dict[str, str]:
+    def _signed_headers(signing_key: SigningKey, body: bytes, *, timestamp: str | None = None) -> dict[str, str]:
+        timestamp = timestamp or str(int(time.time()))
         signature = signing_key.sign(timestamp.encode("utf-8") + body).signature.hex()
         return {
             "X-Signature-Ed25519": signature,
@@ -157,6 +165,38 @@ class DiscordWebhookIngressTests(SparkTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
+    def test_unresolved_webhook_secret_ref_stays_out_of_public_error(self) -> None:
+        secret_ref = "INTERNAL_DISCORD_WEBHOOK_SECRET_REF"
+        self._add_discord_channel(webhook_secret=None, allow_legacy_message_webhook=True)
+        self.config_manager.set_path("channels.records.discord.webhook_auth_ref", secret_ref)
+
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={"X-Spark-Webhook-Secret": "discord-webhook-secret"},
+            body=b"{}",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
+        self.assertNotIn(secret_ref, response.body)
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="discord",
+                event="discord_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertIn(secret_ref, traces[0]["reason"])
+
     def test_rejects_legacy_message_webhook_when_compatibility_is_disabled(self) -> None:
         self._add_discord_channel(allow_legacy_message_webhook=False)
         response = handle_discord_webhook(
@@ -239,6 +279,174 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body), {"type": 1})
+
+    def test_rejects_stale_and_far_future_signed_timestamps(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 1}).encode("utf-8")
+
+        with patch("spark_intelligence.gateway.discord_webhook.time.time", return_value=1_700_000_000):
+            for timestamp in ("1699999699", "1700000301"):
+                with self.subTest(timestamp=timestamp):
+                    response = handle_discord_webhook(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        path=DISCORD_WEBHOOK_PATH,
+                        method="POST",
+                        content_type="application/json",
+                        headers=self._signed_headers(signing_key, body, timestamp=timestamp),
+                        body=body,
+                    )
+
+                    self.assertEqual(response.status_code, 401)
+                    self.assertEqual(json.loads(response.body)["error"], "Discord webhook authentication failed.")
+
+    def test_accepts_signed_timestamp_at_clock_skew_boundary(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 1}).encode("utf-8")
+
+        with patch("spark_intelligence.gateway.discord_webhook.time.time", return_value=1_700_000_000):
+            for timestamp in ("1699999700", "1700000300"):
+                with self.subTest(timestamp=timestamp):
+                    response = handle_discord_webhook(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        path=DISCORD_WEBHOOK_PATH,
+                        method="POST",
+                        content_type="application/json",
+                        headers=self._signed_headers(signing_key, body, timestamp=timestamp),
+                        body=body,
+                    )
+
+                    self.assertEqual(response.status_code, 200)
+
+    def test_rejects_non_ascii_or_non_integer_signed_timestamps(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 1}).encode("utf-8")
+
+        for timestamp in ("nan", "1700000000.0", "1.7e9", "+1700000000", "١٧٠٠٠٠٠٠٠٠"):
+            with self.subTest(timestamp=timestamp):
+                response = handle_discord_webhook(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    path=DISCORD_WEBHOOK_PATH,
+                    method="POST",
+                    content_type="application/json",
+                    headers=self._signed_headers(signing_key, body, timestamp=timestamp),
+                    body=body,
+                )
+
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(json.loads(response.body)["error"], "Discord webhook authentication failed.")
+
+    def test_rejects_replayed_signed_interaction_before_mission_resolution(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps(
+            {
+                "id": "interaction-replay-1",
+                "type": 2,
+                "channel_id": "dm-1",
+                "context": 1,
+                "user": {"id": "user-1", "username": "alice"},
+                "data": {
+                    "type": 1,
+                    "name": "spark",
+                    "options": [{"name": "message", "type": 3, "value": "run this once"}],
+                },
+            }
+        ).encode("utf-8")
+        headers = self._signed_headers(signing_key, body)
+
+        with patch("spark_intelligence.gateway.discord_webhook.resolve_simulated_dm") as resolve_simulated_dm:
+            resolve_simulated_dm.return_value.ok = True
+            resolve_simulated_dm.return_value.decision = "allowed"
+            resolve_simulated_dm.return_value.detail = {
+                "response_text": "done once",
+                "bridge_mode": "external_autodiscovered",
+                "trace_ref": "trace:discord-replay",
+                "output_keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            }
+            first = handle_discord_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=DISCORD_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers=headers,
+                body=body,
+            )
+            replay = handle_discord_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=DISCORD_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers=headers,
+                body=body,
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(replay.status_code, 409)
+        self.assertEqual(json.loads(replay.body)["error"], "Discord interaction was already received.")
+        resolve_simulated_dm.assert_called_once()
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="discord",
+                event="discord_interaction_replay_rejected",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertNotIn("interaction-replay-1", json.dumps(traces))
+        alerts = _build_webhook_alerts(traces=traces, state_db=self.state_db)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["status"], "replay_rejected")
+        self.assertIn("Discord interaction replay rejected", alerts[0]["summary"])
+
+    def test_interaction_replay_claim_is_atomic_across_connections(self) -> None:
+        now_epoch = int(time.time())
+
+        def claim(_: int) -> bool:
+            return _claim_discord_interaction_request(
+                state_db=self.state_db,
+                interaction_id="interaction-concurrent-claim",
+                payload_sha256="a" * 64,
+                signed_at_epoch=now_epoch,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(claim, range(8)))
+
+        self.assertEqual(results.count(True), 1)
+        self.assertEqual(results.count(False), 7)
+
+    def test_rejects_signed_non_ping_interaction_without_durable_id(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 2, "user": {"id": "user-1"}}).encode("utf-8")
+
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            json.loads(response.body)["error"],
+            "Discord interaction payload is missing its interaction id.",
+        )
 
     def test_handles_signed_application_command_in_dm_context(self) -> None:
         signing_key = SigningKey.generate()
