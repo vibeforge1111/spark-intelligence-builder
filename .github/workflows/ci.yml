@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: vibeforge1111/spark-harness-core
-          ref: e34cddb1094d170dc2d77eb6da8489310afc3a4a
+          ref: f3641143f1c3f28f55178faefcea57fd443c98bc
           path: spark-harness-core
           token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
 
@@ -110,7 +110,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: vibeforge1111/spark-harness-core
-          ref: e34cddb1094d170dc2d77eb6da8489310afc3a4a
+          ref: f3641143f1c3f28f55178faefcea57fd443c98bc
           path: spark-harness-core
           token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
 

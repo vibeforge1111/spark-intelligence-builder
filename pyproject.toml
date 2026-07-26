@@ -15,7 +15,7 @@ dependencies = [
   "PyYAML>=6.0",
   "referencing>=0.35.0",
   "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a",
-  "spark-harness-core @ git+https://github.com/vibeforge1111/spark-harness-core.git@e34cddb1094d170dc2d77eb6da8489310afc3a4a",
+  "spark-harness-core @ git+https://github.com/vibeforge1111/spark-harness-core.git@f3641143f1c3f28f55178faefcea57fd443c98bc",
 ]
 
 [project.scripts]

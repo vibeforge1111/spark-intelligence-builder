@@ -438,7 +438,7 @@ dependencies = [
 [[package]]
 name = "spark-harness-core"
 version = "0.1.0"
-source = { git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=e34cddb1094d170dc2d77eb6da8489310afc3a4a#e34cddb1094d170dc2d77eb6da8489310afc3a4a" }
+source = { git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=f3641143f1c3f28f55178faefcea57fd443c98bc#f3641143f1c3f28f55178faefcea57fd443c98bc" }
 dependencies = [
     { name = "jsonschema" },
     { name = "referencing" },
@@ -464,7 +464,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "referencing", specifier = ">=0.35.0" },
     { name = "spark-character", git = "https://github.com/vibeforge1111/spark-character.git?rev=7ac95d3230e81cfbb8c0b808bfffaf0ec5f74c3a" },
-    { name = "spark-harness-core", git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=e34cddb1094d170dc2d77eb6da8489310afc3a4a" },
+    { name = "spark-harness-core", git = "https://github.com/vibeforge1111/spark-harness-core.git?rev=f3641143f1c3f28f55178faefcea57fd443c98bc" },
 ]
 
 [[package]]
