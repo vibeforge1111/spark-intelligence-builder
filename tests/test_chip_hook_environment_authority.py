@@ -10,10 +10,16 @@ from spark_intelligence.attachments.hooks import execute_chip_hook_record
 from spark_intelligence.attachments.registry import AttachmentRecord
 
 
-def _record(repo_root: Path, *, command: list[str]) -> AttachmentRecord:
+def _record(
+    repo_root: Path,
+    *,
+    command: list[str],
+    kind: str = "chip",
+    key: str = "environment-probe",
+) -> AttachmentRecord:
     return AttachmentRecord(
-        kind="chip",
-        key="environment-probe",
+        kind=kind,
+        key=key,
         label="Environment probe",
         repo_root=str(repo_root),
         manifest_path=str(repo_root / "spark-chip.json"),
@@ -171,3 +177,115 @@ Path(args.output).write_text(
         )
 
     assert execution.output["result"]["task"] == "keep the explicit contract"
+
+
+def test_voice_chip_gets_managed_voice_credentials_only_at_canonical_root(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "spark-voice-comms"
+    repo_root.mkdir()
+    script = _write_environment_probe(repo_root)
+    ambient = {
+        "SPARK_VOICE_COMMS_ROOT": str(repo_root),
+        "VOICE_OPENAI_API_KEY": "voice-openai-test-key",
+        "ELEVENLABS_API_KEY": "elevenlabs-test-key",
+    }
+
+    with patch.dict(os.environ, ambient, clear=False), patch(
+        "spark_intelligence.attachments.hooks._verify_chip_hook_governor_authority",
+        return_value={"allowed": True},
+    ):
+        execution = execute_chip_hook_record(
+            _record(
+                repo_root,
+                command=[sys.executable, str(script)],
+                key="spark-voice-comms",
+            ),
+            hook="evaluate",
+            payload={},
+            governor_decision={"allowed": True},
+        )
+
+    child_env = execution.output["result"]["env"]
+    assert child_env["VOICE_OPENAI_API_KEY"] == "voice-openai-test-key"
+    assert child_env["ELEVENLABS_API_KEY"] == "elevenlabs-test-key"
+
+
+def test_voice_credentials_are_scrubbed_for_forged_or_non_voice_chip_roots(
+    tmp_path: Path,
+) -> None:
+    trusted_root = tmp_path / "trusted-spark-voice-comms"
+    forged_root = tmp_path / "forged-spark-voice-comms"
+    ordinary_root = tmp_path / "ordinary-chip"
+    trusted_root.mkdir()
+    forged_root.mkdir()
+    ordinary_root.mkdir()
+    forged_script = _write_environment_probe(forged_root)
+    ordinary_script = _write_environment_probe(ordinary_root)
+    ambient = {
+        "SPARK_VOICE_COMMS_ROOT": str(trusted_root),
+        "VOICE_OPENAI_API_KEY": "voice-openai-test-key",
+        "ELEVENLABS_API_KEY": "elevenlabs-test-key",
+    }
+
+    with patch.dict(os.environ, ambient, clear=False), patch(
+        "spark_intelligence.attachments.hooks._verify_chip_hook_governor_authority",
+        return_value={"allowed": True},
+    ):
+        forged = execute_chip_hook_record(
+            _record(
+                forged_root,
+                command=[sys.executable, str(forged_script)],
+                key="spark-voice-comms",
+            ),
+            hook="evaluate",
+            payload={},
+            governor_decision={"allowed": True},
+        )
+        ordinary = execute_chip_hook_record(
+            _record(
+                ordinary_root,
+                command=[sys.executable, str(ordinary_script)],
+                key="ordinary-chip",
+            ),
+            hook="evaluate",
+            payload={},
+            governor_decision={"allowed": True},
+        )
+
+    for execution in (forged, ordinary):
+        child_env = execution.output["result"]["env"]
+        assert "VOICE_OPENAI_API_KEY" not in child_env
+        assert "ELEVENLABS_API_KEY" not in child_env
+
+
+def test_voice_chip_stays_scrubbed_without_a_trusted_root(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "spark-voice-comms"
+    repo_root.mkdir()
+    script = _write_environment_probe(repo_root)
+    ambient = {
+        "SPARK_VOICE_COMMS_ROOT": "",
+        "VOICE_OPENAI_API_KEY": "voice-openai-test-key",
+        "ELEVENLABS_API_KEY": "elevenlabs-test-key",
+    }
+
+    with patch.dict(os.environ, ambient, clear=False), patch(
+        "spark_intelligence.attachments.hooks._verify_chip_hook_governor_authority",
+        return_value={"allowed": True},
+    ):
+        execution = execute_chip_hook_record(
+            _record(
+                repo_root,
+                command=[sys.executable, str(script)],
+                key="spark-voice-comms",
+            ),
+            hook="evaluate",
+            payload={},
+            governor_decision={"allowed": True},
+        )
+
+    child_env = execution.output["result"]["env"]
+    assert "VOICE_OPENAI_API_KEY" not in child_env
+    assert "ELEVENLABS_API_KEY" not in child_env

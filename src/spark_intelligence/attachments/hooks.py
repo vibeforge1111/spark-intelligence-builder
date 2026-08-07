@@ -183,6 +183,10 @@ _MINIMAL_ENV_KEYS = {
     "PYTHONPATH", "PYTHONDONTWRITEBYTECODE",
 }
 
+VOICE_CHIP_KEY = "spark-voice-comms"
+VOICE_CHIP_ROOT_ENV = "SPARK_VOICE_COMMS_ROOT"
+VOICE_CHIP_SECRET_ENV_KEYS = frozenset({"VOICE_OPENAI_API_KEY", "ELEVENLABS_API_KEY"})
+
 
 def _build_minimal_chip_env(record: AttachmentRecord, repo_root: Path) -> dict[str, str]:
     """Build minimal environment for chip hook subprocesses.
@@ -478,7 +482,38 @@ def _build_chip_hook_environment(
         env["PYTHONPATH"] = str(src_root)
     env.update(_windows_chip_runtime_environment())
     env.update(_runtime_env_overrides(record))
+    env.update(_trusted_voice_chip_secret_environment(record=record, repo_root=repo_root))
     return env
+
+
+def _trusted_voice_chip_secret_environment(
+    *,
+    record: AttachmentRecord,
+    repo_root: Path,
+) -> dict[str, str]:
+    """Allow managed Voice credentials only into the canonical Voice chip subprocess.
+
+    Chip hooks otherwise receive a scrubbed environment.  A chip key is not enough to
+    establish this exception: the discovered attachment root must also resolve to the
+    non-secret canonical root supplied by the installer/runtime.
+    """
+    if record.kind != "chip" or record.key != VOICE_CHIP_KEY:
+        return {}
+    trusted_root_raw = str(os.environ.get(VOICE_CHIP_ROOT_ENV) or "").strip()
+    if not trusted_root_raw:
+        return {}
+    try:
+        trusted_root = Path(trusted_root_raw).expanduser().resolve(strict=False)
+        resolved_record_root = repo_root.expanduser().resolve(strict=False)
+    except OSError:
+        return {}
+    if resolved_record_root != trusted_root:
+        return {}
+    return {
+        key: value
+        for key in VOICE_CHIP_SECRET_ENV_KEYS
+        if (value := os.environ.get(key)) is not None
+    }
 
 
 def _chip_hook_executable_path() -> str:

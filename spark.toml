@@ -28,7 +28,7 @@ binary = "spark-intelligence"
 [needs]
 modules = ["spark-harness-core"]
 capabilities = []
-secrets = ["voice.elevenlabs.api_key"]
+secrets = ["voice.elevenlabs.api_key", "voice.openai.api_key"]
 
 [claims]
 secrets = []
@@ -40,6 +40,12 @@ prompt = "Optional ElevenLabs API key for hosted Spark voice TTS"
 required = false
 storage = "keychain"
 env_var = "ELEVENLABS_API_KEY"
+
+[secrets.voice_openai_api_key]
+prompt = "Optional OpenAI API key for hosted Spark voice transcription and realtime TTS"
+required = false
+storage = "keychain"
+env_var = "VOICE_OPENAI_API_KEY"
 
 [healthcheck]
 command = "python -c \"import spark_intelligence.cli; print('Spark runtime core is importable.')\""
