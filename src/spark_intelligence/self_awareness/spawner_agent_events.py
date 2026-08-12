@@ -126,7 +126,7 @@ def _spawner_ledger_candidates(config_manager: ConfigManager) -> list[Path]:
     user_home = Path.home()
     candidates.extend(
         [
-            user_home / "Desktop" / "spawner-ui" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH,
+            user_home / ".spark" / "spawner-ui" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH,
             user_home / ".spark" / "modules" / "spawner-ui" / "source" / DEFAULT_SPAWNER_LEDGER_RELATIVE_PATH,
         ]
     )
