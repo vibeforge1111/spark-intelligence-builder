@@ -898,7 +898,7 @@ def _discover_module_root(config_manager: ConfigManager, module_name: str) -> Pa
             home / "modules" / module_name / "source",
             home.parent / "modules" / module_name / "source",
             Path.home() / ".spark" / "modules" / module_name / "source",
-            Path.home() / "Desktop" / module_name,
+            Path.home() / ".spark" / "modules" / module_name,
         ]
     for candidate in candidates:
         if candidate.exists():
