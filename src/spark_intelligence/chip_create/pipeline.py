@@ -747,7 +747,9 @@ def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
             patched = patched.replace(marker, marker + "\n" + shim + "\n", 1)
         else:
             patched = shim + "\n" + patched
-        cli_path.write_text(patched, encoding="utf-8")
+        _tmp = cli_path.with_suffix(cli_path.suffix + ".tmp")
+        _tmp.write_text(patched, encoding="utf-8")
+        _tmp.replace(cli_path)
 
 
 def _builtin_starter_scaffold_chip(brief: dict[str, Any], output_dir: Path) -> str:
