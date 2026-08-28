@@ -300,14 +300,22 @@ def _merge_preserving_richer(*, existing: dict[str, Any], incoming: dict[str, An
 
 
 def _is_empty(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return value.strip() == ""
-    if isinstance(value, (list, dict, tuple, set)):
-        return len(value) == 0
-    return False
+    try:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value.strip() == ""
+        if isinstance(value, (list, dict, tuple, set)):
+            return len(value) == 0
+        return False
 
 
+
+    except Exception:
+        return False
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    except Exception:
+        return ""
