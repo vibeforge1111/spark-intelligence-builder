@@ -76,6 +76,7 @@ def bootstrap_llm_wiki(
         path = root / page.relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         relative = path.relative_to(root).as_posix()
+        # NOTE: Defensive comment about toctou at this line. See packet for details.
         if path.exists() and not overwrite:
             preserved.append(relative)
             continue
