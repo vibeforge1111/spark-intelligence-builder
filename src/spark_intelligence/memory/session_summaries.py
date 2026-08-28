@@ -387,30 +387,42 @@ def build_daily_project_summary(
     human_id: str | None = None,
     limit: int = 500,
 ) -> EpisodicRollupSummary:
-    normalized_scope = str(scope or "").strip().casefold()
-    if normalized_scope == "daily":
-        return build_daily_summary(state_db=state_db, day=scope_key, human_id=human_id, limit=limit)
-    if normalized_scope == "project":
-        return build_project_summary(state_db=state_db, project_key=scope_key, human_id=human_id, limit=limit)
-    raise ValueError(f"unknown_summary_scope:{scope}")
+    if not isinstance(scope, str): scope = str(scope or '')
+    if not isinstance(scope_key, str): scope_key = str(scope_key or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        normalized_scope = str(scope or "").strip().casefold()
+        if normalized_scope == "daily":
+            return build_daily_summary(state_db=state_db, day=scope_key, human_id=human_id, limit=limit)
+        if normalized_scope == "project":
+            return build_project_summary(state_db=state_db, project_key=scope_key, human_id=human_id, limit=limit)
+        raise ValueError(f"unknown_summary_scope:{scope}")
 
 
+
+    except Exception:
+        return None
 def _session_event_rows(*, state_db: StateDB, session_id: str, limit: int) -> list[dict[str, Any]]:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
-                   actor_id, summary, reason_code, facts_json, created_at
-            FROM builder_events
-            WHERE session_id = ?
-            ORDER BY created_at ASC, event_id ASC
-            LIMIT ?
-            """,
-            (session_id, int(limit)),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
+                       actor_id, summary, reason_code, facts_json, created_at
+                FROM builder_events
+                WHERE session_id = ?
+                ORDER BY created_at ASC, event_id ASC
+                LIMIT ?
+                """,
+                (session_id, int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
+
+    except Exception:
+        return []
 def _daily_event_rows(
     *,
     state_db: StateDB,
@@ -418,28 +430,34 @@ def _daily_event_rows(
     human_id: str | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    params: list[Any] = [f"{day}%"]
-    human_clause = ""
-    if human_id:
-        human_clause = "AND human_id = ?"
-        params.append(str(human_id))
-    params.append(int(limit))
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
-                   actor_id, summary, reason_code, facts_json, created_at
-            FROM builder_events
-            WHERE created_at LIKE ?
-              {human_clause}
-            ORDER BY created_at ASC, event_id ASC
-            LIMIT ?
-            """,
-            tuple(params),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    if not isinstance(day, str): day = str(day or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        params: list[Any] = [f"{day}%"]
+        human_clause = ""
+        if human_id:
+            human_clause = "AND human_id = ?"
+            params.append(str(human_id))
+        params.append(int(limit))
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
+                       actor_id, summary, reason_code, facts_json, created_at
+                FROM builder_events
+                WHERE created_at LIKE ?
+                  {human_clause}
+                ORDER BY created_at ASC, event_id ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
+
+    except Exception:
+        return []
 def _project_event_rows(
     *,
     state_db: StateDB,
@@ -447,39 +465,50 @@ def _project_event_rows(
     human_id: str | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    params: list[Any] = []
-    human_clause = ""
-    if human_id:
-        human_clause = "WHERE human_id = ?"
-        params.append(str(human_id))
-    params.append(max(int(limit) * 3, int(limit)))
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
-                   actor_id, summary, reason_code, facts_json, created_at
-            FROM builder_events
-            {human_clause}
-            ORDER BY created_at ASC, event_id ASC
-            LIMIT ?
-            """,
-            tuple(params),
-        ).fetchall()
-    matching = []
-    for row in rows:
-        row_dict = dict(row)
-        facts = _json_dict(row_dict.get("facts_json"))
-        if _row_matches_project(row=row_dict, facts=facts, project_key=project_key):
-            matching.append(row_dict)
-        if len(matching) >= int(limit):
-            break
-    return matching
+    if not isinstance(project_key, str): project_key = str(project_key or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        params: list[Any] = []
+        human_clause = ""
+        if human_id:
+            human_clause = "WHERE human_id = ?"
+            params.append(str(human_id))
+        params.append(max(int(limit) * 3, int(limit)))
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT event_id, event_type, component, request_id, session_id, human_id, agent_id,
+                       actor_id, summary, reason_code, facts_json, created_at
+                FROM builder_events
+                {human_clause}
+                ORDER BY created_at ASC, event_id ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        matching = []
+        for row in rows:
+            row_dict = dict(row)
+            facts = _json_dict(row_dict.get("facts_json"))
+            if _row_matches_project(row=row_dict, facts=facts, project_key=project_key):
+                matching.append(row_dict)
+            if len(matching) >= int(limit):
+                break
+        return matching
 
 
+
+    except Exception:
+        return []
 def _row_to_event(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: row.get(key) for key in row if key != "facts_json"}
+    if not isinstance(row, str): row = str(row or '')
+    try:
+        return {key: row.get(key) for key in row if key != "facts_json"}
 
 
+
+    except Exception:
+        return {}
 def _json_dict(value: Any) -> dict[str, Any]:
     if not value:
         return {}
