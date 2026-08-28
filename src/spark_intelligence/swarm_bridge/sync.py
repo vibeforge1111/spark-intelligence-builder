@@ -1977,7 +1977,10 @@ def _get_swarm_api_json(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def _request_swarm_api_json(
@@ -2003,7 +2006,10 @@ def _request_swarm_api_json(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def _post_collective_payload(
@@ -2025,7 +2031,10 @@ def _post_collective_payload(
     )
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def _normalize_collective_payload(payload: dict[str, Any]) -> bool:

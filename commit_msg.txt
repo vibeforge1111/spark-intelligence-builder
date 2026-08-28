@@ -1,0 +1,9 @@
+fix: remove hardcoded debug log path that writes user messages to disk
+
+_maybe_save_reply_as_draft() contained a debug logging block that
+wrote to a hardcoded path C:/Users/USER/Desktop/.../draft_capture_probe.log.
+This creates directories and writes user message content (first 120 chars)
+to disk on every call in production.
+
+The debug block was clearly left over from local development and should
+not be in production code.
