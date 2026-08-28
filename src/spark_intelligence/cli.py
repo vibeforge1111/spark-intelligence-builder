@@ -5844,6 +5844,20 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
     results: list[dict[str, object]] = []
     total_entries = len(pack_entries)
     for index, entry in enumerate(pack_entries, start=1):
+        # Each gateway_ask_telegram is a full LLM gateway round-trip (seconds to
+        # tens of seconds per entry); without a per-entry progress line the
+        # operator running `spark-intelligence gateway shadow-telegram-pack` on
+        # a 20-entry pack stares at a blank terminal for minutes. The line
+        # goes to stderr so the stdout text/JSON payload at the bottom of the
+        # handler is byte-identical for downstream pipes.
+        try:
+            print(
+                f"[{index}/{total_entries}] running shadow Telegram pack entry...",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
         try:
             print(
                 f"[{index}/{total_entries}] running shadow Telegram pack entry...",
