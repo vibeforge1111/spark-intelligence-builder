@@ -21,6 +21,17 @@ automatically (bounded to +-0.05 per evolution cycle).
 
 from __future__ import annotations
 
+def _safe_json_loads(text: str, default=None):
+    """Safely parse JSON, returning default on error."""
+    if not text:
+        return default if default is not None else {}
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default if default is not None else {}
+
+
+
 import json
 import logging
 import re
@@ -1012,9 +1023,9 @@ def load_agent_persona_profile(
                 ).fetchone()
                 if not row:
                     continue
-                base_traits = json.loads(row["base_traits_json"] or "{}")
-                behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-                provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+                base_traits = _safe_json_loads(row["base_traits_json"] or "{}")
+                behavioral_rules = _safe_json_loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+                provenance = _safe_json_loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
                 return {
                     "agent_id": candidate_agent_id,
                     "persona_name": _read_optional_text(row["persona_name"]),
@@ -1174,9 +1185,9 @@ def pop_agent_persona_undo_snapshot(
             (row["snapshot_id"],),
         )
         conn.commit()
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    base_traits = _safe_json_loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+    behavioral_rules = _safe_json_loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+    provenance = _safe_json_loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
     return save_agent_persona_profile(
         agent_id=storage_agent_id,
         human_id=human_id,
@@ -1280,9 +1291,9 @@ def load_agent_persona_savepoint(
         ).fetchone()
     if not row:
         return None
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    base_traits = _safe_json_loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+    behavioral_rules = _safe_json_loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+    provenance = _safe_json_loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
     return {
         "savepoint_id": row["savepoint_id"],
         "savepoint_name": row["savepoint_name"],
@@ -1319,9 +1330,9 @@ def restore_agent_persona_savepoint(
         ).fetchone()
     if not row:
         return None
-    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
-    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    base_traits = _safe_json_loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+    behavioral_rules = _safe_json_loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+    provenance = _safe_json_loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
     return save_agent_persona_profile(
         agent_id=storage_agent_id,
         human_id=human_id,
@@ -2275,7 +2286,7 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[
             ).fetchone()
         if not row or not row["value"]:
             return {}
-        data = json.loads(row["value"])
+        data = _safe_json_loads(row["value"])
         # Deltas are nested under "deltas" key
         deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
         return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
@@ -3214,7 +3225,7 @@ def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[
                 (_observation_state_key(human_id),),
             ).fetchone()
         if row and row["value"]:
-            data = json.loads(row["value"])
+            data = _safe_json_loads(row["value"])
             return data.get("observations", []) if isinstance(data, dict) else []
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
         _LOGGER.debug(
@@ -3286,7 +3297,7 @@ def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str
                 (_evolution_log_state_key(human_id),),
             ).fetchone()
         if row and row["value"]:
-            data = json.loads(row["value"])
+            data = _safe_json_loads(row["value"])
             return data.get("events", []) if isinstance(data, dict) else []
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
         _LOGGER.debug(
