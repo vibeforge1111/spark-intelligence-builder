@@ -102,7 +102,7 @@ def promote_llm_wiki_user_note(
         raise FileExistsError(f"user-specific wiki note already exists: {relative_path}")
 
     warnings: list[str] = []
-    if status == "verified" and len(evidence) == 0:
+    if status == "verified" and not evidence:
         warnings.append("verified_user_note_without_explicit_evidence_ref")
     if status == "candidate":
         warnings.append("candidate_user_note_requires_consent_review_before_reuse")
