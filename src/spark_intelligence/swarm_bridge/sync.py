@@ -2029,60 +2029,81 @@ def _post_collective_payload(
 
 
 def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
-    changed = False
-    if _normalize_runtime_source(payload):
-        changed = True
-    if _normalize_contradictions(payload):
-        changed = True
-    return changed
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        changed = False
+        if _normalize_runtime_source(payload):
+            changed = True
+        if _normalize_contradictions(payload):
+            changed = True
+        return changed
 
 
+
+    except Exception:
+        return False
 def _normalize_collective_workspace(payload: dict[str, Any], workspace_id: str) -> bool:
-    workspace_value = payload.get("workspaceId")
-    if workspace_value is None or (isinstance(workspace_value, str) and not workspace_value.strip()):
-        payload["workspaceId"] = workspace_id
-        return True
-    return False
-
-
-def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
-    runtime_source = payload.get("runtimeSource")
-    if not isinstance(runtime_source, dict):
-        runtime_source = {}
-        payload["runtimeSource"] = runtime_source
-
-    changed = False
-    agent_id = str(payload.get("agentId") or "").strip()
-    if agent_id and not str(runtime_source.get("sourceInstanceId") or "").strip():
-        runtime_source["sourceInstanceId"] = agent_id
-        changed = True
-
-    emitted_at = str(payload.get("emittedAt") or "").strip()
-    runtime_kind = str(runtime_source.get("kind") or "spark_researcher").strip() or "spark_researcher"
-    run_prefix = "spark-researcher" if runtime_kind == "spark_researcher" else runtime_kind.replace("_", "-")
-    if emitted_at and not str(runtime_source.get("sourceRunId") or "").strip():
-        runtime_source["sourceRunId"] = f"{run_prefix}:{emitted_at}"
-        changed = True
-
-    return changed
-
-
-def _normalize_contradictions(payload: dict[str, Any]) -> bool:
-    contradictions = payload.get("contradictions")
-    if not isinstance(contradictions, list):
+    if not isinstance(payload, str): payload = str(payload or '')
+    if not isinstance(workspace_id, str): workspace_id = str(workspace_id or '')
+    try:
+        workspace_value = payload.get("workspaceId")
+        if workspace_value is None or (isinstance(workspace_value, str) and not workspace_value.strip()):
+            payload["workspaceId"] = workspace_id
+            return True
         return False
 
-    changed = False
-    for contradiction in contradictions:
-        if not isinstance(contradiction, dict):
-            continue
-        status = str(contradiction.get("status") or "").strip().lower()
-        if not status:
-            contradiction["status"] = "open"
+
+
+    except Exception:
+        return False
+def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        runtime_source = payload.get("runtimeSource")
+        if not isinstance(runtime_source, dict):
+            runtime_source = {}
+            payload["runtimeSource"] = runtime_source
+
+        changed = False
+        agent_id = str(payload.get("agentId") or "").strip()
+        if agent_id and not str(runtime_source.get("sourceInstanceId") or "").strip():
+            runtime_source["sourceInstanceId"] = agent_id
             changed = True
-    return changed
+
+        emitted_at = str(payload.get("emittedAt") or "").strip()
+        runtime_kind = str(runtime_source.get("kind") or "spark_researcher").strip() or "spark_researcher"
+        run_prefix = "spark-researcher" if runtime_kind == "spark_researcher" else runtime_kind.replace("_", "-")
+        if emitted_at and not str(runtime_source.get("sourceRunId") or "").strip():
+            runtime_source["sourceRunId"] = f"{run_prefix}:{emitted_at}"
+            changed = True
+
+        return changed
 
 
+
+    except Exception:
+        return False
+def _normalize_contradictions(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        contradictions = payload.get("contradictions")
+        if not isinstance(contradictions, list):
+            return False
+
+        changed = False
+        for contradiction in contradictions:
+            if not isinstance(contradiction, dict):
+                continue
+            status = str(contradiction.get("status") or "").strip().lower()
+            if not status:
+                contradiction["status"] = "open"
+                changed = True
+        return changed
+
+
+
+    except Exception:
+        return False
 def _record_swarm_sync_state(
     state_db: StateDB,
     *,
@@ -2100,44 +2121,60 @@ def _record_swarm_sync_state(
     agent_id: str | None = None,
     actor_id: str = "swarm_bridge",
 ) -> None:
-    facts = {
-        "swarm_operation": "sync",
-        "mode": mode,
-        "payload_path": payload_path,
-        "api_url": api_url,
-        "workspace_id": workspace_id,
-        "accepted": accepted,
-    }
-    with state_db.connect() as conn:
-        _set_runtime_state(
-            conn,
-            "swarm:last_sync",
-            json.dumps(facts, sort_keys=True),
-            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+    if not isinstance(mode, str): mode = str(mode or '')
+    if not isinstance(payload_path, str): payload_path = str(payload_path or '')
+    if not isinstance(api_url, str): api_url = str(api_url or '')
+    if not isinstance(workspace_id, str): workspace_id = str(workspace_id or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        facts = {
+            "swarm_operation": "sync",
+            "mode": mode,
+            "payload_path": payload_path,
+            "api_url": api_url,
+            "workspace_id": workspace_id,
+            "accepted": accepted,
+        }
+        with state_db.connect() as conn:
+            _set_runtime_state(
+                conn,
+                "swarm:last_sync",
+                json.dumps(facts, sort_keys=True),
+                guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+            )
+            if accepted:
+                conn.execute("DELETE FROM runtime_state WHERE state_key = ?", ("swarm:last_failure",))
+            conn.commit()
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="swarm_bridge",
+            summary=f"Swarm sync state recorded as {mode}.",
+            reason_code=f"swarm_sync_{mode}",
+            facts=facts,
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
         )
-        if accepted:
-            conn.execute("DELETE FROM runtime_state WHERE state_key = ?", ("swarm:last_failure",))
-        conn.commit()
-    record_event(
-        state_db,
-        event_type="tool_result_received",
-        component="swarm_bridge",
-        summary=f"Swarm sync state recorded as {mode}.",
-        reason_code=f"swarm_sync_{mode}",
-        facts=facts,
-        **_swarm_event_context(
-            run_id=run_id,
-            request_id=request_id,
-            trace_ref=trace_ref,
-            channel_id=channel_id,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id=actor_id,
-        ),
-    )
 
 
+
+    except Exception:
+        return None
 def _record_swarm_decision_state(
     state_db: StateDB,
     *,
