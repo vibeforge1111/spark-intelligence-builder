@@ -245,6 +245,16 @@ class SwarmDoctorReport:
         return "\n".join(lines)
 
 
+_SAFE_RESPONSE_BODY_KEYS = {"error", "message", "code", "status"}
+
+
+def _sanitize_response_body(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Strip unknown keys from provider error response bodies before persistence."""
+    if not isinstance(body, dict):
+        return body
+    return {k: v for k, v in body.items() if k in _SAFE_RESPONSE_BODY_KEYS}
+
+
 @dataclass
 class SwarmSyncResult:
     ok: bool
