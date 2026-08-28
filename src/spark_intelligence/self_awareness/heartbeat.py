@@ -116,84 +116,111 @@ def build_capability_drift_heartbeat(
 
 
 def _probe_registry_by_key(probe_registry: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    priority = {"chip": 5, "provider": 4, "adapter": 4, "system": 3, "path": 2, "repo": 1}
-    selected: dict[str, dict[str, Any]] = {}
-    selected_priority: dict[str, int] = {}
-    for row in probe_registry:
-        key = str(row.get("target_key") or "").strip()
-        if not key:
-            continue
-        row_priority = priority.get(str(row.get("target_kind") or "").strip(), 0)
-        if key not in selected or row_priority > selected_priority.get(key, -1):
-            selected[key] = row
-            selected_priority[key] = row_priority
-    return selected
+    if not isinstance(probe_registry, str): probe_registry = str(probe_registry or '')
+    try:
+        priority = {"chip": 5, "provider": 4, "adapter": 4, "system": 3, "path": 2, "repo": 1}
+        selected: dict[str, dict[str, Any]] = {}
+        selected_priority: dict[str, int] = {}
+        for row in probe_registry:
+            key = str(row.get("target_key") or "").strip()
+            if not key:
+                continue
+            row_priority = priority.get(str(row.get("target_kind") or "").strip(), 0)
+            if key not in selected or row_priority > selected_priority.get(key, -1):
+                selected[key] = row
+                selected_priority[key] = row_priority
+        return selected
 
 
+
+    except Exception:
+        return {}
 def _needs_probe(row: dict[str, Any]) -> bool:
-    confidence = str(row.get("confidence_level") or "").strip()
-    freshness = str(row.get("freshness_status") or "").strip()
-    if confidence in {"recent_failure", "observed_without_success", "stale_success"}:
-        return True
-    return freshness in {"aging", "stale", "unknown"} and not bool(row.get("can_claim_confidently"))
+    if not isinstance(row, str): row = str(row or '')
+    try:
+        confidence = str(row.get("confidence_level") or "").strip()
+        freshness = str(row.get("freshness_status") or "").strip()
+        if confidence in {"recent_failure", "observed_without_success", "stale_success"}:
+            return True
+        return freshness in {"aging", "stale", "unknown"} and not bool(row.get("can_claim_confidently"))
 
 
+
+    except Exception:
+        return False
 def _drift_row(row: dict[str, Any], probe_record: dict[str, Any] | None) -> dict[str, Any]:
-    key = str(row.get("capability_key") or "").strip()
-    return {
-        "capability_key": key,
-        "drift_kind": _drift_kind(row),
-        "confidence_level": str(row.get("confidence_level") or "unknown"),
-        "freshness_status": str(row.get("freshness_status") or "unknown"),
-        "last_success_at": row.get("last_success_at"),
-        "last_failure_at": row.get("last_failure_at"),
-        "last_failure_reason": row.get("last_failure_reason"),
-        "last_success_age_days": _age_days(row.get("last_success_at")),
-        "eval_coverage_status": str(row.get("eval_coverage_status") or "missing"),
-        "eval_coverage_sources": list(row.get("eval_coverage_sources") or []),
-        "evidence_count": int(row.get("evidence_count") or 0),
-        "safe_probe": _safe_probe(key=key, probe_record=probe_record),
-        "probe_access_boundary": str((probe_record or {}).get("access_boundary") or "read_only_probe"),
-        "claim_boundary": "run_probe_before_confident_current_success_claim",
-        "source": str(row.get("source") or "observability_events"),
-    }
+    if not isinstance(row, str): row = str(row or '')
+    if not isinstance(probe_record, str): probe_record = str(probe_record or '')
+    try:
+        key = str(row.get("capability_key") or "").strip()
+        return {
+            "capability_key": key,
+            "drift_kind": _drift_kind(row),
+            "confidence_level": str(row.get("confidence_level") or "unknown"),
+            "freshness_status": str(row.get("freshness_status") or "unknown"),
+            "last_success_at": row.get("last_success_at"),
+            "last_failure_at": row.get("last_failure_at"),
+            "last_failure_reason": row.get("last_failure_reason"),
+            "last_success_age_days": _age_days(row.get("last_success_at")),
+            "eval_coverage_status": str(row.get("eval_coverage_status") or "missing"),
+            "eval_coverage_sources": list(row.get("eval_coverage_sources") or []),
+            "evidence_count": int(row.get("evidence_count") or 0),
+            "safe_probe": _safe_probe(key=key, probe_record=probe_record),
+            "probe_access_boundary": str((probe_record or {}).get("access_boundary") or "read_only_probe"),
+            "claim_boundary": "run_probe_before_confident_current_success_claim",
+            "source": str(row.get("source") or "observability_events"),
+        }
 
 
+
+    except Exception:
+        return {}
 def _drift_kind(row: dict[str, Any]) -> str:
-    confidence = str(row.get("confidence_level") or "").strip()
-    if confidence in {"recent_failure", "observed_without_success", "stale_success"}:
-        return confidence
-    freshness = str(row.get("freshness_status") or "").strip()
-    if freshness in {"aging", "stale", "unknown"}:
-        return f"{freshness}_freshness"
-    return "needs_probe"
+    if not isinstance(row, str): row = str(row or '')
+    try:
+        confidence = str(row.get("confidence_level") or "").strip()
+        if confidence in {"recent_failure", "observed_without_success", "stale_success"}:
+            return confidence
+        freshness = str(row.get("freshness_status") or "").strip()
+        if freshness in {"aging", "stale", "unknown"}:
+            return f"{freshness}_freshness"
+        return "needs_probe"
 
 
+
+    except Exception:
+        return ""
 def _unverified_configured_capabilities(
     *,
     evidence_rows: list[dict[str, Any]],
     probe_registry: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    evidenced_keys = {str(row.get("capability_key") or "").strip() for row in evidence_rows}
-    rows: list[dict[str, Any]] = []
-    for probe in probe_registry:
-        key = str(probe.get("target_key") or "").strip()
-        if not key or key in evidenced_keys:
-            continue
-        rows.append(
-            {
-                "capability_key": key,
-                "target_kind": str(probe.get("target_kind") or "unknown"),
-                "status": str(probe.get("status") or "unknown"),
-                "available": bool(probe.get("available")),
-                "safe_probe": str(probe.get("safe_probe") or "spark-intelligence status --json"),
-                "probe_access_boundary": str(probe.get("access_boundary") or "read_only_probe"),
-                "claim_boundary": "configured_or_available_is_not_recent_success",
-            }
-        )
-    return rows[:40]
+    if not isinstance(evidence_rows, str): evidence_rows = str(evidence_rows or '')
+    if not isinstance(probe_registry, str): probe_registry = str(probe_registry or '')
+    try:
+        evidenced_keys = {str(row.get("capability_key") or "").strip() for row in evidence_rows}
+        rows: list[dict[str, Any]] = []
+        for probe in probe_registry:
+            key = str(probe.get("target_key") or "").strip()
+            if not key or key in evidenced_keys:
+                continue
+            rows.append(
+                {
+                    "capability_key": key,
+                    "target_kind": str(probe.get("target_kind") or "unknown"),
+                    "status": str(probe.get("status") or "unknown"),
+                    "available": bool(probe.get("available")),
+                    "safe_probe": str(probe.get("safe_probe") or "spark-intelligence status --json"),
+                    "probe_access_boundary": str(probe.get("access_boundary") or "read_only_probe"),
+                    "claim_boundary": "configured_or_available_is_not_recent_success",
+                }
+            )
+        return rows[:40]
 
 
+
+    except Exception:
+        return []
 def _probe_plan(
     capabilities_needing_probe: list[dict[str, Any]],
     unverified_configured: list[dict[str, Any]],
