@@ -32,7 +32,7 @@ jobs:
           repository: vibeforge1111/spark-harness-core
           ref: f3641143f1c3f28f55178faefcea57fd443c98bc
           path: spark-harness-core
-          token: ${{ secrets.SPARK_CI_REPO_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout Domain Chip Memory
         uses: actions/checkout@v4
