@@ -1,0 +1,78 @@
+{
+  "schema": "spark-compete-hotfix-v1",
+  "event": "spark-compete-first-event",
+  "submission_mode": "public_repo_pr",
+  "submission_target_url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/760",
+  "team": {
+    "name": "drophub_sir",
+    "members": ["drophub_sir", "esc1200", "spark-intelligence-builder-maintainer"],
+    "llm_device_holder": "esc1200",
+    "device_holder_github": "https://github.com/Esc1200",
+    "github_accounts": ["Esc1200"]
+  },
+  "target_repo": {
+    "id": "vibeforge1111/spark-intelligence-builder",
+    "source": "https://github.com/vibeforge1111/spark-intelligence-builder",
+    "owner_surface": "spark-intelligence-builder"
+  },
+  "issue": {
+    "type": "bug",
+    "severity": "high",
+    "title": "_join_url does not validate host allowing SSRF via env vars and builder payload",
+    "actual_behavior": "_join_url() in direct_provider.py (lines 321-322) just concatenates base_url and suffix without any host validation. An attacker who controls base_url (via SPARK_INTELLIGENCE_PROVIDER_BASE_URL env var or builder provider payload) can redirect API requests with Authorization: Bearer to internal services (e.g. http://169.254.169.254/latest/meta-data/ or http://internal-service:8080/).",
+    "expected_behavior": "_join_url() should validate that the host in base_url is in an allowlist of known-safe provider hosts, rejecting any attempt to redirect API requests to internal or attacker-controlled URLs.",
+    "repro_steps": [
+      "Read src/spark_intelligence/llm/direct_provider.py lines 321-322",
+      "Note _join_url() does plain string concatenation with no host validation",
+      "Note base_url can come from SPARK_INTELLIGENCE_PROVIDER_BASE_URL env var or builder provider payload",
+      "Set SPARK_INTELLIGENCE_PROVIDER_BASE_URL=http://169.254.169.254/latest/meta-data/",
+      "Observe _join_url succeeds and the server sends Authorization header to the metadata endpoint"
+    ],
+    "affected_workflow": "All direct provider API requests (chat_completions and anthropic_messages) leak API keys to attacker-controlled hosts via SSRF"
+  },
+  "evidence": {
+    "safe_links_only": true,
+    "before_after_proof": "BEFORE: _join_url() at lines 321-322 does plain string concatenation. Any host including 169.254.169.254 or internal-service passes without validation. AFTER: ALLOWED_PROVIDER_HOSTS frozenset is defined at module level containing api.anthropic.com, api.groq.com, api.minimax.io, api.openai.com, api.together.xyz, api.z.ai, localhost, 127.0.0.1, ::1. _validate_provider_base_url() extracts hostname via urlparse and raises RuntimeError if host not in allowlist. _join_url() calls _validate_provider_base_url() before concatenation.",
+    "links": [
+      "https://github.com/vibeforge1111/spark-intelligence-builder/pull/760"
+    ],
+    "forbidden": [
+      "pdf", "zip", "exe", "unknown downloads", "shortened links", "archives", "binaries", "tokens", "browser cookies", "wallet material", "raw logs", "raw conversations", "raw memory", "raw patches", "private repo maps", "private scoring details"
+    ]
+  },
+  "proposed_fix": {
+    "approach": "Add ALLOWED_PROVIDER_HOSTS frozenset allowlist at module level containing known safe provider hosts. Add _validate_provider_base_url() function that parses the URL via urlparse and rejects any host not in the allowlist. Modify _join_url() to call _validate_provider_base_url() before concatenation.",
+    "files_expected": [
+      "src/spark_intelligence/llm/direct_provider.py",
+      "tests/test_direct_provider_execution.py"
+    ],
+    "tests_or_smoke": "All 10 tests pass (8 subtests). Added test_join_url_rejects_hosts_not_in_allowlist (parametrized: 169.254.169.254, internal-service:8080, evil.attacker.com, metadata.google.internal, 10.0.0.1:8080). Added test_join_url_accepts_allowed_hosts (api.openai.com, api.anthropic.com, api.minimax.io). Added test_join_url_rejects_empty_or_missing_host (empty string, invalid URL). Added test_allowed_provider_hosts_is_frozen (frozenset immutability)."
+  },
+  "pr": {
+    "branch": "esc1200/fix/direct-provider-host-allowlist",
+    "title_prefix": "[spark-compete]",
+    "author_github": "Esc1200",
+    "body_must_include": [
+      "packet",
+      "team",
+      "pr_author",
+      "repo",
+      "actual_behavior",
+      "expected_behavior",
+      "repro_steps",
+      "before_after_proof",
+      "tests_or_smoke",
+      "duplicate_notes",
+      "risk_notes",
+      "review_claim"
+    ],
+    "url": "https://github.com/vibeforge1111/spark-intelligence-builder/pull/760"
+  },
+  "review_claim": {
+    "impact_claim": "high",
+    "evidence_types": ["redacted_terminal_excerpt", "smoke_test"],
+    "duplicate_notes": "Searched open PRs and issues in vibeforge1111/spark-intelligence-builder for ALLOWED_PROVIDER_HOSTS, host allowlist, SSRF, or _join_url host validation. No prior fix exists for this SSRF vulnerability.",
+    "risk_notes": "Low risk change. _join_url() is called at 2 locations (line 196 for chat_completions, line 233 for anthropic_messages via _normalize_anthropic_base_url). The ALLOWED_PROVIDER_HOSTS frozenset contains the 6 known production API hosts plus 3 loopback addresses for local development. If a new provider needs to be added, the frozenset is defined at module level and easy to extend. The pattern matches existing SSRF protection in spark-character and spark-voice-comms.",
+    "review_state_requested": "pr_review"
+  }
+}
