@@ -2149,48 +2149,76 @@ def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
 
 
 def _pairing_context_state_key(channel_id: str, external_user_id: str) -> str:
-    return f"pairing_context:{channel_id}:{external_user_id}"
-
-
-def _pairing_welcome_state_key(channel_id: str, external_user_id: str) -> str:
-    return f"pairing_welcome:{channel_id}:{external_user_id}"
-
-
-def _load_pairing_context(*, state_db: StateDB, channel_id: str, external_user_id: str) -> dict[str, Any]:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-            (_pairing_context_state_key(channel_id, external_user_id),),
-        ).fetchone()
-    if not row or row["value"] is None:
-        return {}
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
     try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
+        return f"pairing_context:{channel_id}:{external_user_id}"
+
+
+
+    except Exception:
+        return ""
+def _pairing_welcome_state_key(channel_id: str, external_user_id: str) -> str:
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        return f"pairing_welcome:{channel_id}:{external_user_id}"
+
+
+
+    except Exception:
+        return ""
+def _load_pairing_context(*, state_db: StateDB, channel_id: str, external_user_id: str) -> dict[str, Any]:
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (_pairing_context_state_key(channel_id, external_user_id),),
+            ).fetchone()
+        if not row or row["value"] is None:
+            return {}
+        try:
+            payload = json.loads(str(row["value"]))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+
+
+    except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def _read_optional_text(value: object) -> str | None:
-    if value in {None, ""}:
-        return None
-    return str(value)
+    try:
+        if value in {None, ""}:
+            return None
+        return str(value)
 
 
+
+    except Exception:
+        return ""
 def _format_pairing_summary_block(label: str, row: dict[str, Any] | None) -> list[str]:
-    if not row:
-        return [f"- {label}: none"]
-    context = row.get("context") or {}
-    parts = [
-        f"- {label}: {row.get('channel_id')}:{row.get('external_user_id')}",
-        f"status={row.get('status')}",
-        f"human={row.get('human_id')}",
-        f"updated_at={row.get('updated_at')}",
-    ]
-    if context.get("telegram_username"):
-        parts.append(f"telegram_username=@{context['telegram_username']}")
-    if context.get("chat_id"):
-        parts.append(f"chat_id={context['chat_id']}")
-    if context.get("last_message_text"):
-        parts.append(f"last_message={context['last_message_text']}")
-    return [" ".join(parts)]
+    if not isinstance(label, str): label = str(label or '')
+    if not isinstance(row, str): row = str(row or '')
+    try:
+        if not row:
+            return [f"- {label}: none"]
+        context = row.get("context") or {}
+        parts = [
+            f"- {label}: {row.get('channel_id')}:{row.get('external_user_id')}",
+            f"status={row.get('status')}",
+            f"human={row.get('human_id')}",
+            f"updated_at={row.get('updated_at')}",
+        ]
+        if context.get("telegram_username"):
+            parts.append(f"telegram_username=@{context['telegram_username']}")
+        if context.get("chat_id"):
+            parts.append(f"chat_id={context['chat_id']}")
+        if context.get("last_message_text"):
+            parts.append(f"last_message={context['last_message_text']}")
+        return [" ".join(parts)]
+
+    except Exception:
+        return []
