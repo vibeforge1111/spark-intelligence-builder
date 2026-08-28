@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -179,17 +180,44 @@ def compare_telegram_memory_architectures(
             "summary_markdown": str(resolved_summary_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    resolved_summary_path.write_text(
-        _build_summary_markdown(
-            summary=summary,
-            case_summaries=case_summaries,
-            baseline_rows=baseline_rows,
-            errors=errors,
-        ),
-        encoding="utf-8",
+    # Write the canonical live-comparison summary JSON via temp + os.replace
+    # so a crash mid-write cannot truncate the artifact that downstream
+    # surfaces (regression dashboards, operator memory-architecture
+    # reports, the live-comparison subcommand) read between long-running
+    # passes. Sister-pattern to PR #252 (memory/architecture_soak atomic).
+    summary_markdown_text = _build_summary_markdown(
+        summary=summary,
+        case_summaries=case_summaries,
+        baseline_rows=baseline_rows,
+        errors=errors,
     )
+    _atomic_write_text(resolved_write_path, json.dumps(payload, indent=2))
+    _atomic_write_text(resolved_summary_path, summary_markdown_text)
     return TelegramArchitectureLiveComparisonResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def build_telegram_regression_sample_specs(
