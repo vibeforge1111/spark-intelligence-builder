@@ -7529,7 +7529,10 @@ def handle_auth_login(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 {
-                    "start": json.loads(start.to_json()),
+                    try:
+                        "start": json.loads(start.to_json()),
+                    except json.JSONDecodeError:
+                        return {}  # malformed JSON, return safe default
                     "callback": {
                         "callback_url": gateway_result.callback_url,
                         "path": gateway_result.path,
