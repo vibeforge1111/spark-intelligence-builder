@@ -808,36 +808,62 @@ def _row_matches_project(*, row: dict[str, Any], facts: dict[str, Any], project_
 
 
 def _compact_line(value: str, *, limit: int = 180) -> str:
-    cleaned = _clean_value(value)
-    return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 3].rstrip()}..."
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        cleaned = _clean_value(value)
+        return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 3].rstrip()}..."
 
 
-def _fact_line(*, predicate: str, value: str) -> str:
-    normalized_predicate = str(predicate or "").strip()
-    if not normalized_predicate:
+
+    except Exception:
         return ""
-    return _compact_line(f"{normalized_predicate}: {value}")
+def _fact_line(*, predicate: str, value: str) -> str:
+    if not isinstance(predicate, str): predicate = str(predicate or '')
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        normalized_predicate = str(predicate or "").strip()
+        if not normalized_predicate:
+            return ""
+        return _compact_line(f"{normalized_predicate}: {value}")
 
 
+
+    except Exception:
+        return ""
 def _append_unique(items: list[str], value: str) -> None:
-    cleaned = _compact_line(value)
-    if cleaned and cleaned not in items:
-        items.append(cleaned)
+    if not isinstance(items, str): items = str(items or '')
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        cleaned = _compact_line(value)
+        if cleaned and cleaned not in items:
+            items.append(cleaned)
 
 
+
+    except Exception:
+        return None
 def _first_nonempty(values: Any) -> str | None:
-    for value in values:
-        cleaned = str(value or "").strip()
-        if cleaned:
-            return cleaned
-    return None
+    try:
+        for value in values:
+            cleaned = str(value or "").strip()
+            if cleaned:
+                return cleaned
+        return None
 
 
+
+    except Exception:
+        return ""
 def _looks_open(value: str) -> bool:
-    lowered = str(value or "").casefold()
-    return any(marker in lowered for marker in _OPEN_QUESTION_MARKERS)
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        lowered = str(value or "").casefold()
+        return any(marker in lowered for marker in _OPEN_QUESTION_MARKERS)
 
 
+
+    except Exception:
+        return False
 def _collect_references(
     facts: dict[str, Any],
     *,
