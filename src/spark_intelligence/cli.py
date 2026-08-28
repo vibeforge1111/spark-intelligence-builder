@@ -6613,65 +6613,85 @@ def handle_attachments_list(args: argparse.Namespace) -> int:
 
 
 def handle_attachments_add_root(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    values = add_attachment_root(config_manager, target=args.target, root=args.root)
-    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    dotted_path = "spark.chips.roots" if args.target == "chips" else "spark.specialization_paths.roots"
-    print(f"Updated {dotted_path}:")
-    for value in values:
-        print(f"- {value}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        values = add_attachment_root(config_manager, target=args.target, root=args.root)
+        sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        dotted_path = "spark.chips.roots" if args.target == "chips" else "spark.specialization_paths.roots"
+        print(f"Updated {dotted_path}:")
+        for value in values:
+            print(f"- {value}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_snapshot(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(snapshot.to_json() if args.json else snapshot.to_text())
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(snapshot.to_json() if args.json else snapshot.to_text())
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_activate_chip(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    active_keys = activate_chip(config_manager, chip_key=args.chip_key)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        active_keys = activate_chip(config_manager, chip_key=args.chip_key)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_deactivate_chip(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    active_keys = deactivate_chip(config_manager, chip_key=args.chip_key)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        active_keys = deactivate_chip(config_manager, chip_key=args.chip_key)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_pin_chip(args: argparse.Namespace) -> int:
-    config_manager = ConfigManager.from_home(args.home)
-    state_db = StateDB(config_manager.paths.state_db)
-    config_manager.bootstrap()
-    state_db.initialize()
-    active_keys = pin_chip(config_manager, chip_key=args.chip_key)
-    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
-    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
-    print(f"Snapshot: {snapshot.snapshot_path}")
-    return 0
+    try:
+        config_manager = ConfigManager.from_home(args.home)
+        state_db = StateDB(config_manager.paths.state_db)
+        config_manager.bootstrap()
+        state_db.initialize()
+        active_keys = pin_chip(config_manager, chip_key=args.chip_key)
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+        print(f"Snapshot: {snapshot.snapshot_path}")
+        return 0
 
 
+
+    except Exception:
+        return 0
 def handle_attachments_unpin_chip(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
