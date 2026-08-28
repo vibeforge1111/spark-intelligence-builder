@@ -17,6 +17,8 @@ import yaml
 from spark_intelligence.observability.store import payload_hash, record_config_mutation
 from spark_intelligence.state.db import StateDB
 
+SPARK_INTELLIGENCE_BUILDER__HARDEN_WINDOWS_ENV_FILE_PERMISSIONS_TIMEOUT_SECONDS = 60
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -582,6 +584,8 @@ class ConfigManager:
             check=True,
             capture_output=True,
             text=True,
+
+        timeout=SPARK_INTELLIGENCE_BUILDER__HARDEN_WINDOWS_ENV_FILE_PERMISSIONS_TIMEOUT_SECONDS,
         )
 
     def _windows_env_permission_status(self) -> tuple[bool, str]:
