@@ -221,18 +221,37 @@ def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
 
 
 def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: dict[str, Any]) -> None:
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    latest_path = config_manager.paths.home / "artifacts" / "handoff-freshness" / "latest.json"
-    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if report_path is not None and not hasattr(report_path, 'resolve'): from pathlib import Path; report_path = Path(str(report_path))
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        latest_path = config_manager.paths.home / "artifacts" / "handoff-freshness" / "latest.json"
+        latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+
+    except Exception:
+        return None
 def _mtime_iso(path: Path) -> str:
-    return datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
+    if path is not None and not hasattr(path, 'resolve'): from pathlib import Path; path = Path(str(path))
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
 
 
+
+    except Exception:
+        return ""
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    try:
+        return Path(__file__).resolve().parents[3]
 
 
+
+    except Exception:
+        return Path(".")
 def _utc_timestamp() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    try:
+        return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+    except Exception:
+        return ""
