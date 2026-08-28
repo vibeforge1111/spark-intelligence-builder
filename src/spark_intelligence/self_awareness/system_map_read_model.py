@@ -417,175 +417,200 @@ def _cross_system_trace_context(trace_index: dict[str, Any]) -> dict[str, Any]:
 
 
 def _latest_spawner_job_context(trace_index: dict[str, Any]) -> dict[str, Any]:
-    latest = _dict(trace_index.get("latest_spawner_job"))
-    if not latest:
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        latest = _dict(trace_index.get("latest_spawner_job"))
+        if not latest:
+            return {
+                "present": False,
+                "status": "missing",
+                "claim_boundary": "Latest Spawner job evidence missing; run spark os compile.",
+            }
         return {
-            "present": False,
-            "status": "missing",
-            "claim_boundary": "Latest Spawner job evidence missing; run spark os compile.",
+            "present": True,
+            "schema_version": _short(latest.get("schema_version")),
+            "status": _short(latest.get("status") or "unknown"),
+            "provider": _short(latest.get("provider")),
+            "model": _short(latest.get("model")),
+            "provider_source": _short(latest.get("provider_source")),
+            "freshness": _short(latest.get("freshness") or "unknown"),
+            "confidence": _short(latest.get("confidence") or "unknown"),
+            "joined_sources": [_short(item) for item in _list(latest.get("joined_sources"))[:8]],
+            "missing_sources": [_short(item) for item in _list(latest.get("missing_sources"))[:8]],
+            "blockers": [_short(item) for item in _list(latest.get("blockers"))[:8]],
+            "verification_command": _short(latest.get("verification_command") or "spark os trace --json"),
+            "claim_boundary": (
+                "Latest Spawner job evidence is metadata-only compiled trace context. It can answer provider/model "
+                "only when source-owned execution evidence is present; memory and wiki cannot fill missing live proof."
+            ),
         }
-    return {
-        "present": True,
-        "schema_version": _short(latest.get("schema_version")),
-        "status": _short(latest.get("status") or "unknown"),
-        "provider": _short(latest.get("provider")),
-        "model": _short(latest.get("model")),
-        "provider_source": _short(latest.get("provider_source")),
-        "freshness": _short(latest.get("freshness") or "unknown"),
-        "confidence": _short(latest.get("confidence") or "unknown"),
-        "joined_sources": [_short(item) for item in _list(latest.get("joined_sources"))[:8]],
-        "missing_sources": [_short(item) for item in _list(latest.get("missing_sources"))[:8]],
-        "blockers": [_short(item) for item in _list(latest.get("blockers"))[:8]],
-        "verification_command": _short(latest.get("verification_command") or "spark os trace --json"),
-        "claim_boundary": (
-            "Latest Spawner job evidence is metadata-only compiled trace context. It can answer provider/model "
-            "only when source-owned execution evidence is present; memory and wiki cannot fill missing live proof."
-        ),
-    }
 
 
+
+    except Exception:
+        return {}
 def _authority_status_context(authority_view: dict[str, Any]) -> dict[str, Any]:
-    if not authority_view:
+    if not isinstance(authority_view, str): authority_view = str(authority_view or '')
+    try:
+        if not authority_view:
+            return {
+                "present": False,
+                "status": "missing",
+                "authority": "observability_non_authoritative",
+                "claim_boundary": "Authority view missing; run spark os compile.",
+            }
+
+        cli_access = _dict(authority_view.get("cli_access"))
+        telegram_policy = _dict(authority_view.get("telegram_access_policy"))
+        spawner_policy = _dict(authority_view.get("spawner_execution_policy"))
+        browser_authority = _dict(authority_view.get("browser_authority"))
+        public_output = _dict(authority_view.get("public_output_authority"))
+        guardrails = _dict(authority_view.get("guardrail_summary"))
+        required_checks = [_short(item) for item in _list(public_output.get("required_publication_checks"))[:8]]
         return {
-            "present": False,
-            "status": "missing",
-            "authority": "observability_non_authoritative",
-            "claim_boundary": "Authority view missing; run spark os compile.",
+            "present": True,
+            "status": "observed",
+            "schema_version": authority_view.get("schema_version"),
+            "authority": str(authority_view.get("authority") or "observability_non_authoritative"),
+            "default_access_level": _int(authority_view.get("default_access_level_hint")),
+            "default_sandbox_lane": _short(cli_access.get("default_sandbox_lane") or "unknown"),
+            "default_codex_sandbox": _short(cli_access.get("default_codex_sandbox") or "unknown"),
+            "telegram_profile_count": len(_list(telegram_policy.get("profiles"))),
+            "telegram_requirements": [_short(item) for item in _list(telegram_policy.get("requirements"))[:8]],
+            "telegram_allow_matrix": _safe_summary_mapping(telegram_policy.get("allow_matrix")),
+            "spawner_lane_count": len(_list(spawner_policy.get("lane_ids"))),
+            "spawner_run_policies": [_short(item) for item in _list(spawner_policy.get("run_policies"))[:8]],
+            "spawner_confirmation_gated_action_count": _int(
+                guardrails.get("spawner_confirmation_gated_action_count")
+            ),
+            "browser_hook_count": _int(browser_authority.get("hook_count")),
+            "browser_risk_class_counts": _int_mapping(browser_authority.get("risk_class_counts")),
+            "browser_approval_mode_counts": _int_mapping(browser_authority.get("approval_mode_counts")),
+            "browser_approval_required_hook_count": _int(guardrails.get("browser_approval_required_hook_count")),
+            "toxic_pair_count": _int(guardrails.get("toxic_pair_count")),
+            "publication_checks_required": _int(guardrails.get("publication_checks_required")),
+            "required_publication_checks": required_checks,
+            "non_override_rule": _short(public_output.get("non_override_rule"), limit=260),
+            "claim_boundary": (
+                "Authority status is compiled policy evidence only. It does not grant access, approve actions, "
+                "publish capabilities, or override source policy."
+            ),
         }
 
-    cli_access = _dict(authority_view.get("cli_access"))
-    telegram_policy = _dict(authority_view.get("telegram_access_policy"))
-    spawner_policy = _dict(authority_view.get("spawner_execution_policy"))
-    browser_authority = _dict(authority_view.get("browser_authority"))
-    public_output = _dict(authority_view.get("public_output_authority"))
-    guardrails = _dict(authority_view.get("guardrail_summary"))
-    required_checks = [_short(item) for item in _list(public_output.get("required_publication_checks"))[:8]]
-    return {
-        "present": True,
-        "status": "observed",
-        "schema_version": authority_view.get("schema_version"),
-        "authority": str(authority_view.get("authority") or "observability_non_authoritative"),
-        "default_access_level": _int(authority_view.get("default_access_level_hint")),
-        "default_sandbox_lane": _short(cli_access.get("default_sandbox_lane") or "unknown"),
-        "default_codex_sandbox": _short(cli_access.get("default_codex_sandbox") or "unknown"),
-        "telegram_profile_count": len(_list(telegram_policy.get("profiles"))),
-        "telegram_requirements": [_short(item) for item in _list(telegram_policy.get("requirements"))[:8]],
-        "telegram_allow_matrix": _safe_summary_mapping(telegram_policy.get("allow_matrix")),
-        "spawner_lane_count": len(_list(spawner_policy.get("lane_ids"))),
-        "spawner_run_policies": [_short(item) for item in _list(spawner_policy.get("run_policies"))[:8]],
-        "spawner_confirmation_gated_action_count": _int(
-            guardrails.get("spawner_confirmation_gated_action_count")
-        ),
-        "browser_hook_count": _int(browser_authority.get("hook_count")),
-        "browser_risk_class_counts": _int_mapping(browser_authority.get("risk_class_counts")),
-        "browser_approval_mode_counts": _int_mapping(browser_authority.get("approval_mode_counts")),
-        "browser_approval_required_hook_count": _int(guardrails.get("browser_approval_required_hook_count")),
-        "toxic_pair_count": _int(guardrails.get("toxic_pair_count")),
-        "publication_checks_required": _int(guardrails.get("publication_checks_required")),
-        "required_publication_checks": required_checks,
-        "non_override_rule": _short(public_output.get("non_override_rule"), limit=260),
-        "claim_boundary": (
-            "Authority status is compiled policy evidence only. It does not grant access, approve actions, "
-            "publish capabilities, or override source policy."
-        ),
-    }
 
 
+    except Exception:
+        return {}
 def _authority_verdict_context(trace_index: dict[str, Any]) -> dict[str, Any]:
-    verdicts = _dict(trace_index.get("authority_verdicts"))
-    return {
-        "trace_verdict_count": _int(verdicts.get("verdict_count")),
-        "trace_verdict_counts": _int_mapping(verdicts.get("verdict_counts")),
-        "trace_verdict_action_family_counts": _int_mapping(verdicts.get("action_family_counts")),
-        "trace_verdict_source_policy_counts": _int_mapping(verdicts.get("source_policy_counts")),
-    }
+    if not isinstance(trace_index, str): trace_index = str(trace_index or '')
+    try:
+        verdicts = _dict(trace_index.get("authority_verdicts"))
+        return {
+            "trace_verdict_count": _int(verdicts.get("verdict_count")),
+            "trace_verdict_counts": _int_mapping(verdicts.get("verdict_counts")),
+            "trace_verdict_action_family_counts": _int_mapping(verdicts.get("action_family_counts")),
+            "trace_verdict_source_policy_counts": _int_mapping(verdicts.get("source_policy_counts")),
+        }
 
 
+
+    except Exception:
+        return {}
 def _capability_garden_context(capability_catalog: dict[str, Any]) -> dict[str, Any]:
-    raw_cards = [_dict(card) for card in _list(capability_catalog.get("capability_cards"))]
-    status_counts: dict[str, int] = {}
-    surface_counts: dict[str, int] = {}
-    trust_counts: dict[str, int] = {}
-    proof_state_counts: dict[str, int] = {}
-    top_missing_proof = "none"
-    cards: list[dict[str, Any]] = []
-    for card in raw_cards[:12]:
-        status = _short(card.get("status") or "unknown")
-        surface = _short(card.get("surface_type") or "unknown")
-        trust_status = _short(card.get("trust_status") or "untrusted")
-        proof_state = _short(card.get("proof_state") or "missing")
-        missing_proofs = [_short(item) for item in _list(card.get("missing_proofs"))[:8]]
-        status_counts[status] = status_counts.get(status, 0) + 1
-        surface_counts[surface] = surface_counts.get(surface, 0) + 1
-        trust_counts[trust_status] = trust_counts.get(trust_status, 0) + 1
-        proof_state_counts[proof_state] = proof_state_counts.get(proof_state, 0) + 1
-        if top_missing_proof == "none" and missing_proofs:
-            top_missing_proof = missing_proofs[0]
-        cards.append(
-            {
-                "id": _short(card.get("id")),
-                "name": _short(card.get("name")),
-                "owner_repo": _short(card.get("owner_repo")),
-                "surface_type": surface,
-                "status": status,
-                "trust_status": trust_status,
-                "proof_state": proof_state,
-                "missing_proofs": missing_proofs,
-                "requested_authority": [_short(item) for item in _list(card.get("requested_authority"))[:8]],
-                "memory_policy": _short(card.get("memory_policy")),
-                "evidence_summary": _safe_summary_mapping(card.get("evidence_summary")),
-                "benchmark_summary": _safe_summary_mapping(card.get("benchmark_summary")),
-                "review_summary": _safe_summary_mapping(card.get("review_summary")),
-                "blockers": [_short(item) for item in _list(card.get("blockers"))[:5]],
-                "next_action": _short(card.get("next_action"), limit=240),
-                "privacy_boundary": _short(card.get("privacy_boundary"), limit=240),
-                "public_boundary": _short(card.get("public_boundary"), limit=240),
-            }
-        )
+    if not isinstance(capability_catalog, str): capability_catalog = str(capability_catalog or '')
+    try:
+        raw_cards = [_dict(card) for card in _list(capability_catalog.get("capability_cards"))]
+        status_counts: dict[str, int] = {}
+        surface_counts: dict[str, int] = {}
+        trust_counts: dict[str, int] = {}
+        proof_state_counts: dict[str, int] = {}
+        top_missing_proof = "none"
+        cards: list[dict[str, Any]] = []
+        for card in raw_cards[:12]:
+            status = _short(card.get("status") or "unknown")
+            surface = _short(card.get("surface_type") or "unknown")
+            trust_status = _short(card.get("trust_status") or "untrusted")
+            proof_state = _short(card.get("proof_state") or "missing")
+            missing_proofs = [_short(item) for item in _list(card.get("missing_proofs"))[:8]]
+            status_counts[status] = status_counts.get(status, 0) + 1
+            surface_counts[surface] = surface_counts.get(surface, 0) + 1
+            trust_counts[trust_status] = trust_counts.get(trust_status, 0) + 1
+            proof_state_counts[proof_state] = proof_state_counts.get(proof_state, 0) + 1
+            if top_missing_proof == "none" and missing_proofs:
+                top_missing_proof = missing_proofs[0]
+            cards.append(
+                {
+                    "id": _short(card.get("id")),
+                    "name": _short(card.get("name")),
+                    "owner_repo": _short(card.get("owner_repo")),
+                    "surface_type": surface,
+                    "status": status,
+                    "trust_status": trust_status,
+                    "proof_state": proof_state,
+                    "missing_proofs": missing_proofs,
+                    "requested_authority": [_short(item) for item in _list(card.get("requested_authority"))[:8]],
+                    "memory_policy": _short(card.get("memory_policy")),
+                    "evidence_summary": _safe_summary_mapping(card.get("evidence_summary")),
+                    "benchmark_summary": _safe_summary_mapping(card.get("benchmark_summary")),
+                    "review_summary": _safe_summary_mapping(card.get("review_summary")),
+                    "blockers": [_short(item) for item in _list(card.get("blockers"))[:5]],
+                    "next_action": _short(card.get("next_action"), limit=240),
+                    "privacy_boundary": _short(card.get("privacy_boundary"), limit=240),
+                    "public_boundary": _short(card.get("public_boundary"), limit=240),
+                }
+            )
 
-    return {
-        "present": bool(capability_catalog),
-        "creator_system_surfaces": len(_list(capability_catalog.get("creator_system_surfaces"))),
-        "specialization_path_surfaces": len(_list(capability_catalog.get("specialization_path_surfaces"))),
-        "card_count": len(raw_cards),
-        "projected_card_count": len(cards),
-        "status_counts": dict(sorted(status_counts.items())),
-        "surface_counts": dict(sorted(surface_counts.items())),
-        "trust_counts": dict(sorted(trust_counts.items())),
-        "proof_state_counts": dict(sorted(proof_state_counts.items())),
-        "top_missing_proof": top_missing_proof,
-        "cards": cards,
-        "claim_boundary": (
-            "Capability garden is a metadata-only projection. A card shows observed surfaces and blockers; "
-            "it does not grant trust, memory authority, tool authority, or publication approval."
-        ),
-    }
+        return {
+            "present": bool(capability_catalog),
+            "creator_system_surfaces": len(_list(capability_catalog.get("creator_system_surfaces"))),
+            "specialization_path_surfaces": len(_list(capability_catalog.get("specialization_path_surfaces"))),
+            "card_count": len(raw_cards),
+            "projected_card_count": len(cards),
+            "status_counts": dict(sorted(status_counts.items())),
+            "surface_counts": dict(sorted(surface_counts.items())),
+            "trust_counts": dict(sorted(trust_counts.items())),
+            "proof_state_counts": dict(sorted(proof_state_counts.items())),
+            "top_missing_proof": top_missing_proof,
+            "cards": cards,
+            "claim_boundary": (
+                "Capability garden is a metadata-only projection. A card shows observed surfaces and blockers; "
+                "it does not grant trust, memory authority, tool authority, or publication approval."
+            ),
+        }
 
 
+
+    except Exception:
+        return {}
 def _missing_trace_ref_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
-    sources = _dict(trace_health.get("missing_trace_ref_sources"))
-    rows: list[dict[str, Any]] = []
-    for raw_row in _list(sources.get("rows"))[:10]:
-        row = _dict(raw_row)
-        rows.append(
-            {
-                "component": str(row.get("component") or "[missing]"),
-                "event_type": str(row.get("event_type") or "[missing]"),
-                "status": str(row.get("status") or "[missing]"),
-                "severity": str(row.get("severity") or "[missing]"),
-                "target_surface": str(row.get("target_surface") or "[missing]"),
-                "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
-                "event_count": _int(row.get("event_count")),
-            }
-        )
-    return {
-        "group_by": [str(item) for item in _list(sources.get("group_by"))],
-        "row_count": len(rows),
-        "rows": rows,
-        "claim_boundary": "Ranked repair queue for trace propagation only; not memory truth or task outcome.",
-    }
+    if not isinstance(trace_health, str): trace_health = str(trace_health or '')
+    try:
+        sources = _dict(trace_health.get("missing_trace_ref_sources"))
+        rows: list[dict[str, Any]] = []
+        for raw_row in _list(sources.get("rows"))[:10]:
+            row = _dict(raw_row)
+            rows.append(
+                {
+                    "component": str(row.get("component") or "[missing]"),
+                    "event_type": str(row.get("event_type") or "[missing]"),
+                    "status": str(row.get("status") or "[missing]"),
+                    "severity": str(row.get("severity") or "[missing]"),
+                    "target_surface": str(row.get("target_surface") or "[missing]"),
+                    "evidence_lane": str(row.get("evidence_lane") or "[missing]"),
+                    "event_count": _int(row.get("event_count")),
+                }
+            )
+        return {
+            "group_by": [str(item) for item in _list(sources.get("group_by"))],
+            "row_count": len(rows),
+            "rows": rows,
+            "claim_boundary": "Ranked repair queue for trace propagation only; not memory truth or task outcome.",
+        }
 
 
+
+    except Exception:
+        return {}
 def _orphan_parent_event_sources(trace_health: dict[str, Any]) -> dict[str, Any]:
     sources = _dict(trace_health.get("orphan_parent_event_sources"))
     rows: list[dict[str, Any]] = []
