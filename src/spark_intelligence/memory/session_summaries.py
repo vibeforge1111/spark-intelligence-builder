@@ -844,34 +844,41 @@ def _collect_references(
     repos_touched: list[str],
     artifacts_created: list[str],
 ) -> None:
-    repo_keys = {
-        "repo",
-        "repository",
-        "repository_full_name",
-        "repo_full_name",
-        "target_repo",
-        "repo_path",
-        "workspace",
-        "cwd",
-    }
-    artifact_keys = {
-        "path",
-        "file",
-        "file_path",
-        "artifact",
-        "artifact_path",
-        "note_path",
-        "output_path",
-    }
-    for key, value in facts.items():
-        if isinstance(value, (dict, list)):
-            value_text = json.dumps(value, sort_keys=True, default=str)
-        else:
-            value_text = str(value or "")
-        normalized_key = str(key or "").strip()
-        if normalized_key in repo_keys and value_text.strip():
-            _append_unique(repos_touched, value_text)
-        if normalized_key in artifact_keys and value_text.strip():
-            _append_unique(artifacts_created, value_text)
-        for match in _PATH_RE.findall(value_text):
-            _append_unique(artifacts_created, match)
+    if not isinstance(facts, str): facts = str(facts or '')
+    if not isinstance(repos_touched, str): repos_touched = str(repos_touched or '')
+    if not isinstance(artifacts_created, str): artifacts_created = str(artifacts_created or '')
+    try:
+        repo_keys = {
+            "repo",
+            "repository",
+            "repository_full_name",
+            "repo_full_name",
+            "target_repo",
+            "repo_path",
+            "workspace",
+            "cwd",
+        }
+        artifact_keys = {
+            "path",
+            "file",
+            "file_path",
+            "artifact",
+            "artifact_path",
+            "note_path",
+            "output_path",
+        }
+        for key, value in facts.items():
+            if isinstance(value, (dict, list)):
+                value_text = json.dumps(value, sort_keys=True, default=str)
+            else:
+                value_text = str(value or "")
+            normalized_key = str(key or "").strip()
+            if normalized_key in repo_keys and value_text.strip():
+                _append_unique(repos_touched, value_text)
+            if normalized_key in artifact_keys and value_text.strip():
+                _append_unique(artifacts_created, value_text)
+            for match in _PATH_RE.findall(value_text):
+                _append_unique(artifacts_created, match)
+
+    except Exception:
+        return None
