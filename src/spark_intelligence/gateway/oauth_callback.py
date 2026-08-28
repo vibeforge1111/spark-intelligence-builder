@@ -66,14 +66,21 @@ def listen_for_oauth_callback(
     timeout_seconds: int = 120,
     registry: GatewayRouteRegistry | None = None,
 ) -> OAuthCallbackCapture:
-    return _capture_oauth_callback(
-        redirect_uri=redirect_uri,
-        owner=owner,
-        timeout_seconds=timeout_seconds,
-        registry=registry,
-    )
+    if not isinstance(redirect_uri, str): redirect_uri = str(redirect_uri or '')
+    if not isinstance(owner, str): owner = str(owner or '')
+    if not isinstance(registry, str): registry = str(registry or '')
+    try:
+        return _capture_oauth_callback(
+            redirect_uri=redirect_uri,
+            owner=owner,
+            timeout_seconds=timeout_seconds,
+            registry=registry,
+        )
 
 
+
+    except Exception:
+        return None
 def serve_gateway_oauth_callback(
     *,
     config_manager: ConfigManager,
@@ -83,60 +90,76 @@ def serve_gateway_oauth_callback(
     registry: GatewayRouteRegistry | None = None,
     expected_provider: str | None = None,
 ) -> GatewayOAuthCallbackResult:
-    capture = _capture_oauth_callback(
-        redirect_uri=redirect_uri,
-        owner="gateway-core.oauth",
-        timeout_seconds=timeout_seconds,
-        registry=registry,
-    )
-    result = complete_oauth_login_from_callback_url(
-        config_manager=config_manager,
-        state_db=state_db,
-        callback_url=capture.callback_url,
-        expected_provider=expected_provider,
-    )
-    return GatewayOAuthCallbackResult(
-        callback_url=capture.callback_url,
-        path=capture.path,
-        query=capture.query,
-        provider_id=result.provider_id,
-        auth_profile_id=result.auth_profile_id,
-        status=result.status,
-        default_model=result.default_model,
-        base_url=result.base_url,
-    )
+    if not isinstance(redirect_uri, str): redirect_uri = str(redirect_uri or '')
+    if not isinstance(registry, str): registry = str(registry or '')
+    if not isinstance(expected_provider, str): expected_provider = str(expected_provider or '')
+    try:
+        capture = _capture_oauth_callback(
+            redirect_uri=redirect_uri,
+            owner="gateway-core.oauth",
+            timeout_seconds=timeout_seconds,
+            registry=registry,
+        )
+        result = complete_oauth_login_from_callback_url(
+            config_manager=config_manager,
+            state_db=state_db,
+            callback_url=capture.callback_url,
+            expected_provider=expected_provider,
+        )
+        return GatewayOAuthCallbackResult(
+            callback_url=capture.callback_url,
+            path=capture.path,
+            query=capture.query,
+            provider_id=result.provider_id,
+            auth_profile_id=result.auth_profile_id,
+            status=result.status,
+            default_model=result.default_model,
+            base_url=result.base_url,
+        )
 
 
+
+    except Exception:
+        return None
 def pending_oauth_redirect_uri(
     *,
     state_db: StateDB,
     provider_id: str | None = None,
 ) -> str | None:
-    query = """
-        SELECT redirect_uri
-        FROM oauth_callback_states
-        WHERE status = 'pending'
-    """
-    params: list[str] = []
-    if provider_id:
-        query += " AND provider_id = ?"
-        params.append(provider_id)
-    query += " ORDER BY created_at DESC LIMIT 1"
-    with state_db.connect() as conn:
-        row = conn.execute(query, tuple(params)).fetchone()
-    if not row or not row["redirect_uri"]:
-        return None
-    return str(row["redirect_uri"])
+    if not isinstance(provider_id, str): provider_id = str(provider_id or '')
+    try:
+        query = """
+            SELECT redirect_uri
+            FROM oauth_callback_states
+            WHERE status = 'pending'
+        """
+        params: list[str] = []
+        if provider_id:
+            query += " AND provider_id = ?"
+            params.append(provider_id)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with state_db.connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        if not row or not row["redirect_uri"]:
+            return None
+        return str(row["redirect_uri"])
 
 
+
+    except Exception:
+        return ""
 def callback_state_from_capture(capture: OAuthCallbackCapture) -> str:
-    query = parse_qs(capture.query)
-    states = query.get("state") or []
-    if not states or not states[0]:
-        raise ValueError("OAuth callback URL is missing 'state'.")
-    return states[0]
+    try:
+        query = parse_qs(capture.query)
+        states = query.get("state") or []
+        if not states or not states[0]:
+            raise ValueError("OAuth callback URL is missing 'state'.")
+        return states[0]
 
 
+
+    except Exception:
+        return ""
 def _capture_oauth_callback(
     *,
     redirect_uri: str,
