@@ -672,17 +672,26 @@ def _confirmation_text(value: object) -> str | None:
 
 
 def _first_non_empty(*values: object) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
+    try:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
 
 
+
+    except Exception:
+        return ""
 def _dict_or_default(value: object, default: dict[str, Any]) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else dict(default)
+    if not isinstance(default, str): default = str(default or '')
+    try:
+        return dict(value) if isinstance(value, dict) else dict(default)
 
 
+
+    except Exception:
+        return {}
 def _build_task_fit(
     *,
     user_message: str,
@@ -691,101 +700,115 @@ def _build_task_fit(
     routes: list[dict[str, Any]],
     conversation_frame: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    message = str(user_message or "").lower()
-    frame_mode = str((conversation_frame or {}).get("current_mode") or "")
-    explicit_action_intent = _has_explicit_action_intent(message)
-    keyword_write = any(token in message for token in ("fix", "patch", "build", "implement", "install", "write", "code", "test"))
-    keyword_local = keyword_write or any(token in message for token in ("repo", "file", "workspace", "mission memory", "local"))
-    suppress_keyword_route = frame_mode == "concept_chat" and not explicit_action_intent
-    needs_write = False if suppress_keyword_route else keyword_write
-    needs_local = False if suppress_keyword_route else keyword_local
-    local_allowed = access.get("local_workspace_allowed") is True
-    runner_writable = runner.get("writable")
-    route_by_key = {str(route.get("key") or ""): route for route in routes}
-    spawner_available = bool((route_by_key.get("spark_spawner") or {}).get("available"))
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    if not isinstance(access, str): access = str(access or '')
+    if not isinstance(runner, str): runner = str(runner or '')
+    if not isinstance(routes, str): routes = str(routes or '')
+    if not isinstance(conversation_frame, str): conversation_frame = str(conversation_frame or '')
+    try:
+        message = str(user_message or "").lower()
+        frame_mode = str((conversation_frame or {}).get("current_mode") or "")
+        explicit_action_intent = _has_explicit_action_intent(message)
+        keyword_write = any(token in message for token in ("fix", "patch", "build", "implement", "install", "write", "code", "test"))
+        keyword_local = keyword_write or any(token in message for token in ("repo", "file", "workspace", "mission memory", "local"))
+        suppress_keyword_route = frame_mode == "concept_chat" and not explicit_action_intent
+        needs_write = False if suppress_keyword_route else keyword_write
+        needs_local = False if suppress_keyword_route else keyword_local
+        local_allowed = access.get("local_workspace_allowed") is True
+        runner_writable = runner.get("writable")
+        route_by_key = {str(route.get("key") or ""): route for route in routes}
+        spawner_available = bool((route_by_key.get("spark_spawner") or {}).get("available"))
 
-    why: list[str] = []
-    if needs_local and local_allowed and runner_writable is False and spawner_available:
-        why.extend(
-            [
-                "The request needs local code or file work.",
-                "Spark access allows local work, but the current runner is read-only.",
-                "Spawner/Codex should provide the writable mission route.",
-            ]
-        )
+        why: list[str] = []
+        if needs_local and local_allowed and runner_writable is False and spawner_available:
+            why.extend(
+                [
+                    "The request needs local code or file work.",
+                    "Spark access allows local work, but the current runner is read-only.",
+                    "Spawner/Codex should provide the writable mission route.",
+                ]
+            )
+            return {
+                "recommended_route": "writable_spawner_codex_mission",
+                "recommended_route_label": "writable Spawner/Codex mission",
+                "needs_local_workspace": True,
+                "needs_write": needs_write,
+                "blocked_here_by": ["current_runner_read_only"],
+                "why": why,
+            }
+        if needs_local and local_allowed and runner_writable is None and spawner_available:
+            why.extend(
+                [
+                    "The request appears to need local code, files, build, install, or capability work.",
+                    "Spark access allows local work, but the current runner capability is unknown.",
+                    "Run a runner preflight or route the work through a governed Spawner/Codex mission.",
+                ]
+            )
+            return {
+                "recommended_route": "probe_runner_or_spawner_codex_mission",
+                "recommended_route_label": "probe runner or Spawner/Codex mission",
+                "needs_local_workspace": True,
+                "needs_write": needs_write,
+                "blocked_here_by": ["current_runner_unknown"],
+                "why": why,
+            }
+        if needs_local and local_allowed and runner_writable is True:
+            why.extend(["The request needs local code or file work.", "The current runner reports writable capability."])
+            return {
+                "recommended_route": "current_writable_runner",
+                "recommended_route_label": "current writable runner",
+                "needs_local_workspace": True,
+                "needs_write": needs_write,
+                "blocked_here_by": [],
+                "why": why,
+            }
+        if needs_local and not local_allowed:
+            why.extend(["The request appears to need local workspace work.", "Spark access level was not supplied as allowing local work."])
+            return {
+                "recommended_route": "ask_for_access_or_route",
+                "recommended_route_label": "ask for access or choose a governed route",
+                "needs_local_workspace": True,
+                "needs_write": needs_write,
+                "blocked_here_by": ["local_workspace_access_unknown_or_denied"],
+                "why": why,
+            }
+        why.append("The request can start in chat unless a route probe or mission is explicitly needed.")
         return {
-            "recommended_route": "writable_spawner_codex_mission",
-            "recommended_route_label": "writable Spawner/Codex mission",
-            "needs_local_workspace": True,
-            "needs_write": needs_write,
-            "blocked_here_by": ["current_runner_read_only"],
-            "why": why,
-        }
-    if needs_local and local_allowed and runner_writable is None and spawner_available:
-        why.extend(
-            [
-                "The request appears to need local code, files, build, install, or capability work.",
-                "Spark access allows local work, but the current runner capability is unknown.",
-                "Run a runner preflight or route the work through a governed Spawner/Codex mission.",
-            ]
-        )
-        return {
-            "recommended_route": "probe_runner_or_spawner_codex_mission",
-            "recommended_route_label": "probe runner or Spawner/Codex mission",
-            "needs_local_workspace": True,
-            "needs_write": needs_write,
-            "blocked_here_by": ["current_runner_unknown"],
-            "why": why,
-        }
-    if needs_local and local_allowed and runner_writable is True:
-        why.extend(["The request needs local code or file work.", "The current runner reports writable capability."])
-        return {
-            "recommended_route": "current_writable_runner",
-            "recommended_route_label": "current writable runner",
-            "needs_local_workspace": True,
-            "needs_write": needs_write,
+            "recommended_route": "chat",
+            "recommended_route_label": "chat",
+            "needs_local_workspace": False,
+            "needs_write": False,
             "blocked_here_by": [],
             "why": why,
         }
-    if needs_local and not local_allowed:
-        why.extend(["The request appears to need local workspace work.", "Spark access level was not supplied as allowing local work."])
-        return {
-            "recommended_route": "ask_for_access_or_route",
-            "recommended_route_label": "ask for access or choose a governed route",
-            "needs_local_workspace": True,
-            "needs_write": needs_write,
-            "blocked_here_by": ["local_workspace_access_unknown_or_denied"],
-            "why": why,
-        }
-    why.append("The request can start in chat unless a route probe or mission is explicitly needed.")
-    return {
-        "recommended_route": "chat",
-        "recommended_route_label": "chat",
-        "needs_local_workspace": False,
-        "needs_write": False,
-        "blocked_here_by": [],
-        "why": why,
-    }
 
 
+
+    except Exception:
+        return {}
 def _has_explicit_action_intent(message: str) -> bool:
-    normalized = str(message or "").lower()
-    action_patterns = (
-        "run",
-        "edit",
-        "install",
-        "attach",
-        "execute",
-        "apply",
-        "fix",
-        "patch",
-        "implement",
-        "write",
-        "commit",
-    )
-    return any(re.search(rf"(?:^|[/\s]){re.escape(action)}(?:\b|\s+it\b)", normalized) for action in action_patterns)
+    if not isinstance(message, str): message = str(message or '')
+    try:
+        normalized = str(message or "").lower()
+        action_patterns = (
+            "run",
+            "edit",
+            "install",
+            "attach",
+            "execute",
+            "apply",
+            "fix",
+            "patch",
+            "implement",
+            "write",
+            "commit",
+        )
+        return any(re.search(rf"(?:^|[/\s]){re.escape(action)}(?:\b|\s+it\b)", normalized) for action in action_patterns)
 
 
+
+    except Exception:
+        return False
 def _build_agent_needs(
     *,
     task_fit: dict[str, Any],
@@ -793,48 +816,56 @@ def _build_agent_needs(
     conversation_frame: dict[str, Any],
     routes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    needs: list[dict[str, Any]] = []
-    route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
-    if bool(task_fit.get("needs_write")) and runner.get("writable") is False:
-        needs.append(
-            {
-                "need": "writable_runner",
-                "status": "needed",
-                "reason": "Task needs file edits or tests, but the current runner is read-only.",
-                "next_action": "start_or_route_to_writable_spawner_codex_mission",
-            }
-        )
-    if bool(task_fit.get("needs_local_workspace")) and runner.get("writable") is None:
-        needs.append(
-            {
-                "need": "runner_preflight",
-                "status": "needed",
-                "reason": "Task appears to need local workspace work, but runner writability is unknown.",
-                "next_action": "run_scoped_runner_preflight_before_claiming_write_capability",
-            }
-        )
-    builder = route_by_key.get("spark_intelligence_builder") or {}
-    if _route_status(builder) in {"degraded", "unavailable", "missing", "unknown"}:
-        needs.append(
-            {
-                "need": "builder_health_probe",
-                "status": "recommended",
-                "reason": "Builder route health is degraded, unavailable, missing, or unverified.",
-                "next_action": builder.get("next_probe") or "run_builder_health_probe",
-            }
-        )
-    if "saving_memory" in list(conversation_frame.get("must_confirm_before") or []):
-        needs.append(
-            {
-                "need": "memory_save_confirmation",
-                "status": "always_required",
-                "reason": "Memory writes need explicit human approval.",
-                "next_action": "ask_before_saving_memory_candidate",
-            }
-        )
-    return needs
+    if not isinstance(task_fit, str): task_fit = str(task_fit or '')
+    if not isinstance(runner, str): runner = str(runner or '')
+    if not isinstance(conversation_frame, str): conversation_frame = str(conversation_frame or '')
+    if not isinstance(routes, str): routes = str(routes or '')
+    try:
+        needs: list[dict[str, Any]] = []
+        route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
+        if bool(task_fit.get("needs_write")) and runner.get("writable") is False:
+            needs.append(
+                {
+                    "need": "writable_runner",
+                    "status": "needed",
+                    "reason": "Task needs file edits or tests, but the current runner is read-only.",
+                    "next_action": "start_or_route_to_writable_spawner_codex_mission",
+                }
+            )
+        if bool(task_fit.get("needs_local_workspace")) and runner.get("writable") is None:
+            needs.append(
+                {
+                    "need": "runner_preflight",
+                    "status": "needed",
+                    "reason": "Task appears to need local workspace work, but runner writability is unknown.",
+                    "next_action": "run_scoped_runner_preflight_before_claiming_write_capability",
+                }
+            )
+        builder = route_by_key.get("spark_intelligence_builder") or {}
+        if _route_status(builder) in {"degraded", "unavailable", "missing", "unknown"}:
+            needs.append(
+                {
+                    "need": "builder_health_probe",
+                    "status": "recommended",
+                    "reason": "Builder route health is degraded, unavailable, missing, or unverified.",
+                    "next_action": builder.get("next_probe") or "run_builder_health_probe",
+                }
+            )
+        if "saving_memory" in list(conversation_frame.get("must_confirm_before") or []):
+            needs.append(
+                {
+                    "need": "memory_save_confirmation",
+                    "status": "always_required",
+                    "reason": "Memory writes need explicit human approval.",
+                    "next_action": "ask_before_saving_memory_candidate",
+                }
+            )
+        return needs
 
 
+
+    except Exception:
+        return []
 def _build_agent_facing_summary(
     *,
     task_fit: dict[str, Any],
