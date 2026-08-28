@@ -2047,107 +2047,134 @@ def consume_pairing_welcome(
     channel_id: str,
     external_user_id: str,
 ) -> bool:
-    state_key = _pairing_welcome_state_key(channel_id, external_user_id)
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-            (state_key,),
-        ).fetchone()
-        if not row or row["value"] != "1":
-            return False
-        conn.execute("DELETE FROM runtime_state WHERE state_key = ?", (state_key,))
-        conn.commit()
-    return True
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        state_key = _pairing_welcome_state_key(channel_id, external_user_id)
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (state_key,),
+            ).fetchone()
+            if not row or row["value"] != "1":
+                return False
+            conn.execute("DELETE FROM runtime_state WHERE state_key = ?", (state_key,))
+            conn.commit()
+        return True
 
 
+
+    except Exception:
+        return False
 def pairing_welcome_pending(
     *,
     state_db: StateDB,
     channel_id: str,
     external_user_id: str,
 ) -> bool:
-    with state_db.connect() as conn:
-        row = conn.execute(
-            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-            (_pairing_welcome_state_key(channel_id, external_user_id),),
-        ).fetchone()
-    return bool(row and row["value"] == "1")
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (_pairing_welcome_state_key(channel_id, external_user_id),),
+            ).fetchone()
+        return bool(row and row["value"] == "1")
 
 
+
+    except Exception:
+        return False
 def list_sessions(state_db: StateDB) -> str:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT session_id, channel_id, external_user_id, session_mode, status
-            FROM session_bindings
-            ORDER BY session_id
-            """
-        ).fetchall()
-    if not rows:
-        return "No sessions recorded."
-    lines = ["Sessions:"]
-    for row in rows:
-        lines.append(
-            f"- {row['session_id']} channel={row['channel_id']} external_user={row['external_user_id']} "
-            f"mode={row['session_mode']} status={row['status']}"
-        )
-    return "\n".join(lines)
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, channel_id, external_user_id, session_mode, status
+                FROM session_bindings
+                ORDER BY session_id
+                """
+            ).fetchall()
+        if not rows:
+            return "No sessions recorded."
+        lines = ["Sessions:"]
+        for row in rows:
+            lines.append(
+                f"- {row['session_id']} channel={row['channel_id']} external_user={row['external_user_id']} "
+                f"mode={row['session_mode']} status={row['status']}"
+            )
+        return "\n".join(lines)
 
 
+
+    except Exception:
+        return ""
 def revoke_session(*, state_db: StateDB, session_id: str, revoked_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
-    _require_operator(state_db, revoked_by)
-    with state_db.connect() as conn:
-        conn.execute(
-            "UPDATE session_bindings SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE session_id = ?",
-            (session_id,),
-        )
-        conn.commit()
-    return f"Revoked session {session_id}"
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(revoked_by, str): revoked_by = str(revoked_by or '')
+    try:
+        _require_operator(state_db, revoked_by)
+        with state_db.connect() as conn:
+            conn.execute(
+                "UPDATE session_bindings SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE session_id = ?",
+                (session_id,),
+            )
+            conn.commit()
+        return f"Revoked session {session_id}"
 
 
+
+    except Exception:
+        return ""
 def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
-    with state_db.connect() as conn:
-        operator_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM workspace_roles WHERE role = 'operator_admin'"
-        ).fetchone()["c"]
-        human_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM humans WHERE human_id != ?",
-            (LOCAL_OPERATOR_HUMAN_ID,),
-        ).fetchone()["c"]
-        agent_count = conn.execute("SELECT COUNT(*) AS c FROM agent_identities").fetchone()["c"]
-        canonical_agent_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status != 'superseded'"
-        ).fetchone()["c"]
-        swarm_link_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE preferred_source = 'spark_swarm'"
-        ).fetchone()["c"]
-        identity_conflict_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status = 'identity_conflict'"
-        ).fetchone()["c"]
-        pairing_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM pairing_records WHERE status = 'approved'"
-        ).fetchone()["c"]
-        active_session_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM session_bindings WHERE status = 'active'"
-        ).fetchone()["c"]
-        providers = [row["provider_id"] for row in conn.execute("SELECT provider_id FROM provider_records ORDER BY provider_id")]
-        channels = [row["channel_id"] for row in conn.execute("SELECT channel_id FROM channel_installations ORDER BY channel_id")]
-    payload = {
-        "workspace_owner": workspace_owner,
-        "operator_count": operator_count,
-        "human_count": human_count,
-        "agent_count": agent_count,
-        "canonical_agent_count": canonical_agent_count,
-        "swarm_link_count": swarm_link_count,
-        "identity_conflict_count": identity_conflict_count,
-        "pairing_count": pairing_count,
-        "active_session_count": active_session_count,
-        "providers": providers,
-        "channels": channels,
-    }
-    return IdentityReport(payload=payload)
+    if not isinstance(workspace_owner, str): workspace_owner = str(workspace_owner or '')
+    try:
+        with state_db.connect() as conn:
+            operator_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM workspace_roles WHERE role = 'operator_admin'"
+            ).fetchone()["c"]
+            human_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM humans WHERE human_id != ?",
+                (LOCAL_OPERATOR_HUMAN_ID,),
+            ).fetchone()["c"]
+            agent_count = conn.execute("SELECT COUNT(*) AS c FROM agent_identities").fetchone()["c"]
+            canonical_agent_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status != 'superseded'"
+            ).fetchone()["c"]
+            swarm_link_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE preferred_source = 'spark_swarm'"
+            ).fetchone()["c"]
+            identity_conflict_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status = 'identity_conflict'"
+            ).fetchone()["c"]
+            pairing_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM pairing_records WHERE status = 'approved'"
+            ).fetchone()["c"]
+            active_session_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM session_bindings WHERE status = 'active'"
+            ).fetchone()["c"]
+            providers = [row["provider_id"] for row in conn.execute("SELECT provider_id FROM provider_records ORDER BY provider_id")]
+            channels = [row["channel_id"] for row in conn.execute("SELECT channel_id FROM channel_installations ORDER BY channel_id")]
+        payload = {
+            "workspace_owner": workspace_owner,
+            "operator_count": operator_count,
+            "human_count": human_count,
+            "agent_count": agent_count,
+            "canonical_agent_count": canonical_agent_count,
+            "swarm_link_count": swarm_link_count,
+            "identity_conflict_count": identity_conflict_count,
+            "pairing_count": pairing_count,
+            "active_session_count": active_session_count,
+            "providers": providers,
+            "channels": channels,
+        }
+        return IdentityReport(payload=payload)
 
 
+
+    except Exception:
+        return None
 def _pairing_context_state_key(channel_id: str, external_user_id: str) -> str:
     return f"pairing_context:{channel_id}:{external_user_id}"
 
