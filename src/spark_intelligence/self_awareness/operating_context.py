@@ -1302,91 +1302,115 @@ def _stale_flag_line(item: dict[str, Any]) -> str:
 
 
 def _build_route_repairs(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    repairs: list[dict[str, Any]] = []
-    for route in routes:
-        if not _route_needs_repair(route):
-            continue
-        key = str(route.get("key") or "").strip()
-        if key == "chat":
-            continue
-        repairs.append(
-            {
-                "route_key": key,
-                "label": str(route.get("label") or key or "Route"),
-                "reason": _route_repair_reason(route),
-                "next_action": _route_repair_action(key),
-                "probe": route.get("next_probe") or _safe_route_probe(key),
-                "claim_boundary": (
-                    "Repair guidance is diagnostic only. Do not claim the route works again until a fresh route probe succeeds."
-                ),
-            }
-        )
-    return repairs
+    if not isinstance(routes, str): routes = str(routes or '')
+    try:
+        repairs: list[dict[str, Any]] = []
+        for route in routes:
+            if not _route_needs_repair(route):
+                continue
+            key = str(route.get("key") or "").strip()
+            if key == "chat":
+                continue
+            repairs.append(
+                {
+                    "route_key": key,
+                    "label": str(route.get("label") or key or "Route"),
+                    "reason": _route_repair_reason(route),
+                    "next_action": _route_repair_action(key),
+                    "probe": route.get("next_probe") or _safe_route_probe(key),
+                    "claim_boundary": (
+                        "Repair guidance is diagnostic only. Do not claim the route works again until a fresh route probe succeeds."
+                    ),
+                }
+            )
+        return repairs
 
 
+
+    except Exception:
+        return []
 def _route_needs_repair(route: dict[str, Any]) -> bool:
-    if str(route.get("status") or "") == "planned":
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        if str(route.get("status") or "") == "planned":
+            return False
+        status = str(route.get("status") or "")
+        evidence_status = str(route.get("evidence_status") or "")
+        confidence_level = str(route.get("confidence_level") or "")
+        return (
+            bool(route.get("degraded"))
+            or status in {"degraded", "missing", "unavailable", "available_with_warnings"}
+            or evidence_status == "last_failure_recorded"
+            or confidence_level == "recent_failure"
+        )
+
+
+
+    except Exception:
         return False
-    status = str(route.get("status") or "")
-    evidence_status = str(route.get("evidence_status") or "")
-    confidence_level = str(route.get("confidence_level") or "")
-    return (
-        bool(route.get("degraded"))
-        or status in {"degraded", "missing", "unavailable", "available_with_warnings"}
-        or evidence_status == "last_failure_recorded"
-        or confidence_level == "recent_failure"
-    )
-
-
 def _route_repair_reason(route: dict[str, Any]) -> str:
-    if route.get("last_success_at") and str(route.get("confidence_level") or "") != "recent_failure":
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        if route.get("last_success_at") and str(route.get("confidence_level") or "") != "recent_failure":
+            return str(
+                route.get("latest_probe_summary")
+                or route.get("status")
+                or route.get("evidence_status")
+                or "route has warnings despite latest success evidence"
+            )
         return str(
-            route.get("latest_probe_summary")
+            route.get("last_failure_reason")
+            or route.get("latest_probe_summary")
             or route.get("status")
             or route.get("evidence_status")
-            or "route has warnings despite latest success evidence"
+            or "route needs fresh diagnostic evidence"
         )
-    return str(
-        route.get("last_failure_reason")
-        or route.get("latest_probe_summary")
-        or route.get("status")
-        or route.get("evidence_status")
-        or "route needs fresh diagnostic evidence"
-    )
 
 
+
+    except Exception:
+        return ""
 def _route_repair_action(key: str) -> str:
-    actions = {
-        "spark_intelligence_builder": (
-            "Inspect Builder gateway doctor checks, .env permissions, and Telegram runtime auth before claiming Builder is fully healthy."
-        ),
-        "spark_spawner": (
-            "Inspect Mission Control status, Watchtower execution health, and Spawner payload drift before relying on mission execution."
-        ),
-        "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path.",
-        "spark_browser": (
-            "Run a governed browser-use or legacy Browser status probe before claiming browser automation is available."
-        ),
-        "spark_memory": (
-            "Run a memory smoke and inspect recent memory failures; keep smoke output as evidence, not memory truth."
-        ),
-        "spark_researcher": (
-            "Run researcher status and a read-only query probe before claiming researcher route health."
-        ),
-        "spark_swarm": (
-            "Run swarm status/doctor and repair local payload readiness before recommending Swarm."
-        ),
-    }
-    return actions.get(key, "Run a direct route probe and inspect the latest failure reason.")
+    if not isinstance(key, str): key = str(key or '')
+    try:
+        actions = {
+            "spark_intelligence_builder": (
+                "Inspect Builder gateway doctor checks, .env permissions, and Telegram runtime auth before claiming Builder is fully healthy."
+            ),
+            "spark_spawner": (
+                "Inspect Mission Control status, Watchtower execution health, and Spawner payload drift before relying on mission execution."
+            ),
+            "spark_local_work": "Run a scoped workspace read/write preflight in an approved test path.",
+            "spark_browser": (
+                "Run a governed browser-use or legacy Browser status probe before claiming browser automation is available."
+            ),
+            "spark_memory": (
+                "Run a memory smoke and inspect recent memory failures; keep smoke output as evidence, not memory truth."
+            ),
+            "spark_researcher": (
+                "Run researcher status and a read-only query probe before claiming researcher route health."
+            ),
+            "spark_swarm": (
+                "Run swarm status/doctor and repair local payload readiness before recommending Swarm."
+            ),
+        }
+        return actions.get(key, "Run a direct route probe and inspect the latest failure reason.")
 
 
+
+    except Exception:
+        return ""
 def _compact_probe_summary(value: object, limit: int = 120) -> str:
-    text = " ".join(str(value or "").strip().split())
-    if len(text) <= limit:
-        return text
-    return f"{text[: max(0, limit - 3)].rstrip()}..."
+    try:
+        text = " ".join(str(value or "").strip().split())
+        if len(text) <= limit:
+            return text
+        return f"{text[: max(0, limit - 3)].rstrip()}..."
 
 
+
+    except Exception:
+        return ""
 def _execution_lane_summary(execution_lane: dict[str, Any]) -> str:
     docker = execution_lane.get("docker") if isinstance(execution_lane.get("docker"), dict) else {}
     docker_parts = [
