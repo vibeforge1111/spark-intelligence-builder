@@ -349,8 +349,13 @@ def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:
 
 
 def _timestamp_is_stale(value: str, *, stale_seconds: int) -> bool:
+    if not isinstance(value, str): value = str(value or '')
     try:
-        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
-    except ValueError:
-        return True
-    return timestamp <= datetime.now(UTC) - timedelta(seconds=stale_seconds)
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            return True
+        return timestamp <= datetime.now(UTC) - timedelta(seconds=stale_seconds)
+
+    except Exception:
+        return False
