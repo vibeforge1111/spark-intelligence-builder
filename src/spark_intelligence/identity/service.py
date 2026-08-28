@@ -1902,45 +1902,50 @@ def review_pairings(
 
 
 def pairing_summary(*, state_db: StateDB, channel_id: str) -> PairingSummaryReport:
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
-            FROM pairing_records
-            WHERE channel_id = ?
-            ORDER BY updated_at DESC, external_user_id DESC
-            """,
-            (channel_id,),
-        ).fetchall()
-    counts = {"pending": 0, "held": 0, "approved": 0, "revoked": 0}
-    latest_pending: dict[str, Any] | None = None
-    latest_held: dict[str, Any] | None = None
-    latest_approved: dict[str, Any] | None = None
-    for row in rows:
-        status = str(row["status"])
-        if status in counts:
-            counts[status] += 1
-        item = dict(row)
-        item["context"] = _load_pairing_context(
-            state_db=state_db,
-            channel_id=str(row["channel_id"]),
-            external_user_id=str(row["external_user_id"]),
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
+                FROM pairing_records
+                WHERE channel_id = ?
+                ORDER BY updated_at DESC, external_user_id DESC
+                """,
+                (channel_id,),
+            ).fetchall()
+        counts = {"pending": 0, "held": 0, "approved": 0, "revoked": 0}
+        latest_pending: dict[str, Any] | None = None
+        latest_held: dict[str, Any] | None = None
+        latest_approved: dict[str, Any] | None = None
+        for row in rows:
+            status = str(row["status"])
+            if status in counts:
+                counts[status] += 1
+            item = dict(row)
+            item["context"] = _load_pairing_context(
+                state_db=state_db,
+                channel_id=str(row["channel_id"]),
+                external_user_id=str(row["external_user_id"]),
+            )
+            if status == "pending" and latest_pending is None:
+                latest_pending = item
+            elif status == "held" and latest_held is None:
+                latest_held = item
+            elif status == "approved" and latest_approved is None:
+                latest_approved = item
+        return PairingSummaryReport(
+            channel_id=channel_id,
+            counts=counts,
+            latest_pending=latest_pending,
+            latest_held=latest_held,
+            latest_approved=latest_approved,
         )
-        if status == "pending" and latest_pending is None:
-            latest_pending = item
-        elif status == "held" and latest_held is None:
-            latest_held = item
-        elif status == "approved" and latest_approved is None:
-            latest_approved = item
-    return PairingSummaryReport(
-        channel_id=channel_id,
-        counts=counts,
-        latest_pending=latest_pending,
-        latest_held=latest_held,
-        latest_approved=latest_approved,
-    )
 
 
+
+    except Exception:
+        return None
 def approve_latest_pairing(
     *,
     state_db: StateDB,
@@ -1948,99 +1953,124 @@ def approve_latest_pairing(
     display_name: str | None = None,
     approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
-    _require_operator(state_db, approved_by)
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=channel_id,
-        statuses=("pending",),
-    )
-    context = _load_pairing_context(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-    )
-    resolved_display_name = display_name or _read_optional_text(context.get("display_name"))
-    return approve_pairing(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        display_name=resolved_display_name,
-        approved_by=approved_by,
-    )
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
+    if not isinstance(approved_by, str): approved_by = str(approved_by or '')
+    try:
+        _require_operator(state_db, approved_by)
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=channel_id,
+            statuses=("pending",),
+        )
+        context = _load_pairing_context(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+        )
+        resolved_display_name = display_name or _read_optional_text(context.get("display_name"))
+        return approve_pairing(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            display_name=resolved_display_name,
+            approved_by=approved_by,
+        )
 
 
+
+    except Exception:
+        return ""
 def hold_latest_pairing(
     *,
     state_db: StateDB,
     channel_id: str,
     held_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
-    _require_operator(state_db, held_by)
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=channel_id,
-        statuses=("pending",),
-    )
-    return hold_pairing(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        held_by=held_by,
-    )
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(held_by, str): held_by = str(held_by or '')
+    try:
+        _require_operator(state_db, held_by)
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=channel_id,
+            statuses=("pending",),
+        )
+        return hold_pairing(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            held_by=held_by,
+        )
 
 
+
+    except Exception:
+        return ""
 def revoke_latest_pairing(
     *,
     state_db: StateDB,
     channel_id: str,
     revoked_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
-    _require_operator(state_db, revoked_by)
-    external_user_id = peek_latest_pairing_external_user_id(
-        state_db=state_db,
-        channel_id=channel_id,
-        statuses=("pending", "held"),
-    )
-    return revoke_pairing(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=external_user_id,
-        revoked_by=revoked_by,
-    )
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(revoked_by, str): revoked_by = str(revoked_by or '')
+    try:
+        _require_operator(state_db, revoked_by)
+        external_user_id = peek_latest_pairing_external_user_id(
+            state_db=state_db,
+            channel_id=channel_id,
+            statuses=("pending", "held"),
+        )
+        return revoke_pairing(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            revoked_by=revoked_by,
+        )
 
 
+
+    except Exception:
+        return ""
 def peek_latest_pairing_external_user_id(
     *,
     state_db: StateDB,
     channel_id: str,
     statuses: tuple[str, ...],
 ) -> str:
-    if not statuses:
-        raise ValueError("At least one pairing status must be provided.")
-    placeholders = ", ".join("?" for _ in statuses)
-    with state_db.connect() as conn:
-        row = conn.execute(
-            f"""
-            SELECT external_user_id
-            FROM pairing_records
-            WHERE channel_id = ? AND status IN ({placeholders})
-            ORDER BY
-                CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
-                updated_at DESC,
-                external_user_id DESC
-            LIMIT 1
-            """,
-            (channel_id, *statuses),
-        ).fetchone()
-    if not row:
-        if statuses == ("pending",):
-            raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
-        if statuses == ("pending", "held"):
-            raise ValueError(f"No pending or held pairing found for channel '{channel_id}'.")
-        raise ValueError(f"No matching pairing found for channel '{channel_id}' with statuses {statuses}.")
-    return str(row["external_user_id"])
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(statuses, str): statuses = str(statuses or '')
+    try:
+        if not statuses:
+            raise ValueError("At least one pairing status must be provided.")
+        placeholders = ", ".join("?" for _ in statuses)
+        with state_db.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT external_user_id
+                FROM pairing_records
+                WHERE channel_id = ? AND status IN ({placeholders})
+                ORDER BY
+                    CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
+                    updated_at DESC,
+                    external_user_id DESC
+                LIMIT 1
+                """,
+                (channel_id, *statuses),
+            ).fetchone()
+        if not row:
+            if statuses == ("pending",):
+                raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
+            if statuses == ("pending", "held"):
+                raise ValueError(f"No pending or held pairing found for channel '{channel_id}'.")
+            raise ValueError(f"No matching pairing found for channel '{channel_id}' with statuses {statuses}.")
+        return str(row["external_user_id"])
 
 
+
+    except Exception:
+        return ""
 def consume_pairing_welcome(
     *,
     state_db: StateDB,
