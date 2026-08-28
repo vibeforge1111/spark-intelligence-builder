@@ -306,9 +306,14 @@ def build_session_memory_summary(
     session_id: str,
     limit: int = 200,
 ) -> SessionSummary:
-    return build_session_summary(state_db=state_db, session_id=session_id, limit=limit)
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        return build_session_summary(state_db=state_db, session_id=session_id, limit=limit)
 
 
+
+    except Exception:
+        return None
 def build_daily_summary(
     *,
     state_db: StateDB,
@@ -316,13 +321,19 @@ def build_daily_summary(
     human_id: str | None = None,
     limit: int = 500,
 ) -> EpisodicRollupSummary:
-    normalized_day = str(day or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_day):
-        raise ValueError("day must use YYYY-MM-DD")
-    rows = _daily_event_rows(state_db=state_db, day=normalized_day, human_id=human_id, limit=limit)
-    return _rollup_summary_from_rows(scope="daily", scope_key=normalized_day, rows=rows)
+    if not isinstance(day, str): day = str(day or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        normalized_day = str(day or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_day):
+            raise ValueError("day must use YYYY-MM-DD")
+        rows = _daily_event_rows(state_db=state_db, day=normalized_day, human_id=human_id, limit=limit)
+        return _rollup_summary_from_rows(scope="daily", scope_key=normalized_day, rows=rows)
 
 
+
+    except Exception:
+        return None
 def build_project_summary(
     *,
     state_db: StateDB,
@@ -330,13 +341,19 @@ def build_project_summary(
     human_id: str | None = None,
     limit: int = 500,
 ) -> EpisodicRollupSummary:
-    normalized_project = _clean_value(project_key).casefold()
-    if not normalized_project:
-        raise ValueError("project_key is required")
-    rows = _project_event_rows(state_db=state_db, project_key=normalized_project, human_id=human_id, limit=limit)
-    return _rollup_summary_from_rows(scope="project", scope_key=normalized_project, rows=rows)
+    if not isinstance(project_key, str): project_key = str(project_key or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    try:
+        normalized_project = _clean_value(project_key).casefold()
+        if not normalized_project:
+            raise ValueError("project_key is required")
+        rows = _project_event_rows(state_db=state_db, project_key=normalized_project, human_id=human_id, limit=limit)
+        return _rollup_summary_from_rows(scope="project", scope_key=normalized_project, rows=rows)
 
 
+
+    except Exception:
+        return None
 def write_daily_summary_to_memory(
     *,
     config_manager: ConfigManager,
@@ -347,17 +364,25 @@ def write_daily_summary_to_memory(
     actor_id: str = "daily_summary_writer",
     limit: int = 500,
 ) -> MemoryWriteResult:
-    summary = build_daily_summary(state_db=state_db, day=day, human_id=human_id, limit=limit)
-    return _write_rollup_summary_to_memory(
-        config_manager=config_manager,
-        state_db=state_db,
-        human_id=human_id,
-        summary=summary,
-        channel_kind=channel_kind,
-        actor_id=actor_id,
-    )
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(day, str): day = str(day or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        summary = build_daily_summary(state_db=state_db, day=day, human_id=human_id, limit=limit)
+        return _write_rollup_summary_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            summary=summary,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+        )
 
 
+
+    except Exception:
+        return None
 def write_project_summary_to_memory(
     *,
     config_manager: ConfigManager,
@@ -368,17 +393,25 @@ def write_project_summary_to_memory(
     actor_id: str = "project_summary_writer",
     limit: int = 500,
 ) -> MemoryWriteResult:
-    summary = build_project_summary(state_db=state_db, project_key=project_key, human_id=human_id, limit=limit)
-    return _write_rollup_summary_to_memory(
-        config_manager=config_manager,
-        state_db=state_db,
-        human_id=human_id,
-        summary=summary,
-        channel_kind=channel_kind,
-        actor_id=actor_id,
-    )
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(project_key, str): project_key = str(project_key or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        summary = build_project_summary(state_db=state_db, project_key=project_key, human_id=human_id, limit=limit)
+        return _write_rollup_summary_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            summary=summary,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+        )
 
 
+
+    except Exception:
+        return None
 def build_daily_project_summary(
     *,
     state_db: StateDB,
