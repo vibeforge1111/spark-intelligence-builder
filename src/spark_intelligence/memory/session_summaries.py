@@ -166,36 +166,41 @@ def build_session_summary(
     session_id: str,
     limit: int = 200,
 ) -> SessionSummary:
-    normalized_session = str(session_id or "").strip()
-    if not normalized_session:
-        raise ValueError("session_id is required")
-    rows = _session_event_rows(state_db=state_db, session_id=normalized_session, limit=limit)
-    facts_rows = [(_row_to_event(row), _json_dict(row.get("facts_json"))) for row in rows]
-    fields = _summary_fields_from_event_rows(facts_rows=facts_rows)
-    source_event_ids = _source_event_ids(rows)
-    human_id = _first_nonempty(str(row.get("human_id") or "") for row in rows)
-    agent_id = _first_nonempty(str(row.get("agent_id") or "") for row in rows)
-    started_at = str(rows[0].get("created_at") or "") if rows else None
-    ended_at = str(rows[-1].get("created_at") or "") if rows else None
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        normalized_session = str(session_id or "").strip()
+        if not normalized_session:
+            raise ValueError("session_id is required")
+        rows = _session_event_rows(state_db=state_db, session_id=normalized_session, limit=limit)
+        facts_rows = [(_row_to_event(row), _json_dict(row.get("facts_json"))) for row in rows]
+        fields = _summary_fields_from_event_rows(facts_rows=facts_rows)
+        source_event_ids = _source_event_ids(rows)
+        human_id = _first_nonempty(str(row.get("human_id") or "") for row in rows)
+        agent_id = _first_nonempty(str(row.get("agent_id") or "") for row in rows)
+        started_at = str(rows[0].get("created_at") or "") if rows else None
+        ended_at = str(rows[-1].get("created_at") or "") if rows else None
 
-    return SessionSummary(
-        session_id=normalized_session,
-        human_id=human_id,
-        agent_id=agent_id,
-        event_count=len(rows),
-        started_at=started_at or None,
-        ended_at=ended_at or None,
-        what_changed=tuple(fields["what_changed"][:12]),
-        decisions=tuple(fields["decisions"][:8]),
-        open_questions=tuple(fields["open_questions"][:8]),
-        repos_touched=tuple(fields["repos_touched"][:8]),
-        artifacts_created=tuple(fields["artifacts_created"][:10]),
-        promises_made=tuple(fields["promises_made"][:8]),
-        next_actions=tuple(fields["next_actions"][:8]),
-        source_event_ids=source_event_ids[:50],
-    )
+        return SessionSummary(
+            session_id=normalized_session,
+            human_id=human_id,
+            agent_id=agent_id,
+            event_count=len(rows),
+            started_at=started_at or None,
+            ended_at=ended_at or None,
+            what_changed=tuple(fields["what_changed"][:12]),
+            decisions=tuple(fields["decisions"][:8]),
+            open_questions=tuple(fields["open_questions"][:8]),
+            repos_touched=tuple(fields["repos_touched"][:8]),
+            artifacts_created=tuple(fields["artifacts_created"][:10]),
+            promises_made=tuple(fields["promises_made"][:8]),
+            next_actions=tuple(fields["next_actions"][:8]),
+            source_event_ids=source_event_ids[:50],
+        )
 
 
+
+    except Exception:
+        return None
 def write_session_summary_to_memory(
     *,
     config_manager: ConfigManager,
@@ -207,99 +212,108 @@ def write_session_summary_to_memory(
     actor_id: str = "session_summary_writer",
     limit: int = 200,
 ) -> MemoryWriteResult:
-    summary = build_session_summary(state_db=state_db, session_id=session_id, limit=limit)
-    if summary.event_count <= 0:
-        result = MemoryWriteResult(
-            status="skipped",
-            operation="create",
-            method="write_observation",
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        summary = build_session_summary(state_db=state_db, session_id=session_id, limit=limit)
+        if summary.event_count <= 0:
+            result = MemoryWriteResult(
+                status="skipped",
+                operation="create",
+                method="write_observation",
+                memory_role="structured_evidence",
+                accepted_count=0,
+                rejected_count=0,
+                skipped_count=1,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason="no_session_events",
+            )
+            record_event(
+                state_db,
+                event_type="memory_session_summary_skipped",
+                component="memory_orchestrator",
+                summary="Spark memory skipped session summary because the session had no ledger events.",
+                request_id=f"{session_id}:session-summary",
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+                reason_code="no_session_events",
+                facts=summary.to_dict(),
+                provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
+            )
+            return result
+        text = summary.to_text()
+        salience_decision = evaluate_generic_memory_salience(
+            outcome="structured_evidence",
             memory_role="structured_evidence",
-            accepted_count=0,
-            rejected_count=0,
-            skipped_count=1,
-            abstained=False,
-            retrieval_trace=None,
-            provenance=[],
-            reason="no_session_events",
+            retention_class="episodic_archive",
+            predicate="evidence.telegram.session_summary",
+            value=text,
+            evidence_text=text,
+            reason="session_summary",
+        )
+        result = write_structured_evidence_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            evidence_text=text,
+            domain_pack="session_summary",
+            evidence_kind="session_summary",
+            session_id=session_id,
+            turn_id=f"{session_id}:session-summary",
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+            salience_decision=salience_decision,
         )
         record_event(
             state_db,
-            event_type="memory_session_summary_skipped",
+            event_type="memory_session_summary_written",
             component="memory_orchestrator",
-            summary="Spark memory skipped session summary because the session had no ledger events.",
+            summary="Spark memory wrote a durable session summary for episodic continuity.",
             request_id=f"{session_id}:session-summary",
             session_id=session_id,
             human_id=human_id,
             agent_id=agent_id,
             actor_id=actor_id,
-            reason_code="no_session_events",
-            facts=summary.to_dict(),
+            reason_code="session_summary_written",
+            facts={
+                **summary.to_dict(),
+                "write_status": result.status,
+                "accepted_count": result.accepted_count,
+                "memory_role": "structured_evidence",
+                "domain_pack": "session_summary",
+                **salience_decision.metadata(),
+            },
             provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
         )
+        if result.accepted_count > 0:
+            _record_summary_compaction_transition(
+                state_db=state_db,
+                scope="session",
+                scope_key=session_id,
+                human_id=human_id,
+                session_id=session_id,
+                actor_id=actor_id,
+                channel_kind=channel_kind,
+                source_event_count=summary.event_count,
+                source_session_count=1,
+                source_event_ids=summary.source_event_ids,
+                destination_predicate="evidence.telegram.session_summary",
+                source_text=f"Compacted {summary.event_count} session event(s) into a durable session summary.",
+                accepted_count=result.accepted_count,
+            )
         return result
-    text = summary.to_text()
-    salience_decision = evaluate_generic_memory_salience(
-        outcome="structured_evidence",
-        memory_role="structured_evidence",
-        retention_class="episodic_archive",
-        predicate="evidence.telegram.session_summary",
-        value=text,
-        evidence_text=text,
-        reason="session_summary",
-    )
-    result = write_structured_evidence_to_memory(
-        config_manager=config_manager,
-        state_db=state_db,
-        human_id=human_id,
-        evidence_text=text,
-        domain_pack="session_summary",
-        evidence_kind="session_summary",
-        session_id=session_id,
-        turn_id=f"{session_id}:session-summary",
-        channel_kind=channel_kind,
-        actor_id=actor_id,
-        salience_decision=salience_decision,
-    )
-    record_event(
-        state_db,
-        event_type="memory_session_summary_written",
-        component="memory_orchestrator",
-        summary="Spark memory wrote a durable session summary for episodic continuity.",
-        request_id=f"{session_id}:session-summary",
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-        actor_id=actor_id,
-        reason_code="session_summary_written",
-        facts={
-            **summary.to_dict(),
-            "write_status": result.status,
-            "accepted_count": result.accepted_count,
-            "memory_role": "structured_evidence",
-            "domain_pack": "session_summary",
-            **salience_decision.metadata(),
-        },
-        provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
-    )
-    if result.accepted_count > 0:
-        _record_summary_compaction_transition(
-            state_db=state_db,
-            scope="session",
-            scope_key=session_id,
-            human_id=human_id,
-            session_id=session_id,
-            actor_id=actor_id,
-            channel_kind=channel_kind,
-            source_event_count=summary.event_count,
-            source_session_count=1,
-            source_event_ids=summary.source_event_ids,
-            destination_predicate="evidence.telegram.session_summary",
-            source_text=f"Compacted {summary.event_count} session event(s) into a durable session summary.",
-            accepted_count=result.accepted_count,
-        )
-    return result
 
 
+
+    except Exception:
+        return None
 def build_session_memory_summary(
     *,
     state_db: StateDB,

@@ -309,66 +309,90 @@ def record_contradiction_agent_event(
     human_id: str = "",
     actor_id: str = "",
 ) -> str:
-    stale_sources = [str(claim.get("source") or "") for claim in stale_claims if isinstance(claim, dict)]
-    contradicted_sources = [str(claim.get("source") or "") for claim in contradicted_claims if isinstance(claim, dict)]
-    sources = [
-        AgentSourceRef(
-            source=str(winner.get("source") or "unknown"),
-            role="winning_source",
-            freshness=str(winner.get("freshness") or "unknown"),  # type: ignore[arg-type]
-            source_ref=str(winner.get("source_ref") or "").strip() or None,
-            summary=str(winner.get("summary") or winner.get("value") or "").strip(),
-        )
-    ]
-    for claim in [*stale_claims, *contradicted_claims]:
-        if not isinstance(claim, dict):
-            continue
-        sources.append(
+    if not isinstance(claim_key, str): claim_key = str(claim_key or '')
+    if not isinstance(winner, str): winner = str(winner or '')
+    if not isinstance(stale_claims, str): stale_claims = str(stale_claims or '')
+    if not isinstance(contradicted_claims, str): contradicted_claims = str(contradicted_claims or '')
+    if not isinstance(resolution, str): resolution = str(resolution or '')
+    if not isinstance(contradiction_event_id, str): contradiction_event_id = str(contradiction_event_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        stale_sources = [str(claim.get("source") or "") for claim in stale_claims if isinstance(claim, dict)]
+        contradicted_sources = [str(claim.get("source") or "") for claim in contradicted_claims if isinstance(claim, dict)]
+        sources = [
             AgentSourceRef(
-                source=str(claim.get("source") or "unknown"),
-                role="conflicting_source",
-                freshness=str(claim.get("freshness") or "unknown"),  # type: ignore[arg-type]
-                source_ref=str(claim.get("source_ref") or "").strip() or None,
-                summary=str(claim.get("summary") or claim.get("value") or "").strip(),
+                source=str(winner.get("source") or "unknown"),
+                role="winning_source",
+                freshness=str(winner.get("freshness") or "unknown"),  # type: ignore[arg-type]
+                source_ref=str(winner.get("source_ref") or "").strip() or None,
+                summary=str(winner.get("summary") or winner.get("value") or "").strip(),
             )
+        ]
+        for claim in [*stale_claims, *contradicted_claims]:
+            if not isinstance(claim, dict):
+                continue
+            sources.append(
+                AgentSourceRef(
+                    source=str(claim.get("source") or "unknown"),
+                    role="conflicting_source",
+                    freshness=str(claim.get("freshness") or "unknown"),  # type: ignore[arg-type]
+                    source_ref=str(claim.get("source_ref") or "").strip() or None,
+                    summary=str(claim.get("summary") or claim.get("value") or "").strip(),
+                )
+            )
+        return record_agent_event(
+            state_db,
+            AgentEvent(
+                event_type="contradiction_found",
+                summary=f"Contradiction found for {str(claim_key or '').strip()}.",
+                selected_route="source_hierarchy_review",
+                route_confidence="high",
+                facts={
+                    "claim_key": str(claim_key or "").strip(),
+                    "winner": dict(winner),
+                    "stale_sources": stale_sources,
+                    "contradicted_sources": contradicted_sources,
+                    "resolution": str(resolution or "").strip(),
+                    "contradiction_event_id": str(contradiction_event_id or "").strip() or None,
+                },
+                sources=sources,
+                blockers=[str(resolution or "source_conflict").strip()],
+                changed=["lower_authority_context_marked_for_review"],
+            ),
+            request_id=str(request_id or "").strip() or None,
+            session_id=str(session_id or "").strip() or None,
+            human_id=str(human_id or "").strip() or None,
+            actor_id=str(actor_id or "").strip() or None,
+            correlation_id=str(contradiction_event_id or "").strip() or None,
         )
-    return record_agent_event(
-        state_db,
-        AgentEvent(
-            event_type="contradiction_found",
-            summary=f"Contradiction found for {str(claim_key or '').strip()}.",
-            selected_route="source_hierarchy_review",
-            route_confidence="high",
-            facts={
-                "claim_key": str(claim_key or "").strip(),
-                "winner": dict(winner),
-                "stale_sources": stale_sources,
-                "contradicted_sources": contradicted_sources,
-                "resolution": str(resolution or "").strip(),
-                "contradiction_event_id": str(contradiction_event_id or "").strip() or None,
-            },
-            sources=sources,
-            blockers=[str(resolution or "source_conflict").strip()],
-            changed=["lower_authority_context_marked_for_review"],
-        ),
-        request_id=str(request_id or "").strip() or None,
-        session_id=str(session_id or "").strip() or None,
-        human_id=str(human_id or "").strip() or None,
-        actor_id=str(actor_id or "").strip() or None,
-        correlation_id=str(contradiction_event_id or "").strip() or None,
-    )
 
 
+
+    except Exception:
+        return ""
 def _source_ref_from_payload(payload: dict[str, Any]) -> AgentSourceRef:
-    return AgentSourceRef(
-        source=str(payload.get("source") or "unknown"),
-        role=str(payload.get("role") or "route_selection_evidence"),
-        freshness=str(payload.get("freshness") or "unknown"),  # type: ignore[arg-type]
-        source_ref=str(payload.get("source_ref") or "").strip() or None,
-        summary=str(payload.get("summary") or "").strip(),
-    )
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        return AgentSourceRef(
+            source=str(payload.get("source") or "unknown"),
+            role=str(payload.get("role") or "route_selection_evidence"),
+            freshness=str(payload.get("freshness") or "unknown"),  # type: ignore[arg-type]
+            source_ref=str(payload.get("source_ref") or "").strip() or None,
+            summary=str(payload.get("summary") or "").strip(),
+        )
 
 
+
+    except Exception:
+        return None
 def _normalize_source_freshness(value: str) -> str:
-    normalized = str(value or "").strip()
-    return normalized if normalized in SOURCE_FRESHNESS_VALUES else "unknown"
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        normalized = str(value or "").strip()
+        return normalized if normalized in SOURCE_FRESHNESS_VALUES else "unknown"
+
+    except Exception:
+        return ""
