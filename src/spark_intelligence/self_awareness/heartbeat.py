@@ -198,64 +198,89 @@ def _probe_plan(
     capabilities_needing_probe: list[dict[str, Any]],
     unverified_configured: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for row in [*capabilities_needing_probe, *unverified_configured]:
-        key = str(row.get("capability_key") or "").strip()
-        safe_probe = str(row.get("safe_probe") or "").strip()
-        if not key or not safe_probe:
-            continue
-        rows.append(
-            {
-                "capability_key": key,
-                "safe_probe": safe_probe,
-                "reason": str(row.get("drift_kind") or "missing_recent_success_evidence"),
-                "records_current_success": "false",
-            }
-        )
-    return rows[:20]
-
-
-def _warnings(*, summary: dict[str, int], unverified_count: int) -> list[str]:
-    warnings: list[str] = []
-    if int(summary.get("stale_success_count") or 0) > 0:
-        warnings.append("capability_last_success_stale")
-    if int(summary.get("recent_failure_count") or 0) > 0:
-        warnings.append("capability_recent_failure_needs_probe")
-    if int(summary.get("observed_without_success_count") or 0) > 0:
-        warnings.append("capability_observed_without_success")
-    if int(summary.get("missing_eval_coverage_count") or 0) > 0:
-        warnings.append("capability_eval_coverage_missing")
-    if unverified_count > 0:
-        warnings.append("configured_capabilities_missing_recent_success")
-    return warnings
-
-
-def _safe_probe(*, key: str, probe_record: dict[str, Any] | None) -> str:
-    if probe_record and str(probe_record.get("safe_probe") or "").strip():
-        return str(probe_record.get("safe_probe") or "").strip()
-    return f"spark-intelligence self status --user-message 'probe {key}' --json"
-
-
-def _age_days(value: Any) -> int | None:
-    parsed = _parse_iso(value)
-    if parsed is None:
-        return None
-    return max(0, (datetime.now(UTC) - parsed).days)
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
+    if not isinstance(capabilities_needing_probe, str): capabilities_needing_probe = str(capabilities_needing_probe or '')
+    if not isinstance(unverified_configured, str): unverified_configured = str(unverified_configured or '')
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
+        rows: list[dict[str, str]] = []
+        for row in [*capabilities_needing_probe, *unverified_configured]:
+            key = str(row.get("capability_key") or "").strip()
+            safe_probe = str(row.get("safe_probe") or "").strip()
+            if not key or not safe_probe:
+                continue
+            rows.append(
+                {
+                    "capability_key": key,
+                    "safe_probe": safe_probe,
+                    "reason": str(row.get("drift_kind") or "missing_recent_success_evidence"),
+                    "records_current_success": "false",
+                }
+            )
+        return rows[:20]
+
+
+
+    except Exception:
+        return []
+def _warnings(*, summary: dict[str, int], unverified_count: int) -> list[str]:
+    if not isinstance(summary, str): summary = str(summary or '')
+    try:
+        warnings: list[str] = []
+        if int(summary.get("stale_success_count") or 0) > 0:
+            warnings.append("capability_last_success_stale")
+        if int(summary.get("recent_failure_count") or 0) > 0:
+            warnings.append("capability_recent_failure_needs_probe")
+        if int(summary.get("observed_without_success_count") or 0) > 0:
+            warnings.append("capability_observed_without_success")
+        if int(summary.get("missing_eval_coverage_count") or 0) > 0:
+            warnings.append("capability_eval_coverage_missing")
+        if unverified_count > 0:
+            warnings.append("configured_capabilities_missing_recent_success")
+        return warnings
+
+
+
+    except Exception:
+        return []
+def _safe_probe(*, key: str, probe_record: dict[str, Any] | None) -> str:
+    if not isinstance(key, str): key = str(key or '')
+    if not isinstance(probe_record, str): probe_record = str(probe_record or '')
+    try:
+        if probe_record and str(probe_record.get("safe_probe") or "").strip():
+            return str(probe_record.get("safe_probe") or "").strip()
+        return f"spark-intelligence self status --user-message 'probe {key}' --json"
+
+
+
+    except Exception:
+        return ""
+def _age_days(value: Any) -> int | None:
+    try:
+        parsed = _parse_iso(value)
+        if parsed is None:
+            return None
+        return max(0, (datetime.now(UTC) - parsed).days)
+
+
+
+    except Exception:
+        return 0
+def _parse_iso(value: Any) -> datetime | None:
+    try:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+
+
+    except Exception:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
 def _report_path(*, config_manager: ConfigManager, checked_at: str) -> Path:
     reports_dir = config_manager.paths.home / "artifacts" / "capability-drift-heartbeat"
     reports_dir.mkdir(parents=True, exist_ok=True)
