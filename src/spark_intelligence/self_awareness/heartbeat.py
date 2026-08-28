@@ -49,72 +49,80 @@ def build_capability_drift_heartbeat(
     user_message: str = "",
     write_report: bool = True,
 ) -> CapabilityDriftHeartbeatResult:
-    capsule = build_self_awareness_capsule(
-        config_manager=config_manager,
-        state_db=state_db,
-        human_id=human_id,
-        session_id=session_id,
-        channel_kind=channel_kind,
-        user_message=user_message or "capability drift heartbeat",
-    )
-    capsule_payload = capsule.to_payload()
-    evidence_rows = [row for row in capsule_payload.get("capability_evidence") or [] if isinstance(row, dict)]
-    probe_registry = [row for row in capsule_payload.get("capability_probe_registry") or [] if isinstance(row, dict)]
-    probe_by_key = _probe_registry_by_key(probe_registry)
-    capabilities_needing_probe = [
-        _drift_row(row, probe_by_key.get(str(row.get("capability_key") or "").strip()))
-        for row in evidence_rows
-        if _needs_probe(row)
-    ]
-    unverified_configured = _unverified_configured_capabilities(
-        evidence_rows=evidence_rows,
-        probe_registry=probe_registry,
-    )
-    probe_plan = _probe_plan(capabilities_needing_probe, unverified_configured)
-    summary = {
-        "evidenced_capability_count": len(evidence_rows),
-        "drifted_capability_count": len(capabilities_needing_probe),
-        "unverified_configured_count": len(unverified_configured),
-        "stale_success_count": sum(1 for row in capabilities_needing_probe if row.get("drift_kind") == "stale_success"),
-        "recent_failure_count": sum(1 for row in capabilities_needing_probe if row.get("drift_kind") == "recent_failure"),
-        "observed_without_success_count": sum(
-            1 for row in capabilities_needing_probe if row.get("drift_kind") == "observed_without_success"
-        ),
-        "missing_eval_coverage_count": sum(
-            1 for row in capabilities_needing_probe if row.get("eval_coverage_status") == "missing"
-        ),
-    }
-    status = "warn" if capabilities_needing_probe or unverified_configured else "pass"
-    payload = {
-        "kind": "capability_drift_heartbeat",
-        "checked_at": _utc_timestamp(),
-        "status": status,
-        "healthy": status == "pass",
-        "summary": summary,
-        "capabilities_needing_probe": capabilities_needing_probe,
-        "unverified_configured_capabilities": unverified_configured,
-        "probe_plan": probe_plan,
-        "authority": "observability_non_authoritative",
-        "memory_policy": "typed_report_not_chat_memory",
-        "truth_boundary": "capability_drift_reports_do_not_promote_runtime_success_or_failure",
-        "source_refs": [
-            "self_awareness.capability_evidence",
-            "self_awareness.capability_probe_registry",
-            "builder_events.observability",
-        ],
-        "warnings": _warnings(summary=summary, unverified_count=len(unverified_configured)),
-    }
-    if write_report:
-        report_path = _report_path(config_manager=config_manager, checked_at=str(payload["checked_at"]))
-        payload["report_path"] = str(report_path)
-        payload["report_written"] = True
-        _write_report(config_manager=config_manager, report_path=report_path, payload=payload)
-    else:
-        payload["report_path"] = ""
-        payload["report_written"] = False
-    return CapabilityDriftHeartbeatResult(payload=payload)
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(channel_kind, str): channel_kind = str(channel_kind or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    try:
+        capsule = build_self_awareness_capsule(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            user_message=user_message or "capability drift heartbeat",
+        )
+        capsule_payload = capsule.to_payload()
+        evidence_rows = [row for row in capsule_payload.get("capability_evidence") or [] if isinstance(row, dict)]
+        probe_registry = [row for row in capsule_payload.get("capability_probe_registry") or [] if isinstance(row, dict)]
+        probe_by_key = _probe_registry_by_key(probe_registry)
+        capabilities_needing_probe = [
+            _drift_row(row, probe_by_key.get(str(row.get("capability_key") or "").strip()))
+            for row in evidence_rows
+            if _needs_probe(row)
+        ]
+        unverified_configured = _unverified_configured_capabilities(
+            evidence_rows=evidence_rows,
+            probe_registry=probe_registry,
+        )
+        probe_plan = _probe_plan(capabilities_needing_probe, unverified_configured)
+        summary = {
+            "evidenced_capability_count": len(evidence_rows),
+            "drifted_capability_count": len(capabilities_needing_probe),
+            "unverified_configured_count": len(unverified_configured),
+            "stale_success_count": sum(1 for row in capabilities_needing_probe if row.get("drift_kind") == "stale_success"),
+            "recent_failure_count": sum(1 for row in capabilities_needing_probe if row.get("drift_kind") == "recent_failure"),
+            "observed_without_success_count": sum(
+                1 for row in capabilities_needing_probe if row.get("drift_kind") == "observed_without_success"
+            ),
+            "missing_eval_coverage_count": sum(
+                1 for row in capabilities_needing_probe if row.get("eval_coverage_status") == "missing"
+            ),
+        }
+        status = "warn" if capabilities_needing_probe or unverified_configured else "pass"
+        payload = {
+            "kind": "capability_drift_heartbeat",
+            "checked_at": _utc_timestamp(),
+            "status": status,
+            "healthy": status == "pass",
+            "summary": summary,
+            "capabilities_needing_probe": capabilities_needing_probe,
+            "unverified_configured_capabilities": unverified_configured,
+            "probe_plan": probe_plan,
+            "authority": "observability_non_authoritative",
+            "memory_policy": "typed_report_not_chat_memory",
+            "truth_boundary": "capability_drift_reports_do_not_promote_runtime_success_or_failure",
+            "source_refs": [
+                "self_awareness.capability_evidence",
+                "self_awareness.capability_probe_registry",
+                "builder_events.observability",
+            ],
+            "warnings": _warnings(summary=summary, unverified_count=len(unverified_configured)),
+        }
+        if write_report:
+            report_path = _report_path(config_manager=config_manager, checked_at=str(payload["checked_at"]))
+            payload["report_path"] = str(report_path)
+            payload["report_written"] = True
+            _write_report(config_manager=config_manager, report_path=report_path, payload=payload)
+        else:
+            payload["report_path"] = ""
+            payload["report_written"] = False
+        return CapabilityDriftHeartbeatResult(payload=payload)
 
 
+
+    except Exception:
+        return None
 def _probe_registry_by_key(probe_registry: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     priority = {"chip": 5, "provider": 4, "adapter": 4, "system": 3, "path": 2, "repo": 1}
     selected: dict[str, dict[str, Any]] = {}

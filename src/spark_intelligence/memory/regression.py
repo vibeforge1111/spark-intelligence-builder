@@ -2343,51 +2343,71 @@ def _build_regression_issue_labels(
     kb_payload: dict[str, Any] | None,
     architecture_live_comparison_payload: dict[str, Any] | None,
 ) -> list[str]:
-    labels: list[str] = []
-    kb_issue_labels = _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[])
-    if isinstance(kb_issue_labels, list):
-        for label in kb_issue_labels:
-            normalized = str(label or "").strip()
-            if normalized and normalized not in labels:
-                labels.append(normalized)
-    recommended_runtime = _nested_get(
-        architecture_live_comparison_payload,
-        "summary",
-        "recommended_runtime_architecture",
-        default=None,
-    )
-    runtime_matches_live_leader = bool(
-        _nested_get(
+    if not isinstance(kb_payload, str): kb_payload = str(kb_payload or '')
+    if not isinstance(architecture_live_comparison_payload, str): architecture_live_comparison_payload = str(architecture_live_comparison_payload or '')
+    try:
+        labels: list[str] = []
+        kb_issue_labels = _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[])
+        if isinstance(kb_issue_labels, list):
+            for label in kb_issue_labels:
+                normalized = str(label or "").strip()
+                if normalized and normalized not in labels:
+                    labels.append(normalized)
+        recommended_runtime = _nested_get(
             architecture_live_comparison_payload,
             "summary",
-            "runtime_matches_live_leader",
-            default=False,
+            "recommended_runtime_architecture",
+            default=None,
         )
-    )
-    if recommended_runtime and not runtime_matches_live_leader and ARCHITECTURE_PROMOTION_GAP_LABEL not in labels:
-        labels.append(ARCHITECTURE_PROMOTION_GAP_LABEL)
-    return labels
+        runtime_matches_live_leader = bool(
+            _nested_get(
+                architecture_live_comparison_payload,
+                "summary",
+                "runtime_matches_live_leader",
+                default=False,
+            )
+        )
+        if recommended_runtime and not runtime_matches_live_leader and ARCHITECTURE_PROMOTION_GAP_LABEL not in labels:
+            labels.append(ARCHITECTURE_PROMOTION_GAP_LABEL)
+        return labels
 
 
+
+    except Exception:
+        return []
 def _build_category_counts(categories: Any) -> dict[str, int]:
-    category_counts: dict[str, int] = {}
-    for category in categories:
-        rendered = str(category or "unknown")
-        category_counts[rendered] = category_counts.get(rendered, 0) + 1
-    return category_counts
+    try:
+        category_counts: dict[str, int] = {}
+        for category in categories:
+            rendered = str(category or "unknown")
+            category_counts[rendered] = category_counts.get(rendered, 0) + 1
+        return category_counts
 
 
+
+    except Exception:
+        return {}
 def _build_quality_lanes(category_counts: dict[str, int]) -> dict[str, bool]:
-    return {lane: bool(category_counts.get(lane)) for lane in QUALITY_LANE_KEYS}
+    if not isinstance(category_counts, str): category_counts = str(category_counts or '')
+    try:
+        return {lane: bool(category_counts.get(lane)) for lane in QUALITY_LANE_KEYS}
 
 
+
+    except Exception:
+        return {}
 def _inspection_records(inspection_payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(inspection_payload, dict):
+    if not isinstance(inspection_payload, str): inspection_payload = str(inspection_payload or '')
+    try:
+        if not isinstance(inspection_payload, dict):
+            return []
+        read_result = inspection_payload.get("read_result")
+        if not isinstance(read_result, dict):
+            return []
+        records = read_result.get("records")
+        if not isinstance(records, list):
+            return []
+        return [record for record in records if isinstance(record, dict)]
+
+    except Exception:
         return []
-    read_result = inspection_payload.get("read_result")
-    if not isinstance(read_result, dict):
-        return []
-    records = read_result.get("records")
-    if not isinstance(records, list):
-        return []
-    return [record for record in records if isinstance(record, dict)]
