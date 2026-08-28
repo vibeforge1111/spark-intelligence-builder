@@ -213,92 +213,122 @@ def _record_resume_richness_guard(
     incoming_object: dict[str, Any],
     stored_object: dict[str, Any],
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO resume_richness_guard_records(
-            guard_record_id,
-            state_key,
-            component,
-            action,
-            existing_richness,
-            incoming_richness,
-            stored_richness,
-            evidence_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            f"rgg:{uuid4().hex}",
-            state_key,
-            component,
-            action,
-            existing_richness,
-            incoming_richness,
-            stored_richness,
-            json.dumps(
-                {
-                    "existing": existing_object,
-                    "incoming": incoming_object,
-                    "stored": stored_object,
-                    "preserved_keys": sorted(
-                        key
-                        for key, value in existing_object.items()
-                        if key not in incoming_object and not _is_empty(value)
-                    ),
-                },
-                sort_keys=True,
-                ensure_ascii=True,
-                default=str,
-            ),
-        ),
-    )
-
-
-def _loads_json_object(value: str | None) -> dict[str, Any] | None:
-    if not value:
-        return None
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(component, str): component = str(component or '')
+    if not isinstance(action, str): action = str(action or '')
+    if not isinstance(existing_object, str): existing_object = str(existing_object or '')
+    if not isinstance(incoming_object, str): incoming_object = str(incoming_object or '')
+    if not isinstance(stored_object, str): stored_object = str(stored_object or '')
     try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _json_richness(value: str | None) -> int:
-    parsed = _loads_json_object(value)
-    if parsed is None:
-        normalized = str(value or "").strip()
-        return 0 if not normalized else min(len(normalized), 32)
-    return _object_richness(parsed)
-
-
-def _object_richness(value: Any) -> int:
-    if isinstance(value, dict):
-        return sum(_object_richness(item) for item in value.values()) + sum(
-            1 for item in value.values() if not _is_empty(item)
+        conn.execute(
+            """
+            INSERT INTO resume_richness_guard_records(
+                guard_record_id,
+                state_key,
+                component,
+                action,
+                existing_richness,
+                incoming_richness,
+                stored_richness,
+                evidence_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"rgg:{uuid4().hex}",
+                state_key,
+                component,
+                action,
+                existing_richness,
+                incoming_richness,
+                stored_richness,
+                json.dumps(
+                    {
+                        "existing": existing_object,
+                        "incoming": incoming_object,
+                        "stored": stored_object,
+                        "preserved_keys": sorted(
+                            key
+                            for key, value in existing_object.items()
+                            if key not in incoming_object and not _is_empty(value)
+                        ),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=True,
+                    default=str,
+                ),
+            ),
         )
-    if isinstance(value, list):
-        return sum(_object_richness(item) for item in value) + sum(1 for item in value if not _is_empty(item))
-    if _is_empty(value):
+
+
+
+    except Exception:
+        return None
+def _loads_json_object(value: str | None) -> dict[str, Any] | None:
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        if not value:
+            return None
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+
+
+    except Exception:
+        return {}
+def _json_richness(value: str | None) -> int:
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        parsed = _loads_json_object(value)
+        if parsed is None:
+            normalized = str(value or "").strip()
+            return 0 if not normalized else min(len(normalized), 32)
+        return _object_richness(parsed)
+
+
+
+    except Exception:
         return 0
-    if isinstance(value, str):
-        return 1 + min(len(value.strip()) // 8, 8)
-    return 1
+def _object_richness(value: Any) -> int:
+    try:
+        if isinstance(value, dict):
+            return sum(_object_richness(item) for item in value.values()) + sum(
+                1 for item in value.values() if not _is_empty(item)
+            )
+        if isinstance(value, list):
+            return sum(_object_richness(item) for item in value) + sum(1 for item in value if not _is_empty(item))
+        if _is_empty(value):
+            return 0
+        if isinstance(value, str):
+            return 1 + min(len(value.strip()) // 8, 8)
+        return 1
 
 
+
+    except Exception:
+        return 0
 def _merge_preserving_richer(*, existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(existing)
-    for key, incoming_value in incoming.items():
-        existing_value = merged.get(key)
-        if isinstance(existing_value, dict) and isinstance(incoming_value, dict):
-            merged[key] = _merge_preserving_richer(existing=existing_value, incoming=incoming_value)
-            continue
-        if _is_empty(incoming_value) and not _is_empty(existing_value):
-            continue
-        merged[key] = incoming_value
-    return merged
+    if not isinstance(existing, str): existing = str(existing or '')
+    if not isinstance(incoming, str): incoming = str(incoming or '')
+    try:
+        merged = dict(existing)
+        for key, incoming_value in incoming.items():
+            existing_value = merged.get(key)
+            if isinstance(existing_value, dict) and isinstance(incoming_value, dict):
+                merged[key] = _merge_preserving_richer(existing=existing_value, incoming=incoming_value)
+                continue
+            if _is_empty(incoming_value) and not _is_empty(existing_value):
+                continue
+            merged[key] = incoming_value
+        return merged
 
 
+
+    except Exception:
+        return {}
 def _is_empty(value: Any) -> bool:
     if value is None:
         return True
