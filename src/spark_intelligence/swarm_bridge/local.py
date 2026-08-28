@@ -317,50 +317,75 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
 
 
 def _resolve_swarm_runtime_root_env(config_manager: ConfigManager) -> str | None:
-    env_value = str(os.environ.get(SWARM_RUNTIME_ROOT_ENV) or "").strip()
-    if env_value:
-        return env_value
-    return str(config_manager.read_env_map().get(SWARM_RUNTIME_ROOT_ENV) or "").strip() or None
+    try:
+        env_value = str(os.environ.get(SWARM_RUNTIME_ROOT_ENV) or "").strip()
+        if env_value:
+            return env_value
+        return str(config_manager.read_env_map().get(SWARM_RUNTIME_ROOT_ENV) or "").strip() or None
 
 
+
+    except Exception:
+        return ""
 def _specialization_repo_env_var(path_key: str) -> str:
-    normalized = str(path_key or "").strip().upper().replace("-", "_")
-    return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        normalized = str(path_key or "").strip().upper().replace("-", "_")
+        return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
 
 
+
+    except Exception:
+        return ""
 def _resolve_specialization_path_repo_root(config_manager: ConfigManager, path_key: str | None) -> Path:
-    normalized_key = _normalize_path_key(path_key or "")
-    attachments = list_attachments(config_manager, kind="path")
-    for record in attachments.records:
-        if _normalize_path_key(record.key) == normalized_key:
-            return Path(record.repo_root).expanduser().resolve()
-    if normalized_key:
-        raise RuntimeError(
-            f"Spark Swarm specialization path `{path_key}` is not attached locally. "
-            "Use `/swarm paths` to inspect available path keys."
-        )
-    active_key = str(config_manager.get_path("spark.specialization_paths.active_path_key", default="") or "").strip()
-    if active_key:
-        return _resolve_specialization_path_repo_root(config_manager, active_key)
-    raise RuntimeError("No active Spark Swarm specialization path is configured.")
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        normalized_key = _normalize_path_key(path_key or "")
+        attachments = list_attachments(config_manager, kind="path")
+        for record in attachments.records:
+            if _normalize_path_key(record.key) == normalized_key:
+                return Path(record.repo_root).expanduser().resolve()
+        if normalized_key:
+            raise RuntimeError(
+                f"Spark Swarm specialization path `{path_key}` is not attached locally. "
+                "Use `/swarm paths` to inspect available path keys."
+            )
+        active_key = str(config_manager.get_path("spark.specialization_paths.active_path_key", default="") or "").strip()
+        if active_key:
+            return _resolve_specialization_path_repo_root(config_manager, active_key)
+        raise RuntimeError("No active Spark Swarm specialization path is configured.")
 
 
+
+    except Exception:
+        return Path(".")
 def _resolve_session_summary_path(sessions_root: Path, *, session_id: str | None) -> Path | None:
-    if session_id:
-        summary_path = sessions_root / session_id / "summary.json"
-        return summary_path if summary_path.exists() else None
-    session_paths = sorted(
-        sessions_root.glob("*/summary.json"),
-        key=_safe_mtime,
-        reverse=True,
-    )
-    return session_paths[0] if session_paths else None
+    if sessions_root is not None and not hasattr(sessions_root, 'resolve'): from pathlib import Path; sessions_root = Path(str(sessions_root))
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        if session_id:
+            summary_path = sessions_root / session_id / "summary.json"
+            return summary_path if summary_path.exists() else None
+        session_paths = sorted(
+            sessions_root.glob("*/summary.json"),
+            key=_safe_mtime,
+            reverse=True,
+        )
+        return session_paths[0] if session_paths else None
 
 
+
+    except Exception:
+        return Path(".")
 def _list_session_ids(sessions_root: Path) -> list[str]:
-    return [path.parent.name for path in sorted(sessions_root.glob("*/summary.json"), key=_safe_mtime, reverse=True)]
+    if sessions_root is not None and not hasattr(sessions_root, 'resolve'): from pathlib import Path; sessions_root = Path(str(sessions_root))
+    try:
+        return [path.parent.name for path in sorted(sessions_root.glob("*/summary.json"), key=_safe_mtime, reverse=True)]
 
 
+
+    except Exception:
+        return []
 def _safe_mtime(path: Path) -> float:
     try:
         return path.stat().st_mtime
