@@ -700,46 +700,66 @@ def _dict(value: object) -> dict[str, Any]:
 
 
 def _list(value: object) -> list[Any]:
-    return list(value) if isinstance(value, list) else []
+    try:
+        return list(value) if isinstance(value, list) else []
 
 
+
+    except Exception:
+        return []
 def _int(value: object) -> int:
     try:
-        return int(value or 0)
-    except (TypeError, ValueError):
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+
+
+    except Exception:
         return 0
-
-
 def _float(value: object) -> float:
     try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
 
+
+    except Exception:
+        return None
 def _int_mapping(value: object) -> dict[str, int]:
-    if not isinstance(value, dict):
+    try:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): _int(item) for key, item in value.items()}
+
+
+
+    except Exception:
         return {}
-    return {str(key): _int(item) for key, item in value.items()}
-
-
 def _safe_summary_mapping(value: object, *, depth: int = 0) -> dict[str, Any]:
-    if depth > 3 or not isinstance(value, dict):
+    try:
+        if depth > 3 or not isinstance(value, dict):
+            return {}
+        output: dict[str, Any] = {}
+        for key, item in list(value.items())[:40]:
+            clean_key = _short(key, limit=80)
+            if isinstance(item, dict):
+                output[clean_key] = _safe_summary_mapping(item, depth=depth + 1)
+            elif isinstance(item, list):
+                output[clean_key] = [_short(entry, limit=120) for entry in item[:20]]
+            elif isinstance(item, (bool, int, float)) or item is None:
+                output[clean_key] = item
+            else:
+                output[clean_key] = _short(item)
+        return output
+
+
+
+    except Exception:
         return {}
-    output: dict[str, Any] = {}
-    for key, item in list(value.items())[:40]:
-        clean_key = _short(key, limit=80)
-        if isinstance(item, dict):
-            output[clean_key] = _safe_summary_mapping(item, depth=depth + 1)
-        elif isinstance(item, list):
-            output[clean_key] = [_short(entry, limit=120) for entry in item[:20]]
-        elif isinstance(item, (bool, int, float)) or item is None:
-            output[clean_key] = item
-        else:
-            output[clean_key] = _short(item)
-    return output
-
-
 def _short(value: object, *, limit: int = 160) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
