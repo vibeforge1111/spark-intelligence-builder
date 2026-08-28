@@ -103,81 +103,108 @@ def _normalize_goal(text: str) -> str:
 
 
 def _implementation_route(lowered: str) -> str:
-    if _has_any(lowered, ("dashboard", "app", "website", "site", "portal", "viewer", "panel")) and not _has_any(
-        lowered,
-        ("so spark can", "so you can", "for you", "for spark to", "lets you", "lets spark"),
-    ):
-        return "mission_artifact"
-    if _has_any(lowered, ("daily report", "daily reports", "schedule", "scheduled", "automate", "automation", "reminder", "notification")):
-        return "workflow_automation"
-    if _has_any(lowered, ("email", "emails", "gmail", "inbox", "calendar", "voice", "speech", "browser", "browse", "files", "filesystem", "api", "webhook")):
-        return "capability_connector"
-    if _has_any(lowered, ("domain chip", "domain-chip", "chip", "skill", "watchtower", "evaluate", "suggest")):
-        return "domain_chip"
-    if _has_any(lowered, ("brain", "runtime", "route", "routing", "memory", "workflow", "self-awareness", "self awareness")):
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    try:
+        if _has_any(lowered, ("dashboard", "app", "website", "site", "portal", "viewer", "panel")) and not _has_any(
+            lowered,
+            ("so spark can", "so you can", "for you", "for spark to", "lets you", "lets spark"),
+        ):
+            return "mission_artifact"
+        if _has_any(lowered, ("daily report", "daily reports", "schedule", "scheduled", "automate", "automation", "reminder", "notification")):
+            return "workflow_automation"
+        if _has_any(lowered, ("email", "emails", "gmail", "inbox", "calendar", "voice", "speech", "browser", "browse", "files", "filesystem", "api", "webhook")):
+            return "capability_connector"
+        if _has_any(lowered, ("domain chip", "domain-chip", "chip", "skill", "watchtower", "evaluate", "suggest")):
+            return "domain_chip"
+        if _has_any(lowered, ("brain", "runtime", "route", "routing", "memory", "workflow", "self-awareness", "self awareness")):
+            return "runtime_patch"
         return "runtime_patch"
-    return "runtime_patch"
 
 
+
+    except Exception:
+        return ""
 def _owner_system(route: str) -> str:
-    return {
-        "domain_chip": "Spark Intelligence Builder + domain chip attachment runtime",
-        "runtime_patch": "Spark Intelligence Builder",
-        "capability_connector": "Spark Intelligence Builder + connector chip/harness",
-        "mission_artifact": "Spark Spawner / Mission Control",
-        "workflow_automation": "Spark Intelligence Builder + scheduler/Mission Control",
-    }.get(route, "Spark Intelligence Builder")
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        return {
+            "domain_chip": "Spark Intelligence Builder + domain chip attachment runtime",
+            "runtime_patch": "Spark Intelligence Builder",
+            "capability_connector": "Spark Intelligence Builder + connector chip/harness",
+            "mission_artifact": "Spark Spawner / Mission Control",
+            "workflow_automation": "Spark Intelligence Builder + scheduler/Mission Control",
+        }.get(route, "Spark Intelligence Builder")
 
 
+
+    except Exception:
+        return ""
 def _recipient(lowered: str) -> str:
-    if _has_any(lowered, ("spark users", "users of spark")):
-        return "spark_users"
-    if _has_any(lowered, ("for you", "for spark", "spark can", "you can", "yourself", "my spark", "our spark")):
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    try:
+        if _has_any(lowered, ("spark users", "users of spark")):
+            return "spark_users"
+        if _has_any(lowered, ("for you", "for spark", "spark can", "you can", "yourself", "my spark", "our spark")):
+            return "spark"
+        if _has_any(lowered, ("email", "gmail", "calendar", "api", "webhook")):
+            return "external_system"
         return "spark"
-    if _has_any(lowered, ("email", "gmail", "calendar", "api", "webhook")):
-        return "external_system"
-    return "spark"
 
 
+
+    except Exception:
+        return ""
 def _permissions_required(lowered: str, route: str) -> list[str]:
-    permissions: list[str] = []
-    if _has_any(lowered, ("email", "emails", "gmail", "inbox")):
-        permissions.extend(["email_account_access", "message_read_scope"])
-    if "calendar" in lowered:
-        permissions.extend(["calendar_account_access", "event_read_scope"])
-    if _has_any(lowered, ("files", "filesystem", "project files")):
-        permissions.extend(["filesystem_read_scope"])
-    if _has_any(lowered, ("voice", "speech")):
-        permissions.extend(["voice_provider_access", "telegram_voice_delivery"])
-    if _has_any(lowered, ("browser", "browse")):
-        permissions.extend(["browser_runtime_access"])
-    if _has_any(lowered, ("notification", "reminder", "schedule", "daily report", "daily reports")):
-        permissions.extend(["scheduler_write_scope", "delivery_channel_access"])
-    if route in {"runtime_patch", "domain_chip", "capability_connector"}:
-        permissions.append("operator_approval_to_activate")
-    if not permissions:
-        permissions.append("operator_approval_to_plan")
-    return _dedupe(permissions)
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    if not isinstance(route, str): route = str(route or '')
+    try:
+        permissions: list[str] = []
+        if _has_any(lowered, ("email", "emails", "gmail", "inbox")):
+            permissions.extend(["email_account_access", "message_read_scope"])
+        if "calendar" in lowered:
+            permissions.extend(["calendar_account_access", "event_read_scope"])
+        if _has_any(lowered, ("files", "filesystem", "project files")):
+            permissions.extend(["filesystem_read_scope"])
+        if _has_any(lowered, ("voice", "speech")):
+            permissions.extend(["voice_provider_access", "telegram_voice_delivery"])
+        if _has_any(lowered, ("browser", "browse")):
+            permissions.extend(["browser_runtime_access"])
+        if _has_any(lowered, ("notification", "reminder", "schedule", "daily report", "daily reports")):
+            permissions.extend(["scheduler_write_scope", "delivery_channel_access"])
+        if route in {"runtime_patch", "domain_chip", "capability_connector"}:
+            permissions.append("operator_approval_to_activate")
+        if not permissions:
+            permissions.append("operator_approval_to_plan")
+        return _dedupe(permissions)
 
 
+
+    except Exception:
+        return []
 def _safe_probe(route: str, lowered: str) -> str:
-    if "email" in lowered or "gmail" in lowered or "inbox" in lowered:
-        return "Run a read-only provider/auth status probe, then fetch at most one redacted metadata-only message sample in dry-run mode."
-    if "calendar" in lowered:
-        return "Run a read-only calendar auth/status probe, then fetch one redacted upcoming-event metadata sample in dry-run mode."
-    if "files" in lowered or "filesystem" in lowered:
-        return "Run a scoped filesystem listing probe against an operator-approved test directory."
-    if "voice" in lowered or "speech" in lowered:
-        return "Run voice.status, then synthesize a short test phrase without changing global voice settings."
-    if route == "domain_chip":
-        return "Scaffold or inspect the chip manifest, then run its health/status hook with a synthetic payload."
-    if route == "workflow_automation":
-        return "Render the schedule and run one dry-run report without sending or persisting live changes."
-    if route == "mission_artifact":
-        return "Create the Spawner mission in dry-run or preview mode, then verify expected artifacts before activation."
-    return "Run the smallest status/eval probe for the target route and record success, failure, latency, and trace id."
+    if not isinstance(route, str): route = str(route or '')
+    if not isinstance(lowered, str): lowered = str(lowered or '')
+    try:
+        if "email" in lowered or "gmail" in lowered or "inbox" in lowered:
+            return "Run a read-only provider/auth status probe, then fetch at most one redacted metadata-only message sample in dry-run mode."
+        if "calendar" in lowered:
+            return "Run a read-only calendar auth/status probe, then fetch one redacted upcoming-event metadata sample in dry-run mode."
+        if "files" in lowered or "filesystem" in lowered:
+            return "Run a scoped filesystem listing probe against an operator-approved test directory."
+        if "voice" in lowered or "speech" in lowered:
+            return "Run voice.status, then synthesize a short test phrase without changing global voice settings."
+        if route == "domain_chip":
+            return "Scaffold or inspect the chip manifest, then run its health/status hook with a synthetic payload."
+        if route == "workflow_automation":
+            return "Render the schedule and run one dry-run report without sending or persisting live changes."
+        if route == "mission_artifact":
+            return "Create the Spawner mission in dry-run or preview mode, then verify expected artifacts before activation."
+        return "Run the smallest status/eval probe for the target route and record success, failure, latency, and trace id."
 
 
+
+    except Exception:
+        return ""
 def _approval_boundary(permissions: list[str], route: str) -> str:
     if any(permission.endswith("_access") or permission.endswith("_scope") for permission in permissions):
         return "Human approval required before connecting accounts, reading private data, scheduling delivery, or activating new tool authority."
