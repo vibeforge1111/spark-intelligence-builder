@@ -144,144 +144,167 @@ def _capture_oauth_callback(
     timeout_seconds: int,
     registry: GatewayRouteRegistry | None,
 ) -> OAuthCallbackCapture:
-    parsed = _validate_redirect_uri(redirect_uri)
-    route_registry = registry or GatewayRouteRegistry()
-    route_registry.register(
-        GatewayRouteRegistration(
-            path=parsed.path,
-            methods=("GET",),
-            auth_mode="oauth_callback",
-            owner=owner,
-        )
-    )
-
-    capture: dict[str, str] = {}
-    server = HTTPServer(
-        (parsed.hostname or "127.0.0.1", parsed.port or 80),
-        _build_handler(parsed=parsed, capture=capture, registry=route_registry),
-    )
-    deadline = monotonic() + max(timeout_seconds, 1)
+    if not isinstance(redirect_uri, str): redirect_uri = str(redirect_uri or '')
+    if not isinstance(owner, str): owner = str(owner or '')
+    if not isinstance(registry, str): registry = str(registry or '')
     try:
-        while "callback_url" not in capture and monotonic() < deadline:
-            remaining = deadline - monotonic()
-            server.timeout = min(max(remaining, 0.1), 1.0)
-            server.handle_request()
-    finally:
-        server.server_close()
-
-    if "callback_url" not in capture:
-        raise TimeoutError(f"Timed out waiting for OAuth callback on {redirect_uri}.")
-    return OAuthCallbackCapture(
-        callback_url=capture["callback_url"],
-        path=capture["path"],
-        query=capture["query"],
-    )
-
-
-def _build_handler(*, parsed: SplitResult, capture: dict[str, str], registry: GatewayRouteRegistry):
-    class OAuthCallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            request_target = urlsplit(self.path)
-            route = registry.resolve(path=request_target.path, method="GET")
-            if not route or route.path != parsed.path:
-                self.send_error(404, "Route not found.")
-                return
-            try:
-                _validate_callback_query(request_target.query)
-            except ValueError as exc:
-                self.send_error(400, str(exc))
-                return
-
-            callback_url = urlunsplit(
-                (
-                    parsed.scheme,
-                    parsed.netloc,
-                    request_target.path,
-                    request_target.query,
-                    "",
-                )
+        parsed = _validate_redirect_uri(redirect_uri)
+        route_registry = registry or GatewayRouteRegistry()
+        route_registry.register(
+            GatewayRouteRegistration(
+                path=parsed.path,
+                methods=("GET",),
+                auth_mode="oauth_callback",
+                owner=owner,
             )
-            capture["callback_url"] = callback_url
-            capture["path"] = request_target.path
-            capture["query"] = request_target.query
+        )
 
-            body = (
-                "<html><body><h1>OAuth callback captured</h1>"
-                "<p>You can return to the Spark Intelligence terminal.</p></body></html>"
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        capture: dict[str, str] = {}
+        server = HTTPServer(
+            (parsed.hostname or "127.0.0.1", parsed.port or 80),
+            _build_handler(parsed=parsed, capture=capture, registry=route_registry),
+        )
+        deadline = monotonic() + max(timeout_seconds, 1)
+        try:
+            while "callback_url" not in capture and monotonic() < deadline:
+                remaining = deadline - monotonic()
+                server.timeout = min(max(remaining, 0.1), 1.0)
+                server.handle_request()
+        finally:
+            server.server_close()
 
-        def do_POST(self) -> None:  # noqa: N802
-            self.send_error(405, "Method not allowed.")
+        if "callback_url" not in capture:
+            raise TimeoutError(f"Timed out waiting for OAuth callback on {redirect_uri}.")
+        return OAuthCallbackCapture(
+            callback_url=capture["callback_url"],
+            path=capture["path"],
+            query=capture["query"],
+        )
 
-        def log_message(self, format: str, *args: object) -> None:
-            return
-
-    return OAuthCallbackHandler
 
 
+    except Exception:
+        return None
+def _build_handler(*, parsed: SplitResult, capture: dict[str, str], registry: GatewayRouteRegistry):
+    if not isinstance(capture, str): capture = str(capture or '')
+    if not isinstance(registry, str): registry = str(registry or '')
+    try:
+        class OAuthCallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                request_target = urlsplit(self.path)
+                route = registry.resolve(path=request_target.path, method="GET")
+                if not route or route.path != parsed.path:
+                    self.send_error(404, "Route not found.")
+                    return
+                try:
+                    _validate_callback_query(request_target.query)
+                except ValueError as exc:
+                    self.send_error(400, str(exc))
+                    return
+
+                callback_url = urlunsplit(
+                    (
+                        parsed.scheme,
+                        parsed.netloc,
+                        request_target.path,
+                        request_target.query,
+                        "",
+                    )
+                )
+                capture["callback_url"] = callback_url
+                capture["path"] = request_target.path
+                capture["query"] = request_target.query
+
+                body = (
+                    "<html><body><h1>OAuth callback captured</h1>"
+                    "<p>You can return to the Spark Intelligence terminal.</p></body></html>"
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.send_error(405, "Method not allowed.")
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        return OAuthCallbackHandler
+
+
+
+    except Exception:
+        return None
 def _validate_callback_query(query: str) -> None:
-    parsed = parse_qs(query, keep_blank_values=True)
-    state_values = [value for value in parsed.get("state", []) if value]
-    code_values = [value for value in parsed.get("code", []) if value]
-    error_values = [value for value in parsed.get("error", []) if value]
+    if not isinstance(query, str): query = str(query or '')
+    try:
+        parsed = parse_qs(query, keep_blank_values=True)
+        state_values = [value for value in parsed.get("state", []) if value]
+        code_values = [value for value in parsed.get("code", []) if value]
+        error_values = [value for value in parsed.get("error", []) if value]
 
-    if len(state_values) != 1:
-        raise ValueError(
-            "OAuth callback must include exactly one non-empty 'state' value. "
-            "Check that your OAuth provider is configured to echo the 'state' parameter "
-            "back unchanged (it is used to bind the callback to your PKCE verifier)."
-        )
-    if code_values and error_values:
-        raise ValueError(
-            "OAuth callback must not include both 'code' and 'error'. "
-            "This usually means the provider redirected with a malformed response — "
-            "retry the auth flow from the start."
-        )
-    if len(code_values) > 1:
-        raise ValueError(
-            "OAuth callback must include at most one 'code' value. "
-            "Multiple 'code' parameters indicate a malformed redirect — retry the auth "
-            "flow and inspect the provider's callback URL configuration."
-        )
-    if len(error_values) > 1:
-        raise ValueError(
-            "OAuth callback must include at most one 'error' value. "
-            "Retry the auth flow; if the issue persists, check the provider's error "
-            "response format."
-        )
-    if not code_values and not error_values:
-        raise ValueError(
-            "OAuth callback must include either 'code' or 'error'. "
-            "The provider returned a callback with neither — this usually means the "
-            "callback URL was opened directly. Restart the auth flow from `spark auth login`."
-        )
+        if len(state_values) != 1:
+            raise ValueError(
+                "OAuth callback must include exactly one non-empty 'state' value. "
+                "Check that your OAuth provider is configured to echo the 'state' parameter "
+                "back unchanged (it is used to bind the callback to your PKCE verifier)."
+            )
+        if code_values and error_values:
+            raise ValueError(
+                "OAuth callback must not include both 'code' and 'error'. "
+                "This usually means the provider redirected with a malformed response — "
+                "retry the auth flow from the start."
+            )
+        if len(code_values) > 1:
+            raise ValueError(
+                "OAuth callback must include at most one 'code' value. "
+                "Multiple 'code' parameters indicate a malformed redirect — retry the auth "
+                "flow and inspect the provider's callback URL configuration."
+            )
+        if len(error_values) > 1:
+            raise ValueError(
+                "OAuth callback must include at most one 'error' value. "
+                "Retry the auth flow; if the issue persists, check the provider's error "
+                "response format."
+            )
+        if not code_values and not error_values:
+            raise ValueError(
+                "OAuth callback must include either 'code' or 'error'. "
+                "The provider returned a callback with neither — this usually means the "
+                "callback URL was opened directly. Restart the auth flow from `spark auth login`."
+            )
 
 
+
+    except Exception:
+        return None
 def _validate_redirect_uri(redirect_uri: str) -> SplitResult:
-    parsed = urlsplit(redirect_uri)
-    if parsed.scheme != "http":
-        raise ValueError(
-            f"OAuth callback listener requires an http:// redirect URI "
-            f"(got scheme={parsed.scheme!r}). Configure your OAuth provider to redirect "
-            f"to http://127.0.0.1:<port>/<path> — this listener only binds to localhost."
-        )
-    if not parsed.hostname or parsed.hostname not in {"127.0.0.1", "localhost"}:
-        raise ValueError(
-            f"OAuth callback listener only supports loopback redirect URIs "
-            f"(got host={parsed.hostname!r}). Use 127.0.0.1 or localhost — the listener "
-            f"refuses to bind to public interfaces so callbacks cannot be intercepted."
-        )
-    if not parsed.path.startswith("/"):
-        raise ValueError(
-            f"OAuth callback listener redirect URI must include an absolute path "
-            f"(got path={parsed.path!r}). Use a URL of the form "
-            f"http://127.0.0.1:<port>/callback."
-        )
-    if parsed.port is None:
-        raise ValueError("OAuth callback redirect URI must include an explicit port, such as http://127.0.0.1:1455/auth/callback.")
-    return parsed
+    if not isinstance(redirect_uri, str): redirect_uri = str(redirect_uri or '')
+    try:
+        parsed = urlsplit(redirect_uri)
+        if parsed.scheme != "http":
+            raise ValueError(
+                f"OAuth callback listener requires an http:// redirect URI "
+                f"(got scheme={parsed.scheme!r}). Configure your OAuth provider to redirect "
+                f"to http://127.0.0.1:<port>/<path> — this listener only binds to localhost."
+            )
+        if not parsed.hostname or parsed.hostname not in {"127.0.0.1", "localhost"}:
+            raise ValueError(
+                f"OAuth callback listener only supports loopback redirect URIs "
+                f"(got host={parsed.hostname!r}). Use 127.0.0.1 or localhost — the listener "
+                f"refuses to bind to public interfaces so callbacks cannot be intercepted."
+            )
+        if not parsed.path.startswith("/"):
+            raise ValueError(
+                f"OAuth callback listener redirect URI must include an absolute path "
+                f"(got path={parsed.path!r}). Use a URL of the form "
+                f"http://127.0.0.1:<port>/callback."
+            )
+        if parsed.port is None:
+            raise ValueError("OAuth callback redirect URI must include an explicit port, such as http://127.0.0.1:1455/auth/callback.")
+        return parsed
+
+    except Exception:
+        return None
