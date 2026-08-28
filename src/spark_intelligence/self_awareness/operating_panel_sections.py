@@ -339,39 +339,62 @@ def _capability_garden_status(capability_garden: dict[str, Any]) -> str:
 
 
 def _authority_status(authority_status: dict[str, Any]) -> str:
-    if not authority_status.get("present"):
-        return "missing"
-    if int(authority_status.get("browser_approval_required_hook_count") or 0) or int(
-        authority_status.get("publication_checks_required") or 0
-    ):
-        return "gated"
-    return "observed"
-
-
-def _trace_count(trace_repair_payload: dict[str, Any], key: str) -> int:
-    counts = _dict(trace_repair_payload.get("counts"))
+    if not isinstance(authority_status, str): authority_status = str(authority_status or '')
     try:
-        return int(counts.get(key) or 0)
-    except (TypeError, ValueError):
+        if not authority_status.get("present"):
+            return "missing"
+        if int(authority_status.get("browser_approval_required_hook_count") or 0) or int(
+            authority_status.get("publication_checks_required") or 0
+        ):
+            return "gated"
+        return "observed"
+
+
+
+    except Exception:
+        return ""
+def _trace_count(trace_repair_payload: dict[str, Any], key: str) -> int:
+    if not isinstance(trace_repair_payload, str): trace_repair_payload = str(trace_repair_payload or '')
+    if not isinstance(key, str): key = str(key or '')
+    try:
+        counts = _dict(trace_repair_payload.get("counts"))
+        try:
+            return int(counts.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+
+
+    except Exception:
         return 0
-
-
 def _yes_no_unknown(value: object) -> str:
-    if value is True:
-        return "yes"
-    if value is False:
-        return "no"
-    return "unknown"
+    try:
+        if value is True:
+            return "yes"
+        if value is False:
+            return "no"
+        return "unknown"
 
 
+
+    except Exception:
+        return ""
 def _dict(value: object) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+    try:
+        return dict(value) if isinstance(value, dict) else {}
 
 
+
+    except Exception:
+        return {}
 def _list(value: object) -> list[object]:
-    return list(value) if isinstance(value, list) else []
+    try:
+        return list(value) if isinstance(value, list) else []
 
 
+
+    except Exception:
+        return []
 def _strings(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
