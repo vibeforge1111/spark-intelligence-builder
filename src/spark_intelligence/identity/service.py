@@ -1160,46 +1160,52 @@ def normalize_spark_swarm_identity_import(
     human_id: str,
     hook_output: dict[str, Any],
 ) -> dict[str, Any]:
-    result = hook_output.get("result")
-    if not isinstance(result, dict):
-        raise ValueError("Spark Swarm identity hook must return a JSON object under result.")
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(hook_output, str): hook_output = str(hook_output or '')
+    try:
+        result = hook_output.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("Spark Swarm identity hook must return a JSON object under result.")
 
-    result_human_id = str(result.get("human_id") or human_id).strip() or human_id
-    if result_human_id != human_id:
-        raise ValueError(
-            f"Spark Swarm identity hook returned human_id '{result_human_id}' but expected '{human_id}'."
-        )
+        result_human_id = str(result.get("human_id") or human_id).strip() or human_id
+        if result_human_id != human_id:
+            raise ValueError(
+                f"Spark Swarm identity hook returned human_id '{result_human_id}' but expected '{human_id}'."
+            )
 
-    external_system = str(result.get("external_system") or "spark_swarm").strip() or "spark_swarm"
-    if external_system != "spark_swarm":
-        raise ValueError(
-            f"Spark Swarm identity hook returned unsupported external_system '{external_system}'."
-        )
+        external_system = str(result.get("external_system") or "spark_swarm").strip() or "spark_swarm"
+        if external_system != "spark_swarm":
+            raise ValueError(
+                f"Spark Swarm identity hook returned unsupported external_system '{external_system}'."
+            )
 
-    swarm_agent_id = str(result.get("swarm_agent_id") or result.get("agent_id") or "").strip()
-    if not swarm_agent_id:
-        raise ValueError("Spark Swarm identity hook must return a non-empty swarm_agent_id.")
+        swarm_agent_id = str(result.get("swarm_agent_id") or result.get("agent_id") or "").strip()
+        if not swarm_agent_id:
+            raise ValueError("Spark Swarm identity hook must return a non-empty swarm_agent_id.")
 
-    agent_name = str(result.get("agent_name") or result.get("display_name") or "").strip() or "Spark Agent"
-    confirmed_at = str(result.get("confirmed_at") or "").strip() or None
-    metadata = result.get("metadata")
-    if metadata is None:
-        metadata_dict: dict[str, Any] = {}
-    elif isinstance(metadata, dict):
-        metadata_dict = dict(metadata)
-    else:
-        raise ValueError("Spark Swarm identity hook metadata must be a JSON object when provided.")
+        agent_name = str(result.get("agent_name") or result.get("display_name") or "").strip() or "Spark Agent"
+        confirmed_at = str(result.get("confirmed_at") or "").strip() or None
+        metadata = result.get("metadata")
+        if metadata is None:
+            metadata_dict: dict[str, Any] = {}
+        elif isinstance(metadata, dict):
+            metadata_dict = dict(metadata)
+        else:
+            raise ValueError("Spark Swarm identity hook metadata must be a JSON object when provided.")
 
-    return {
-        "human_id": human_id,
-        "swarm_agent_id": swarm_agent_id,
-        "agent_name": agent_name,
-        "confirmed_at": confirmed_at,
-        "external_system": external_system,
-        "metadata": metadata_dict,
-    }
+        return {
+            "human_id": human_id,
+            "swarm_agent_id": swarm_agent_id,
+            "agent_name": agent_name,
+            "confirmed_at": confirmed_at,
+            "external_system": external_system,
+            "metadata": metadata_dict,
+        }
 
 
+
+    except Exception:
+        return {}
 def _activate_channel_access(
     *,
     state_db: StateDB,
@@ -1207,105 +1213,124 @@ def _activate_channel_access(
     external_user_id: str,
     display_name: str,
 ) -> tuple[str, str, str]:
-    # Identity aliasing: if (channel, user) is registered as an alias for
-    # a primary identity, the human_id we use for the humans / bindings /
-    # session_binding rows is the *primary's* human_id, not the canonical
-    # per-channel one. This is what makes personality and memory shared
-    # across surfaces — they all key off the same human_id.
-    #
-    # The session_id stays per-channel so independent threads remain
-    # independent.
-    alias = _resolve_alias(state_db, channel_id, external_user_id)
-    if alias is not None:
-        human_id = alias.primary_human_id
-    else:
-        human_id = _canonical_human_id(channel_id, external_user_id)
-    account_id = _canonical_channel_account_id(channel_id, external_user_id)
-    surface_id = _canonical_surface_id(channel_id, external_user_id)
-    session_id = _canonical_session_id(channel_id, external_user_id)
-
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO humans(human_id, display_name, status)
-            VALUES (?, ?, 'active')
-            ON CONFLICT(human_id) DO UPDATE SET display_name=excluded.display_name, status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (human_id, display_name),
-        )
-        conn.execute(
-            """
-            INSERT INTO channel_accounts(account_id, channel_id, external_user_id, external_username, status)
-            VALUES (?, ?, ?, ?, 'active')
-            ON CONFLICT(account_id) DO UPDATE SET external_username=excluded.external_username, status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (account_id, channel_id, external_user_id, display_name),
-        )
-        conn.execute(
-            """
-            INSERT INTO identity_bindings(binding_id, human_id, account_id, verified, status)
-            VALUES (?, ?, ?, 1, 'active')
-            ON CONFLICT(binding_id) DO UPDATE SET verified=1, status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (f"binding:{channel_id}:{external_user_id}", human_id, account_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO conversation_surfaces(surface_id, channel_id, surface_kind, external_surface_id, status)
-            VALUES (?, ?, 'dm', ?, 'active')
-            ON CONFLICT(surface_id) DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (surface_id, channel_id, external_user_id),
-        )
-        conn.commit()
-
-    # NOTE: intentionally do NOT pass display_name through to the agent
-    # identity resolution. display_name here is the HUMAN's label (goes into
-    # humans / channel_accounts above), not the agent's chosen name. Leaking
-    # it into agent_name was Finding G of
-    # docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md. The agent starts with an
-    # empty agent_name and is named via onboarding (see
-    # personality/loader.py:maybe_handle_agent_persona_onboarding_turn).
-    agent_state = resolve_canonical_agent_identity(
-        state_db=state_db,
-        human_id=human_id,
-    )
-    agent_id = agent_state.agent_id
-
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO session_bindings(session_id, agent_id, surface_id, channel_id, external_user_id, session_mode, status)
-            VALUES (?, ?, ?, ?, ?, 'dm', 'active')
-            ON CONFLICT(session_id) DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (session_id, agent_id, surface_id, channel_id, external_user_id),
-        )
-        conn.commit()
-
-    return human_id, agent_id, session_id
-
-
-def _pairing_code_now(now: datetime | None = None) -> datetime:
-    value = now or datetime.now(timezone.utc)
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _pairing_code_timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _parse_pairing_code_timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(external_user_id, str): external_user_id = str(external_user_id or '')
+    if not isinstance(display_name, str): display_name = str(display_name or '')
     try:
-        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
+        # Identity aliasing: if (channel, user) is registered as an alias for
+        # a primary identity, the human_id we use for the humans / bindings /
+        # session_binding rows is the *primary's* human_id, not the canonical
+        # per-channel one. This is what makes personality and memory shared
+        # across surfaces — they all key off the same human_id.
+        #
+        # The session_id stays per-channel so independent threads remain
+        # independent.
+        alias = _resolve_alias(state_db, channel_id, external_user_id)
+        if alias is not None:
+            human_id = alias.primary_human_id
+        else:
+            human_id = _canonical_human_id(channel_id, external_user_id)
+        account_id = _canonical_channel_account_id(channel_id, external_user_id)
+        surface_id = _canonical_surface_id(channel_id, external_user_id)
+        session_id = _canonical_session_id(channel_id, external_user_id)
+
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO humans(human_id, display_name, status)
+                VALUES (?, ?, 'active')
+                ON CONFLICT(human_id) DO UPDATE SET display_name=excluded.display_name, status='active', updated_at=CURRENT_TIMESTAMP
+                """,
+                (human_id, display_name),
+            )
+            conn.execute(
+                """
+                INSERT INTO channel_accounts(account_id, channel_id, external_user_id, external_username, status)
+                VALUES (?, ?, ?, ?, 'active')
+                ON CONFLICT(account_id) DO UPDATE SET external_username=excluded.external_username, status='active', updated_at=CURRENT_TIMESTAMP
+                """,
+                (account_id, channel_id, external_user_id, display_name),
+            )
+            conn.execute(
+                """
+                INSERT INTO identity_bindings(binding_id, human_id, account_id, verified, status)
+                VALUES (?, ?, ?, 1, 'active')
+                ON CONFLICT(binding_id) DO UPDATE SET verified=1, status='active', updated_at=CURRENT_TIMESTAMP
+                """,
+                (f"binding:{channel_id}:{external_user_id}", human_id, account_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO conversation_surfaces(surface_id, channel_id, surface_kind, external_surface_id, status)
+                VALUES (?, ?, 'dm', ?, 'active')
+                ON CONFLICT(surface_id) DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP
+                """,
+                (surface_id, channel_id, external_user_id),
+            )
+            conn.commit()
+
+        # NOTE: intentionally do NOT pass display_name through to the agent
+        # identity resolution. display_name here is the HUMAN's label (goes into
+        # humans / channel_accounts above), not the agent's chosen name. Leaking
+        # it into agent_name was Finding G of
+        # docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md. The agent starts with an
+        # empty agent_name and is named via onboarding (see
+        # personality/loader.py:maybe_handle_agent_persona_onboarding_turn).
+        agent_state = resolve_canonical_agent_identity(
+            state_db=state_db,
+            human_id=human_id,
+        )
+        agent_id = agent_state.agent_id
+
+        with state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_bindings(session_id, agent_id, surface_id, channel_id, external_user_id, session_mode, status)
+                VALUES (?, ?, ?, ?, ?, 'dm', 'active')
+                ON CONFLICT(session_id) DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP
+                """,
+                (session_id, agent_id, surface_id, channel_id, external_user_id),
+            )
+            conn.commit()
+
+        return human_id, agent_id, session_id
+
+
+
+    except Exception:
+        return ()
+def _pairing_code_now(now: datetime | None = None) -> datetime:
+    try:
+        value = now or datetime.now(timezone.utc)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+
+    except Exception:
         return None
+def _pairing_code_timestamp(value: datetime) -> str:
+    try:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+
+    except Exception:
+        return ""
+def _parse_pairing_code_timestamp(value: Any) -> datetime | None:
+    try:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+
+
+    except Exception:
+        return None
 def _normalize_pairing_code(code: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
 
