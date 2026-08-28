@@ -577,6 +577,8 @@ class ConfigManager:
                 str(self.paths.env_file),
                 "/inheritance:r",
                 "/grant:r",
+            ],
+            timeout=60,
                 f"{principal}:(R,W)",
             ],
             check=True,
