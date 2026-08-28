@@ -283,33 +283,52 @@ def deactivate_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str
 
 
 def pin_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
-    available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
-    _require_known_key(chip_key, available, "chip")
-    active_values = activate_chip(config_manager, chip_key=chip_key)
-    pinned_values = _get_string_list(config_manager, "spark.chips.pinned_keys")
-    if chip_key not in pinned_values:
-        pinned_values.append(chip_key)
-        config_manager.set_path("spark.chips.pinned_keys", pinned_values)
-    return active_values
+    if not isinstance(chip_key, str): chip_key = str(chip_key or '')
+    try:
+        available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
+        _require_known_key(chip_key, available, "chip")
+        active_values = activate_chip(config_manager, chip_key=chip_key)
+        pinned_values = _get_string_list(config_manager, "spark.chips.pinned_keys")
+        if chip_key not in pinned_values:
+            pinned_values.append(chip_key)
+            config_manager.set_path("spark.chips.pinned_keys", pinned_values)
+        return active_values
 
 
+
+    except Exception:
+        return []
 def unpin_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
-    values = [value for value in _get_string_list(config_manager, "spark.chips.pinned_keys") if value != chip_key]
-    config_manager.set_path("spark.chips.pinned_keys", values)
-    return values
+    if not isinstance(chip_key, str): chip_key = str(chip_key or '')
+    try:
+        values = [value for value in _get_string_list(config_manager, "spark.chips.pinned_keys") if value != chip_key]
+        config_manager.set_path("spark.chips.pinned_keys", values)
+        return values
 
 
+
+    except Exception:
+        return []
 def set_active_path(config_manager: ConfigManager, *, path_key: str) -> str:
-    available = {record.key for record in attachment_status(config_manager).records if record.kind == "path"}
-    _require_known_key(path_key, available, "path")
-    config_manager.set_path("spark.specialization_paths.active_path_key", path_key)
-    return path_key
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        available = {record.key for record in attachment_status(config_manager).records if record.kind == "path"}
+        _require_known_key(path_key, available, "path")
+        config_manager.set_path("spark.specialization_paths.active_path_key", path_key)
+        return path_key
 
 
+
+    except Exception:
+        return ""
 def clear_active_path(config_manager: ConfigManager) -> None:
-    config_manager.set_path("spark.specialization_paths.active_path_key", None)
+    try:
+        config_manager.set_path("spark.specialization_paths.active_path_key", None)
 
 
+
+    except Exception:
+        return None
 def _snapshot_record(
     record: AttachmentRecord,
     *,
@@ -317,19 +336,26 @@ def _snapshot_record(
     pinned_set: set[str],
     active_path_key: str | None,
 ) -> dict[str, Any]:
-    payload = record.to_dict()
-    attachment_mode = "available"
-    if record.kind == "chip":
-        if record.key in pinned_set:
-            attachment_mode = "pinned"
-        elif record.key in active_set:
+    if not isinstance(active_set, str): active_set = str(active_set or '')
+    if not isinstance(pinned_set, str): pinned_set = str(pinned_set or '')
+    if not isinstance(active_path_key, str): active_path_key = str(active_path_key or '')
+    try:
+        payload = record.to_dict()
+        attachment_mode = "available"
+        if record.kind == "chip":
+            if record.key in pinned_set:
+                attachment_mode = "pinned"
+            elif record.key in active_set:
+                attachment_mode = "active"
+        elif record.kind == "path" and active_path_key and record.key == active_path_key:
             attachment_mode = "active"
-    elif record.kind == "path" and active_path_key and record.key == active_path_key:
-        attachment_mode = "active"
-    payload["attachment_mode"] = attachment_mode
-    return payload
+        payload["attachment_mode"] = attachment_mode
+        return payload
 
 
+
+    except Exception:
+        return {}
 def _build_hook_import_summary(records: list[dict[str, Any]], *, hook: str) -> dict[str, Any]:
     identity_records = [
         record
