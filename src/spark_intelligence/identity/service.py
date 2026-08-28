@@ -397,62 +397,81 @@ def unlink_identity_alias(
     alias_channel: str,
     alias_external_user: str,
 ) -> bool:
-    """Remove an alias. Returns True if a row was deleted."""
-    with state_db.connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM identity_aliases WHERE alias_channel = ? AND alias_external_user = ?",
-            (alias_channel, alias_external_user),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-
-
-def list_identity_aliases(state_db: StateDB) -> list[IdentityAlias]:
-    """All registered aliases — for `spark identity list` and inspection."""
-    with state_db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT alias_channel, alias_external_user,
-                   primary_channel, primary_external_user,
-                   primary_human_id, primary_agent_id
-            FROM identity_aliases
-            ORDER BY primary_human_id, alias_channel, alias_external_user
-            """
-        ).fetchall()
-    return [
-        IdentityAlias(
-            alias_channel=str(r["alias_channel"]),
-            alias_external_user=str(r["alias_external_user"]),
-            primary_channel=str(r["primary_channel"]),
-            primary_external_user=str(r["primary_external_user"]),
-            primary_human_id=str(r["primary_human_id"]),
-            primary_agent_id=str(r["primary_agent_id"]),
-        )
-        for r in rows
-    ]
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
+    if not isinstance(alias_channel, str): alias_channel = str(alias_channel or '')
+    if not isinstance(alias_external_user, str): alias_external_user = str(alias_external_user or '')
     try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
+        """Remove an alias. Returns True if a row was deleted."""
+        with state_db.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM identity_aliases WHERE alias_channel = ? AND alias_external_user = ?",
+                (alias_channel, alias_external_user),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+
+
+    except Exception:
+        return False
+def list_identity_aliases(state_db: StateDB) -> list[IdentityAlias]:
+    try:
+        """All registered aliases — for `spark identity list` and inspection."""
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT alias_channel, alias_external_user,
+                       primary_channel, primary_external_user,
+                       primary_human_id, primary_agent_id
+                FROM identity_aliases
+                ORDER BY primary_human_id, alias_channel, alias_external_user
+                """
+            ).fetchall()
+        return [
+            IdentityAlias(
+                alias_channel=str(r["alias_channel"]),
+                alias_external_user=str(r["alias_external_user"]),
+                primary_channel=str(r["primary_channel"]),
+                primary_external_user=str(r["primary_external_user"]),
+                primary_human_id=str(r["primary_human_id"]),
+                primary_agent_id=str(r["primary_agent_id"]),
+            )
+            for r in rows
+        ]
+
+
+
+    except Exception:
+        return []
+def _utc_now_iso() -> str:
+    try:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+
+    except Exception:
+        return ""
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+
+
+    except Exception:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _reanchor_builder_persona_rows(
     *,
     conn: Any,
@@ -460,81 +479,88 @@ def _reanchor_builder_persona_rows(
     builder_agent_id: str,
     candidate_agent_ids: list[str],
 ) -> None:
-    source_agent_ids: list[str] = []
-    for candidate in candidate_agent_ids:
-        normalized = str(candidate or "").strip()
-        if normalized and normalized != builder_agent_id and normalized not in source_agent_ids:
-            source_agent_ids.append(normalized)
-    if not source_agent_ids:
-        return
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(builder_agent_id, str): builder_agent_id = str(builder_agent_id or '')
+    if not isinstance(candidate_agent_ids, str): candidate_agent_ids = str(candidate_agent_ids or '')
+    try:
+        source_agent_ids: list[str] = []
+        for candidate in candidate_agent_ids:
+            normalized = str(candidate or "").strip()
+            if normalized and normalized != builder_agent_id and normalized not in source_agent_ids:
+                source_agent_ids.append(normalized)
+        if not source_agent_ids:
+            return
 
-    placeholders = ",".join("?" for _ in source_agent_ids)
-    target_row = conn.execute(
-        """
-        SELECT agent_id
-        FROM agent_persona_profiles
-        WHERE agent_id = ?
-        LIMIT 1
-        """,
-        (builder_agent_id,),
-    ).fetchone()
-    source_row = conn.execute(
-        f"""
-        SELECT agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
-        FROM agent_persona_profiles
-        WHERE agent_id IN ({placeholders})
-        ORDER BY updated_at DESC, created_at DESC
-        LIMIT 1
-        """,
-        tuple(source_agent_ids),
-    ).fetchone()
-    if target_row is None and source_row is not None:
-        conn.execute(
+        placeholders = ",".join("?" for _ in source_agent_ids)
+        target_row = conn.execute(
             """
-            INSERT INTO agent_persona_profiles(
-                agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT agent_id
+            FROM agent_persona_profiles
+            WHERE agent_id = ?
+            LIMIT 1
             """,
-            (
-                builder_agent_id,
-                source_row["persona_name"],
-                source_row["persona_summary"],
-                source_row["base_traits_json"],
-                source_row["behavioral_rules_json"],
-                source_row["provenance_json"],
-                source_row["updated_at"],
-                source_row["created_at"],
-            ),
+            (builder_agent_id,),
+        ).fetchone()
+        source_row = conn.execute(
+            f"""
+            SELECT agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
+            FROM agent_persona_profiles
+            WHERE agent_id IN ({placeholders})
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            tuple(source_agent_ids),
+        ).fetchone()
+        if target_row is None and source_row is not None:
+            conn.execute(
+                """
+                INSERT INTO agent_persona_profiles(
+                    agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    builder_agent_id,
+                    source_row["persona_name"],
+                    source_row["persona_summary"],
+                    source_row["base_traits_json"],
+                    source_row["behavioral_rules_json"],
+                    source_row["provenance_json"],
+                    source_row["updated_at"],
+                    source_row["created_at"],
+                ),
+            )
+
+        conn.execute(
+            f"""
+            UPDATE agent_persona_mutations
+            SET agent_id = ?
+            WHERE human_id = ?
+              AND agent_id IN ({placeholders})
+            """,
+            (builder_agent_id, human_id, *source_agent_ids),
+        )
+        conn.execute(
+            f"""
+            UPDATE operator_events
+            SET target_ref = ?
+            WHERE action = 'import_personality'
+              AND target_kind = 'agent_persona'
+              AND target_ref IN ({placeholders})
+            """,
+            (builder_agent_id, *source_agent_ids),
+        )
+        conn.execute(
+            f"""
+            DELETE FROM agent_persona_profiles
+            WHERE agent_id IN ({placeholders})
+            """,
+            tuple(source_agent_ids),
         )
 
-    conn.execute(
-        f"""
-        UPDATE agent_persona_mutations
-        SET agent_id = ?
-        WHERE human_id = ?
-          AND agent_id IN ({placeholders})
-        """,
-        (builder_agent_id, human_id, *source_agent_ids),
-    )
-    conn.execute(
-        f"""
-        UPDATE operator_events
-        SET target_ref = ?
-        WHERE action = 'import_personality'
-          AND target_kind = 'agent_persona'
-          AND target_ref IN ({placeholders})
-        """,
-        (builder_agent_id, *source_agent_ids),
-    )
-    conn.execute(
-        f"""
-        DELETE FROM agent_persona_profiles
-        WHERE agent_id IN ({placeholders})
-        """,
-        tuple(source_agent_ids),
-    )
 
 
+    except Exception:
+        return None
 def _choose_agent_name(
     *,
     current_name: str | None,
