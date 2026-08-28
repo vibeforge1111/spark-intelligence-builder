@@ -9,6 +9,8 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 
+SPARK_INTELLIGENCE_BUILDER__GIT_CHANGED_PATHS_TIMEOUT_SECONDS = 60
+
 
 TRIGGER_PREFIXES: tuple[str, ...] = (
     "src/spark_intelligence/self_awareness/",
@@ -173,6 +175,8 @@ def _git_changed_paths_with_status(repo_root: Path) -> tuple[list[str], bool]:
             check=False,
             capture_output=True,
             text=True,
+
+        timeout=SPARK_INTELLIGENCE_BUILDER__GIT_CHANGED_PATHS_TIMEOUT_SECONDS,
         )
     except OSError:
         return [], True
