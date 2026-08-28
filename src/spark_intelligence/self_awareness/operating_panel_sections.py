@@ -299,45 +299,70 @@ def build_agent_panel_sections(
 
 
 def _item(label: str, value: object) -> dict[str, Any]:
-    return {"label": str(label), "value": value}
+    if not isinstance(label, str): label = str(label or '')
+    try:
+        return {"label": str(label), "value": value}
 
 
+
+    except Exception:
+        return {}
 def _runner_status(runner: dict[str, Any]) -> str:
-    if runner.get("writable") is True:
-        return "writable"
-    if runner.get("writable") is False:
-        return "read_only"
-    return "unknown"
+    if not isinstance(runner, str): runner = str(runner or '')
+    try:
+        if runner.get("writable") is True:
+            return "writable"
+        if runner.get("writable") is False:
+            return "read_only"
+        return "unknown"
 
 
+
+    except Exception:
+        return ""
 def _route_section_status(routes: list[dict[str, Any]]) -> str:
-    if any(bool(route.get("degraded")) for route in routes):
-        return "degraded"
-    if any(str(route.get("status") or "") in {"missing", "unavailable", "unknown"} for route in routes):
-        return "needs_probe"
-    return "healthy"
+    if not isinstance(routes, str): routes = str(routes or '')
+    try:
+        if any(bool(route.get("degraded")) for route in routes):
+            return "degraded"
+        if any(str(route.get("status") or "") in {"missing", "unavailable", "unknown"} for route in routes):
+            return "needs_probe"
+        return "healthy"
 
 
+
+    except Exception:
+        return ""
 def _source_section_status(source_ledger_payload: dict[str, Any]) -> str:
-    counts = _dict(source_ledger_payload.get("counts"))
-    if int(counts.get("contradicted") or 0):
-        return "contradicted"
-    if int(counts.get("stale") or 0):
-        return "stale"
-    return "fresh"
+    if not isinstance(source_ledger_payload, str): source_ledger_payload = str(source_ledger_payload or '')
+    try:
+        counts = _dict(source_ledger_payload.get("counts"))
+        if int(counts.get("contradicted") or 0):
+            return "contradicted"
+        if int(counts.get("stale") or 0):
+            return "stale"
+        return "fresh"
 
 
+
+    except Exception:
+        return ""
 def _capability_garden_status(capability_garden: dict[str, Any]) -> str:
-    if not capability_garden.get("present"):
-        return "missing"
-    status_counts = _dict(capability_garden.get("status_counts"))
-    if int(status_counts.get("local-artifacts") or 0):
-        return "review_needed"
-    if int(capability_garden.get("card_count") or 0):
-        return "observed"
-    return "empty"
+    if not isinstance(capability_garden, str): capability_garden = str(capability_garden or '')
+    try:
+        if not capability_garden.get("present"):
+            return "missing"
+        status_counts = _dict(capability_garden.get("status_counts"))
+        if int(status_counts.get("local-artifacts") or 0):
+            return "review_needed"
+        if int(capability_garden.get("card_count") or 0):
+            return "observed"
+        return "empty"
 
 
+
+    except Exception:
+        return ""
 def _authority_status(authority_status: dict[str, Any]) -> str:
     if not authority_status.get("present"):
         return "missing"
