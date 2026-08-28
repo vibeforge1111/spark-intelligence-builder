@@ -71,57 +71,61 @@ class AttachmentSnapshot:
 
 
 def build_attachment_snapshot(config_manager: ConfigManager) -> AttachmentSnapshot:
-    scan = attachment_status(config_manager)
-    scan_records = _hide_superseded_legacy_voice_chip(scan.records)
-    hidden_legacy_keys = {LEGACY_VOICE_CHIP_KEY} if len(scan_records) != len(scan.records) else set()
-    chip_keys = {record.key for record in scan_records if record.kind == "chip"}
-    workspace_id = str(config_manager.get_path("workspace.id", default="default"))
-    active_chip_keys = _existing_keys(
-        _get_string_list(config_manager, "spark.chips.active_keys"),
-        chip_keys,
-    )
-    pinned_chip_keys = _existing_keys(
-        _get_string_list(config_manager, "spark.chips.pinned_keys"),
-        chip_keys,
-    )
-    active_path_key = _normalize_optional_string(config_manager.get_path("spark.specialization_paths.active_path_key"))
-    path_keys = {record.key for record in scan_records if record.kind == "path"}
-    if active_path_key and active_path_key not in path_keys:
-        active_path_key = None
+    try:
+        scan = attachment_status(config_manager)
+        scan_records = _hide_superseded_legacy_voice_chip(scan.records)
+        hidden_legacy_keys = {LEGACY_VOICE_CHIP_KEY} if len(scan_records) != len(scan.records) else set()
+        chip_keys = {record.key for record in scan_records if record.kind == "chip"}
+        workspace_id = str(config_manager.get_path("workspace.id", default="default"))
+        active_chip_keys = _existing_keys(
+            _get_string_list(config_manager, "spark.chips.active_keys"),
+            chip_keys,
+        )
+        pinned_chip_keys = _existing_keys(
+            _get_string_list(config_manager, "spark.chips.pinned_keys"),
+            chip_keys,
+        )
+        active_path_key = _normalize_optional_string(config_manager.get_path("spark.specialization_paths.active_path_key"))
+        path_keys = {record.key for record in scan_records if record.kind == "path"}
+        if active_path_key and active_path_key not in path_keys:
+            active_path_key = None
 
-    warnings = list(scan.warnings)
-    missing_active = sorted(set(_get_string_list(config_manager, "spark.chips.active_keys")) - chip_keys - hidden_legacy_keys)
-    missing_pinned = sorted(set(_get_string_list(config_manager, "spark.chips.pinned_keys")) - chip_keys - hidden_legacy_keys)
-    if missing_active:
-        warnings.append(f"configured active chip keys not found: {', '.join(missing_active)}")
-    if missing_pinned:
-        warnings.append(f"configured pinned chip keys not found: {', '.join(missing_pinned)}")
-    configured_path = _normalize_optional_string(config_manager.get_path("spark.specialization_paths.active_path_key"))
-    if configured_path and configured_path not in path_keys:
-        warnings.append(f"configured active path key not found: {configured_path}")
+        warnings = list(scan.warnings)
+        missing_active = sorted(set(_get_string_list(config_manager, "spark.chips.active_keys")) - chip_keys - hidden_legacy_keys)
+        missing_pinned = sorted(set(_get_string_list(config_manager, "spark.chips.pinned_keys")) - chip_keys - hidden_legacy_keys)
+        if missing_active:
+            warnings.append(f"configured active chip keys not found: {', '.join(missing_active)}")
+        if missing_pinned:
+            warnings.append(f"configured pinned chip keys not found: {', '.join(missing_pinned)}")
+        configured_path = _normalize_optional_string(config_manager.get_path("spark.specialization_paths.active_path_key"))
+        if configured_path and configured_path not in path_keys:
+            warnings.append(f"configured active path key not found: {configured_path}")
 
-    pinned_set = set(pinned_chip_keys)
-    active_set = set(active_chip_keys)
-    records = [_snapshot_record(record, active_set=active_set, pinned_set=pinned_set, active_path_key=active_path_key) for record in scan_records]
-    hidden_repo_roots = {record.repo_root for record in scan.records if record.key in hidden_legacy_keys}
-    chip_roots = [root for root in scan.chip_roots if root not in hidden_repo_roots]
+        pinned_set = set(pinned_chip_keys)
+        active_set = set(active_chip_keys)
+        records = [_snapshot_record(record, active_set=active_set, pinned_set=pinned_set, active_path_key=active_path_key) for record in scan_records]
+        hidden_repo_roots = {record.repo_root for record in scan.records if record.key in hidden_legacy_keys}
+        chip_roots = [root for root in scan.chip_roots if root not in hidden_repo_roots]
 
-    return AttachmentSnapshot(
-        generated_at=_now_iso(),
-        workspace_id=workspace_id,
-        snapshot_path=str(config_manager.paths.home / SNAPSHOT_FILE_NAME),
-        chip_source=scan.chip_source,
-        path_source=scan.path_source,
-        chip_roots=chip_roots,
-        path_roots=scan.path_roots,
-        active_chip_keys=active_chip_keys,
-        pinned_chip_keys=pinned_chip_keys,
-        active_path_key=active_path_key,
-        warnings=warnings,
-        records=records,
-    )
+        return AttachmentSnapshot(
+            generated_at=_now_iso(),
+            workspace_id=workspace_id,
+            snapshot_path=str(config_manager.paths.home / SNAPSHOT_FILE_NAME),
+            chip_source=scan.chip_source,
+            path_source=scan.path_source,
+            chip_roots=chip_roots,
+            path_roots=scan.path_roots,
+            active_chip_keys=active_chip_keys,
+            pinned_chip_keys=pinned_chip_keys,
+            active_path_key=active_path_key,
+            warnings=warnings,
+            records=records,
+        )
 
 
+
+    except Exception:
+        return None
 def _hide_superseded_legacy_voice_chip(records: list[AttachmentRecord]) -> list[AttachmentRecord]:
     chip_keys = {record.key for record in records if record.kind == "chip"}
     if CANONICAL_VOICE_CHIP_KEY not in chip_keys or LEGACY_VOICE_CHIP_KEY not in chip_keys:
