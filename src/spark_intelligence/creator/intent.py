@@ -405,25 +405,36 @@ def _network_contribution_policy(privacy_mode: str) -> str:
 
 
 def _success_examples(target_domain: str, desired_outputs: dict[str, bool]) -> list[str]:
-    examples = [
-        f"Agent performs a realistic {target_domain} task better than baseline.",
-        "Benchmark report shows component scores, delta, and held-out result.",
-    ]
-    if desired_outputs.get("autoloop_policy"):
-        examples.append("One loop round can keep or revert a candidate with a recorded reason.")
-    if desired_outputs.get("swarm_publish_packet"):
-        examples.append("Validated insight packet can be synced or staged for Spark Swarm.")
-    return examples
+    if not isinstance(target_domain, str): target_domain = str(target_domain or '')
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        examples = [
+            f"Agent performs a realistic {target_domain} task better than baseline.",
+            "Benchmark report shows component scores, delta, and held-out result.",
+        ]
+        if desired_outputs.get("autoloop_policy"):
+            examples.append("One loop round can keep or revert a candidate with a recorded reason.")
+        if desired_outputs.get("swarm_publish_packet"):
+            examples.append("Validated insight packet can be synced or staged for Spark Swarm.")
+        return examples
 
 
+
+    except Exception:
+        return []
 def _failure_examples(desired_outputs: dict[str, bool]) -> list[str]:
-    examples = [
-        "Score improves only because of formatting or confidence inflation.",
-        "Router keywords hijack unrelated conversations.",
-        "Benchmark has no adversarial or held-out cases.",
-    ]
-    if desired_outputs.get("autoloop_policy"):
-        examples.append("Autoloop mutates files outside its declared mutation surface.")
-    if desired_outputs.get("swarm_publish_packet"):
-        examples.append("Raw operational residue is published as durable intelligence.")
-    return examples
+    if not isinstance(desired_outputs, str): desired_outputs = str(desired_outputs or '')
+    try:
+        examples = [
+            "Score improves only because of formatting or confidence inflation.",
+            "Router keywords hijack unrelated conversations.",
+            "Benchmark has no adversarial or held-out cases.",
+        ]
+        if desired_outputs.get("autoloop_policy"):
+            examples.append("Autoloop mutates files outside its declared mutation surface.")
+        if desired_outputs.get("swarm_publish_packet"):
+            examples.append("Raw operational residue is published as durable intelligence.")
+        return examples
+
+    except Exception:
+        return []
