@@ -17,6 +17,8 @@ import yaml
 from spark_intelligence.observability.store import payload_hash, record_config_mutation
 from spark_intelligence.state.db import StateDB
 
+SPARK_INTELLIGENCE_BUILDER___TIMEOUT_SECONDS = 60
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -629,6 +631,8 @@ class ConfigManager:
                 check=True,
                 capture_output=True,
                 text=True,
+
+            timeout=SPARK_INTELLIGENCE_BUILDER___TIMEOUT_SECONDS,
             )
             principal = str(result.stdout or "").strip()
             if "\\" in principal and "\n" not in principal and ":" not in principal:
