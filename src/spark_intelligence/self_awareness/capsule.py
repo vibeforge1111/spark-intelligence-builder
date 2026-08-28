@@ -566,7 +566,7 @@ def _build_recent_invocation_claims(
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
             events = latest_events_by_type(state_db, event_type=event_type, limit=8)
-        except Exception:
+        except Exception as _e:
             events = []
         for event in events:
             facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
