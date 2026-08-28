@@ -2556,103 +2556,135 @@ def _record_swarm_refresh_state(
     agent_id: str | None = None,
     actor_id: str = "swarm_bridge",
 ) -> None:
-    refreshed_at = _utc_now_iso() if refreshed else None
-    with state_db.connect() as conn:
-        if refreshed:
-            _set_runtime_state(conn, "swarm:last_auth_refresh_at", refreshed_at or _utc_now_iso())
-            _set_runtime_state(conn, "swarm:last_auth_refresh_error", "")
-        if error is not None:
-            _set_runtime_state(conn, "swarm:last_auth_refresh_error", error)
-        conn.commit()
-    if refreshed:
-        record_event(
-            state_db,
-            event_type="tool_result_received",
-            component="swarm_bridge",
-            summary="Swarm auth refresh succeeded.",
-            reason_code="swarm_auth_refresh_succeeded",
-            facts={"swarm_operation": "auth_refresh", "refreshed": True, "refreshed_at": refreshed_at},
-            **_swarm_event_context(
-                run_id=run_id,
-                request_id=request_id,
-                trace_ref=trace_ref,
-                channel_id=channel_id,
-                session_id=session_id,
-                human_id=human_id,
-                agent_id=agent_id,
-                actor_id=actor_id,
-            ),
-        )
-    if error is not None:
-        record_event(
-            state_db,
-            event_type="dispatch_failed",
-            component="swarm_bridge",
-            summary="Swarm auth refresh failed.",
-            reason_code="swarm_auth_refresh_failed",
-            severity="high",
-            facts={"swarm_operation": "auth_refresh", "error": error},
-            **_swarm_event_context(
-                run_id=run_id,
-                request_id=request_id,
-                trace_ref=trace_ref,
-                channel_id=channel_id,
-                session_id=session_id,
-                human_id=human_id,
-                agent_id=agent_id,
-                actor_id=actor_id,
-            ),
-        )
-
-
-def _strip_surrounding_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
-
-
-def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:
-    runtime_root, _ = _discover_swarm_runtime_root(config_manager)
-    if not runtime_root:
-        return {}
-    mapping: dict[str, str] = {}
-    for path in (
-        runtime_root / ".env.alpha",
-        runtime_root / "apps" / "api" / ".env",
-        runtime_root / "apps" / "web" / ".env",
-    ):
-        if not path.exists():
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, value = stripped.split("=", 1)
-            mapping.setdefault(key, _strip_surrounding_quotes(value.strip()))
-    return mapping
-
-
-def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
-    if not token or token.count(".") < 2:
-        return {}
-    segment = token.split(".")[1]
-    padded = segment + "=" * (-len(segment) % 4)
+    if not isinstance(error, str): error = str(error or '')
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
     try:
-        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
-        payload = json.loads(raw.decode("utf-8"))
+        refreshed_at = _utc_now_iso() if refreshed else None
+        with state_db.connect() as conn:
+            if refreshed:
+                _set_runtime_state(conn, "swarm:last_auth_refresh_at", refreshed_at or _utc_now_iso())
+                _set_runtime_state(conn, "swarm:last_auth_refresh_error", "")
+            if error is not None:
+                _set_runtime_state(conn, "swarm:last_auth_refresh_error", error)
+            conn.commit()
+        if refreshed:
+            record_event(
+                state_db,
+                event_type="tool_result_received",
+                component="swarm_bridge",
+                summary="Swarm auth refresh succeeded.",
+                reason_code="swarm_auth_refresh_succeeded",
+                facts={"swarm_operation": "auth_refresh", "refreshed": True, "refreshed_at": refreshed_at},
+                **_swarm_event_context(
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
+                ),
+            )
+        if error is not None:
+            record_event(
+                state_db,
+                event_type="dispatch_failed",
+                component="swarm_bridge",
+                summary="Swarm auth refresh failed.",
+                reason_code="swarm_auth_refresh_failed",
+                severity="high",
+                facts={"swarm_operation": "auth_refresh", "error": error},
+                **_swarm_event_context(
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
+                ),
+            )
+
+
+
+    except Exception:
+        return None
+def _strip_surrounding_quotes(value: str) -> str:
+    if not isinstance(value, str): value = str(value or '')
+    try:
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            return value[1:-1]
+        return value
+
+
+
+    except Exception:
+        return ""
+def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:
+    try:
+        runtime_root, _ = _discover_swarm_runtime_root(config_manager)
+        if not runtime_root:
+            return {}
+        mapping: dict[str, str] = {}
+        for path in (
+            runtime_root / ".env.alpha",
+            runtime_root / "apps" / "api" / ".env",
+            runtime_root / "apps" / "web" / ".env",
+        ):
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                mapping.setdefault(key, _strip_surrounding_quotes(value.strip()))
+        return mapping
+
+
+
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
+def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
+    if not isinstance(token, str): token = str(token or '')
+    try:
+        if not token or token.count(".") < 2:
+            return {}
+        segment = token.split(".")[1]
+        padded = segment + "=" * (-len(segment) % 4)
+        try:
+            raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
 
+
+    except Exception:
+        return {}
 def _token_expiry_iso(token: str | None) -> str | None:
-    claims = _decode_jwt_claims(token)
-    exp = claims.get("exp")
-    if not isinstance(exp, (int, float)):
-        return None
-    return datetime.fromtimestamp(float(exp), tz=timezone.utc).isoformat(timespec="seconds")
+    if not isinstance(token, str): token = str(token or '')
+    try:
+        claims = _decode_jwt_claims(token)
+        exp = claims.get("exp")
+        if not isinstance(exp, (int, float)):
+            return None
+        return datetime.fromtimestamp(float(exp), tz=timezone.utc).isoformat(timespec="seconds")
 
 
+
+    except Exception:
+        return ""
 def _token_is_expired(token: str | None, *, skew_seconds: int = 60) -> bool:
     claims = _decode_jwt_claims(token)
     exp = claims.get("exp")
