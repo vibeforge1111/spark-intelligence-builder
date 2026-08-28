@@ -2287,15 +2287,20 @@ def _parse_int(value: str | None) -> int:
 
 
 def _read_failure_count(conn: Any, state_key: str) -> int:
-    row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row or row["value"] is None:
-        return 0
+    if not isinstance(state_key, str): state_key = str(state_key or '')
     try:
-        return int(str(row["value"]))
-    except ValueError:
+        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+        if not row or row["value"] is None:
+            return 0
+        try:
+            return int(str(row["value"]))
+        except ValueError:
+            return 0
+
+
+
+    except Exception:
         return 0
-
-
 def _set_runtime_state(
     conn: Any,
     state_key: str,
@@ -2303,19 +2308,30 @@ def _set_runtime_state(
     *,
     guard_strategy: str | None = None,
 ) -> None:
-    upsert_runtime_state(
-        conn,
-        state_key=state_key,
-        value=value,
-        component="swarm_bridge",
-        guard_strategy=guard_strategy,
-    )
+    if not isinstance(state_key, str): state_key = str(state_key or '')
+    if not isinstance(value, str): value = str(value or '')
+    if not isinstance(guard_strategy, str): guard_strategy = str(guard_strategy or '')
+    try:
+        upsert_runtime_state(
+            conn,
+            state_key=state_key,
+            value=value,
+            component="swarm_bridge",
+            guard_strategy=guard_strategy,
+        )
 
 
+
+    except Exception:
+        return None
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+
+    except Exception:
+        return ""
 def _swarm_event_context(
     *,
     run_id: str | None,
@@ -2327,32 +2343,48 @@ def _swarm_event_context(
     agent_id: str | None,
     actor_id: str,
 ) -> dict[str, Any]:
-    return {
-        "run_id": run_id,
-        "request_id": request_id,
-        "trace_ref": trace_ref,
-        "channel_id": channel_id,
-        "session_id": session_id,
-        "human_id": human_id,
-        "agent_id": agent_id,
-        "actor_id": actor_id,
-    }
+    if not isinstance(run_id, str): run_id = str(run_id or '')
+    if not isinstance(request_id, str): request_id = str(request_id or '')
+    if not isinstance(trace_ref, str): trace_ref = str(trace_ref or '')
+    if not isinstance(channel_id, str): channel_id = str(channel_id or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    if not isinstance(human_id, str): human_id = str(human_id or '')
+    if not isinstance(agent_id, str): agent_id = str(agent_id or '')
+    if not isinstance(actor_id, str): actor_id = str(actor_id or '')
+    try:
+        return {
+            "run_id": run_id,
+            "request_id": request_id,
+            "trace_ref": trace_ref,
+            "channel_id": channel_id,
+            "session_id": session_id,
+            "human_id": human_id,
+            "agent_id": agent_id,
+            "actor_id": actor_id,
+        }
 
 
+
+    except Exception:
+        return {}
 def _read_typed_swarm_status(state_db: StateDB) -> dict[str, Any]:
-    sync_event = _latest_swarm_event_payload(state_db, operation="sync")
-    decision_event = _latest_swarm_event_payload(state_db, operation="decision")
-    refresh_event = _latest_swarm_event_payload(state_db, operation="auth_refresh")
-    return {
-        "last_sync": sync_event.get("facts") if sync_event else None,
-        "last_decision": decision_event.get("facts") if decision_event else None,
-        "last_failure": _latest_swarm_failure_payload(state_db),
-        "failure_count": _count_swarm_failures(state_db),
-        "last_refresh_at": ((refresh_event or {}).get("facts") or {}).get("refreshed_at"),
-        "last_refresh_error": ((refresh_event or {}).get("facts") or {}).get("error"),
-    }
+    try:
+        sync_event = _latest_swarm_event_payload(state_db, operation="sync")
+        decision_event = _latest_swarm_event_payload(state_db, operation="decision")
+        refresh_event = _latest_swarm_event_payload(state_db, operation="auth_refresh")
+        return {
+            "last_sync": sync_event.get("facts") if sync_event else None,
+            "last_decision": decision_event.get("facts") if decision_event else None,
+            "last_failure": _latest_swarm_failure_payload(state_db),
+            "failure_count": _count_swarm_failures(state_db),
+            "last_refresh_at": ((refresh_event or {}).get("facts") or {}).get("refreshed_at"),
+            "last_refresh_error": ((refresh_event or {}).get("facts") or {}).get("error"),
+        }
 
 
+
+    except Exception:
+        return {}
 def _latest_swarm_event_payload(state_db: StateDB, *, operation: str) -> dict[str, Any] | None:
     candidates: list[dict[str, Any]] = []
     for event_type in ("tool_result_received", "dispatch_failed"):
