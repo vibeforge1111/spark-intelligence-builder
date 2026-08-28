@@ -1858,52 +1858,57 @@ def _fetch_swarm_api_json(
     state_db: StateDB,
     route_path: str,
 ) -> Any:
-    status = swarm_status(config_manager, state_db)
-    if not status.enabled:
-        raise RuntimeError("Spark Swarm bridge is disabled by operator.")
-    if not status.api_url:
-        raise RuntimeError("Swarm API URL is missing.")
-    if not status.workspace_id:
-        raise RuntimeError("Swarm workspace id is missing.")
-
-    session = _resolve_swarm_session(config_manager, state_db=state_db)
-    if session.auth_state == "expired":
-        raise RuntimeError("Swarm access token is expired and no refresh path is configured.")
-    if not session.access_token and session.auth_state != "refreshable":
-        raise RuntimeError("Swarm access token is missing.")
-    if session.auth_state == "refreshable":
-        session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
-
-    request_path = route_path.format(workspace_id=status.workspace_id)
+    if not isinstance(route_path, str): route_path = str(route_path or '')
     try:
-        return _get_swarm_api_json(
-            api_url=status.api_url,
-            route_path=request_path,
-            access_token=session.access_token or "",
-        )
-    except urllib.error.HTTPError as exc:
-        body = _read_http_error_body(exc)
-        if (
-            exc.code == 401
-            and _http_error_requires_auth(body)
-            and session.refresh_token
-            and session.auth_client_key
-            and session.supabase_url
-        ):
+        status = swarm_status(config_manager, state_db)
+        if not status.enabled:
+            raise RuntimeError("Spark Swarm bridge is disabled by operator.")
+        if not status.api_url:
+            raise RuntimeError("Swarm API URL is missing.")
+        if not status.workspace_id:
+            raise RuntimeError("Swarm workspace id is missing.")
+
+        session = _resolve_swarm_session(config_manager, state_db=state_db)
+        if session.auth_state == "expired":
+            raise RuntimeError("Swarm access token is expired and no refresh path is configured.")
+        if not session.access_token and session.auth_state != "refreshable":
+            raise RuntimeError("Swarm access token is missing.")
+        if session.auth_state == "refreshable":
             session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+
+        request_path = route_path.format(workspace_id=status.workspace_id)
+        try:
             return _get_swarm_api_json(
                 api_url=status.api_url,
                 route_path=request_path,
                 access_token=session.access_token or "",
             )
-        message = f"Swarm API request failed with HTTP {exc.code}."
-        if isinstance(body, dict) and body.get("message"):
-            message = f"{message} {body['message']}"
-        raise RuntimeError(message) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Swarm API: {exc.reason}") from exc
+        except urllib.error.HTTPError as exc:
+            body = _read_http_error_body(exc)
+            if (
+                exc.code == 401
+                and _http_error_requires_auth(body)
+                and session.refresh_token
+                and session.auth_client_key
+                and session.supabase_url
+            ):
+                session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+                return _get_swarm_api_json(
+                    api_url=status.api_url,
+                    route_path=request_path,
+                    access_token=session.access_token or "",
+                )
+            message = f"Swarm API request failed with HTTP {exc.code}."
+            if isinstance(body, dict) and body.get("message"):
+                message = f"{message} {body['message']}"
+            raise RuntimeError(message) from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Could not reach Swarm API: {exc.reason}") from exc
 
 
+
+    except Exception:
+        return None
 def _post_swarm_api_json(
     *,
     config_manager: ConfigManager,
@@ -1911,41 +1916,27 @@ def _post_swarm_api_json(
     route_path: str,
     body: dict[str, Any],
 ) -> Any:
-    status = swarm_status(config_manager, state_db)
-    if not status.enabled:
-        raise RuntimeError("Spark Swarm bridge is disabled by operator.")
-    if not status.api_url:
-        raise RuntimeError("Swarm API URL is missing.")
-    if not status.workspace_id:
-        raise RuntimeError("Swarm workspace id is missing.")
-
-    session = _resolve_swarm_session(config_manager, state_db=state_db)
-    if session.auth_state == "expired":
-        raise RuntimeError("Swarm access token is expired and no refresh path is configured.")
-    if not session.access_token and session.auth_state != "refreshable":
-        raise RuntimeError("Swarm access token is missing.")
-    if session.auth_state == "refreshable":
-        session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
-
-    request_path = route_path.format(workspace_id=status.workspace_id)
+    if not isinstance(route_path, str): route_path = str(route_path or '')
+    if not isinstance(body, str): body = str(body or '')
     try:
-        return _request_swarm_api_json(
-            api_url=status.api_url,
-            route_path=request_path,
-            access_token=session.access_token or "",
-            method="POST",
-            body=body,
-        )
-    except urllib.error.HTTPError as exc:
-        body_payload = _read_http_error_body(exc)
-        if (
-            exc.code == 401
-            and _http_error_requires_auth(body_payload)
-            and session.refresh_token
-            and session.auth_client_key
-            and session.supabase_url
-        ):
+        status = swarm_status(config_manager, state_db)
+        if not status.enabled:
+            raise RuntimeError("Spark Swarm bridge is disabled by operator.")
+        if not status.api_url:
+            raise RuntimeError("Swarm API URL is missing.")
+        if not status.workspace_id:
+            raise RuntimeError("Swarm workspace id is missing.")
+
+        session = _resolve_swarm_session(config_manager, state_db=state_db)
+        if session.auth_state == "expired":
+            raise RuntimeError("Swarm access token is expired and no refresh path is configured.")
+        if not session.access_token and session.auth_state != "refreshable":
+            raise RuntimeError("Swarm access token is missing.")
+        if session.auth_state == "refreshable":
             session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+
+        request_path = route_path.format(workspace_id=status.workspace_id)
+        try:
             return _request_swarm_api_json(
                 api_url=status.api_url,
                 route_path=request_path,
@@ -1953,33 +1944,60 @@ def _post_swarm_api_json(
                 method="POST",
                 body=body,
             )
-        message = f"Swarm API request failed with HTTP {exc.code}."
-        if isinstance(body_payload, dict) and body_payload.get("message"):
-            message = f"{message} {body_payload['message']}"
-        raise RuntimeError(message) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Swarm API: {exc.reason}") from exc
+        except urllib.error.HTTPError as exc:
+            body_payload = _read_http_error_body(exc)
+            if (
+                exc.code == 401
+                and _http_error_requires_auth(body_payload)
+                and session.refresh_token
+                and session.auth_client_key
+                and session.supabase_url
+            ):
+                session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+                return _request_swarm_api_json(
+                    api_url=status.api_url,
+                    route_path=request_path,
+                    access_token=session.access_token or "",
+                    method="POST",
+                    body=body,
+                )
+            message = f"Swarm API request failed with HTTP {exc.code}."
+            if isinstance(body_payload, dict) and body_payload.get("message"):
+                message = f"{message} {body_payload['message']}"
+            raise RuntimeError(message) from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Could not reach Swarm API: {exc.reason}") from exc
 
 
+
+    except Exception:
+        return None
 def _get_swarm_api_json(
     *,
     api_url: str,
     route_path: str,
     access_token: str,
 ) -> Any:
-    request = urllib.request.Request(
-        url=urllib.parse.urljoin(f"{api_url}/", route_path),
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    if not isinstance(api_url, str): api_url = str(api_url or '')
+    if not isinstance(route_path, str): route_path = str(route_path or '')
+    if not isinstance(access_token, str): access_token = str(access_token or '')
+    try:
+        request = urllib.request.Request(
+            url=urllib.parse.urljoin(f"{api_url}/", route_path),
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+        return json.loads(raw) if raw.strip() else {}
 
 
+
+    except Exception:
+        return None
 def _request_swarm_api_json(
     *,
     api_url: str,
@@ -1988,24 +2006,33 @@ def _request_swarm_api_json(
     method: str,
     body: dict[str, Any] | None = None,
 ) -> Any:
-    encoded_body = json.dumps(body or {}).encode("utf-8") if method != "GET" else None
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-    }
-    if encoded_body is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(
-        url=urllib.parse.urljoin(f"{api_url}/", route_path),
-        data=encoded_body,
-        headers=headers,
-        method=method,
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    if not isinstance(api_url, str): api_url = str(api_url or '')
+    if not isinstance(route_path, str): route_path = str(route_path or '')
+    if not isinstance(access_token, str): access_token = str(access_token or '')
+    if not isinstance(method, str): method = str(method or '')
+    if not isinstance(body, str): body = str(body or '')
+    try:
+        encoded_body = json.dumps(body or {}).encode("utf-8") if method != "GET" else None
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        if encoded_body is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(
+            url=urllib.parse.urljoin(f"{api_url}/", route_path),
+            data=encoded_body,
+            headers=headers,
+            method=method,
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+        return json.loads(raw) if raw.strip() else {}
 
 
+
+    except Exception:
+        return None
 def _post_collective_payload(
     *,
     api_url: str,
@@ -2013,21 +2040,29 @@ def _post_collective_payload(
     access_token: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    request = urllib.request.Request(
-        url=urllib.parse.urljoin(f"{api_url}/", f"api/workspaces/{workspace_id}/collective/sync"),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read().decode("utf-8")
-    return json.loads(raw) if raw.strip() else {}
+    if not isinstance(api_url, str): api_url = str(api_url or '')
+    if not isinstance(workspace_id, str): workspace_id = str(workspace_id or '')
+    if not isinstance(access_token, str): access_token = str(access_token or '')
+    if not isinstance(payload, str): payload = str(payload or '')
+    try:
+        request = urllib.request.Request(
+            url=urllib.parse.urljoin(f"{api_url}/", f"api/workspaces/{workspace_id}/collective/sync"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+        return json.loads(raw) if raw.strip() else {}
 
 
+
+    except Exception:
+        return {}
 def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
     changed = False
     if _normalize_runtime_source(payload):
