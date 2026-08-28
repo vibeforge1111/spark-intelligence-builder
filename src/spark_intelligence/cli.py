@@ -7214,71 +7214,97 @@ def _render_browser_hook_display(
 
 
 def _browser_snapshot_failure_requires_page_context(display_payload: dict[str, object] | None) -> bool:
-    if not isinstance(display_payload, dict):
-        return False
-    if str(display_payload.get("status") or "").strip().lower() != "failed":
-        return False
-    error = display_payload.get("error")
-    if not isinstance(error, dict):
-        return False
-    if str(error.get("code") or "").strip() != "EXTENSION_RUNTIME_FAILED":
-        return False
-    message = str(error.get("message") or "").strip().lower()
-    return "cannot access contents of the page" in message
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    try:
+        if not isinstance(display_payload, dict):
+            return False
+        if str(display_payload.get("status") or "").strip().lower() != "failed":
+            return False
+        error = display_payload.get("error")
+        if not isinstance(error, dict):
+            return False
+        if str(error.get("code") or "").strip() != "EXTENSION_RUNTIME_FAILED":
+            return False
+        message = str(error.get("message") or "").strip().lower()
+        return "cannot access contents of the page" in message
 
 
+
+    except Exception:
+        return False
 def _browser_result_tab_id(display_payload: dict[str, object] | None) -> str | None:
-    if not isinstance(display_payload, dict):
-        return None
-    result = display_payload.get("result")
-    if isinstance(result, dict):
-        tab = result.get("tab")
-        if isinstance(tab, dict):
-            tab_id = tab.get("id") or tab.get("tab_id")
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    try:
+        if not isinstance(display_payload, dict):
+            return None
+        result = display_payload.get("result")
+        if isinstance(result, dict):
+            tab = result.get("tab")
+            if isinstance(tab, dict):
+                tab_id = tab.get("id") or tab.get("tab_id")
+                if tab_id:
+                    return str(tab_id)
+            tab_id = result.get("tab_id")
             if tab_id:
                 return str(tab_id)
-        tab_id = result.get("tab_id")
-        if tab_id:
-            return str(tab_id)
-    provenance = display_payload.get("provenance")
-    if isinstance(provenance, dict) and provenance.get("tab_id"):
-        return str(provenance.get("tab_id"))
-    execution = display_payload.get("execution")
-    if isinstance(execution, dict):
-        output = execution.get("output")
-        if isinstance(output, dict):
-            output_provenance = output.get("provenance")
-            if isinstance(output_provenance, dict) and output_provenance.get("tab_id"):
-                return str(output_provenance.get("tab_id"))
-    return None
-
-
-def _browser_result_origin(display_payload: dict[str, object] | None, *, default: str) -> str:
-    if isinstance(display_payload, dict):
-        result = display_payload.get("result")
-        if isinstance(result, dict) and result.get("origin"):
-            return str(result.get("origin"))
         provenance = display_payload.get("provenance")
-        if isinstance(provenance, dict) and provenance.get("origin"):
-            return str(provenance.get("origin"))
-    return default
-
-
-def _normalize_browser_hook_status(hook_output: dict[str, object]) -> str | None:
-    value = hook_output.get("status")
-    if value is None:
+        if isinstance(provenance, dict) and provenance.get("tab_id"):
+            return str(provenance.get("tab_id"))
+        execution = display_payload.get("execution")
+        if isinstance(execution, dict):
+            output = execution.get("output")
+            if isinstance(output, dict):
+                output_provenance = output.get("provenance")
+                if isinstance(output_provenance, dict) and output_provenance.get("tab_id"):
+                    return str(output_provenance.get("tab_id"))
         return None
-    normalized = str(value).strip().lower()
-    return normalized or None
 
 
+
+    except Exception:
+        return ""
+def _browser_result_origin(display_payload: dict[str, object] | None, *, default: str) -> str:
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    if not isinstance(default, str): default = str(default or '')
+    try:
+        if isinstance(display_payload, dict):
+            result = display_payload.get("result")
+            if isinstance(result, dict) and result.get("origin"):
+                return str(result.get("origin"))
+            provenance = display_payload.get("provenance")
+            if isinstance(provenance, dict) and provenance.get("origin"):
+                return str(provenance.get("origin"))
+        return default
+
+
+
+    except Exception:
+        return ""
+def _normalize_browser_hook_status(hook_output: dict[str, object]) -> str | None:
+    if not isinstance(hook_output, str): hook_output = str(hook_output or '')
+    try:
+        value = hook_output.get("status")
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        return normalized or None
+
+
+
+    except Exception:
+        return ""
 def _render_browser_hook_failure(display_payload: dict[str, object]) -> str:
-    error = display_payload.get("error") if isinstance(display_payload.get("error"), dict) else {}
-    code = str(error.get("code") or "BROWSER_HOOK_FAILED")
-    message = str(error.get("message") or "The browser hook returned a governed failure response.")
-    return f"Browser hook failed: {code}: {message}"
+    if not isinstance(display_payload, str): display_payload = str(display_payload or '')
+    try:
+        error = display_payload.get("error") if isinstance(display_payload.get("error"), dict) else {}
+        code = str(error.get("code") or "BROWSER_HOOK_FAILED")
+        message = str(error.get("message") or "The browser hook returned a governed failure response.")
+        return f"Browser hook failed: {code}: {message}"
 
 
+
+    except Exception:
+        return ""
 def handle_browser_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
