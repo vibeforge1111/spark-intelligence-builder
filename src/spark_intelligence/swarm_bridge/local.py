@@ -124,117 +124,133 @@ def swarm_bridge_execute_rerun_request(
     *,
     path_key: str | None = None,
 ) -> SwarmBridgeCommandResult:
-    repo_root = _resolve_specialization_path_repo_root(config_manager, path_key) if path_key else None
-    command = [
-        sys.executable,
-        "-m",
-        "spark_swarm_bridge.cli",
-        "specialization-path",
-        "execute-rerun-request",
-    ]
-    if path_key:
-        command.append(path_key)
-    if repo_root:
-        command.extend(["--path", str(repo_root)])
-    return _run_swarm_bridge_command(
-        config_manager,
-        action="execute-rerun-request",
-        repo_root=repo_root,
-        path_key=path_key,
-        command=command,
-    )
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        repo_root = _resolve_specialization_path_repo_root(config_manager, path_key) if path_key else None
+        command = [
+            sys.executable,
+            "-m",
+            "spark_swarm_bridge.cli",
+            "specialization-path",
+            "execute-rerun-request",
+        ]
+        if path_key:
+            command.append(path_key)
+        if repo_root:
+            command.extend(["--path", str(repo_root)])
+        return _run_swarm_bridge_command(
+            config_manager,
+            action="execute-rerun-request",
+            repo_root=repo_root,
+            path_key=path_key,
+            command=command,
+        )
 
 
+
+    except Exception:
+        return None
 def swarm_bridge_read_autoloop_session(
     config_manager: ConfigManager,
     *,
     path_key: str,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
-    sessions_root = repo_root / ".spark-swarm" / "specialization-paths" / path_key / "sessions"
-    if not sessions_root.exists():
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    if not isinstance(session_id, str): session_id = str(session_id or '')
+    try:
+        repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
+        sessions_root = repo_root / ".spark-swarm" / "specialization-paths" / path_key / "sessions"
+        if not sessions_root.exists():
+            return {
+                "path_key": path_key,
+                "repo_root": str(repo_root),
+                "session_id": None,
+                "session_summary_path": None,
+                "session_summary": None,
+                "latest_round_summary_path": None,
+                "latest_round_summary": None,
+                "round_history_path": None,
+                "round_history": _load_round_history(repo_root, path_key),
+                "available_session_ids": [],
+            }
+        summary_path = _resolve_session_summary_path(sessions_root, session_id=session_id)
+        if summary_path is None:
+            return {
+                "path_key": path_key,
+                "repo_root": str(repo_root),
+                "session_id": None,
+                "session_summary_path": None,
+                "session_summary": None,
+                "latest_round_summary_path": None,
+                "latest_round_summary": None,
+                "round_history_path": None,
+                "round_history": _load_round_history(repo_root, path_key),
+                "available_session_ids": _list_session_ids(sessions_root),
+            }
+        summary = _load_json_file(summary_path)
+        latest_round_summary_path = _resolve_latest_round_summary_path(summary)
+        latest_round_summary = _load_json_file(latest_round_summary_path) if latest_round_summary_path is not None else None
+        round_history = _load_round_history(repo_root, path_key)
         return {
             "path_key": path_key,
             "repo_root": str(repo_root),
-            "session_id": None,
-            "session_summary_path": None,
-            "session_summary": None,
-            "latest_round_summary_path": None,
-            "latest_round_summary": None,
-            "round_history_path": None,
-            "round_history": _load_round_history(repo_root, path_key),
-            "available_session_ids": [],
-        }
-    summary_path = _resolve_session_summary_path(sessions_root, session_id=session_id)
-    if summary_path is None:
-        return {
-            "path_key": path_key,
-            "repo_root": str(repo_root),
-            "session_id": None,
-            "session_summary_path": None,
-            "session_summary": None,
-            "latest_round_summary_path": None,
-            "latest_round_summary": None,
-            "round_history_path": None,
-            "round_history": _load_round_history(repo_root, path_key),
+            "session_id": str(summary.get("sessionId") or summary_path.parent.name),
+            "session_summary_path": str(summary_path),
+            "session_summary": summary,
+            "latest_round_summary_path": str(latest_round_summary_path) if latest_round_summary_path is not None else None,
+            "latest_round_summary": latest_round_summary,
+            "round_history_path": str(_round_history_path(repo_root, path_key)) if _round_history_path(repo_root, path_key).exists() else None,
+            "round_history": round_history,
             "available_session_ids": _list_session_ids(sessions_root),
         }
-    summary = _load_json_file(summary_path)
-    latest_round_summary_path = _resolve_latest_round_summary_path(summary)
-    latest_round_summary = _load_json_file(latest_round_summary_path) if latest_round_summary_path is not None else None
-    round_history = _load_round_history(repo_root, path_key)
-    return {
-        "path_key": path_key,
-        "repo_root": str(repo_root),
-        "session_id": str(summary.get("sessionId") or summary_path.parent.name),
-        "session_summary_path": str(summary_path),
-        "session_summary": summary,
-        "latest_round_summary_path": str(latest_round_summary_path) if latest_round_summary_path is not None else None,
-        "latest_round_summary": latest_round_summary,
-        "round_history_path": str(_round_history_path(repo_root, path_key)) if _round_history_path(repo_root, path_key).exists() else None,
-        "round_history": round_history,
-        "available_session_ids": _list_session_ids(sessions_root),
-    }
 
 
+
+    except Exception:
+        return {}
 def swarm_bridge_list_autoloop_sessions(
     config_manager: ConfigManager,
     *,
     path_key: str,
     limit: int = 3,
 ) -> dict[str, Any]:
-    repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
-    sessions_root = repo_root / ".spark-swarm" / "specialization-paths" / path_key / "sessions"
-    entries: list[dict[str, Any]] = []
-    if sessions_root.exists():
-        session_paths = sorted(
-            sessions_root.glob("*/summary.json"),
-            key=_safe_mtime,
-            reverse=True,
-        )[: max(int(limit or 3), 1)]
-        for summary_path in session_paths:
-            payload = _load_json_file(summary_path)
-            entries.append(
-                {
-                    "session_id": str(payload.get("sessionId") or summary_path.parent.name),
-                    "summary_path": str(summary_path),
-                    "updated_at": str(payload.get("updatedAt") or ""),
-                    "completed_rounds": int(payload.get("completedRounds") or 0),
-                    "requested_rounds_total": int(payload.get("requestedRoundsTotal") or 0),
-                    "stop_reason": str(payload.get("stopReason") or "").strip() or None,
-                    "planner_status": str(payload.get("plannerStatus") or "").strip() or None,
-                    "best_score": payload.get("bestScore"),
-                }
-            )
-    return {
-        "path_key": path_key,
-        "repo_root": str(repo_root),
-        "sessions": entries,
-        "round_history": _load_round_history(repo_root, path_key),
-    }
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
+        sessions_root = repo_root / ".spark-swarm" / "specialization-paths" / path_key / "sessions"
+        entries: list[dict[str, Any]] = []
+        if sessions_root.exists():
+            session_paths = sorted(
+                sessions_root.glob("*/summary.json"),
+                key=_safe_mtime,
+                reverse=True,
+            )[: max(int(limit or 3), 1)]
+            for summary_path in session_paths:
+                payload = _load_json_file(summary_path)
+                entries.append(
+                    {
+                        "session_id": str(payload.get("sessionId") or summary_path.parent.name),
+                        "summary_path": str(summary_path),
+                        "updated_at": str(payload.get("updatedAt") or ""),
+                        "completed_rounds": int(payload.get("completedRounds") or 0),
+                        "requested_rounds_total": int(payload.get("requestedRoundsTotal") or 0),
+                        "stop_reason": str(payload.get("stopReason") or "").strip() or None,
+                        "planner_status": str(payload.get("plannerStatus") or "").strip() or None,
+                        "best_score": payload.get("bestScore"),
+                    }
+                )
+        return {
+            "path_key": path_key,
+            "repo_root": str(repo_root),
+            "sessions": entries,
+            "round_history": _load_round_history(repo_root, path_key),
+        }
 
 
+
+    except Exception:
+        return {}
 def _run_swarm_bridge_command(
     config_manager: ConfigManager,
     *,
@@ -243,79 +259,91 @@ def _run_swarm_bridge_command(
     repo_root: Path | None,
     path_key: str | None,
 ) -> SwarmBridgeCommandResult:
-    runtime_root = _resolve_swarm_runtime_root(config_manager)
-    bridge_cwd = runtime_root / "apps" / "bridge"
-    if not bridge_cwd.exists():
-        raise RuntimeError(f"Spark Swarm bridge runtime is missing at {bridge_cwd}")
-    bridge_src = bridge_cwd / "src"
-    env = dict(os.environ)
-    existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
-    pythonpath_entries = [str(bridge_src)] if bridge_src.exists() else []
-    if existing_pythonpath:
-        pythonpath_entries.append(existing_pythonpath)
-    if pythonpath_entries:
-        env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
-    env["SPARK_SWARM_STATE_DIR"] = str((runtime_root / ".state").resolve())
-    researcher_repo = (runtime_root.parent / "spark-researcher").resolve()
-    if researcher_repo.exists():
-        env["SPARK_RESEARCHER_REPO"] = str(researcher_repo)
-    if repo_root is not None and path_key:
-        env[_specialization_repo_env_var(path_key)] = str(repo_root.resolve())
-    execution = run_governed_command(command=command, cwd=bridge_cwd, env=env)
-    session_id = _extract_session_id(execution.stdout)
-    session_summary = None
-    session_summary_path = None
-    round_history = None
-    round_history_path = None
-    latest_round_summary = None
-    latest_round_summary_path = None
-    if repo_root is not None and path_key:
-        session_payload = swarm_bridge_read_autoloop_session(config_manager, path_key=path_key, session_id=session_id)
-        session_id = str(session_payload.get("session_id") or session_id or "").strip() or None
-        session_summary = session_payload.get("session_summary") if isinstance(session_payload.get("session_summary"), dict) else None
-        session_summary_path = (
-            str(session_payload.get("session_summary_path") or "").strip() or None
+    if not isinstance(action, str): action = str(action or '')
+    if not isinstance(command, str): command = str(command or '')
+    if repo_root is not None and not hasattr(repo_root, 'resolve'): from pathlib import Path; repo_root = Path(str(repo_root))
+    if not isinstance(path_key, str): path_key = str(path_key or '')
+    try:
+        runtime_root = _resolve_swarm_runtime_root(config_manager)
+        bridge_cwd = runtime_root / "apps" / "bridge"
+        if not bridge_cwd.exists():
+            raise RuntimeError(f"Spark Swarm bridge runtime is missing at {bridge_cwd}")
+        bridge_src = bridge_cwd / "src"
+        env = dict(os.environ)
+        existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+        pythonpath_entries = [str(bridge_src)] if bridge_src.exists() else []
+        if existing_pythonpath:
+            pythonpath_entries.append(existing_pythonpath)
+        if pythonpath_entries:
+            env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+        env["SPARK_SWARM_STATE_DIR"] = str((runtime_root / ".state").resolve())
+        researcher_repo = (runtime_root.parent / "spark-researcher").resolve()
+        if researcher_repo.exists():
+            env["SPARK_RESEARCHER_REPO"] = str(researcher_repo)
+        if repo_root is not None and path_key:
+            env[_specialization_repo_env_var(path_key)] = str(repo_root.resolve())
+        execution = run_governed_command(command=command, cwd=bridge_cwd, env=env)
+        session_id = _extract_session_id(execution.stdout)
+        session_summary = None
+        session_summary_path = None
+        round_history = None
+        round_history_path = None
+        latest_round_summary = None
+        latest_round_summary_path = None
+        if repo_root is not None and path_key:
+            session_payload = swarm_bridge_read_autoloop_session(config_manager, path_key=path_key, session_id=session_id)
+            session_id = str(session_payload.get("session_id") or session_id or "").strip() or None
+            session_summary = session_payload.get("session_summary") if isinstance(session_payload.get("session_summary"), dict) else None
+            session_summary_path = (
+                str(session_payload.get("session_summary_path") or "").strip() or None
+            )
+            latest_round_summary = (
+                session_payload.get("latest_round_summary")
+                if isinstance(session_payload.get("latest_round_summary"), dict)
+                else None
+            )
+            latest_round_summary_path = str(session_payload.get("latest_round_summary_path") or "").strip() or None
+            round_history = session_payload.get("round_history") if isinstance(session_payload.get("round_history"), dict) else None
+            round_history_path = str(session_payload.get("round_history_path") or "").strip() or None
+        return SwarmBridgeCommandResult(
+            ok=execution.ok,
+            action=action,
+            command=list(command),
+            cwd=str(bridge_cwd),
+            runtime_root=str(runtime_root),
+            repo_root=str(repo_root) if repo_root else None,
+            path_key=path_key,
+            exit_code=execution.exit_code,
+            stdout=execution.stdout.strip(),
+            stderr=execution.stderr.strip(),
+            session_id=session_id,
+            session_summary_path=session_summary_path,
+            session_summary=session_summary,
+            latest_round_summary_path=latest_round_summary_path,
+            latest_round_summary=latest_round_summary,
+            round_history_path=round_history_path,
+            round_history=round_history,
+            artifacts_path=_extract_labeled_path(execution.stdout, "Artifacts"),
+            payload_path=_extract_labeled_path(execution.stdout, "Collective payload"),
         )
-        latest_round_summary = (
-            session_payload.get("latest_round_summary")
-            if isinstance(session_payload.get("latest_round_summary"), dict)
-            else None
-        )
-        latest_round_summary_path = str(session_payload.get("latest_round_summary_path") or "").strip() or None
-        round_history = session_payload.get("round_history") if isinstance(session_payload.get("round_history"), dict) else None
-        round_history_path = str(session_payload.get("round_history_path") or "").strip() or None
-    return SwarmBridgeCommandResult(
-        ok=execution.ok,
-        action=action,
-        command=list(command),
-        cwd=str(bridge_cwd),
-        runtime_root=str(runtime_root),
-        repo_root=str(repo_root) if repo_root else None,
-        path_key=path_key,
-        exit_code=execution.exit_code,
-        stdout=execution.stdout.strip(),
-        stderr=execution.stderr.strip(),
-        session_id=session_id,
-        session_summary_path=session_summary_path,
-        session_summary=session_summary,
-        latest_round_summary_path=latest_round_summary_path,
-        latest_round_summary=latest_round_summary,
-        round_history_path=round_history_path,
-        round_history=round_history,
-        artifacts_path=_extract_labeled_path(execution.stdout, "Artifacts"),
-        payload_path=_extract_labeled_path(execution.stdout, "Collective payload"),
-    )
 
 
+
+    except Exception:
+        return None
 def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
-    configured = _resolve_swarm_runtime_root_env(config_manager)
-    if configured:
-        candidate = config_manager.normalize_runtime_path(configured)
-        if candidate is not None:
-            return candidate
-    raise RuntimeError("Spark Swarm runtime root is not configured.")
+    try:
+        configured = _resolve_swarm_runtime_root_env(config_manager)
+        if configured:
+            candidate = config_manager.normalize_runtime_path(configured)
+            if candidate is not None:
+                return candidate
+        raise RuntimeError("Spark Swarm runtime root is not configured.")
 
 
+
+    except Exception:
+        return Path(".")
 def _resolve_swarm_runtime_root_env(config_manager: ConfigManager) -> str | None:
     env_value = str(os.environ.get(SWARM_RUNTIME_ROOT_ENV) or "").strip()
     if env_value:
