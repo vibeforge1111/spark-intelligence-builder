@@ -247,6 +247,17 @@ def _codex_cli_env() -> dict[str, str]:
         value = os.environ.get(key)
         if value:
             env[key] = value
+    if os.name == "nt":
+        # cmd shims and the account-authenticated CLI need Windows runtime paths.
+        # Keep this allowlisted: provider credentials must not leak to the child.
+        for key in (
+            "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+            "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+            "PROGRAMDATA",
+        ):
+            value = os.environ.get(key)
+            if value:
+                env.setdefault(key, value)
     codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
     env["CODEX_HOME"] = codex_home
     return env
