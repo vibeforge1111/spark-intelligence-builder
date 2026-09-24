@@ -16,7 +16,7 @@
 
 ### Scoring
 
-- Phase 2.1 (PR #1011): new starter chips get one explicitly authored draft-or-clarify development case. Generic starters retain 14 cases; realistic packs retain every original case plus the new case, with matching manifests. Scores before and after this change are not comparable as one trend.
+- Phase 2.1 (PR #1011): new starter chips get one explicitly authored draft-or-clarify development case. Generic starters retain their configured mutation-axis context and 14 cases; realistic packs retain every original case plus the new case, with matching manifests. Scores before and after this change are not comparable as one trend.
 
 
 - None: this environment repair does not change benchmark or judging rules.

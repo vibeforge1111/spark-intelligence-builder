@@ -1,3 +1,9 @@
+## 2026-09-24 · PR #1011 axis-context correction
+
+CI caught the loss of the configured review-depth axis in generic development-002. Preserve the original axis context inside the newly authored task; the existing smoke assertion stays unchanged. Extended the direct temporary-file regression to require review depth: fast. All12 focused tests pass. Fresh full CI is mandatory for this corrected head.
+
+---
+
 ## 2026-09-24 · PR #1011 publication
 
 Published the isolated starter-authoring counterpart. Desktop PR #31 and all exact-head Builder CI are prerequisites; no automatic merge requested.

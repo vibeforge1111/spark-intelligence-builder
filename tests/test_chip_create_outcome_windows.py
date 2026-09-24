@@ -12,7 +12,7 @@ from spark_intelligence.chip_create import pipeline
 def test_written_starter_contains_authored_borderline_choice(tmp_path, domain_id):
     original_packs = copy.deepcopy(pipeline._R30_DOMAIN_FIXTURE_PACKS)
     brief = {"domain_id": domain_id, "domain_name": domain_id.replace("-", " "),
-             "description": "Private support triage", "primary_metric": "task_quality"}
+             "description": "Private support triage", "primary_metric": "task_quality", "mutation_axes": [{"name":"risk_focus","values":["security"]},{"name":"review_depth","values":["fast"]}]}
     pipeline._write_loop_proof_starter_assets(tmp_path, brief, chip_key=f"domain-chip-{domain_id}")
     cases = [json.loads(line) for line in (tmp_path / "benchmark/cases.jsonl").read_text(encoding="utf-8").splitlines()]
     alternatives = [case for case in cases if len(case.get("allowed_mutation_outcomes", [])) > 1]
@@ -21,6 +21,8 @@ def test_written_starter_contains_authored_borderline_choice(tmp_path, domain_id
     assert borderline["lane"] == "development"
     assert borderline["expected_outcome"] == "abstain"
     assert borderline["allowed_mutation_outcomes"] == ["abstain", "pass"]
+    if domain_id == 'independent-example':
+        assert 'review depth: fast' in borderline['prompt']
     assert "no acceptance criterion" in borderline["prompt"]
     assert "Use pass only" in borderline["expected_behavior"]
     assert "Use abstain" in borderline["expected_behavior"]

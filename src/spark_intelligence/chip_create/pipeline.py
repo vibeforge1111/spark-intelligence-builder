@@ -4455,7 +4455,10 @@ Keep this starter private/local until those gates are green.
             "expected_behavior": "apply the playbook, cite domain evidence, and stay private",
             "score_dimensions": benchmark_manifest["scoring"]["component_metrics"],
         },
-        _borderline_development_case(f"{domain_id}-development-002", domain_name),
+        _borderline_development_case(
+            f"{domain_id}-development-002",
+            f"{domain_name} ({_axis_context(1, 0, 'an ambiguity or missing-evidence case')})",
+        ),
         {
             "case_id": f"{domain_id}-development-003",
             "lane": "development",
