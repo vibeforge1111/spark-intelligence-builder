@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- None.
+
+### Changed
+
+- None.
+
 ### Fixed
 
 - Phase 1.3 (PR pending): Windows chip creation forwards the minimal operating-system environment needed by the account-authenticated Codex CLI, while keeping credentials and unrelated variables excluded. Mac/Linux behavior is unchanged.
+
+### Scoring
+
+- None: this environment repair does not change benchmark or judging rules.
 
 ### Session status — 2026-09-24
 
