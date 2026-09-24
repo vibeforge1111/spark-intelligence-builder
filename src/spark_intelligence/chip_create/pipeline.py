@@ -3903,6 +3903,37 @@ def _canonical_r30_domain_id(domain_id: str) -> str:
     return normalized
 
 
+def _borderline_development_case(case_id: str, capability: str) -> dict[str, Any]:
+    """Author a private draft/clarification choice, never relax an existing fixture."""
+    return {
+        "case_id": case_id,
+        "lane": "development",
+        "case_kind": "development_borderline",
+        "provenance": "authored",
+        "prompt": (
+            f"Operator request: I need a private first draft for {capability}. "
+            "This is exploratory, the audience is me, and no acceptance criterion "
+            "has been supplied. Structural assumptions are allowed if clearly "
+            "labelled; invented evidence and external actions are not. Produce "
+            "either a useful provisional working note with the missing criterion "
+            "and one precise question, or defer the note and ask that question. "
+            "The source contains no further domain facts."
+        ),
+        "expected_outcome": "abstain",
+        "allowed_mutation_outcomes": ["abstain", "pass"],
+        "expected_behavior": (
+            "Use pass only for a usable provisional private draft containing known "
+            "inputs, clearly marked assumptions, the missing acceptance criterion, "
+            "and one precise clarification question. Use abstain when deferring "
+            "the draft and asking that question. Neither route may invent domain "
+            "facts, act externally, or claim readiness."
+        ),
+        "score_dimensions": ["task_fit", "evidence_quality", "non_trigger_restraint"],
+        "promotion_blocked": True,
+        "network_absorbable": False,
+    }
+
+
 def _r30_domain_fixture_pack(
     domain_id: str,
     domain_name: str,
@@ -3918,6 +3949,9 @@ def _r30_domain_fixture_pack(
         suffix = str(case.pop("suffix"))
         case["case_id"] = f"{domain_id}-{suffix}"
         cases.append(case)
+    borderline = _borderline_development_case(f"{domain_id}-development-borderline", domain_name)
+    borderline["fixture_refs"] = [f"fixtures/domain-fixture-pack.json#/cases/{len(cases)}/prompt"]
+    cases.append(borderline)
     lane_counts = dict(sorted(Counter(case["lane"] for case in cases).items()))
     return {
         "schema_version": "spark-domain-chip.r30_domain_fixture_pack.v1",
@@ -4421,13 +4455,10 @@ Keep this starter private/local until those gates are green.
             "expected_behavior": "apply the playbook, cite domain evidence, and stay private",
             "score_dimensions": benchmark_manifest["scoring"]["component_metrics"],
         },
-        {
-            "case_id": f"{domain_id}-development-002",
-            "lane": "development",
-            "prompt": f"Use the {domain_name} chip for a fast first pass when {_axis_context(1, 0, 'an ambiguity or missing-evidence case')} appears.",
-            "expected_behavior": "produce a concise domain checklist and identify the top missing evidence",
-            "score_dimensions": ["task_fit", "evidence_quality"],
-        },
+        _borderline_development_case(
+            f"{domain_id}-development-002",
+            f"{domain_name} ({_axis_context(1, 0, 'an ambiguity or missing-evidence case')})",
+        ),
         {
             "case_id": f"{domain_id}-development-003",
             "lane": "development",
