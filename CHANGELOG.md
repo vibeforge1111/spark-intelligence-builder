@@ -8,4 +8,6 @@
 
 ### Session status — 2026-09-24
 
-- Prepared in an isolated worktree; five focused tests pass and the original Windows test fails before the fix. Compilation and whitespace checks pass. Broader creation/bridge tests have 44 passes and six failures that also occur with the original environment function. Three involve Windows path/python3 assumptions; three assume no available Codex provider and fail differently with the original function. These are not a full-suite pass. Not published or merged; Desktop prerequisites land first.
+- Prepared in an isolated worktree. Five focused environment tests pass; the Windows regression fails before the fix. Broader local tests have 44 passes and six pre-existing Windows/provider-availability failures, so this is not a full-suite pass.
+- Desktop prerequisite PRs #19–#21 and Windows prompt repair #18 are merged after fully passing CI. Desktop JSON repair #22 is checking its corrected revision; Builder publication follows it in Phase 1 order.
+- Builder main remains 19afe6cf and its latest CI run 35945719937 passed. The environment repair itself is not published or CI-verified yet. No training data or running checkout has changed.
