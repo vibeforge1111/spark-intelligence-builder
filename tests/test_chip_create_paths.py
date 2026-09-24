@@ -3614,7 +3614,7 @@ def test_create_chip_from_prompt_generates_realistic_r30_fixture_packs(
         )
         assert fixture_pack["case_lanes"] == {
             "adversarial": 3,
-            "development": 5,
+            "development": 6,
             "held_out": 5,
             "no_op": 1,
         }
@@ -3636,7 +3636,7 @@ def test_create_chip_from_prompt_generates_realistic_r30_fixture_packs(
             ]
             is False
         )
-        assert len(cases) == 14
+        assert len(cases) == 15
         prompts = "\n".join(str(case["prompt"]).lower() for case in cases)
         assert f"use the {domain_name.lower()} chip on an in-domain task" not in prompts
         for term in expected_terms:
