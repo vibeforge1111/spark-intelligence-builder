@@ -1,3 +1,7 @@
+## 2026-10-03 - Chip creation executable discovery
+
+Creation now honors CODEX_BIN before PATH, matching the desktop launcher. Invalid explicit executables fail closed. Ten focused Codex creation tests pass without provider calls; pre-existing local Windows environment preservation is a separate patch. The full creation suite was interrupted after failures; no full-suite pass is claimed. GitHub CI is required before merging. See CHIP-CREATE-CODEX-PATH-2026-10-03.md.
+
 ## 2026-09-24 · PR #1011 axis-context correction
 
 CI caught the loss of the configured review-depth axis in generic development-002. Preserve the original axis context inside the newly authored task; the existing smoke assertion stays unchanged. Extended the direct temporary-file regression to require review depth: fast. All12 focused tests pass. Fresh full CI is mandatory for this corrected head.

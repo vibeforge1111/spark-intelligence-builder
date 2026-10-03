@@ -310,7 +310,9 @@ def _provider_uses_codex_external_wrapper(provider) -> bool:
 
 
 def _parse_brief_via_codex_cli(prompt: str, *, provider, governance=None) -> dict:
-    codex_path = shutil.which("codex")
+    # Desktop launches may supply a standalone executable without adding it to PATH.
+    # An explicit, invalid choice must fail rather than silently use another binary.
+    codex_path = shutil.which(os.environ.get("CODEX_BIN", "").strip() or "codex")
     if not codex_path:
         raise ChipCreateProviderExecutionError("codex_cli_missing")
     system_prompt = _BRIEF_SYSTEM

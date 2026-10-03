@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import pytest
 from collections import Counter
 from types import SimpleNamespace
 
@@ -19,6 +20,12 @@ from spark_intelligence.harness_contract import (
     verify_governor_tool_authority,
 )
 from spark_intelligence.state.db import StateDB
+
+
+@pytest.fixture(autouse=True)
+def isolate_codex_binary(monkeypatch):
+    # These fixtures explicitly mock PATH discovery; ignore the test host's launcher.
+    monkeypatch.delenv("CODEX_BIN", raising=False)
 
 
 def _chip_create_governor(*, tool_name: str = "chip.create") -> dict:
