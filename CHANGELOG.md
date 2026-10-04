@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Agent creation honors CODEX_BIN, fixing desktop launches where Codex is outside PATH. Invalid explicit paths fail closed; training and authorization rules are unchanged.
+
 - Phase 1.3 (PR #1010): Windows chip creation forwards the minimal operating-system environment needed by the account-authenticated Codex CLI, while keeping credentials and unrelated variables excluded. Mac/Linux behavior is unchanged.
 
 ### Scoring
