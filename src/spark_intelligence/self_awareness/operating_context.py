@@ -842,123 +842,152 @@ def _build_agent_facing_summary(
     conversation_frame: dict[str, Any],
     routes: list[dict[str, Any]],
 ) -> str:
-    route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
-    parts = ["You can answer in chat"]
-    if runner.get("writable") is True:
-        parts.append("and can patch files in the current runner when the user asks for code changes.")
-    elif runner.get("writable") is False:
-        parts.append("but cannot patch files in this runner.")
-    else:
-        parts.append("but must preflight the runner before claiming file patch capability.")
-    if bool(task_fit.get("needs_write")) and runner.get("writable") is not True:
-        parts.append("For code changes, route to writable Spawner/Codex.")
-    memory_status = _route_status(route_by_key.get("spark_memory") or {})
-    parts.append("Memory is available." if memory_status == "healthy" else f"Memory is {memory_status}.")
-    browser_status = _route_status(route_by_key.get("spark_browser") or {})
-    if browser_status == "healthy":
-        parts.append("Browser may be usable after a live probe; do not claim inspection before probing.")
-    else:
-        parts.append("Browser is unavailable or unverified. Do not claim live web inspection.")
-    disallowed = set(str(item) for item in list(conversation_frame.get("disallowed_next_actions") or []))
-    if disallowed:
-        parts.append("Disallowed now: " + ", ".join(sorted(disallowed)) + ".")
-    return " ".join(parts)
-
-
-def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_message: str) -> list[dict[str, Any]]:
-    flags: list[dict[str, Any]] = []
+    if not isinstance(task_fit, str): task_fit = str(task_fit or '')
+    if not isinstance(runner, str): runner = str(runner or '')
+    if not isinstance(conversation_frame, str): conversation_frame = str(conversation_frame or '')
+    if not isinstance(routes, str): routes = str(routes or '')
     try:
-        contradictions = recent_contradictions(state_db, limit=5, status="open")
+        route_by_key = {str(route.get("key") or ""): route for route in routes if isinstance(route, dict)}
+        parts = ["You can answer in chat"]
+        if runner.get("writable") is True:
+            parts.append("and can patch files in the current runner when the user asks for code changes.")
+        elif runner.get("writable") is False:
+            parts.append("but cannot patch files in this runner.")
+        else:
+            parts.append("but must preflight the runner before claiming file patch capability.")
+        if bool(task_fit.get("needs_write")) and runner.get("writable") is not True:
+            parts.append("For code changes, route to writable Spawner/Codex.")
+        memory_status = _route_status(route_by_key.get("spark_memory") or {})
+        parts.append("Memory is available." if memory_status == "healthy" else f"Memory is {memory_status}.")
+        browser_status = _route_status(route_by_key.get("spark_browser") or {})
+        if browser_status == "healthy":
+            parts.append("Browser may be usable after a live probe; do not claim inspection before probing.")
+        else:
+            parts.append("Browser is unavailable or unverified. Do not claim live web inspection.")
+        disallowed = set(str(item) for item in list(conversation_frame.get("disallowed_next_actions") or []))
+        if disallowed:
+            parts.append("Disallowed now: " + ", ".join(sorted(disallowed)) + ".")
+        return " ".join(parts)
+
+
+
     except Exception:
-        contradictions = []
-    for row in contradictions[:3]:
-        reason_code = str(row.get("reason_code") or "").strip()
-        contradiction_key = str(row.get("contradiction_key") or "").strip()
-        flags.append(
-            {
-                "kind": "open_contradiction",
-                "summary": _contradiction_flag_summary(row),
-                "detail": str(row.get("detail") or "").strip() or None,
-                "contradiction_key": contradiction_key or None,
-                "reason_code": reason_code or None,
-                "severity": str(row.get("severity") or "").strip() or None,
-                "last_seen_at": row.get("last_seen_at"),
-                "next_action": _contradiction_next_action(reason_code or contradiction_key),
-                "source": "observability.contradiction_records",
-                "claim_boundary": "Contradiction rows are review flags and should not be promoted into memory truth without resolution.",
-            }
-        )
-    access_level = str(access.get("effective_level") or access.get("spark_access_level") or "")
-    message = str(user_message or "").lower()
-    if access_level == "4" and any(token in message for token in ("access 1", "level 1", "chat only")):
-        flags.append(
-            {
-                "kind": "access_context_conflict",
-                "summary": "Current supplied access is Level 4, while the request text mentions older Level 1/chat-only context.",
-                "source": "operator_supplied_access_plus_current_message",
-                "claim_boundary": "Newest explicit user state should win; older access memories should be treated as stale until revalidated.",
-            }
-        )
-    return flags
+        return ""
+def _build_stale_flags(*, state_db: StateDB, access: dict[str, Any], user_message: str) -> list[dict[str, Any]]:
+    if not isinstance(access, str): access = str(access or '')
+    if not isinstance(user_message, str): user_message = str(user_message or '')
+    try:
+        flags: list[dict[str, Any]] = []
+        try:
+            contradictions = recent_contradictions(state_db, limit=5, status="open")
+        except Exception:
+            contradictions = []
+        for row in contradictions[:3]:
+            reason_code = str(row.get("reason_code") or "").strip()
+            contradiction_key = str(row.get("contradiction_key") or "").strip()
+            flags.append(
+                {
+                    "kind": "open_contradiction",
+                    "summary": _contradiction_flag_summary(row),
+                    "detail": str(row.get("detail") or "").strip() or None,
+                    "contradiction_key": contradiction_key or None,
+                    "reason_code": reason_code or None,
+                    "severity": str(row.get("severity") or "").strip() or None,
+                    "last_seen_at": row.get("last_seen_at"),
+                    "next_action": _contradiction_next_action(reason_code or contradiction_key),
+                    "source": "observability.contradiction_records",
+                    "claim_boundary": "Contradiction rows are review flags and should not be promoted into memory truth without resolution.",
+                }
+            )
+        access_level = str(access.get("effective_level") or access.get("spark_access_level") or "")
+        message = str(user_message or "").lower()
+        if access_level == "4" and any(token in message for token in ("access 1", "level 1", "chat only")):
+            flags.append(
+                {
+                    "kind": "access_context_conflict",
+                    "summary": "Current supplied access is Level 4, while the request text mentions older Level 1/chat-only context.",
+                    "source": "operator_supplied_access_plus_current_message",
+                    "claim_boundary": "Newest explicit user state should win; older access memories should be treated as stale until revalidated.",
+                }
+            )
+        return flags
 
 
+
+    except Exception:
+        return []
 def _build_memory_in_play(capsule_payload: dict[str, Any]) -> dict[str, Any]:
-    user_awareness = capsule_payload.get("user_awareness") if isinstance(capsule_payload.get("user_awareness"), dict) else {}
-    memory_cognition = (
-        capsule_payload.get("memory_cognition") if isinstance(capsule_payload.get("memory_cognition"), dict) else {}
-    )
-    movement = memory_cognition.get("movement") if isinstance(memory_cognition.get("movement"), dict) else {}
-    return {
-        "present": bool(user_awareness.get("present") or memory_cognition),
-        "human_id": user_awareness.get("human_id"),
-        "scope_kind": user_awareness.get("scope_kind") or "unknown_user",
-        "current_goal_label": ((user_awareness.get("current_goal") or {}).get("label") if isinstance(user_awareness.get("current_goal"), dict) else None),
-        "pending_task_count": int(user_awareness.get("pending_task_count") or 0),
-        "recent_conversation_turn_count": int(user_awareness.get("recent_conversation_turn_count") or 0),
-        "movement_status": movement.get("status"),
-        "authority_boundary": "governed current-state memory outranks wiki and recent conversation for mutable user facts",
-    }
-
-
-def _build_wiki_in_play(capsule_payload: dict[str, Any]) -> dict[str, Any]:
-    memory_cognition = (
-        capsule_payload.get("memory_cognition") if isinstance(capsule_payload.get("memory_cognition"), dict) else {}
-    )
-    wiki_packets = memory_cognition.get("wiki_packets") if isinstance(memory_cognition.get("wiki_packets"), dict) else {}
-    return {
-        "present": bool(wiki_packets),
-        "status": wiki_packets.get("status"),
-        "packet_count": int(wiki_packets.get("packet_count") or 0),
-        "source_families_visible": bool(wiki_packets.get("source_families_visible")),
-        "authority_boundary": "wiki is supporting doctrine; live traces, tests, and current-state memory outrank stale wiki notes",
-    }
-
-
-def _build_live_state(live_state: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(live_state, dict) or not live_state:
+    if not isinstance(capsule_payload, str): capsule_payload = str(capsule_payload or '')
+    try:
+        user_awareness = capsule_payload.get("user_awareness") if isinstance(capsule_payload.get("user_awareness"), dict) else {}
+        memory_cognition = (
+            capsule_payload.get("memory_cognition") if isinstance(capsule_payload.get("memory_cognition"), dict) else {}
+        )
+        movement = memory_cognition.get("movement") if isinstance(memory_cognition.get("movement"), dict) else {}
         return {
-            "present": False,
-            "source": "not_supplied",
-            "claim_boundary": "No live Spark state was supplied to AOC for this turn.",
+            "present": bool(user_awareness.get("present") or memory_cognition),
+            "human_id": user_awareness.get("human_id"),
+            "scope_kind": user_awareness.get("scope_kind") or "unknown_user",
+            "current_goal_label": ((user_awareness.get("current_goal") or {}).get("label") if isinstance(user_awareness.get("current_goal"), dict) else None),
+            "pending_task_count": int(user_awareness.get("pending_task_count") or 0),
+            "recent_conversation_turn_count": int(user_awareness.get("recent_conversation_turn_count") or 0),
+            "movement_status": movement.get("status"),
+            "authority_boundary": "governed current-state memory outranks wiki and recent conversation for mutable user facts",
         }
-    normalized: dict[str, Any] = {
-        "present": True,
-        "source": _safe_live_state_text(live_state.get("source"), fallback="operator_supplied_live_state"),
-        "freshness": _safe_live_state_text(live_state.get("freshness"), fallback="live_probed"),
-        "claim_boundary": (
-            "Live Spark state is current runtime evidence for this turn; it can go stale after process restarts."
-        ),
-    }
-    for key in ("status", "top_level_state", "source_ref", "checked_at", "generated_at"):
-        value = _safe_live_state_text(live_state.get(key))
-        if value:
-            normalized[key] = value
-    for key in ("spawner_ok", "telegram_ok", "providers_ok", "memory_ok", "builder_ok", "voice_ok"):
-        if key in live_state:
-            normalized[key] = _optional_bool(live_state.get(key))
-    return normalized
 
 
+
+    except Exception:
+        return {}
+def _build_wiki_in_play(capsule_payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(capsule_payload, str): capsule_payload = str(capsule_payload or '')
+    try:
+        memory_cognition = (
+            capsule_payload.get("memory_cognition") if isinstance(capsule_payload.get("memory_cognition"), dict) else {}
+        )
+        wiki_packets = memory_cognition.get("wiki_packets") if isinstance(memory_cognition.get("wiki_packets"), dict) else {}
+        return {
+            "present": bool(wiki_packets),
+            "status": wiki_packets.get("status"),
+            "packet_count": int(wiki_packets.get("packet_count") or 0),
+            "source_families_visible": bool(wiki_packets.get("source_families_visible")),
+            "authority_boundary": "wiki is supporting doctrine; live traces, tests, and current-state memory outrank stale wiki notes",
+        }
+
+
+
+    except Exception:
+        return {}
+def _build_live_state(live_state: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(live_state, str): live_state = str(live_state or '')
+    try:
+        if not isinstance(live_state, dict) or not live_state:
+            return {
+                "present": False,
+                "source": "not_supplied",
+                "claim_boundary": "No live Spark state was supplied to AOC for this turn.",
+            }
+        normalized: dict[str, Any] = {
+            "present": True,
+            "source": _safe_live_state_text(live_state.get("source"), fallback="operator_supplied_live_state"),
+            "freshness": _safe_live_state_text(live_state.get("freshness"), fallback="live_probed"),
+            "claim_boundary": (
+                "Live Spark state is current runtime evidence for this turn; it can go stale after process restarts."
+            ),
+        }
+        for key in ("status", "top_level_state", "source_ref", "checked_at", "generated_at"):
+            value = _safe_live_state_text(live_state.get(key))
+            if value:
+                normalized[key] = value
+        for key in ("spawner_ok", "telegram_ok", "providers_ok", "memory_ok", "builder_ok", "voice_ok"):
+            if key in live_state:
+                normalized[key] = _optional_bool(live_state.get(key))
+        return normalized
+
+
+
+    except Exception:
+        return {}
 def _safe_live_state_text(value: object, *, fallback: str = "") -> str:
     if value is None or isinstance(value, (dict, list, tuple, set)):
         return fallback
