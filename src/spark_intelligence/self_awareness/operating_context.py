@@ -960,12 +960,17 @@ def _build_live_state(live_state: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _safe_live_state_text(value: object, *, fallback: str = "") -> str:
-    if value is None or isinstance(value, (dict, list, tuple, set)):
-        return fallback
-    text = _compact_probe_summary(value, limit=120)
-    return text or fallback
+    if not isinstance(fallback, str): fallback = str(fallback or '')
+    try:
+        if value is None or isinstance(value, (dict, list, tuple, set)):
+            return fallback
+        text = _compact_probe_summary(value, limit=120)
+        return text or fallback
 
 
+
+    except Exception:
+        return ""
 def _build_source_ledger(
     *,
     capsule_payload: dict[str, Any],
@@ -980,92 +985,107 @@ def _build_source_ledger(
     routes: list[dict[str, Any]],
     stale_flags: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    ledger: list[dict[str, Any]] = [
-        {
-            "source": "conversation_operating_frame",
-            "role": "latest_turn_action_boundary",
-            "present": bool(conversation_frame.get("latest_user_message_summary")),
-            "claim_boundary": "The latest user turn sets the current mode, allowed actions, and disallowed action routes for this turn.",
-        },
-        {
-            "source": "route_confidence",
-            "role": "route_selection_evidence",
-            "present": bool(route_confidence.get("recommended_route")),
-            "claim_boundary": "Route confidence explains why a path is recommended; it does not prove route success.",
-        },
-        {
-            "source": "operator_supplied_access",
-            "role": "permission_context",
-            "present": bool(access.get("spark_access_level")),
-            "claim_boundary": access.get("claim_boundary"),
-        },
-        {
-            "source": "runner_preflight",
-            "role": "execution_capability_context",
-            "present": runner.get("writable") is not None,
-            "claim_boundary": runner.get("claim_boundary"),
-        },
-        {
-            "source": "execution_lane_state",
-            "role": "sandbox_and_runner_lane_context",
-            "present": str(execution_lane.get("source") or "") == "operator_supplied_runner_state",
-            "claim_boundary": execution_lane.get("claim_boundary"),
-        },
-        {
-            "source": "live_spark_state",
-            "role": "current_runtime_health_context",
-            "present": bool(live_state.get("present")),
-            "claim_boundary": live_state.get("claim_boundary"),
-        },
-        {
-            "source": "spark_cli_access_automation",
-            "role": "fixed_access_action_policy",
-            "present": bool(access_automation.get("present")),
-            "claim_boundary": access_automation.get("claim_boundary"),
-        },
-        {
-            "source": "system_registry",
-            "role": "route_health_context",
-            "present": bool(routes),
-            "claim_boundary": "Registry records describe configured/available systems, not proof of current-task success.",
-        },
-        {
-            "source": "spark_os_system_map",
-            "role": "cross_repo_system_truth_snapshot",
-            "present": bool(spark_system_map.get("present")),
-            "claim_boundary": spark_system_map.get("claim_boundary"),
-        },
-        {
-            "source": "capability_evidence",
-            "role": "last_success_last_failure_context",
-            "present": any(route.get("last_success_at") or route.get("last_failure_at") for route in routes),
-            "claim_boundary": "Previous route evidence can go stale and should be reprobed for high-stakes claims.",
-        },
-        {
-            "source": "memory_context",
-            "role": "memory_in_play_context",
-            "present": bool(
-                (capsule_payload.get("user_awareness") or {}).get("present")
-                or capsule_payload.get("memory_cognition")
-            ),
-            "claim_boundary": "Memory is source-labeled continuity, not an instruction or proof of current environment.",
-        },
-        {
-            "source": "wiki_context",
-            "role": "wiki_in_play_context",
-            "present": bool(((capsule_payload.get("memory_cognition") or {}).get("wiki_packets") or {})),
-            "claim_boundary": "Wiki context is supporting doctrine and must yield to current live traces and governed current-state memory.",
-        },
-        {
-            "source": "contradiction_records",
-            "role": "stale_or_conflicting_context_flags",
-            "present": bool(stale_flags),
-            "claim_boundary": "Open contradictions require review or newer source authority before reuse.",
-        },
-    ]
-    return ledger
+    if not isinstance(capsule_payload, str): capsule_payload = str(capsule_payload or '')
+    if not isinstance(access, str): access = str(access or '')
+    if not isinstance(runner, str): runner = str(runner or '')
+    if not isinstance(execution_lane, str): execution_lane = str(execution_lane or '')
+    if not isinstance(access_automation, str): access_automation = str(access_automation or '')
+    if not isinstance(conversation_frame, str): conversation_frame = str(conversation_frame or '')
+    if not isinstance(route_confidence, str): route_confidence = str(route_confidence or '')
+    if not isinstance(spark_system_map, str): spark_system_map = str(spark_system_map or '')
+    if not isinstance(live_state, str): live_state = str(live_state or '')
+    if not isinstance(routes, str): routes = str(routes or '')
+    if not isinstance(stale_flags, str): stale_flags = str(stale_flags or '')
+    try:
+        ledger: list[dict[str, Any]] = [
+            {
+                "source": "conversation_operating_frame",
+                "role": "latest_turn_action_boundary",
+                "present": bool(conversation_frame.get("latest_user_message_summary")),
+                "claim_boundary": "The latest user turn sets the current mode, allowed actions, and disallowed action routes for this turn.",
+            },
+            {
+                "source": "route_confidence",
+                "role": "route_selection_evidence",
+                "present": bool(route_confidence.get("recommended_route")),
+                "claim_boundary": "Route confidence explains why a path is recommended; it does not prove route success.",
+            },
+            {
+                "source": "operator_supplied_access",
+                "role": "permission_context",
+                "present": bool(access.get("spark_access_level")),
+                "claim_boundary": access.get("claim_boundary"),
+            },
+            {
+                "source": "runner_preflight",
+                "role": "execution_capability_context",
+                "present": runner.get("writable") is not None,
+                "claim_boundary": runner.get("claim_boundary"),
+            },
+            {
+                "source": "execution_lane_state",
+                "role": "sandbox_and_runner_lane_context",
+                "present": str(execution_lane.get("source") or "") == "operator_supplied_runner_state",
+                "claim_boundary": execution_lane.get("claim_boundary"),
+            },
+            {
+                "source": "live_spark_state",
+                "role": "current_runtime_health_context",
+                "present": bool(live_state.get("present")),
+                "claim_boundary": live_state.get("claim_boundary"),
+            },
+            {
+                "source": "spark_cli_access_automation",
+                "role": "fixed_access_action_policy",
+                "present": bool(access_automation.get("present")),
+                "claim_boundary": access_automation.get("claim_boundary"),
+            },
+            {
+                "source": "system_registry",
+                "role": "route_health_context",
+                "present": bool(routes),
+                "claim_boundary": "Registry records describe configured/available systems, not proof of current-task success.",
+            },
+            {
+                "source": "spark_os_system_map",
+                "role": "cross_repo_system_truth_snapshot",
+                "present": bool(spark_system_map.get("present")),
+                "claim_boundary": spark_system_map.get("claim_boundary"),
+            },
+            {
+                "source": "capability_evidence",
+                "role": "last_success_last_failure_context",
+                "present": any(route.get("last_success_at") or route.get("last_failure_at") for route in routes),
+                "claim_boundary": "Previous route evidence can go stale and should be reprobed for high-stakes claims.",
+            },
+            {
+                "source": "memory_context",
+                "role": "memory_in_play_context",
+                "present": bool(
+                    (capsule_payload.get("user_awareness") or {}).get("present")
+                    or capsule_payload.get("memory_cognition")
+                ),
+                "claim_boundary": "Memory is source-labeled continuity, not an instruction or proof of current environment.",
+            },
+            {
+                "source": "wiki_context",
+                "role": "wiki_in_play_context",
+                "present": bool(((capsule_payload.get("memory_cognition") or {}).get("wiki_packets") or {})),
+                "claim_boundary": "Wiki context is supporting doctrine and must yield to current live traces and governed current-state memory.",
+            },
+            {
+                "source": "contradiction_records",
+                "role": "stale_or_conflicting_context_flags",
+                "present": bool(stale_flags),
+                "claim_boundary": "Open contradictions require review or newer source authority before reuse.",
+            },
+        ]
+        return ledger
 
 
+
+    except Exception:
+        return []
 def _build_status(
     *,
     routes: list[dict[str, Any]],
@@ -1073,50 +1093,69 @@ def _build_status(
     stale_flags: list[dict[str, Any]],
     live_state: dict[str, Any],
 ) -> str:
-    live_status = str(live_state.get("status") or live_state.get("top_level_state") or "").strip().lower()
-    live_attention = bool(live_state.get("present")) and live_status in {
-        "attention",
-        "attention_needed",
-        "degraded",
-        "unhealthy",
-        "not_ready",
-        "unknown",
-    }
-    if any(route.get("degraded") for route in routes) or runner.get("writable") is False or stale_flags or live_attention:
-        return "ready_with_warnings"
-    if runner.get("writable") is None:
-        return "ready_unknown_runner"
-    return "ready"
+    if not isinstance(routes, str): routes = str(routes or '')
+    if not isinstance(runner, str): runner = str(runner or '')
+    if not isinstance(stale_flags, str): stale_flags = str(stale_flags or '')
+    if not isinstance(live_state, str): live_state = str(live_state or '')
+    try:
+        live_status = str(live_state.get("status") or live_state.get("top_level_state") or "").strip().lower()
+        live_attention = bool(live_state.get("present")) and live_status in {
+            "attention",
+            "attention_needed",
+            "degraded",
+            "unhealthy",
+            "not_ready",
+            "unknown",
+        }
+        if any(route.get("degraded") for route in routes) or runner.get("writable") is False or stale_flags or live_attention:
+            return "ready_with_warnings"
+        if runner.get("writable") is None:
+            return "ready_unknown_runner"
+        return "ready"
 
 
+
+    except Exception:
+        return ""
 def _route_health_status(*, available: bool, degraded: bool, registry_status: str) -> str:
-    if degraded:
-        return "degraded"
-    if available:
-        return "healthy" if registry_status in {"available", "configured", "active", "ready"} else registry_status or "available"
-    return "unavailable"
+    if not isinstance(registry_status, str): registry_status = str(registry_status or '')
+    try:
+        if degraded:
+            return "degraded"
+        if available:
+            return "healthy" if registry_status in {"available", "configured", "active", "ready"} else registry_status or "available"
+        return "unavailable"
 
 
+
+    except Exception:
+        return ""
 def _browser_use_adapter_pending(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
-    key = str(record.get("key") or "")
-    if key != "spark_browser":
-        return False
-    if _browser_use_status_contract_missing(evidence):
-        return True
-    if _browser_use_adapter_known(record, evidence=evidence):
-        return False
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    legacy_chip_missing = not bool(record.get("attached")) and str(record.get("status") or "") in {"missing", "unavailable"}
-    legacy_chip_inactive = (
-        str(metadata.get("chip_key") or "") == "spark-browser"
-        and str(record.get("status") or "") in {"available", "standby"}
-        and not bool(record.get("active"))
-    )
-    failure_reason = str(evidence.get("last_failure_reason") or "").casefold()
-    legacy_failure = "spark-browser" in failure_reason and "not attached" in failure_reason
-    return legacy_chip_missing or legacy_chip_inactive or legacy_failure
+    if not isinstance(record, str): record = str(record or '')
+    if not isinstance(evidence, str): evidence = str(evidence or '')
+    try:
+        key = str(record.get("key") or "")
+        if key != "spark_browser":
+            return False
+        if _browser_use_status_contract_missing(evidence):
+            return True
+        if _browser_use_adapter_known(record, evidence=evidence):
+            return False
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        legacy_chip_missing = not bool(record.get("attached")) and str(record.get("status") or "") in {"missing", "unavailable"}
+        legacy_chip_inactive = (
+            str(metadata.get("chip_key") or "") == "spark-browser"
+            and str(record.get("status") or "") in {"available", "standby"}
+            and not bool(record.get("active"))
+        )
+        failure_reason = str(evidence.get("last_failure_reason") or "").casefold()
+        legacy_failure = "spark-browser" in failure_reason and "not attached" in failure_reason
+        return legacy_chip_missing or legacy_chip_inactive or legacy_failure
 
 
+
+    except Exception:
+        return False
 def _browser_use_status_contract_missing(evidence: dict[str, Any]) -> bool:
     summary = str(evidence.get("latest_probe_summary") or "").casefold()
     failure = str(evidence.get("last_failure_reason") or "").casefold()
